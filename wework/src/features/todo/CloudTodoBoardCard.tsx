@@ -1,15 +1,6 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import {
-  Archive,
-  Bot,
-  CalendarDays,
-  ChevronRight,
-  Ellipsis,
-  Flag,
-  ListTodo,
-  Plus,
-} from 'lucide-react'
+import { Archive, CalendarDays, ChevronRight, Ellipsis, Flag, ListTodo, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -35,19 +26,12 @@ const priorityLabels: Record<CloudLoopItem['priority'], string> = {
 interface CloudTodoCardContentProps {
   item: CloudLoopItem
   display: BoardCardDisplaySettings
-  /** Active robot names for the current project, used when the item only
-   * carries `assignee_agent_id` (local projects do not resolve the name). */
-  agentNames?: Record<string, string>
 }
 
-export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCardContentProps) {
+export function CloudTodoCardContent({ item, display }: CloudTodoCardContentProps) {
   const tags = item.tags ?? []
   const showFooter = display.showPriority || display.showDate || display.showAssignee
-  const assigneeName =
-    item.assignee_name ||
-    (item.assignee_agent_id
-      ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
-      : null)
+  const assigneeName = item.assignee_name
 
   return (
     <>
@@ -108,7 +92,6 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
                   className="inline-flex min-w-0 items-center gap-1.5"
                 >
                   <span className="sr-only">负责人</span>
-                  {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
                   <span className="truncate">{assigneeName}</span>
                 </span>
               </Tooltip>
@@ -131,7 +114,6 @@ interface CloudTodoBoardCardProps {
   onArchive: () => void
   onOpenActivity?: () => void
   display: BoardCardDisplaySettings
-  agentNames?: Record<string, string>
   dragDisabled?: boolean
   archiveDisabled?: boolean
 }
@@ -144,7 +126,6 @@ export function CloudTodoBoardCard({
   onOpenChildren,
   onArchive,
   display,
-  agentNames,
   dragDisabled = false,
   archiveDisabled = false,
 }: CloudTodoBoardCardProps) {
@@ -224,7 +205,7 @@ export function CloudTodoBoardCard({
         {...listeners}
         {...attributes}
       >
-        <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
+        <CloudTodoCardContent item={item} display={display} />
       </button>
 
       <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">

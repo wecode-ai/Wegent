@@ -459,6 +459,7 @@ const SYSTEM_DRAG_PANEL_ONLY = process.argv.includes('--system-drag-panel-only')
 const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const CLOUD_FEATURES_ONLY = process.argv.includes('--cloud-features-only')
+const CLOUD_DEVELOPMENT_ONLY = process.argv.includes('--cloud-development-only')
 const CLOUD_VISION_ONLY = process.argv.includes('--cloud-vision-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const AUTOMATION_ONLY = process.argv.includes('--automation-only')
@@ -560,6 +561,7 @@ function getActiveOnlyModes() {
     ['--model-switch-only', MODEL_SWITCH_ONLY],
     ['--cloud-only', CLOUD_ONLY],
     ['--cloud-features-only', CLOUD_FEATURES_ONLY],
+    ['--cloud-development-only', CLOUD_DEVELOPMENT_ONLY],
     ['--cloud-vision-only', CLOUD_VISION_ONLY],
     ['--plugins-only', PLUGINS_ONLY],
     ['--automation-only', AUTOMATION_ONLY],
@@ -1622,6 +1624,7 @@ export {
   MODEL_SWITCH_ONLY,
   CLOUD_ONLY,
   CLOUD_FEATURES_ONLY,
+  CLOUD_DEVELOPMENT_ONLY,
   CLOUD_VISION_ONLY,
   PLUGINS_ONLY,
   AUTOMATION_ONLY,

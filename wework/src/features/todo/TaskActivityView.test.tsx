@@ -147,6 +147,53 @@ const agentMessage: ProjectChatMessage = {
   status: 'streaming',
 }
 
+function workflowClient() {
+  return {
+    subscribe: vi.fn(async () => ({
+      snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+      unsubscribe: vi.fn(),
+    })),
+    send: vi.fn(async input => ({
+      ...userMessage,
+      messageId: input.clientMessageId,
+      content: input.text,
+      metadata: {
+        mentions: input.mentions ?? [],
+        workflowManaged: input.workflowManaged ?? false,
+      },
+    })),
+    startAgentResponse: vi.fn(),
+    failAgentResponse: vi.fn(),
+    dispose: vi.fn(),
+  } satisfies ProjectChatClient
+}
+
+function workflowApi(options?: { binding?: Record<string, unknown> | null }) {
+  const binding =
+    options && 'binding' in options
+      ? options.binding
+      : {
+          id: 7,
+          itemId: 'WEG-1',
+          targetType: 'project_agent',
+          targetId: '12',
+          targetSnapshot: {},
+          repositoryBindingId: 'repo-1',
+          executionTarget: { type: 'registered_device', id: 'device-1' },
+          workspaceMode: 'git_worktree',
+          createdByUserId: 1,
+          version: 2,
+          createdAt: '',
+          updatedAt: '',
+        }
+  return {
+    listSquads: vi.fn(async () => []),
+    getTaskBinding: vi.fn(async () => binding),
+    upsertTaskBinding: vi.fn(),
+    startRun: vi.fn(async () => ({ id: 'run-1' })),
+  }
+}
+
 describe('TaskActivityView', () => {
   beforeEach(() => {
     agentsMock.value = [
@@ -291,6 +338,91 @@ describe('TaskActivityView', () => {
       })
     )
     expect(await screen.findByText('机器人已接收')).toBeInTheDocument()
+  })
+
+  it('posts a plain comment without starting the legacy assignee when workflow mode is available', async () => {
+    const user = userEvent.setup()
+    const client = workflowClient()
+    const workflows = workflowApi({ binding: null })
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework', location: 'cloud' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+        projectWorkflowApi={workflows as never}
+      />
+    )
+
+    await screen.findByTestId('task-comment-execution-actor')
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '仅记录结论')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: '仅记录结论',
+        mentions: [],
+        workflowManaged: false,
+      })
+    )
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(workflows.startRun).not.toHaveBeenCalled()
+  })
+
+  it('starts the bound workflow only after an explicit execution actor is selected', async () => {
+    const user = userEvent.setup()
+    const client = workflowClient()
+    const workflows = workflowApi()
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework', location: 'cloud' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+          } as never
+        }
+        projectWorkflowApi={workflows as never}
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('task-comment-execution-actor')).toHaveValue('project_agent:12')
+    )
+    await user.type(screen.getByTestId('cloud-task-activity-composer'), '实现并验证')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    await waitFor(() => expect(workflows.startRun).toHaveBeenCalledOnce())
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mentions: [{ type: 'agent', id: '12', label: 'Code Reviewer' }],
+        workflowManaged: true,
+      })
+    )
+    expect(workflows.startRun).toHaveBeenCalledWith(
+      '11',
+      'WEG-1',
+      expect.any(String),
+      expect.any(String)
+    )
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
   })
 
   it('defaults the parent comment execution project to the task page project', async () => {

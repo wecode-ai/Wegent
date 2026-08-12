@@ -153,12 +153,14 @@ export function createLocalProjectChatClient(
         metadata: {
           mentions,
           ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+          ...(input.attachmentIds?.length ? { attachment_ids: input.attachmentIds } : {}),
+          ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         },
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
     const agentMention = mentions.find(mention => mention.type === 'agent')
-    if (agentMention) {
+    if (agentMention && !input.workflowManaged) {
       void request('executions.enqueue', {
         project_id: input.projectId,
         task_id: input.taskId ?? '',

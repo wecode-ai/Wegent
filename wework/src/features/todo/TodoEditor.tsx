@@ -44,17 +44,26 @@ import type {
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import type {
+  ExecutionActorRef,
+  ProjectAgentSquad,
+  RepositoryBinding,
+  WorkflowDefinition,
+  createProjectWorkflowApi,
+} from '@/api/projectWorkflows'
 import type { AITableApi } from '@/api/aitable'
-import type { ProjectWithTasks } from '@/types/api'
+import type { ProjectWithTasks, Team } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
+import { TaskDevelopmentPanel } from './TaskDevelopmentPanel'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
 import { TaskActivityView } from './TaskActivityView'
+import { TaskWorkflowPanel } from './TaskWorkflowPanel'
 import { markdownAttachmentRows } from './attachmentMarkdown'
 import './task-detail-layout.css'
 import {
@@ -66,10 +75,6 @@ import {
 } from './todoShared'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
-
-function supportsAssignApi(api: DeliveryApi): boolean {
-  return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
-}
 
 type AttachmentRow = Pick<CloudLoopItemAttachment, 'id' | 'display_name' | 'size_bytes'>
 
@@ -487,8 +492,10 @@ export type TodoEditorProps = {
   api: DeliveryApi
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  projectWorkflowApi?: ReturnType<typeof createProjectWorkflowApi>
+  teamApi?: WorkbenchServices['teamApi']
+  deviceApi?: WorkbenchServices['deviceApi']
   projectChatClient?: ProjectChatClient
-  selfManagedExecution?: boolean
   currentUserId?: string | number
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
@@ -535,11 +542,7 @@ export function TodoEditor(props: TodoEditorProps) {
   )
   const [dueDate, setDueDate] = useState(item?.due_at?.slice(0, 10) ?? draft?.dueDate ?? '')
   const [assigneeTarget, setAssigneeTarget] = useState(
-    item?.assignee_agent_id
-      ? `agent:${item.assignee_agent_id}`
-      : item?.assignee_user_id
-        ? `user:${item.assignee_user_id}`
-        : ''
+    item?.assignee_user_id ? `user:${item.assignee_user_id}` : ''
   )
   const [tags, setTags] = useState<string[]>(item?.tags ?? draft?.tags ?? [])
   const [tagDraft, setTagDraft] = useState('')
@@ -552,18 +555,10 @@ export function TodoEditor(props: TodoEditorProps) {
     const previous = syncedItemRef.current
     if (previous && previous.id === item.id && previous.version === item.version) return
     const sameTask = previous?.id === item.id
-    const previousAssigneeTarget = previous
-      ? previous.assignee_agent_id
-        ? `agent:${previous.assignee_agent_id}`
-        : previous.assignee_user_id
-          ? `user:${previous.assignee_user_id}`
-          : ''
+    const previousAssigneeTarget = previous?.assignee_user_id
+      ? `user:${previous.assignee_user_id}`
       : ''
-    const nextAssigneeTarget = item.assignee_agent_id
-      ? `agent:${item.assignee_agent_id}`
-      : item.assignee_user_id
-        ? `user:${item.assignee_user_id}`
-        : ''
+    const nextAssigneeTarget = item.assignee_user_id ? `user:${item.assignee_user_id}` : ''
     const tagsMatch = (left: string[], right: string[]) =>
       left.length === right.length && left.every((tag, index) => tag === right[index])
     if (!sameTask || title === (previous?.title ?? '')) setTitle(item.title ?? '')
@@ -603,6 +598,23 @@ export function TodoEditor(props: TodoEditorProps) {
   const [collaborators, setCollaborators] = useState<CloudLoopItemCollaborator[]>([])
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
+  const [projectSquads, setProjectSquads] = useState<ProjectAgentSquad[]>([])
+  const [projectWorkflows, setProjectWorkflows] = useState<WorkflowDefinition[]>([])
+  const [projectRepositories, setProjectRepositories] = useState<RepositoryBinding[]>([])
+  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
+  const [executionDevices, setExecutionDevices] = useState<
+    Array<{ device_id: string; device_type?: string; status?: string }>
+  >([])
+  const [aiExecutionSelection, setAiExecutionSelection] = useState('default')
+  const [aiExecutionTargetType, setAiExecutionTargetType] = useState<
+    'registered_device' | 'managed_container'
+  >(project?.project_store === 'local' ? 'registered_device' : 'managed_container')
+  const [aiExecutionDeviceId, setAiExecutionDeviceId] = useState('')
+  const [aiWorkspaceMode, setAiWorkspaceMode] = useState<'current_workspace' | 'git_worktree'>(
+    'git_worktree'
+  )
+  const [aiRepositoryBindingId, setAiRepositoryBindingId] = useState('')
+  const [startWorkflowAfterSave, setStartWorkflowAfterSave] = useState(true)
   const [addingCollaborator, setAddingCollaborator] = useState(false)
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
@@ -677,6 +689,42 @@ export function TodoEditor(props: TodoEditorProps) {
     })
   }, [api, createProjectId, props.projectChatAgentApi])
 
+  useEffect(() => {
+    if (createProjectId == null || !props.projectWorkflowApi) return
+    let active = true
+    void Promise.all([
+      props.projectWorkflowApi.listSquads(String(createProjectId)),
+      props.projectWorkflowApi.listWorkflows(String(createProjectId)),
+      props.projectWorkflowApi.listRepositories(String(createProjectId)),
+      props.teamApi?.listTeams() ?? Promise.resolve([]),
+      props.deviceApi?.listDevices() ?? Promise.resolve([]),
+    ]).then(([squads, workflows, repositories, teams, devices]) => {
+      if (!active) return
+      setProjectSquads(squads)
+      setProjectWorkflows(workflows)
+      setProjectRepositories(repositories)
+      setWegentTeams(teams)
+      setExecutionDevices(devices)
+      const defaultRepository = repositories.find(repository => repository.status === 'active')
+      setAiRepositoryBindingId(defaultRepository?.id ?? '')
+      const compatibleDevice = devices.find(device =>
+        project?.project_store === 'local'
+          ? device.device_type === 'local' || device.device_type === 'app'
+          : device.status === 'online'
+      )
+      setAiExecutionDeviceId(compatibleDevice?.device_id ?? '')
+    })
+    return () => {
+      active = false
+    }
+  }, [
+    createProjectId,
+    project?.project_store,
+    props.deviceApi,
+    props.projectWorkflowApi,
+    props.teamApi,
+  ])
+
   // Persist the text draft on every edit; a fully cleared form removes it.
   useEffect(() => {
     if (!draftKey) return
@@ -710,12 +758,7 @@ export function TodoEditor(props: TodoEditorProps) {
       status !== item.status ||
       priority !== item.priority ||
       parentId !== (item.parent_id ?? '') ||
-      assigneeTarget !==
-        (item.assignee_agent_id
-          ? `agent:${item.assignee_agent_id}`
-          : item.assignee_user_id
-            ? `user:${item.assignee_user_id}`
-            : '') ||
+      assigneeTarget !== (item.assignee_user_id ? `user:${item.assignee_user_id}` : '') ||
       dueDate !== (item.due_at?.slice(0, 10) ?? '') ||
       tagsDirty
     : false
@@ -744,7 +787,6 @@ export function TodoEditor(props: TodoEditorProps) {
   const statusLabel = statusOptions.find(option => option.id === status)?.name ?? '未设置'
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => assigneeTarget === `user:${member.user_id}`)
-  const assigneeAgent = projectAgents.find(agent => assigneeTarget === `agent:${agent.id}`)
   const canAssign = project
     ? project.access_role === 'Owner' || project.access_role === 'Maintainer'
     : false
@@ -774,25 +816,57 @@ export function TodoEditor(props: TodoEditorProps) {
         ...(dueDate ? { due_at: dueDate } : {}),
         ...(creatorName ? { creator_name: creatorName } : {}),
       })
-      // createLoopItem does not accept an assignee, so assign right after;
-      // this records the who-assigned-to-whom chain and the queue state.
       if (assigneeTarget) {
-        if (supportsAssignApi(api)) {
-          created = await api.assignLoopItem(props.project.id, created.id, {
-            version: created.version,
-            assigneeType: assigneeTarget.startsWith('user:') ? 'user' : 'agent',
-            assigneeId: assigneeTarget.startsWith('user:')
-              ? assigneeTarget.slice(5)
-              : assigneeTarget.slice(6),
-          })
-        } else {
-          created = await api.updateLoopItem(created.id, {
-            version: created.version,
-            assignee_user_id: assigneeTarget.startsWith('user:')
-              ? Number(assigneeTarget.slice(5))
-              : null,
-            assignee_agent_id: assigneeTarget.startsWith('agent:') ? assigneeTarget.slice(6) : null,
-          })
+        created = await api.updateLoopItem(created.id, {
+          version: created.version,
+          assignee_user_id: Number(assigneeTarget.slice(5)),
+        })
+      }
+      if (
+        props.projectWorkflowApi &&
+        aiExecutionSelection !== 'none' &&
+        (aiExecutionTargetType === 'managed_container' || aiExecutionDeviceId)
+      ) {
+        const [selectionType, selectionId] = aiExecutionSelection.split(':', 2)
+        const defaultWorkflow = projectWorkflows.find(workflow => workflow.isDefault)
+        const selectedTeam = wegentTeams.find(team => String(team.id) === selectionId)
+        let actor: ExecutionActorRef | undefined
+        let workflowId: string | undefined
+        if (aiExecutionSelection === 'default') {
+          workflowId = defaultWorkflow?.id
+        } else if (selectionType === 'workflow') {
+          workflowId = selectionId
+        } else if (selectionType === 'project_agent') {
+          actor = { type: 'project_agent', id: selectionId }
+        } else if (selectionType === 'project_squad') {
+          actor = { type: 'project_squad', id: selectionId }
+        } else if (selectionType === 'wegent_team' && selectedTeam) {
+          actor = {
+            type: 'wegent_team',
+            teamId: selectedTeam.id,
+            namespace: selectedTeam.namespace || 'default',
+            name: selectedTeam.name,
+            userId: selectedTeam.user_id ?? Number(props.currentUserId || 0),
+          }
+        }
+        if (actor || workflowId) {
+          await props.projectWorkflowApi.upsertTaskBinding(
+            String(props.project.id),
+            String(created.id),
+            {
+              ...(actor ? { actor } : {}),
+              ...(workflowId ? { workflowId } : {}),
+              ...(aiRepositoryBindingId ? { repositoryBindingId: aiRepositoryBindingId } : {}),
+              executionTarget: {
+                type: aiExecutionTargetType,
+                ...(aiExecutionTargetType === 'registered_device'
+                  ? { id: aiExecutionDeviceId }
+                  : {}),
+              },
+              workspaceMode: aiWorkspaceMode,
+              startAfterSave: startWorkflowAfterSave,
+            }
+          )
         }
       }
       const uploaded = await uploadAttachments(created.id, pendingFiles)
@@ -815,7 +889,6 @@ export function TodoEditor(props: TodoEditorProps) {
         taskProvider: project?.task_provider,
         projectLocation: (project as { location?: string } | null)?.location,
         assigneeTarget,
-        usesAssignApi: supportsAssignApi(api),
         error: cause instanceof Error ? cause.message : String(cause),
         stack: cause instanceof Error ? cause.stack : null,
       })
@@ -841,33 +914,19 @@ export function TodoEditor(props: TodoEditorProps) {
         due_at: dueDate || null,
         tags,
       })
-      const currentAssigneeTarget = current.assignee_agent_id
-        ? `agent:${current.assignee_agent_id}`
-        : current.assignee_user_id
-          ? `user:${current.assignee_user_id}`
-          : ''
+      const currentAssigneeTarget = current.assignee_user_id
+        ? `user:${current.assignee_user_id}`
+        : ''
       if (assigneeTarget !== currentAssigneeTarget) {
         if (!assigneeTarget) {
           updated = await api.updateLoopItem(current.id, {
             version: updated.version,
             assignee_user_id: null,
-            assignee_agent_id: null,
-          })
-        } else if (project && supportsAssignApi(api)) {
-          updated = await api.assignLoopItem(project.id, current.id, {
-            version: updated.version,
-            assigneeType: assigneeTarget.startsWith('user:') ? 'user' : 'agent',
-            assigneeId: assigneeTarget.startsWith('user:')
-              ? assigneeTarget.slice(5)
-              : assigneeTarget.slice(6),
           })
         } else {
           updated = await api.updateLoopItem(current.id, {
             version: updated.version,
-            assignee_user_id: assigneeTarget.startsWith('user:')
-              ? Number(assigneeTarget.slice(5))
-              : null,
-            assignee_agent_id: assigneeTarget.startsWith('agent:') ? assigneeTarget.slice(6) : null,
+            assignee_user_id: Number(assigneeTarget.slice(5)),
           })
         }
       }
@@ -876,7 +935,6 @@ export function TodoEditor(props: TodoEditorProps) {
         itemId: updated.id,
         version: updated.version,
         assignee_user_id: updated.assignee_user_id ?? null,
-        assignee_agent_id: updated.assignee_agent_id ?? null,
         assignee_name: updated.assignee_name ?? null,
         requested_assignee_target: assigneeTarget,
       })
@@ -889,7 +947,6 @@ export function TodoEditor(props: TodoEditorProps) {
         projectLocation: (project as { location?: string } | null)?.location,
         itemId: current.id,
         assigneeTarget,
-        usesAssignApi: supportsAssignApi(api),
         error: cause instanceof Error ? cause.message : String(cause),
         stack: cause instanceof Error ? cause.stack : null,
       })
@@ -1075,15 +1132,14 @@ export function TodoEditor(props: TodoEditorProps) {
     editProps.project.task_provider !== 'dingtalk_aitable' &&
     props.projectChatClient ? (
       <TaskActivityView
-        key={`${item.id}:${item.assignee_agent_id ?? 'unassigned'}`}
+        key={item.id}
         client={props.projectChatClient}
         project={editProps.project}
         task={item}
         currentUserId={props.currentUserId}
         onTaskUpdated={editProps.onUpdated}
         projectChatAgentApi={props.projectChatAgentApi}
-        localProjects={props.localProjects}
-        selfManagedExecution={props.selfManagedExecution}
+        projectWorkflowApi={props.projectWorkflowApi}
         linear
       />
     ) : null
@@ -1140,17 +1196,149 @@ export function TodoEditor(props: TodoEditorProps) {
           </option>
         ))}
       </optgroup>
-      {projectAgents.length ? (
-        <optgroup label="机器人">
-          {projectAgents.map(agent => (
-            <option key={agent.id} value={`agent:${agent.id}`}>
-              {agent.name}
-            </option>
-          ))}
-        </optgroup>
-      ) : null}
     </select>
   )
+  const aiExecutionCreatePanel =
+    isCreate && props.projectWorkflowApi ? (
+      <section
+        data-testid="task-ai-execution"
+        className="mt-3 grid gap-3 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-2"
+      >
+        <label className="text-xs text-text-secondary">
+          AI 执行
+          <select
+            data-testid="task-ai-execution-target"
+            value={aiExecutionSelection}
+            onChange={event => setAiExecutionSelection(event.target.value)}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+          >
+            <option value="default">跟随项目默认工作流</option>
+            <option value="none">不启动 AI</option>
+            {projectAgents.map(agent => (
+              <option
+                key={agent.id}
+                value={`project_agent:${agent.id}`}
+                data-testid={`task-ai-execution-agent-${agent.id}`}
+              >
+                项目机器人 · {agent.name}
+              </option>
+            ))}
+            {projectSquads.map(squad => (
+              <option
+                key={squad.id}
+                value={`project_squad:${squad.id}`}
+                data-testid={`task-ai-execution-squad-${squad.id}`}
+              >
+                机器人小队 · {squad.name}
+              </option>
+            ))}
+            {wegentTeams
+              .filter(team => team.is_active)
+              .map(team => (
+                <option
+                  key={team.id}
+                  value={`wegent_team:${team.id}`}
+                  data-testid={`task-ai-execution-wegent-team-${team.id}`}
+                >
+                  Wegent 智能体 · {team.displayName || team.name}
+                </option>
+              ))}
+            {projectWorkflows.map(workflow => (
+              <option
+                key={workflow.id}
+                value={`workflow:${workflow.id}`}
+                data-testid={`task-ai-execution-workflow-${workflow.id}`}
+              >
+                工作流 · {workflow.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-text-secondary">
+          执行环境
+          <select
+            data-testid="task-ai-execution-environment"
+            value={aiExecutionTargetType}
+            onChange={event =>
+              setAiExecutionTargetType(
+                event.target.value as 'registered_device' | 'managed_container'
+              )
+            }
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+          >
+            <option value="registered_device">AI 设备</option>
+            {project?.project_store !== 'local' ? (
+              <option value="managed_container">编码模式容器</option>
+            ) : null}
+          </select>
+        </label>
+        {aiExecutionTargetType === 'registered_device' ? (
+          <label className="text-xs text-text-secondary">
+            AI 设备
+            <select
+              data-testid="task-ai-execution-device"
+              value={aiExecutionDeviceId}
+              onChange={event => setAiExecutionDeviceId(event.target.value)}
+              className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+            >
+              <option value="">选择在线设备</option>
+              {executionDevices.map(device => (
+                <option key={device.device_id} value={device.device_id}>
+                  {device.device_id}
+                  {device.status ? ` · ${device.status}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div
+            data-testid="task-ai-execution-coding-container"
+            className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-text-muted"
+          >
+            保存后由 Executor Manager 创建编码模式托管容器
+          </div>
+        )}
+        <label className="text-xs text-text-secondary">
+          工作区
+          <select
+            data-testid="task-workspace-mode"
+            value={aiWorkspaceMode}
+            onChange={event =>
+              setAiWorkspaceMode(event.target.value as 'current_workspace' | 'git_worktree')
+            }
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+          >
+            <option value="git_worktree">隔离 Git worktree</option>
+            <option value="current_workspace">当前工作区</option>
+          </select>
+        </label>
+        <label className="text-xs text-text-secondary">
+          目标仓库
+          <select
+            data-testid="task-repository-binding"
+            value={aiRepositoryBindingId}
+            onChange={event => setAiRepositoryBindingId(event.target.value)}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+          >
+            <option value="">不绑定仓库</option>
+            {projectRepositories.map(repository => (
+              <option key={repository.id} value={repository.id}>
+                {repository.repositoryIdentity}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-text-secondary sm:col-span-2">
+          <input
+            type="checkbox"
+            data-testid="task-start-workflow-toggle"
+            checked={startWorkflowAfterSave}
+            onChange={event => setStartWorkflowAfterSave(event.target.checked)}
+          />
+          保存任务后立即启动
+        </label>
+      </section>
+    ) : null
   const parentSelect = (
     <select
       data-testid={isCreate ? 'cloud-todo-create-parent' : 'cloud-todo-detail-parent'}
@@ -1202,7 +1390,7 @@ export function TodoEditor(props: TodoEditorProps) {
     high: 'P1 高',
     urgent: 'P0 紧急',
   }
-  const railAssigneeName = assigneeAgent?.name ?? assignee?.user_name ?? null
+  const railAssigneeName = assignee?.user_name ?? null
   const iterationText =
     item && editProps?.project
       ? (sourceCellText(item.source_cells, ['iteration', 'sprint', '迭代']) ??
@@ -1241,14 +1429,10 @@ export function TodoEditor(props: TodoEditorProps) {
     <>
       {statusChip}
       {priorityChip}
-      <span className={cn(propChipClass, !assignee && !assigneeAgent && 'text-text-muted')}>
-        {assigneeAgent ? (
-          <Bot className="h-3.5 w-3.5 text-violet-600" />
-        ) : (
-          <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-        )}
+      <span className={cn(propChipClass, !assignee && 'text-text-muted')}>
+        <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
         <span className="text-text-muted">负责人</span>
-        {assigneeAgent?.name ?? assignee?.user_name ?? '添加'}
+        {assignee?.user_name ?? '添加'}
         <ChevronDown className="h-3 w-3 text-text-muted" />
         {assigneeSelect}
       </span>
@@ -1598,6 +1782,8 @@ export function TodoEditor(props: TodoEditorProps) {
                 )}
               </div>
 
+              {aiExecutionCreatePanel}
+
               {!twoColumn ? (
                 <div className="mt-2.5 flex items-center gap-2">
                   <span className="flex shrink-0 select-none items-center gap-1.5 text-xs text-text-muted">
@@ -1616,15 +1802,9 @@ export function TodoEditor(props: TodoEditorProps) {
               {twoColumn ? (
                 <div className="task-detail-meta-line">
                   <span className="task-detail-meta-item">
-                    {assigneeAgent ? (
-                      <Bot className="h-3.5 w-3.5 text-violet-600" />
-                    ) : (
-                      <CircleUserRound className="h-3.5 w-3.5" />
-                    )}
+                    <CircleUserRound className="h-3.5 w-3.5" />
                     负责人
-                    <span className="text-text-primary">
-                      {assignee?.user_name ?? assigneeAgent?.name ?? '未指派'}
-                    </span>
+                    <span className="text-text-primary">{assignee?.user_name ?? '未指派'}</span>
                   </span>
                   <span className="task-detail-meta-item">
                     <Calendar className="h-3.5 w-3.5" />
@@ -1668,6 +1848,37 @@ export function TodoEditor(props: TodoEditorProps) {
                 </div>
               ) : null}
               {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
+
+              {twoColumn &&
+              item &&
+              editProps?.project?.location === 'cloud' &&
+              editProps.project.task_provider !== 'dingtalk_aitable' &&
+              props.projectWorkflowApi &&
+              props.teamApi &&
+              props.deviceApi &&
+              Number(props.currentUserId) > 0 ? (
+                <TaskWorkflowPanel
+                  projectId={editProps.project.id}
+                  itemId={item.id}
+                  currentUserId={Number(props.currentUserId)}
+                  api={props.projectWorkflowApi}
+                  projectChatAgentApi={props.projectChatAgentApi}
+                  teamApi={props.teamApi}
+                  deviceApi={props.deviceApi}
+                />
+              ) : null}
+
+              {twoColumn &&
+              item &&
+              editProps?.project?.location === 'cloud' &&
+              editProps.project.task_provider !== 'dingtalk_aitable' &&
+              props.projectWorkflowApi ? (
+                <TaskDevelopmentPanel
+                  projectId={editProps.project.id}
+                  itemId={item.id}
+                  api={props.projectWorkflowApi}
+                />
+              ) : null}
 
               {twoColumn && item && editProps?.project?.task_provider !== 'dingtalk_aitable'
                 ? (activityView ?? (

@@ -43,6 +43,7 @@ from app.schemas.project_chat import (
     LoopItemAssign,
     ProjectChatAgentCreate,
     ProjectChatAgentUpdate,
+    ProjectChatAgentValidation,
     ProjectChatAgentView,
 )
 from app.services.cloud_files import cloud_file_service
@@ -124,6 +125,24 @@ def list_project_chat_agents(
 
 
 @router.post(
+    "/{project_id}/chat-agents/validate",
+    response_model=ProjectChatAgentValidation,
+)
+def validate_project_chat_agent(
+    project_id: int,
+    values: ProjectChatAgentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectChatAgentValidation:
+    return project_chat_service.validate_agent_config(
+        db,
+        user_id=current_user.id,
+        project_id=str(project_id),
+        request=values,
+    )
+
+
+@router.post(
     "/{project_id}/chat-agents",
     response_model=ProjectChatAgentView,
     status_code=status.HTTP_201_CREATED,
@@ -170,11 +189,7 @@ def assign_loop_item(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
-    """Assign a task to a project member or to one of the project robots.
-
-    The assignment chain and the derived queue state live on the task itself;
-    there is no separate queue storage.
-    """
+    """Assign a task to a project member or to one project robot."""
 
     if external_loop_item_provider.is_external_item(db, item_id):
         response = external_loop_item_provider.assign(
@@ -212,7 +227,7 @@ def approve_loop_item_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
-    """Approve a pending robot run. Only the robot creator can approve."""
+    """Approve a pending robot run."""
 
     if external_loop_item_provider.is_external_item(db, item_id):
         response = external_loop_item_provider.approve_run(
@@ -254,7 +269,7 @@ def reject_loop_item_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
-    """Reject a pending robot run. Only the robot creator can reject."""
+    """Reject a pending robot run."""
 
     if external_loop_item_provider.is_external_item(db, item_id):
         response = external_loop_item_provider.reject_run(

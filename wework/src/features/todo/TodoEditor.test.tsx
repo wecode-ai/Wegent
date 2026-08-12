@@ -42,7 +42,6 @@ const baseItem = {
   due_at: null,
   tags: [],
   assignee_user_id: null,
-  assignee_agent_id: 'agent-1',
   created_at: '2026-08-01T00:00:00',
   updated_at: '2026-08-01T00:00:00',
   version: 1,
@@ -105,7 +104,7 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('completed')
   })
 
-  it('assigns a member through the assign route with a string user id', async () => {
+  it('updates the human assignee through the task update route', async () => {
     const user = userEvent.setup()
     const assignApi = {
       listDeliveries: vi.fn(async () => ({ items: [] })),
@@ -122,12 +121,6 @@ describe('TodoEditor external item sync', () => {
         },
       ]),
       updateLoopItem: vi.fn(async () => ({ ...baseItem, version: 2 })),
-      assignLoopItem: vi.fn(async () => ({
-        ...baseItem,
-        version: 2,
-        assignee_user_id: 5,
-        assignee_agent_id: null,
-      })),
     } as never
     const ownerProject = { ...project, access_role: 'Owner' } as unknown as CloudProject
     render(
@@ -149,10 +142,9 @@ describe('TodoEditor external item sync', () => {
     await user.click(screen.getByTestId('cloud-todo-save'))
 
     await vi.waitFor(() => {
-      expect(assignApi.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
+      expect(assignApi.updateLoopItem).toHaveBeenNthCalledWith(2, 'WEG-1', {
         version: 2,
-        assigneeType: 'user',
-        assigneeId: '5',
+        assignee_user_id: 5,
       })
     })
   })
@@ -162,7 +154,6 @@ describe('TodoEditor external item sync', () => {
     const memberItem = {
       ...baseItem,
       assignee_user_id: 5,
-      assignee_agent_id: null,
     }
     const clearApi = {
       listDeliveries: vi.fn(async () => ({ items: [] })),
@@ -182,9 +173,7 @@ describe('TodoEditor external item sync', () => {
         ...memberItem,
         version: 2,
         assignee_user_id: null,
-        assignee_agent_id: null,
       })),
-      assignLoopItem: vi.fn(async () => memberItem),
     } as never
     const ownerProject = { ...project, access_role: 'Owner' } as unknown as CloudProject
     render(
@@ -209,10 +198,8 @@ describe('TodoEditor external item sync', () => {
       expect(clearApi.updateLoopItem).toHaveBeenLastCalledWith('WEG-1', {
         version: 2,
         assignee_user_id: null,
-        assignee_agent_id: null,
       })
     })
-    expect(clearApi.assignLoopItem).not.toHaveBeenCalled()
   })
 })
 

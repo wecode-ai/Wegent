@@ -3,6 +3,8 @@ import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
+import { ProjectDevelopmentWorkflowSection } from './ProjectDevelopmentWorkflowSection'
+import { ProjectWorkflowAutomationsSection } from './ProjectWorkflowAutomationsSection'
 import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
 import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
 
@@ -16,6 +18,8 @@ export function ProjectAutomationView({
   executionApi,
   deviceApi,
   modelApi,
+  projectWorkflowApi,
+  teamApi,
   localProjects,
   runtimeWork,
   currentUserId,
@@ -29,6 +33,8 @@ export function ProjectAutomationView({
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
+  projectWorkflowApi?: WorkbenchServices['projectWorkflowApi']
+  teamApi: WorkbenchServices['teamApi']
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
   currentUserId?: string | number
@@ -65,6 +71,25 @@ export function ProjectAutomationView({
           runtimeWork={runtimeWork}
           canManage={canManageAgents}
         />
+        {projectWorkflowApi && Number(currentUserId) > 0 ? (
+          <>
+            <ProjectDevelopmentWorkflowSection
+              projectId={project.id}
+              api={projectWorkflowApi}
+              projectChatAgentApi={projectChatAgentApi}
+              teamApi={teamApi}
+              canManage={canManageAgents}
+              currentUserId={Number(currentUserId)}
+            />
+            <ProjectWorkflowAutomationsSection
+              projectId={project.id}
+              api={projectWorkflowApi}
+              deviceApi={deviceApi}
+              canManage={canManageAgents}
+              localProject={project.project_store === 'local'}
+            />
+          </>
+        ) : null}
         <section className="mt-8 border-t border-border pt-6">
           <div className="mb-3 flex items-center gap-2">
             <h3 className="text-heading-md font-semibold">

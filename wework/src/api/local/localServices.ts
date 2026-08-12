@@ -143,6 +143,7 @@ import {
   createLocalDeliveryApi,
   createLocalLoopItemExecutionApi,
   createLocalProjectChatAgentApi,
+  createLocalProjectWorkflowApi,
 } from './localDelivery'
 import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
@@ -3120,6 +3121,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   // cloud account. The approval/creator checks compare against LOCAL_USER, so
   // robots created with the cloud user id would never be approvable locally.
   const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
+  const projectWorkflowApi = createLocalProjectWorkflowApi(request, LOCAL_USER.id)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: LOCAL_USER,
@@ -3181,6 +3183,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     deliveryApi,
     externalIssueApi,
     localProjectChatAgentApi,
+    projectWorkflowApi,
     localLoopItemExecutionApi,
     localHarnessModelApi: {
       async resolveLaunch(harnessId: LocalHarnessId, option: LocalHarnessModelOption | null) {

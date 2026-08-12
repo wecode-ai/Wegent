@@ -291,9 +291,50 @@ fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state(
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
+    assert_eq!(task.thread_status, "idle");
+    assert_eq!(task.turn_status.as_deref(), Some("completed"));
     assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn finishing_non_codex_tasks_persists_terminal_turn_status() {
+    let cases = [
+        ("done", "completed"),
+        ("failed", "failed"),
+        ("cancelled", "interrupted"),
+    ];
+
+    for (status, expected_turn_status) in cases {
+        let index_path = temp_runtime_work_index_path(&format!("finish-claude-{status}"));
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        handler.upsert_local_task(RuntimeTaskLink::new_pending_with_runtime(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+            "claude_code",
+        ));
+
+        let execution_id = start_test_execution(&handler, "task-1");
+        handler.finish_local_task("task-1", execution_id, None, status);
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "active", "{status}");
+        assert!(!task.running, "{status}");
+        assert_eq!(task.thread_status, "idle", "{status}");
+        assert_eq!(
+            task.turn_status.as_deref(),
+            Some(expected_turn_status),
+            "{status}"
+        );
+        assert!(task.completed_at.is_some(), "{status}");
+
+        let _ = fs::remove_file(index_path);
+    }
 }
 
 #[test]

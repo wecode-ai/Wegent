@@ -35,7 +35,6 @@ import type {
 } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
-import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import {
   DesktopSidebarHeader,
@@ -242,11 +241,8 @@ function boardStatusFromDropId(id: string | number | undefined): string | null {
 }
 
 function itemMatchesAssigneeGroup(item: CloudLoopItem, groupValue: string): boolean {
-  if (groupValue.startsWith('agent:')) {
-    return item.assignee_agent_id === groupValue.slice('agent:'.length)
-  }
   if (groupValue === '') {
-    return !item.assignee_user_id && !item.assignee_agent_id
+    return !item.assignee_user_id
   }
   return String(item.assignee_user_id ?? '') === groupValue
 }
@@ -717,9 +713,6 @@ export function CloudTodoWorkspace({
   const [projects, setProjects] = useState<LocatedCloudProject[]>([])
   const [projectCounts, setProjectCounts] = useState<Record<string, number>>({})
   const [projectMembers, setProjectMembers] = useState<Record<string, CloudProjectMember[]>>({})
-  // Active robots of the selected project, used to resolve the assignee name
-  // of robot-assigned tasks (local loop items only carry the agent id).
-  const [projectAgents, setProjectAgents] = useState<Record<string, ProjectChatAgent[]>>({})
   // Every project's loop items, cached for the projects-home overview
   // (stats, recent activity). Keyed by project id.
   const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
@@ -951,7 +944,6 @@ export function CloudTodoWorkspace({
     selectedProject?.location === 'local'
       ? services.localProjectChatClient
       : services.projectChatClient
-  const selectedProjectSelfManagedExecution = selectedProject?.location === 'local'
   const selectedProjectLocation = selectedProject?.location
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
   // Stable handle for the automation queue: the cloud executions API is
@@ -984,15 +976,6 @@ export function CloudTodoWorkspace({
     services.deliveryApi,
     services.localLoopItemExecutionApi,
   ])
-  const selectedProjectAgents = useMemo(
-    () => (selectedProjectId ? (projectAgents[selectedProjectId] ?? []) : []),
-    [projectAgents, selectedProjectId]
-  )
-  const agentNameById = useMemo(() => {
-    const names: Record<string, string> = {}
-    for (const agent of selectedProjectAgents) names[agent.id] = agent.name
-    return names
-  }, [selectedProjectAgents])
   const boardCardDisplay: BoardCardDisplaySettings = {
     showAssignee: selectedProject?.card_display?.show_assignee ?? true,
     showPriority: selectedProject?.card_display?.show_priority ?? true,
@@ -1002,28 +985,6 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
-
-  useEffect(() => {
-    if (!selectedProjectId || !selectedProjectAgentApi) return
-    let cancelled = false
-    void selectedProjectAgentApi
-      .list(selectedProjectId)
-      .then(agents => {
-        if (cancelled) return
-        setProjectAgents(current => ({
-          ...current,
-          [selectedProjectId]: agents.filter(agent => agent.status === 'active'),
-        }))
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setProjectAgents(current => ({ ...current, [selectedProjectId]: [] }))
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedProjectAgentApi, selectedProjectId])
 
   useEffect(() => {
     if (!selectedProjectId || !selectedProjectLocation) return
@@ -1110,36 +1071,6 @@ export function CloudTodoWorkspace({
               status: 'inbox',
               sourceStatus: null,
               groupValue: String(member.user_id),
-              dotClass: 'bg-indigo-500',
-            })),
-            ...Array.from(
-              new Map(
-                [
-                  ...selectedProjectAgents.map(agent => ({
-                    agent_id: agent.id,
-                    agent_name: agent.name,
-                  })),
-                  ...items.flatMap(item =>
-                    item.assignee_agent_id
-                      ? [
-                          {
-                            agent_id: item.assignee_agent_id,
-                            agent_name:
-                              item.assignee_agent_name ||
-                              agentNameById[item.assignee_agent_id] ||
-                              '',
-                          },
-                        ]
-                      : []
-                  ),
-                ].map(agent => [agent.agent_id, agent])
-              ).values()
-            ).map(agent => ({
-              key: `assignee-agent-${agent.agent_id}`,
-              label: agent.agent_name || agent.agent_id,
-              status: 'inbox',
-              sourceStatus: null,
-              groupValue: `agent:${agent.agent_id}`,
               dotClass: 'bg-indigo-500',
             })),
             {
@@ -1556,17 +1487,10 @@ export function CloudTodoWorkspace({
             return { ...candidate, priority: column.groupValue as CloudLoopItem['priority'] }
           }
           if (nativeGroupBy === 'assignee') {
-            return column.groupValue.startsWith('agent:')
-              ? {
-                  ...candidate,
-                  assignee_user_id: null,
-                  assignee_agent_id: column.groupValue.slice('agent:'.length),
-                }
-              : {
-                  ...candidate,
-                  assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
-                  assignee_agent_id: null,
-                }
+            return {
+              ...candidate,
+              assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+            }
           }
           return { ...candidate, tags: column.groupValue ? [column.groupValue] : [] }
         })
@@ -1582,15 +1506,9 @@ export function CloudTodoWorkspace({
           : nativeGroupBy === 'priority'
             ? { priority: column.groupValue as CloudLoopItem['priority'] }
             : nativeGroupBy === 'assignee'
-              ? column.groupValue.startsWith('agent:')
-                ? {
-                    assignee_user_id: null,
-                    assignee_agent_id: column.groupValue.slice('agent:'.length),
-                  }
-                : {
-                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
-                    assignee_agent_id: null,
-                  }
+              ? {
+                  assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                }
               : { tags: column.groupValue ? [column.groupValue] : [] }
       const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
       setItems(current =>
@@ -1916,24 +1834,6 @@ export function CloudTodoWorkspace({
               onSelectItem={item => {
                 if (item.can_view_detail !== false) setSelectedItem(item)
               }}
-              onApproveItem={async item => {
-                const api = apiForProjectId(item.cloud_project_id)
-                if (!api) return
-                try {
-                  const updated = await api.approveLoopItemRun(
-                    item.cloud_project_id,
-                    item.id,
-                    item.version
-                  )
-                  setMyWork(current =>
-                    current.map(entry =>
-                      entry.id === updated.id ? { ...entry, ...updated } : entry
-                    )
-                  )
-                } catch (error) {
-                  console.error('[Wework] Failed to approve task from my work', error)
-                }
-              }}
             />
           ) : loading ? (
             <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
@@ -2191,6 +2091,8 @@ export function CloudTodoWorkspace({
                   executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}
+                  projectWorkflowApi={services.projectWorkflowApi}
+                  teamApi={services.teamApi}
                   localProjects={localProjects}
                   runtimeWork={runtimeWork}
                   project={selectedProject}
@@ -2526,7 +2428,6 @@ export function CloudTodoWorkspace({
                                           : undefined
                                       }
                                       display={boardCardDisplay}
-                                      agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
                                       archiveDisabled={selectedProject.task_provider !== 'local'}
                                     />
@@ -2563,7 +2464,6 @@ export function CloudTodoWorkspace({
                               <CloudTodoCardContent
                                 item={items.find(item => item.id === activeDragItemId)!}
                                 display={boardCardDisplay}
-                                agentNames={agentNameById}
                               />
                             </div>
                           ) : null}
@@ -2619,10 +2519,11 @@ export function CloudTodoWorkspace({
           mode="edit"
           api={selectedItemApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          projectWorkflowApi={services.projectWorkflowApi}
+          teamApi={services.teamApi}
+          deviceApi={services.deviceApi}
           projectChatClient={selectedProjectChatClient}
-          selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
-          localProjects={localProjects}
           aitableApi={
             projects.find(project => project.id === selectedItem.cloud_project_id)
               ?.task_provider === 'dingtalk_aitable'
@@ -2711,7 +2612,6 @@ export function CloudTodoWorkspace({
             }))
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
-            if (item.assignee_agent_id) setSelectedItem(item)
             track('board_item_created', {
               has_parent: item.parent_id !== null,
               source: createTodoProject.location,

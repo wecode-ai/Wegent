@@ -17,6 +17,26 @@ import {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
 import type { RuntimeTaskAddress } from '@/types/api'
+import type { ProjectAgentResourceRef, ProjectAgentSecretRef } from '@/api/projectChatAgents'
+import type {
+  ConfigurationValidation,
+  ProjectAgentSquad,
+  ProjectAgentSquadInput,
+  ProjectWorkflowAutomation,
+  ProjectWorkflowAutomationInput,
+  ProjectWorkflowAutomationRun,
+  RepositoryBinding,
+  RepositoryBindingInput,
+  SquadRoutePreview,
+  TaskDevelopment,
+  TaskExecutionBinding,
+  TaskExecutionBindingInput,
+  WorkflowDefinition,
+  WorkflowDefinitionInput,
+  WorkflowRun,
+  WorkflowRunDetail,
+} from '@/api/projectWorkflows'
+import type { Automation, AutomationRun } from '@/types/automation'
 
 type LocalRequest = <T>(
   method: string,
@@ -46,7 +66,6 @@ interface LocalLoopItemRecord {
   updated_at: string
   completed_at: string | null
   assignee_user_id?: number | null
-  assignee_agent_id?: string | null
   execution_id?: number | null
   execution_state?: string | null
 }
@@ -89,8 +108,21 @@ export interface LocalProjectChatAgent {
   projectId: string
   name: string
   runtime: 'codex'
+  harness: 'codex' | 'opencode' | 'claude_code'
   model: string | null
+  modelSelection: Record<string, unknown> | null
   systemPrompt: string
+  skillRefs: ProjectAgentResourceRef[]
+  pluginRefs: ProjectAgentResourceRef[]
+  mcpServerRefs: ProjectAgentResourceRef[]
+  connectorRefs: ProjectAgentResourceRef[]
+  secretRefs: ProjectAgentSecretRef[]
+  concurrency: number
+  timeoutSeconds: number
+  workspacePolicy: Record<string, unknown>
+  gitPolicy: Record<string, unknown>
+  permissionPolicy: Record<string, unknown>
+  approvalPolicy: Record<string, unknown>
   status: 'active' | 'archived'
   visibility: 'private' | 'creator_admin' | 'public'
   executionEnvironment: 'local' | 'cloud'
@@ -285,8 +317,21 @@ type LocalAgentRecord = Record<string, unknown> & {
   id: string
   project_id?: string
   name?: string
+  harness?: string
   model?: string | null
+  model_selection?: Record<string, unknown> | null
   system_prompt?: string
+  skill_refs?: ProjectAgentResourceRef[]
+  plugin_refs?: ProjectAgentResourceRef[]
+  mcp_server_refs?: ProjectAgentResourceRef[]
+  connector_refs?: ProjectAgentResourceRef[]
+  secret_refs?: ProjectAgentSecretRef[]
+  concurrency?: number
+  timeout_seconds?: number
+  workspace_policy?: Record<string, unknown>
+  git_policy?: Record<string, unknown>
+  permission_policy?: Record<string, unknown>
+  approval_policy?: Record<string, unknown>
   status?: string
   visibility?: string
   execution_environment?: string
@@ -305,8 +350,22 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     projectId: record.project_id ?? '',
     name: record.name ?? 'AI',
     runtime: 'codex',
+    harness:
+      record.harness === 'opencode' || record.harness === 'claude_code' ? record.harness : 'codex',
     model: record.model ?? null,
+    modelSelection: record.model_selection ?? null,
     systemPrompt: record.system_prompt ?? '',
+    skillRefs: record.skill_refs ?? [],
+    pluginRefs: record.plugin_refs ?? [],
+    mcpServerRefs: record.mcp_server_refs ?? [],
+    connectorRefs: record.connector_refs ?? [],
+    secretRefs: record.secret_refs ?? [],
+    concurrency: record.concurrency ?? 1,
+    timeoutSeconds: record.timeout_seconds ?? 3600,
+    workspacePolicy: record.workspace_policy ?? {},
+    gitPolicy: record.git_policy ?? {},
+    permissionPolicy: record.permission_policy ?? {},
+    approvalPolicy: record.approval_policy ?? {},
     status: record.status === 'archived' ? 'archived' : 'active',
     visibility: (record.visibility as LocalProjectChatAgent['visibility']) ?? 'creator_admin',
     executionEnvironment:
@@ -334,8 +393,21 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         name: string
         runtime: 'codex'
+        harness: LocalProjectChatAgent['harness']
         model?: string | null
+        modelSelection?: Record<string, unknown> | null
         systemPrompt?: string
+        skillRefs?: ProjectAgentResourceRef[]
+        pluginRefs?: ProjectAgentResourceRef[]
+        mcpServerRefs?: ProjectAgentResourceRef[]
+        connectorRefs?: ProjectAgentResourceRef[]
+        secretRefs?: ProjectAgentSecretRef[]
+        concurrency?: number
+        timeoutSeconds?: number
+        workspacePolicy?: Record<string, unknown>
+        gitPolicy?: Record<string, unknown>
+        permissionPolicy?: Record<string, unknown>
+        approvalPolicy?: Record<string, unknown>
         visibility?: LocalProjectChatAgent['visibility']
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
         executionMode?: LocalProjectChatAgent['executionMode']
@@ -347,8 +419,21 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         project_id: projectId,
         agent: {
           name: input.name,
+          harness: input.harness,
           model: input.model ?? null,
+          model_selection: input.modelSelection ?? null,
           system_prompt: input.systemPrompt ?? '',
+          skill_refs: input.skillRefs ?? [],
+          plugin_refs: input.pluginRefs ?? [],
+          mcp_server_refs: input.mcpServerRefs ?? [],
+          connector_refs: input.connectorRefs ?? [],
+          secret_refs: input.secretRefs ?? [],
+          concurrency: input.concurrency ?? 1,
+          timeout_seconds: input.timeoutSeconds ?? 3600,
+          workspace_policy: input.workspacePolicy ?? {},
+          git_policy: input.gitPolicy ?? {},
+          permission_policy: input.permissionPolicy ?? {},
+          approval_policy: input.approvalPolicy ?? {},
           visibility: input.visibility ?? 'creator_admin',
           execution_environment: input.executionEnvironment ?? 'local',
           execution_mode: input.executionMode ?? 'auto',
@@ -359,14 +444,55 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       })
       return localAgent(record)
     },
+    async validate(
+      _projectId: string,
+      input: {
+        name: string
+        runtime: 'codex'
+        harness?: LocalProjectChatAgent['harness']
+        modelSelection?: Record<string, unknown> | null
+        executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
+        executionDeviceId?: string | null
+        localProjectId?: number | null
+        secretRefs?: ProjectAgentSecretRef[]
+        permissionPolicy?: Record<string, unknown>
+      }
+    ) {
+      const issues: string[] = []
+      if (!input.name.trim()) issues.push('Robot name is required')
+      if (!input.executionDeviceId) issues.push('Execution device is required')
+      if (input.executionEnvironment === 'local' && input.localProjectId == null) {
+        issues.push('Local execution requires a bound code project')
+      }
+      if (input.harness && input.harness !== 'codex' && input.modelSelection == null) {
+        issues.push('OpenCode and Claude Code robots require a model selection')
+      }
+      if (input.secretRefs?.length && !Object.keys(input.permissionPolicy ?? {}).length) {
+        issues.push('Secret references require an explicit permission policy')
+      }
+      return { valid: issues.length === 0, issues }
+    },
     async update(
       projectId: string,
       agentId: string,
       input: {
         version: number
         name?: string
+        harness?: LocalProjectChatAgent['harness']
         model?: string | null
+        modelSelection?: Record<string, unknown> | null
         systemPrompt?: string
+        skillRefs?: ProjectAgentResourceRef[]
+        pluginRefs?: ProjectAgentResourceRef[]
+        mcpServerRefs?: ProjectAgentResourceRef[]
+        connectorRefs?: ProjectAgentResourceRef[]
+        secretRefs?: ProjectAgentSecretRef[]
+        concurrency?: number
+        timeoutSeconds?: number
+        workspacePolicy?: Record<string, unknown>
+        gitPolicy?: Record<string, unknown>
+        permissionPolicy?: Record<string, unknown>
+        approvalPolicy?: Record<string, unknown>
         status?: 'active' | 'archived'
         visibility?: LocalProjectChatAgent['visibility']
         executionEnvironment?: LocalProjectChatAgent['executionEnvironment']
@@ -381,8 +507,21 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         agent: {
           version: input.version,
           name: input.name,
+          harness: input.harness,
           model: input.model,
+          model_selection: input.modelSelection,
           system_prompt: input.systemPrompt,
+          skill_refs: input.skillRefs,
+          plugin_refs: input.pluginRefs,
+          mcp_server_refs: input.mcpServerRefs,
+          connector_refs: input.connectorRefs,
+          secret_refs: input.secretRefs,
+          concurrency: input.concurrency,
+          timeout_seconds: input.timeoutSeconds,
+          workspace_policy: input.workspacePolicy,
+          git_policy: input.gitPolicy,
+          permission_policy: input.permissionPolicy,
+          approval_policy: input.approvalPolicy,
           status: input.status,
           visibility: input.visibility,
           execution_environment: input.executionEnvironment,
@@ -467,6 +606,420 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
   }
 }
 
+export function createLocalProjectWorkflowApi(request: LocalRequest, currentUserId: number) {
+  type LocalWorkflowAutomationConfig = {
+    projectId: string
+    userId: number
+    workflowId: string
+    repositoryBindingId?: string
+    executionTarget: ProjectWorkflowAutomationInput['executionTarget']
+    workspaceMode: ProjectWorkflowAutomationInput['workspaceMode']
+    taskTemplate: Record<string, unknown>
+    payloadMapping: Record<string, string>
+    triggerType: ProjectWorkflowAutomationInput['triggerType']
+    triggerConfig: Record<string, unknown>
+    enabled: boolean
+    description: string
+  }
+  type LocalAutomationRecord = Automation & {
+    taskPayload?: {
+      projectWorkflowAutomation?: LocalWorkflowAutomationConfig
+    }
+  }
+  type LocalAutomationRun = AutomationRun & { workflowRunId?: string | null }
+
+  const scheduleFor = (
+    triggerType: ProjectWorkflowAutomationInput['triggerType'],
+    config: Record<string, unknown>
+  ) => {
+    if (triggerType === 'cron') {
+      return { type: 'cron', expression: String(config.expression || '0 9 * * *') }
+    }
+    if (triggerType === 'interval') {
+      return {
+        type: 'interval',
+        value: Math.max(1, Number(config.value) || 1),
+        unit: ['minutes', 'hours', 'days'].includes(String(config.unit))
+          ? String(config.unit)
+          : 'hours',
+      }
+    }
+    if (triggerType === 'one_time') {
+      return {
+        type: 'one_time',
+        execute_at: String(config.executeAt || config.execute_at || new Date().toISOString()),
+      }
+    }
+    return { type: 'one_time', execute_at: '9999-12-31T23:59:59Z' }
+  }
+
+  const localAutomationView = (automation: LocalAutomationRecord): ProjectWorkflowAutomation => {
+    const config = automation.taskPayload?.projectWorkflowAutomation
+    if (!config) throw new Error('Local project workflow automation configuration is missing')
+    return {
+      id: automation.id,
+      projectId: config.projectId,
+      name: automation.name,
+      description: config.description || automation.description,
+      triggerType: config.triggerType,
+      triggerConfig: config.triggerConfig,
+      workflowId: config.workflowId,
+      repositoryBindingId: config.repositoryBindingId || null,
+      executionTarget: config.executionTarget,
+      workspaceMode: config.workspaceMode,
+      taskTemplate: config.taskTemplate,
+      payloadMapping: config.payloadMapping,
+      webhookConfigured: false,
+      enabled: config.enabled,
+      nextRunAt: automation.nextRunAt ?? null,
+      lastRunAt: automation.lastRunAt ?? null,
+      createdByUserId: config.userId,
+      version: automation.version,
+      createdAt: automation.createdAt,
+      updatedAt: automation.updatedAt,
+    }
+  }
+
+  const localAutomationRunView = (run: LocalAutomationRun): ProjectWorkflowAutomationRun => ({
+    id: run.id,
+    automationId: run.automationId,
+    triggerType: run.trigger,
+    status:
+      run.status === 'needs_attention' || run.status === 'skipped'
+        ? 'failed'
+        : run.status === 'pending'
+          ? 'pending'
+          : run.status,
+    loopItemId: run.taskId ?? null,
+    workflowRunId: run.workflowRunId ?? null,
+    scheduledFor: run.scheduledFor,
+    startedAt: run.createdAt,
+    completedAt: ['succeeded', 'failed', 'cancelled', 'skipped', 'needs_attention'].includes(
+      run.status
+    )
+      ? run.updatedAt
+      : null,
+    errorMessage: run.error ?? null,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  })
+
+  const automationPayload = (
+    projectId: string,
+    input: ProjectWorkflowAutomationInput,
+    existing?: LocalAutomationRecord
+  ) => {
+    if (input.triggerType === 'webhook') {
+      throw new Error('Webhook automations require a cloud project')
+    }
+    const timezone = String(input.triggerConfig.timezone || 'UTC')
+    const enabled = input.enabled && !['manual', 'webhook'].includes(input.triggerType)
+    return {
+      id: existing?.id ?? '',
+      version: existing?.version ?? 0,
+      name: input.name,
+      description: input.description,
+      prompt: input.name,
+      schedule: scheduleFor(input.triggerType, input.triggerConfig),
+      timezone,
+      enabled,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskPayload: {
+        projectWorkflowAutomation: {
+          projectId,
+          userId: currentUserId,
+          workflowId: input.workflowId,
+          ...(input.repositoryBindingId ? { repositoryBindingId: input.repositoryBindingId } : {}),
+          executionTarget: input.executionTarget,
+          workspaceMode: input.workspaceMode,
+          taskTemplate: input.taskTemplate,
+          payloadMapping: input.payloadMapping,
+          triggerType: input.triggerType,
+          triggerConfig: input.triggerConfig,
+          enabled: input.enabled,
+          description: input.description,
+        },
+      },
+      continuationPayload: null,
+    }
+  }
+
+  const getLocalAutomation = async (automationId: string) => {
+    const response = await request<{ automation: LocalAutomationRecord }>(
+      'runtime.automations.get',
+      { automationId }
+    )
+    return response.automation
+  }
+
+  return {
+    listSquads: (projectId: string) =>
+      request<ProjectAgentSquad[]>('project_workflows.squads.list', {
+        project_id: projectId,
+      }),
+    createSquad: (projectId: string, input: ProjectAgentSquadInput) =>
+      request<ProjectAgentSquad>('project_workflows.squads.create', {
+        project_id: projectId,
+        user_id: currentUserId,
+        squad: input,
+      }),
+    updateSquad: (
+      projectId: string,
+      squadId: string,
+      input: Partial<ProjectAgentSquadInput> & {
+        version: number
+        status?: ProjectAgentSquad['status']
+      }
+    ) =>
+      request<ProjectAgentSquad>('project_workflows.squads.update', {
+        project_id: projectId,
+        squad_id: squadId,
+        squad: input,
+      }),
+    previewSquadRoute: async (
+      projectId: string,
+      squadId: string,
+      task: string
+    ): Promise<SquadRoutePreview> => {
+      const squad = (
+        await request<ProjectAgentSquad[]>('project_workflows.squads.list', {
+          project_id: projectId,
+        })
+      ).find(entry => entry.id === squadId)
+      if (!squad) throw new Error('Robot squad not found')
+      const orderedMembers = [
+        squad.leaderAgentId,
+        ...squad.memberAgentIds.filter(id => id !== squad.leaderAgentId),
+      ].slice(0, squad.maxParallelMembers)
+      return {
+        squadId,
+        leaderAgentId: squad.leaderAgentId,
+        selectedMembers: orderedMembers.map(agentId => ({
+          agentId,
+          instruction: `Evaluate and execute this simulated task: ${task}`,
+          requiredArtifacts: [],
+          executionMode: 'parallel',
+        })),
+        explanation:
+          'Preview only. Members are bounded by maxParallelMembers and no run was created.',
+      }
+    },
+    listRepositories: (projectId: string) =>
+      request<RepositoryBinding[]>('project_workflows.repositories.list', {
+        project_id: projectId,
+      }),
+    createRepository: (projectId: string, input: RepositoryBindingInput) =>
+      request<RepositoryBinding>('project_workflows.repositories.create', {
+        project_id: projectId,
+        user_id: currentUserId,
+        repository: input,
+      }),
+    updateRepository: (
+      projectId: string,
+      bindingId: string,
+      input: Partial<RepositoryBindingInput> & {
+        version: number
+        status?: RepositoryBinding['status']
+      }
+    ) =>
+      request<RepositoryBinding>('project_workflows.repositories.update', {
+        project_id: projectId,
+        binding_id: bindingId,
+        repository: input,
+      }),
+    validateRepository: (_projectId: string, bindingId: string) =>
+      request<ConfigurationValidation>('project_workflows.repositories.validate', {
+        binding_id: bindingId,
+      }),
+    listWorkflows: (projectId: string) =>
+      request<WorkflowDefinition[]>('project_workflows.definitions.list', {
+        project_id: projectId,
+      }),
+    createWorkflow: (projectId: string, input: WorkflowDefinitionInput) =>
+      request<WorkflowDefinition>('project_workflows.definitions.create', {
+        project_id: projectId,
+        user_id: currentUserId,
+        workflow: input,
+      }),
+    validateWorkflow: (_projectId: string, input: WorkflowDefinitionInput) =>
+      request<ConfigurationValidation>('project_workflows.definitions.validate', {
+        workflow: input,
+      }),
+    updateWorkflow: (
+      projectId: string,
+      workflowId: string,
+      input: Partial<WorkflowDefinitionInput> & {
+        version: number
+        status?: WorkflowDefinition['status']
+      }
+    ) =>
+      request<WorkflowDefinition>('project_workflows.definitions.update', {
+        project_id: projectId,
+        workflow_id: workflowId,
+        workflow: input,
+      }),
+    async listAutomations(projectId: string) {
+      const response = await request<{ items?: LocalAutomationRecord[] }>(
+        'runtime.automations.list',
+        {}
+      )
+      return (response.items ?? [])
+        .filter(
+          automation => automation.taskPayload?.projectWorkflowAutomation?.projectId === projectId
+        )
+        .map(localAutomationView)
+    },
+    async createAutomation(projectId: string, input: ProjectWorkflowAutomationInput) {
+      const response = await request<{ automation: LocalAutomationRecord }>(
+        'runtime.automations.create',
+        { automation: automationPayload(projectId, input) }
+      )
+      return localAutomationView(response.automation)
+    },
+    async updateAutomation(
+      projectId: string,
+      automationId: string,
+      input: Partial<ProjectWorkflowAutomationInput> & { version: number }
+    ) {
+      const existing = await getLocalAutomation(automationId)
+      if (existing.version !== input.version) throw new Error('Automation version conflict')
+      const current = localAutomationView(existing)
+      const merged: ProjectWorkflowAutomationInput = {
+        name: input.name ?? current.name,
+        description: input.description ?? current.description,
+        triggerType: input.triggerType ?? current.triggerType,
+        triggerConfig: input.triggerConfig ?? current.triggerConfig,
+        workflowId: input.workflowId ?? current.workflowId,
+        ...(input.repositoryBindingId !== undefined
+          ? input.repositoryBindingId
+            ? { repositoryBindingId: input.repositoryBindingId }
+            : {}
+          : current.repositoryBindingId
+            ? { repositoryBindingId: current.repositoryBindingId }
+            : {}),
+        executionTarget: input.executionTarget ?? current.executionTarget,
+        workspaceMode: input.workspaceMode ?? current.workspaceMode,
+        taskTemplate: input.taskTemplate ?? current.taskTemplate,
+        payloadMapping: input.payloadMapping ?? current.payloadMapping,
+        enabled: input.enabled ?? current.enabled,
+      }
+      const response = await request<{ automation: LocalAutomationRecord }>(
+        'runtime.automations.update',
+        { automation: automationPayload(projectId, merged, existing) }
+      )
+      return localAutomationView(response.automation)
+    },
+    async rotateAutomationWebhook() {
+      throw new Error('Webhook automations require a cloud project')
+    },
+    async listAutomationRuns(_projectId: string, automationId: string) {
+      const response = await request<{ items?: LocalAutomationRun[] }>(
+        'runtime.automation_runs.list',
+        { automationId }
+      )
+      return (response.items ?? []).map(localAutomationRunView)
+    },
+    async runAutomation(_projectId: string, automationId: string) {
+      const response = await request<{ run: LocalAutomationRun | null }>(
+        'runtime.automations.run_now',
+        { automationId }
+      )
+      if (!response.run) throw new Error('Automation run was not created')
+      return localAutomationRunView(response.run)
+    },
+    getTaskBinding: (_projectId: string, itemId: string) =>
+      request<TaskExecutionBinding | null>('project_workflows.bindings.get', {
+        item_id: itemId,
+      }),
+    upsertTaskBinding: (projectId: string, itemId: string, input: TaskExecutionBindingInput) =>
+      request<TaskExecutionBinding>('project_workflows.bindings.upsert', {
+        project_id: projectId,
+        item_id: itemId,
+        user_id: currentUserId,
+        binding: input,
+      }),
+    listRuns: (_projectId: string, itemId: string) =>
+      request<WorkflowRun[]>('project_workflows.runs.list', { item_id: itemId }),
+    getRun: (_projectId: string, _itemId: string, runId: string) =>
+      request<WorkflowRunDetail>('project_workflows.runs.get', { run_id: runId }),
+    getTaskDevelopment: (_projectId: string, itemId: string) =>
+      request<TaskDevelopment[]>('project_workflows.development.get', {
+        item_id: itemId,
+      }),
+    createPullRequest: async () => {
+      throw new Error('Local project spaces do not have repository provider credentials')
+    },
+    refreshPullRequest: async () => {
+      throw new Error('Local project spaces do not have repository provider credentials')
+    },
+    mergePullRequest: async () => {
+      throw new Error('Local project spaces do not have repository provider credentials')
+    },
+    startRun: (
+      projectId: string,
+      itemId: string,
+      idempotencyKey: string,
+      triggerMessageId?: string
+    ) =>
+      request<WorkflowRun>('project_workflows.runs.start', {
+        project_id: projectId,
+        item_id: itemId,
+        user_id: currentUserId,
+        idempotency_key: idempotencyKey,
+        trigger_message_id: triggerMessageId,
+      }),
+    approveStage: (
+      projectId: string,
+      _itemId: string,
+      runId: string,
+      stageId: string,
+      version: number,
+      reason?: string
+    ) =>
+      request<WorkflowRunDetail>('project_workflows.stages.approve', {
+        project_id: projectId,
+        run_id: runId,
+        stage_id: stageId,
+        version,
+        reason,
+      }),
+    rejectStage: (
+      projectId: string,
+      _itemId: string,
+      runId: string,
+      stageId: string,
+      version: number,
+      reason?: string
+    ) =>
+      request<WorkflowRunDetail>('project_workflows.stages.reject', {
+        project_id: projectId,
+        run_id: runId,
+        stage_id: stageId,
+        version,
+        reason,
+      }),
+    retryStage: (
+      projectId: string,
+      _itemId: string,
+      runId: string,
+      stageId: string,
+      version: number
+    ) =>
+      request<WorkflowRunDetail>('project_workflows.stages.retry', {
+        project_id: projectId,
+        run_id: runId,
+        stage_id: stageId,
+        version,
+      }),
+    cancelRun: (_projectId: string, _itemId: string, runId: string, version: number) =>
+      request<WorkflowRunDetail>('project_workflows.runs.cancel', {
+        run_id: runId,
+        version,
+      }),
+  }
+}
+
 function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
   const role = project?.access_role ?? 'Owner'
   const isPublicVisitor = role === 'RestrictedAnalyst'
@@ -485,7 +1038,6 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     assignee_user_id: record.assignee_user_id ?? null,
-    assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
     execution_state: record.execution_state ?? null,
     assignee_name:
@@ -647,7 +1199,7 @@ export function createLocalDeliveryApi(
     async listLoopItems(
       projectId: CloudProjectId,
       options: {
-        assigneeType?: 'user' | 'agent'
+        assigneeType?: 'user'
         assigneeId?: string | number
       } = {}
     ) {
@@ -656,10 +1208,7 @@ export function createLocalDeliveryApi(
       })
       rememberTasks(projectId, records)
       let items = records.map(record => localTask(record))
-      if (options.assigneeType === 'agent' && options.assigneeId !== undefined) {
-        const agentId = String(options.assigneeId)
-        items = items.filter(item => item.assignee_agent_id === agentId)
-      } else if (options.assigneeType === 'user' && options.assigneeId !== undefined) {
+      if (options.assigneeType === 'user' && options.assigneeId !== undefined) {
         const userId = Number(options.assigneeId)
         items = items.filter(item => item.assignee_user_id === userId)
       }

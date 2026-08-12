@@ -275,7 +275,7 @@ wework_desktop_core_e2e_matrix={"include":[{"id":"core-workspace-tabs","name":"C
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"workspace-tabs,core-task-flow,conversation-state"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"priority-filter,window-lifecycle,workspace-attachments"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"telemetry-consent,goal-lifecycle,rendering-extensions"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"automation-lifecycle,supervisor-lifecycle,browser-multi-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"model-routing,resilience,embedded-browser"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}'
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""},{"id":"cloud-development","name":"Cloud / AI development workflow","command":"e2e:desktop:cloud-development","segment":""}]}'
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
@@ -339,8 +339,8 @@ wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"workspace-tabs,core-task-flow,conversation-state"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"priority-filter,window-lifecycle,workspace-attachments"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"telemetry-consent,goal-lifecycle,rendering-extensions"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"automation-lifecycle,supervisor-lifecycle,browser-multi-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"model-routing,resilience,embedded-browser"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"cloud-development","name":"Cloud / AI development workflow","command":"e2e:desktop:cloud-development","segment":""}]}' \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
 
 assert_desktop_case "plugin files select only their plugin segment" \

@@ -183,6 +183,9 @@ def scan_robot_queue(self) -> dict:
             return {"status": "skipped", "reason": "lock_held_by_another_instance"}
         with get_db_session() as db:
             try:
+                from app.services.project_workflows import project_workflow_service
+
+                automation_runs = project_workflow_service.run_due_automations(db)
                 requeued, failed = loop_item_execution_service.recovery_scan(db)
                 ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="requeued").inc(requeued)
                 ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="failed").inc(failed)
@@ -199,6 +202,9 @@ def scan_robot_queue(self) -> dict:
                     emit_runtime_cancels(stalled)
                 dispatched = _robot_queue_loop().run_until_complete(
                     _dispatch_queued_executions(db)
+                )
+                cleaned_resources = _robot_queue_loop().run_until_complete(
+                    _cleanup_completed_workflow_resources(db)
                 )
                 from sqlalchemy import func, select
 
@@ -220,7 +226,9 @@ def scan_robot_queue(self) -> dict:
                 )
                 return {
                     "status": "ok",
+                    "automation_runs": automation_runs,
                     "dispatched": dispatched,
+                    "cleaned_resources": cleaned_resources,
                     "requeued": requeued,
                     "failed": failed,
                 }
@@ -289,6 +297,7 @@ def _queued_devices(db: Session) -> list[tuple[str, str]]:
         )
         .where(
             LoopItemExecution.status.in_(["queued", "claimed"]),
+            LoopItemExecution.execution_target_type == "registered_device",
             LoopItemExecution.execution_device_id.is_not(None),
             LoopItemExecution.execution_device_id != "",
         )
@@ -367,6 +376,23 @@ def _resolve_routing_user_ids(
     return candidates
 
 
+def _execution_initiator(
+    db: Session,
+    execution: LoopItemExecution,
+) -> Optional[User]:
+    """Resolve the user who started a legacy assignment or workflow stage."""
+
+    if execution.assigner_user_id:
+        user = db.get(User, execution.assigner_user_id)
+        if user is not None:
+            return user
+    if execution.agent_id:
+        agent = db.get(ProjectChatAgent, execution.agent_id)
+        if agent and agent.created_by_user_id:
+            return db.get(User, agent.created_by_user_id)
+    return None
+
+
 async def _routing_user_for_device(
     db: Session, device_id: str, environment: str
 ) -> Optional[int]:
@@ -382,12 +408,7 @@ async def _routing_user_for_device(
     )
     if sample is None:
         return None
-    sample_agent = db.get(ProjectChatAgent, sample.agent_id)
-    sample_creator = (
-        db.get(User, sample_agent.created_by_user_id)
-        if sample_agent and sample_agent.created_by_user_id
-        else None
-    )
+    sample_creator = _execution_initiator(db, sample)
     candidate_users = _resolve_routing_user_ids(
         db,
         device_id,
@@ -411,7 +432,7 @@ async def _dispatch_queued_executions(db: Session) -> int:
     retried on the next scan.
     """
 
-    dispatched = 0
+    dispatched = await _dispatch_managed_container_executions(db)
     for device_id, environment in _queued_devices(db):
         with distributed_lock.acquire_context(
             f"robot_exec:{device_id}",
@@ -436,12 +457,7 @@ async def _dispatch_queued_executions(db: Session) -> int:
             )
             if sample is None:
                 continue
-            sample_agent = db.get(ProjectChatAgent, sample.agent_id)
-            sample_creator = (
-                db.get(User, sample_agent.created_by_user_id)
-                if sample_agent and sample_agent.created_by_user_id
-                else None
-            )
+            sample_creator = _execution_initiator(db, sample)
             candidate_users = _resolve_routing_user_ids(
                 db,
                 device_id,
@@ -555,6 +571,298 @@ async def _dispatch_queued_executions(db: Session) -> int:
         except Exception as exc:
             _fail_dispatch(db, claimed, exc)
     return dispatched
+
+
+async def _cleanup_completed_workflow_resources(db: Session) -> int:
+    """Remove merged workflow worktrees and managed sandboxes with retryable state."""
+
+    from app.models.project_workflow import (
+        ProjectRepositoryBinding,
+        TaskDevelopmentLink,
+        TaskStageRun,
+        TaskWorkflowRun,
+        TaskWorkspace,
+    )
+    from app.services import project_service
+    from app.services.execution import get_executor_runtime_client
+
+    rows = (
+        db.query(TaskWorkspace, ProjectRepositoryBinding)
+        .join(
+            TaskDevelopmentLink,
+            TaskDevelopmentLink.workspace_id == TaskWorkspace.id,
+        )
+        .join(
+            ProjectRepositoryBinding,
+            ProjectRepositoryBinding.id == TaskWorkspace.repository_binding_id,
+        )
+        .filter(
+            TaskDevelopmentLink.pull_request_state == "merged",
+            TaskWorkspace.status.in_(["ready", "released", "cleanup_failed"]),
+            TaskWorkspace.cleanup_policy.in_(
+                ["after_merge", "on_merge", "after_completion", "always"]
+            ),
+        )
+        .all()
+    )
+    cleaned = 0
+    for workspace, repository in rows:
+        workspace.status = "cleaning"
+        workspace.version += 1
+        db.commit()
+        try:
+            if (
+                workspace.workspace_kind == "git_worktree"
+                and workspace.execution_target_type == "registered_device"
+                and workspace.workspace_path
+            ):
+                if not repository.local_project_id or not workspace.execution_target_id:
+                    raise RuntimeError(
+                        "Git worktree cleanup requires a local project and device"
+                    )
+                await project_service.cleanup_git_worktree_path(
+                    db=db,
+                    user_id=repository.created_by_user_id,
+                    project_id=repository.local_project_id,
+                    client_origin="wework",
+                    device_id=workspace.execution_target_id,
+                    target_path=workspace.workspace_path,
+                )
+            if workspace.execution_target_type == "managed_container":
+                run_ids = [
+                    row[0]
+                    for row in db.query(TaskWorkflowRun.id)
+                    .filter(TaskWorkflowRun.loop_item_id == workspace.loop_item_id)
+                    .all()
+                ]
+                sandbox_ids = {
+                    row[0]
+                    for row in db.query(TaskStageRun.runtime_instance_id)
+                    .filter(
+                        TaskStageRun.workflow_run_id.in_(run_ids),
+                        TaskStageRun.runtime_instance_id != "",
+                    )
+                    .all()
+                    if row[0]
+                }
+                client = get_executor_runtime_client()
+                failed = []
+                for sandbox_id in sorted(sandbox_ids):
+                    deleted, error = await client.delete_sandbox(sandbox_id)
+                    if not deleted:
+                        failed.append(error or f"Failed to delete sandbox {sandbox_id}")
+                if failed:
+                    raise RuntimeError("; ".join(failed))
+            workspace.status = "cleaned"
+            workspace.workspace_path = ""
+            workspace.version += 1
+            cleaned += 1
+        except Exception:
+            workspace.status = "cleanup_failed"
+            workspace.version += 1
+            logger.exception(
+                "[RobotQueue] Workflow resource cleanup failed workspace=%s task=%s",
+                workspace.id,
+                workspace.loop_item_id,
+            )
+        db.commit()
+    return cleaned
+
+
+async def _dispatch_managed_container_executions(db: Session) -> int:
+    """Provision and dispatch queued coding-mode managed containers."""
+
+    dispatched = 0
+    with distributed_lock.acquire_context(
+        "robot_exec:managed_containers",
+        expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
+    ) as acquired:
+        if not acquired:
+            return 0
+        while True:
+            execution = loop_item_execution_service.claim_next_managed_container(
+                db,
+                capacity=settings.ROBOT_MANAGED_CONTAINER_SLOTS,
+            )
+            if execution is None:
+                break
+            try:
+                await _dispatch_managed_container(db, execution)
+                dispatched += 1
+                ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
+            except Exception as exc:
+                _fail_dispatch(db, execution, exc)
+    return dispatched
+
+
+async def _dispatch_managed_container(
+    db: Session,
+    execution: LoopItemExecution,
+) -> None:
+    """Create a sandbox and start one workflow actor inside it."""
+
+    from app.models.kind import Kind
+    from app.models.project_workflow import (
+        ProjectRepositoryBinding,
+        TaskStageRun,
+        TaskWorkflowRun,
+    )
+    from app.services.execution import get_executor_runtime_client
+    from app.services.execution.request_builder import TaskRequestBuilder
+
+    creator = db.get(User, execution.assigner_user_id)
+    if creator is None:
+        raise RuntimeError(f"Execution {execution.id} has no initiating user")
+    task = loop_item_execution_service.resolve_task_context(
+        db,
+        execution=execution,
+        user_id=creator.id,
+    )
+    if task is None:
+        raise RuntimeError(f"Execution {execution.id} lost its task")
+
+    prompt = (
+        "Read the bound project task and its workflow artifacts, complete this "
+        "stage, run real verification, and return a structured execution result."
+    )
+    bot_configs: list[dict]
+    if execution.actor_type == "project_agent":
+        agent = db.get(ProjectChatAgent, execution.actor_id)
+        if agent is None:
+            raise RuntimeError(
+                f"Execution {execution.id} lost project Agent {execution.actor_id}"
+            )
+        prompt = loop_item_execution_service.build_robot_prompt(agent)
+        payload = loop_item_execution_service.build_runtime_payload(
+            db,
+            execution=execution,
+            task=task,
+        )
+        if payload is None:
+            raise RuntimeError(f"Execution {execution.id} payload cannot be built")
+        request = payload.get("executionRequest", {})
+        bot_configs = request.get("bot", [])
+    elif execution.actor_type == "wegent_team":
+        snapshot = execution.actor_snapshot or {}
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == int(execution.actor_id),
+                Kind.kind == "Team",
+                Kind.namespace == snapshot.get("namespace"),
+                Kind.name == snapshot.get("name"),
+                Kind.user_id == snapshot.get("userId"),
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if team is None:
+            raise RuntimeError(
+                f"Execution {execution.id} lost Wegent Team {execution.actor_id}"
+            )
+        bot_configs = TaskRequestBuilder(db).build_team_bot_configs(
+            team,
+            creator.id,
+        )
+    else:
+        raise RuntimeError(
+            f"Execution {execution.id} has unsupported actor {execution.actor_type}"
+        )
+    if not bot_configs:
+        raise RuntimeError(f"Execution {execution.id} has no runnable Bot")
+
+    run = db.get(TaskWorkflowRun, execution.workflow_run_id)
+    repository = (
+        db.get(ProjectRepositoryBinding, run.repository_binding_id)
+        if run and run.repository_binding_id
+        else None
+    )
+    workflow_context_payload = {
+        "executionRequest": {},
+        "additionalContext": {},
+    }
+    await _apply_workflow_runtime_context(
+        db,
+        execution=execution,
+        payload=workflow_context_payload,
+        user_id=creator.id,
+        prepare_workspace=False,
+        include_workspace=False,
+    )
+    if workflow_context_payload.get("message"):
+        prompt = str(workflow_context_payload["message"])
+    try:
+        sandbox_task_id = int(task.id)
+    except (TypeError, ValueError):
+        sandbox_task_id = int(execution.id)
+    timeout = min(
+        7200,
+        max(
+            60,
+            int(
+                (execution.actor_snapshot or {}).get("timeoutSeconds")
+                or (execution.actor_snapshot or {}).get("timeout_seconds")
+                or 3600
+            ),
+        ),
+    )
+    client = get_executor_runtime_client()
+    sandbox, error = await client.create_sandbox(
+        shell_type=str(bot_configs[0].get("shell_type") or "codex"),
+        user_id=creator.id,
+        user_name=creator.user_name,
+        timeout=timeout,
+        workspace_ref=repository.repository_url if repository else None,
+        bot_config=bot_configs[0].get("agent_config") or {},
+        metadata={
+            "task_id": sandbox_task_id,
+            "subtask_id": execution.id,
+            "loop_item_id": task.id,
+            "workflow_run_id": execution.workflow_run_id,
+            "stage_run_id": execution.stage_run_id,
+            "workflow_context": workflow_context_payload.get("additionalContext", {}),
+        },
+    )
+    if sandbox is None:
+        raise RobotQueueInfraError(error or "Managed container creation failed")
+    result, error = await client.execute_sandbox(
+        sandbox.sandbox_id,
+        prompt=prompt,
+        timeout=timeout,
+        metadata={
+            "subtask_id": execution.id,
+            "bot_config": bot_configs,
+            "loop_item_id": task.id,
+            "workflow_run_id": execution.workflow_run_id,
+            "stage_run_id": execution.stage_run_id,
+            "workflow_context": workflow_context_payload.get("additionalContext", {}),
+        },
+    )
+    if result is None:
+        raise RobotQueueInfraError(error or "Managed container execution failed")
+    runtime_task_id = str(result.get("execution_id") or execution.id)
+    loop_item_execution_service.heartbeat(
+        db,
+        execution_id=execution.id,
+        runtime_device_id=sandbox.sandbox_id,
+        runtime_task_id=runtime_task_id,
+    )
+    stage = db.get(TaskStageRun, execution.stage_run_id)
+    if stage:
+        stage.runtime_instance_id = sandbox.sandbox_id
+        stage.runtime_task_id = runtime_task_id
+        stage.status = "running"
+        stage.version += 1
+        db.commit()
+    logger.info(
+        "[RobotQueue] Managed container dispatched execution=%s sandbox=%s "
+        "runtime_task=%s actor=%s/%s",
+        execution.id,
+        sandbox.sandbox_id,
+        runtime_task_id,
+        execution.actor_type,
+        execution.actor_id,
+    )
 
 
 async def dispatch_queues_background() -> None:
@@ -862,6 +1170,93 @@ async def _online_local_device(db: Session, user_id: int) -> Optional[str]:
     return None
 
 
+def _build_wegent_team_runtime_payload(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    task: object,
+    creator: User,
+) -> tuple[str, dict]:
+    """Build a device runtime request from an exact Wegent Team snapshot."""
+
+    from app.models.kind import Kind
+    from app.services.execution.request_builder import TaskRequestBuilder
+
+    snapshot = execution.actor_snapshot or {}
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.id == int(execution.actor_id),
+            Kind.kind == "Team",
+            Kind.namespace == snapshot.get("namespace"),
+            Kind.name == snapshot.get("name"),
+            Kind.user_id == snapshot.get("userId"),
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
+    if team is None:
+        raise RuntimeError(
+            f"Execution {execution.id} lost Wegent Team {execution.actor_id}"
+        )
+    bot_configs = TaskRequestBuilder(db).build_team_bot_configs(team, creator.id)
+    if not bot_configs:
+        raise RuntimeError(f"Execution {execution.id} has no runnable Bot")
+    title = getattr(task, "title", None) or getattr(task, "name", None) or ""
+    task_id = f"codex-robot-{getattr(task, 'id', '')}"
+    prompt = (
+        f"You are Wegent Team {team.namespace}/{team.name}. Read the bound "
+        "project task and existing workflow artifacts, complete this stage, "
+        "submit every required structured artifact, run real verification, "
+        "and report unfinished work and risks."
+    )
+    execution_request = {
+        "task_id": task_id,
+        "subtask_id": f"{task_id}-assistant",
+        "team_id": team.id,
+        "team_name": team.name,
+        "team_namespace": team.namespace,
+        "task_title": title,
+        "subtask_title": f"{title} - Assistant",
+        "user_id": creator.id,
+        "user_name": creator.user_name,
+        "user": {
+            "id": creator.id,
+            "name": creator.user_name,
+            "user_name": creator.user_name,
+        },
+        "bot": bot_configs,
+        "system_prompt": prompt,
+        "prompt": prompt,
+        "standalone_chat_workspace": True,
+        "enable_tools": True,
+        "enable_web_search": False,
+        "enable_deep_thinking": True,
+    }
+    return prompt, {
+        "taskId": task_id,
+        "teamId": team.id,
+        "runtime": "codex",
+        "message": prompt,
+        "title": title,
+        "ephemeral": True,
+        "continuable": True,
+        "cloudProjectId": str(getattr(task, "cloud_project_id", "")),
+        "executionRequest": execution_request,
+        "additionalContext": {
+            "projectWorkflow": {
+                "kind": "application",
+                "value": (
+                    f"Workflow run {execution.workflow_run_id}, stage "
+                    f"{execution.stage_run_id}, task cloud://projects/"
+                    f"{getattr(task, 'cloud_project_id', '')}/todos/"
+                    f"{getattr(task, 'id', '')}."
+                ),
+            }
+        },
+    }
+
+
 async def _dispatch_execution(
     db: Session,
     execution: LoopItemExecution,
@@ -875,11 +1270,8 @@ async def _dispatch_execution(
     task and its runtime events update the execution record.
     """
 
-    agent = db.get(ProjectChatAgent, execution.agent_id)
-    creator = (
-        db.get(User, agent.created_by_user_id) if agent.created_by_user_id else None
-    )
-    if agent is None or creator is None or not execution.execution_device_id:
+    creator = _execution_initiator(db, execution)
+    if creator is None or not execution.execution_device_id:
         raise RuntimeError(f"Execution {execution.id} has no creator or bound device")
     task = loop_item_execution_service.resolve_task_context(
         db, execution=execution, user_id=creator.id
@@ -911,12 +1303,42 @@ async def _dispatch_execution(
     if not online:
         raise DeviceOfflineError("Device went offline before dispatch")
 
-    prompt = loop_item_execution_service.build_robot_prompt(agent)
-    payload = loop_item_execution_service.build_runtime_payload(
-        db, execution=execution, task=task
+    actor_type = execution.actor_type or ("project_agent" if execution.agent_id else "")
+    if actor_type == "project_agent":
+        agent = db.get(
+            ProjectChatAgent,
+            execution.actor_id or execution.agent_id,
+        )
+        if agent is None:
+            raise RuntimeError(
+                f"Execution {execution.id} lost project Agent "
+                f"{execution.actor_id or execution.agent_id}"
+            )
+        prompt = loop_item_execution_service.build_robot_prompt(agent)
+        payload = loop_item_execution_service.build_runtime_payload(
+            db,
+            execution=execution,
+            task=task,
+        )
+        if payload is None:
+            raise RuntimeError(f"Execution {execution.id} payload cannot be built")
+    elif actor_type == "wegent_team":
+        prompt, payload = _build_wegent_team_runtime_payload(
+            db,
+            execution=execution,
+            task=task,
+            creator=creator,
+        )
+    else:
+        raise RuntimeError(
+            f"Execution {execution.id} has unsupported actor {actor_type}"
+        )
+    await _apply_workflow_runtime_context(
+        db,
+        execution=execution,
+        payload=payload,
+        user_id=routing_user_id,
     )
-    if payload is None:
-        raise RuntimeError(f"Execution {execution.id} payload cannot be built")
     # The canonical runtime task id is bound at claim time; keep the same
     # identity here so events always map back to this execution.
     task_id = execution.runtime_task_id or f"codex-queue-{execution.id}"
@@ -974,25 +1396,159 @@ async def _dispatch_execution(
         task_id,
         event_name,
     )
-    try:
-        loop_item_execution_service.open_execution_activity(
-            db,
-            execution=execution,
-            prompt=prompt,
-        )
-    except Exception:
-        logger.exception(
-            "[RobotQueue] Failed to open activity comment for execution=%s",
-            execution.id,
-        )
+    if actor_type == "project_agent":
+        try:
+            loop_item_execution_service.open_execution_activity(
+                db,
+                execution=execution,
+                prompt=prompt,
+            )
+        except Exception:
+            logger.exception(
+                "[RobotQueue] Failed to open activity comment for execution=%s",
+                execution.id,
+            )
     logger.info(
-        "[RobotQueue] Dispatched execution=%s task=%s agent=%s device=%s runtime_task=%s",
+        "[RobotQueue] Dispatched execution=%s task=%s actor=%s/%s "
+        "device=%s runtime_task=%s",
         execution.id,
         task.id,
-        agent.id,
+        actor_type,
+        execution.actor_id or execution.agent_id,
         execution.execution_device_id,
         task_id,
     )
+
+
+async def _apply_workflow_runtime_context(
+    db: Session,
+    *,
+    execution: LoopItemExecution,
+    payload: dict,
+    user_id: int,
+    prepare_workspace: bool = True,
+    include_workspace: bool = True,
+) -> None:
+    """Prepare and inject the persisted workflow workspace and stage contract."""
+
+    if not execution.workflow_run_id or not execution.stage_run_id:
+        return
+    from app.models.project_workflow import (
+        ProjectRepositoryBinding,
+        TaskStageRun,
+        TaskWorkflowArtifact,
+        TaskWorkflowRun,
+        TaskWorkspace,
+    )
+
+    run = db.get(TaskWorkflowRun, execution.workflow_run_id)
+    stage = db.get(TaskStageRun, execution.stage_run_id)
+    if run is None or stage is None:
+        raise RuntimeError(f"Execution {execution.id} lost its workflow stage")
+    workspace = (
+        db.get(TaskWorkspace, stage.workspace_id) if stage.workspace_id else None
+    )
+    repository = (
+        db.get(ProjectRepositoryBinding, run.repository_binding_id)
+        if run.repository_binding_id
+        else None
+    )
+    if (
+        workspace
+        and workspace.workspace_kind == "git_worktree"
+        and workspace.status != "ready"
+        and prepare_workspace
+    ):
+        if repository is None or not repository.local_project_id:
+            raise RuntimeError(
+                f"Execution {execution.id} requires a local project for Git worktree preparation"
+            )
+        from app.services import project_service
+
+        prepared = await project_service.prepare_git_worktree_for_task(
+            db=db,
+            user_id=user_id,
+            project_id=repository.local_project_id,
+            client_origin="wework",
+            task_id=execution.id,
+            base_branch=workspace.base_branch or repository.default_branch,
+        )
+        workspace.workspace_path = prepared["path"]
+        workspace.workspace_kind = prepared["source"]
+        workspace.status = "ready"
+        workspace.version += 1
+        db.commit()
+    if workspace and include_workspace and not workspace.workspace_path:
+        raise RuntimeError(f"Execution {execution.id} has no usable workspace path")
+
+    node = stage.input_snapshot.get("workflowNode") or {}
+    artifacts = (
+        db.query(TaskWorkflowArtifact)
+        .filter(TaskWorkflowArtifact.workflow_run_id == run.id)
+        .order_by(TaskWorkflowArtifact.created_at.asc())
+        .all()
+    )
+    artifact_context = [
+        {
+            "type": artifact.artifact_type,
+            "schemaVersion": artifact.schema_version,
+            "content": artifact.content_json,
+            "objectKey": artifact.object_key or None,
+            "sha256": artifact.sha256 or None,
+        }
+        for artifact in artifacts
+    ]
+    stage_contract = {
+        "workflowRunId": run.id,
+        "stageRunId": stage.id,
+        "groupKey": stage.group_key,
+        "nodeKey": stage.node_key,
+        "nodeType": stage.node_type,
+        "promptTemplate": node.get("prompt_template") or "",
+        "requiredOutputs": stage.input_snapshot.get("requiredOutputs") or [],
+        "inputArtifacts": stage.input_snapshot.get("inputArtifacts") or [],
+        "artifacts": artifact_context,
+        "branchName": workspace.branch_name if workspace else None,
+        "baseBranch": workspace.base_branch if workspace else None,
+    }
+    execution_request = payload.setdefault("executionRequest", {})
+    if workspace and include_workspace:
+        execution_request.update(
+            {
+                "standalone_chat_workspace": False,
+                "workspace_source": workspace.workspace_kind,
+                "project_workspace_path": workspace.workspace_path,
+                "workspace": {
+                    "project": {
+                        "source": workspace.workspace_kind,
+                        "path": workspace.workspace_path,
+                    }
+                },
+            }
+        )
+        payload["workspacePath"] = workspace.workspace_path
+        payload["execution"] = {
+            "workspace": {
+                "source": workspace.workspace_kind,
+                "path": workspace.workspace_path,
+            }
+        }
+    if repository:
+        execution_request["git_url"] = repository.repository_url
+        execution_request["runtime_project_name"] = repository.repository_identity
+    directive = (
+        "Execute the persisted workflow stage contract below. Work only in the "
+        "provided workspace. If branchName is present, create or switch to that "
+        "branch before changing files. Produce every required output as a "
+        "structured workflow artifact and report real verification results.\n"
+        f"{stage_contract}"
+    )
+    execution_request["prompt"] = directive
+    payload["message"] = directive
+    payload.setdefault("additionalContext", {})["projectWorkflowStage"] = {
+        "kind": "application",
+        "value": stage_contract,
+    }
 
 
 async def _emit_runtime_rpc(

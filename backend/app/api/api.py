@@ -35,11 +35,13 @@ from app.api.endpoints import (
     openapi_responses,
     pet,
     project_automations,
+    project_workflows,
     projects,
     prompt_optimization,
     quota,
     remote_devices,
     repository,
+    repository_integrations,
     resource_library,
     runtime_work,
     share,
@@ -153,6 +155,16 @@ api_router.include_router(
     project_automations.router,
     prefix="/v1/cloud-projects",
     tags=["project-automations"],
+)
+api_router.include_router(
+    project_workflows.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-workflows"],
+)
+api_router.include_router(
+    repository_integrations.router,
+    prefix="/v1/repository-integrations",
+    tags=["repository-integrations"],
 )
 api_router.include_router(
     loop_item_executions.router,

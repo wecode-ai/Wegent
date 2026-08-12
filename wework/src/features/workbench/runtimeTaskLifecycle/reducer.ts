@@ -10,21 +10,27 @@ export function reduceRuntimeTaskLifecycle(
       const expectedRunning = state.expectedExecutorRunning
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
+      const terminalTurnStatus = isTerminalTurnStatus(event.task.turnStatus)
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
-        (!terminalStatus || hasIdentifiedActiveTurn)
+        ((!terminalStatus && !terminalTurnStatus) || hasIdentifiedActiveTurn)
       if (shouldIgnoreStaleSnapshot) return state
 
       const executionPhase =
-        terminalStatus || snapshotRunning === false
+        terminalStatus || terminalTurnStatus || snapshotRunning === false
           ? 'idle'
           : snapshotRunning === true
             ? 'running'
             : state.executionPhase
-      const turnPhase = terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
-      const activeTurnId = terminalStatus || snapshotRunning === false ? null : state.activeTurnId
+      const turnPhase =
+        terminalStatus || terminalTurnStatus || snapshotRunning === false ? 'idle' : state.turnPhase
+      const activeTurnId =
+        terminalStatus || terminalTurnStatus || snapshotRunning === false
+          ? null
+          : state.activeTurnId
+      const terminalOutcome = turnOutcomeFromStatus(event.task.turnStatus)
 
       return {
         ...state,
@@ -32,13 +38,14 @@ export function reduceRuntimeTaskLifecycle(
         task: event.task,
         executionPhase,
         turnPhase,
+        turnOutcome: terminalOutcome ?? state.turnOutcome,
         activeTurnId,
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
           snapshotRunning !== null &&
           event.task.optimistic !== true &&
-          (snapshotRunning === expectedRunning || terminalStatus)
+          (snapshotRunning === expectedRunning || terminalStatus || terminalTurnStatus)
             ? null
             : expectedRunning,
       }
@@ -184,6 +191,29 @@ function isTerminalTaskStatus(status: string | null | undefined): boolean {
       normalized
     )
   )
+}
+
+function isTerminalTurnStatus(status: string | null | undefined): boolean {
+  return turnOutcomeFromStatus(status) !== null
+}
+
+function turnOutcomeFromStatus(
+  status: string | null | undefined
+): RuntimeTaskLifecycleState['turnOutcome'] {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  if (normalized === 'completed' || normalized === 'complete' || normalized === 'done') {
+    return 'succeeded'
+  }
+  if (normalized === 'failed' || normalized === 'error') return 'failed'
+  if (
+    normalized === 'interrupted' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'aborted'
+  ) {
+    return 'cancelled'
+  }
+  return null
 }
 
 function mergeAddress(

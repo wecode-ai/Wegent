@@ -358,6 +358,27 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(true)
   })
 
+  test('settles a fast non-Codex turn from an explicit terminal turn snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const claudeTask = task({ runtime: 'claude_code', running: false, status: 'active' })
+    store.syncRuntimeWork(runtimeWork(claudeTask))
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(
+      runtimeWork({
+        ...claudeTask,
+        turnStatus: 'completed',
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.turn.outcome).toBe('succeeded')
+    expect(snapshot?.derived.isThinking).toBe(false)
+  })
+
   test('settles the active turn when an authoritative terminal snapshot is idle', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: false })))

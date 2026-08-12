@@ -455,6 +455,59 @@ async def prepare_git_worktree_for_task(
     return {"source": "git_worktree", "path": worktree_path}
 
 
+async def cleanup_git_worktree_path(
+    *,
+    db: Session,
+    user_id: int,
+    project_id: int,
+    client_origin: Optional[str],
+    device_id: str,
+    target_path: str,
+) -> None:
+    """Remove one managed worktree without deleting its owning workflow task."""
+
+    project = _get_active_project(
+        db=db,
+        project_id=project_id,
+        user_id=user_id,
+        client_origin=client_origin,
+    )
+    config = ProjectConfig.model_validate(project.config or {})
+    if (
+        not config.is_workspace
+        or not config.execution
+        or not config.workspace
+        or config.execution.targetType != "local"
+        or config.execution.deviceId != device_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Worktree cleanup target does not match the local project",
+        )
+    source_workspace_path = _source_workspace_path(config.workspace)
+    if not source_workspace_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Worktree cleanup requires a project workspace path",
+        )
+    workspace_root = await _resolve_project_workspace_root(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+    )
+    source_checkout_path = _resolve_source_workspace_abs_path(
+        workspace_root,
+        source_workspace_path,
+    )
+    await _remove_worktree_directory(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        source_checkout_path=source_checkout_path,
+        target_path=target_path,
+    )
+
+
 async def list_project_worktrees(
     *,
     db: Session,

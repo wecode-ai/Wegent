@@ -1,5 +1,5 @@
 import { createSocketClient, type AuthenticatedSocketClient } from '@wegent/chat-core'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 
 const NAMESPACE = '/wework-runtime'
 const SUBSCRIBE_EVENT = 'wework:project_chat:subscribe'
@@ -12,7 +12,7 @@ const AGENT_CHUNK_EVENT = 'wework:project_chat:agent:chunk'
 const ACK_TIMEOUT_MS = 15_000
 
 export interface ProjectChatMention {
-  type: 'user' | 'agent'
+  type: 'user' | 'agent' | 'squad'
   id: string
   label: string
 }
@@ -61,6 +61,12 @@ export interface ProjectChatClient {
     model?: string | null
     /** Bound local code project chosen by the user for this comment's run. */
     localProjectId?: number | null
+    /** The workflow runtime owns dispatch; local chat must not enqueue again. */
+    workflowManaged?: boolean
+    /** Backend attachment context IDs associated with this comment. */
+    attachmentIds?: number[]
+    /** Local attachment descriptors retained by the local workflow runtime. */
+    attachments?: Attachment[]
   }) => Promise<ProjectChatMessage>
   startAgentResponse: (input: {
     projectId: string
@@ -185,6 +191,7 @@ export function createProjectChatClient(options: ProjectChatClientOptions): Proj
         clientMessageId: input.clientMessageId,
         content: input.text,
         mentions: input.mentions ?? [],
+        attachmentIds: input.attachmentIds ?? [],
         replyToMessageId: input.replyToMessageId ?? null,
         model: input.model ?? null,
       })

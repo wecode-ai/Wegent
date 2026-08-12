@@ -208,6 +208,28 @@ describe('ProjectQueueView', () => {
         api={mock.deliveryApi!}
         project={project}
         projectChatAgentApi={mock.projectChatAgentApi}
+        executionApi={{
+          list: vi.fn(async () => [
+            {
+              id: 101,
+              loop_item_id: 'T-3',
+              cloud_project_id: '11',
+              task_title: 'Bot queued task',
+              task_status: 'pending',
+              task_priority: 'medium',
+              agent_id: 'bot-1',
+              assigner_user_id: 1,
+              status: 'queued',
+              queued_at: null,
+              started_at: null,
+              completed_at: null,
+              execution_note: null,
+              version: 1,
+              created_at: '2026-08-07T00:00:00Z',
+              updated_at: '2026-08-07T00:00:00Z',
+            },
+          ]),
+        }}
         currentUserId={1}
       />
     )
@@ -294,6 +316,28 @@ describe('ProjectQueueView', () => {
         api={mock.deliveryApi!}
         project={project}
         projectChatAgentApi={mock.projectChatAgentApi}
+        executionApi={{
+          list: vi.fn(async () => [
+            {
+              id: 101,
+              loop_item_id: 'T-3',
+              cloud_project_id: '11',
+              task_title: 'Bot queued task',
+              task_status: 'pending',
+              task_priority: 'medium',
+              agent_id: 'bot-1',
+              assigner_user_id: 1,
+              status: 'queued',
+              queued_at: null,
+              started_at: null,
+              completed_at: null,
+              execution_note: null,
+              version: 1,
+              created_at: '2026-08-07T00:00:00Z',
+              updated_at: '2026-08-07T00:00:00Z',
+            },
+          ]),
+        }}
         currentUserId={1}
       />
     )

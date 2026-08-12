@@ -40,6 +40,7 @@ import {
   codexUpstreamApiFormat,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
+  verifyCloudDevelopmentWorkflowFlow,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyModelProtocolMatrix,
@@ -115,6 +116,7 @@ import {
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CLOUD_FEATURES_ONLY,
+  CLOUD_DEVELOPMENT_ONLY,
   CLOUD_ONLY,
   CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_VISION_ONLY,
@@ -506,7 +508,7 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_DEVELOPMENT_ONLY || CLOUD_VISION_ONLY) {
       cloudEnvironment = new RealCloudEnvironment({
         codexBinary,
         modelServerUrl: control.url,
@@ -753,7 +755,20 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
-    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_DEVELOPMENT_ONLY || CLOUD_VISION_ONLY) {
+      if (CLOUD_DEVELOPMENT_ONLY) {
+        phase = 'cloud-development-workflow'
+        await verifyCloudDevelopmentWorkflowFlow(control, cloudEnvironment)
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(
+          `Wework desktop cloud development workflow E2E passed. Diagnostics: ${resultDir}`
+        )
+        return
+      }
       if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT) {
         phase = `cloud-${SELECTED_DESKTOP_SEGMENT}`
         await verifyCloudCheckpoint({

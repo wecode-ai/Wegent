@@ -25,6 +25,10 @@ use crate::{
         execute_workspace_file_command_with_input, is_workspace_file_command,
     },
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
+    project_workflows::{
+        RepositoryInput, RepositoryUpdate, SquadInput, SquadUpdate, TaskBindingInput,
+        WorkflowInput, WorkflowUpdate,
+    },
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
         BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalCommentCreate,
@@ -1171,6 +1175,199 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .archive_chat_agent(project_id, agent_id, version)
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "project_workflows.squads.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_workflow_squads(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.squads.create" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let user_id = params.get("user_id").and_then(Value::as_i64).unwrap_or(0);
+            let input = task_input::<SquadInput>(&params, "squad")?;
+            serialize_task_value(
+                runtime
+                    .create_workflow_squad(project_id, user_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.squads.update" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let squad_id = required_task_string(&params, "squad_id")?;
+            let input = task_input::<SquadUpdate>(&params, "squad")?;
+            serialize_task_value(
+                runtime
+                    .update_workflow_squad(project_id, squad_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.repositories.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_workflow_repositories(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.repositories.create" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let user_id = params.get("user_id").and_then(Value::as_i64).unwrap_or(0);
+            let input = task_input::<RepositoryInput>(&params, "repository")?;
+            serialize_task_value(
+                runtime
+                    .create_workflow_repository(project_id, user_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.repositories.update" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let binding_id = required_task_string(&params, "binding_id")?;
+            let input = task_input::<RepositoryUpdate>(&params, "repository")?;
+            serialize_task_value(
+                runtime
+                    .update_workflow_repository(project_id, binding_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.repositories.validate" => {
+            let binding_id = required_task_string(&params, "binding_id")?;
+            serialize_task_value(
+                runtime
+                    .validate_workflow_repository(binding_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.definitions.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_workflow_definitions(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.definitions.validate" => {
+            let input = task_input::<WorkflowInput>(&params, "workflow")?;
+            serialize_task_value(runtime.validate_workflow_definition(&input))
+        }
+        "project_workflows.definitions.create" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let user_id = params.get("user_id").and_then(Value::as_i64).unwrap_or(0);
+            let input = task_input::<WorkflowInput>(&params, "workflow")?;
+            serialize_task_value(
+                runtime
+                    .create_workflow_definition(project_id, user_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.definitions.update" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let workflow_id = required_task_string(&params, "workflow_id")?;
+            let input = task_input::<WorkflowUpdate>(&params, "workflow")?;
+            serialize_task_value(
+                runtime
+                    .update_workflow_definition(project_id, workflow_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.bindings.get" => {
+            let item_id = required_task_string(&params, "item_id")?;
+            serialize_task_value(
+                runtime
+                    .get_workflow_task_binding(item_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.bindings.upsert" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            let user_id = params.get("user_id").and_then(Value::as_i64).unwrap_or(0);
+            let input = task_input::<TaskBindingInput>(&params, "binding")?;
+            serialize_task_value(
+                runtime
+                    .upsert_workflow_task_binding(project_id, item_id, user_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.runs.list" => {
+            let item_id = required_task_string(&params, "item_id")?;
+            serialize_task_value(
+                runtime
+                    .list_workflow_runs(item_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.runs.get" => {
+            let run_id = required_task_string(&params, "run_id")?;
+            serialize_task_value(
+                runtime
+                    .get_workflow_run(run_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.development.get" => {
+            let item_id = required_task_string(&params, "item_id")?;
+            serialize_task_value(
+                runtime
+                    .get_workflow_task_development(item_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.runs.start" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            let user_id = params.get("user_id").and_then(Value::as_i64).unwrap_or(0);
+            let idempotency_key = required_task_string(&params, "idempotency_key")?;
+            let trigger_message_id = params.get("trigger_message_id").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .start_workflow_run(
+                        project_id,
+                        item_id,
+                        user_id,
+                        idempotency_key,
+                        trigger_message_id,
+                    )
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.stages.approve" | "project_workflows.stages.reject" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            let stage_id = required_task_string(&params, "stage_id")?;
+            let version = required_task_i64(&params, "version")?;
+            let reason = params.get("reason").and_then(Value::as_str);
+            serialize_task_value(if method == "project_workflows.stages.approve" {
+                runtime
+                    .approve_workflow_stage(project_id, run_id, stage_id, version, reason)
+                    .map_err(task_runtime_error)?
+            } else {
+                runtime
+                    .reject_workflow_stage(project_id, run_id, stage_id, version, reason)
+                    .map_err(task_runtime_error)?
+            })
+        }
+        "project_workflows.stages.retry" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let run_id = required_task_string(&params, "run_id")?;
+            let stage_id = required_task_string(&params, "stage_id")?;
+            let version = required_task_i64(&params, "version")?;
+            serialize_task_value(
+                runtime
+                    .retry_workflow_stage(project_id, run_id, stage_id, version)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "project_workflows.runs.cancel" => {
+            let run_id = required_task_string(&params, "run_id")?;
+            let version = required_task_i64(&params, "version")?;
+            serialize_task_value(
+                runtime
+                    .cancel_workflow_run(run_id, version)
+                    .map_err(task_runtime_error)?,
+            )
         }
         "executions.list" => {
             let project_id = required_task_string(&params, "project_id")?;

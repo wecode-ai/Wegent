@@ -106,6 +106,20 @@ class TaskRequestBuilder:
         # to avoid repeated database queries while keeping per-shell isolation.
         self._cached_shell_info: dict[tuple[int, str, str], dict] = {}
 
+    def build_team_bot_configs(self, team: Kind, user_id: int) -> list[dict]:
+        """Resolve Team → Bot → Ghost → Shell/Model/Skills/MCP for external runs."""
+
+        team_crd = Team.model_validate(team.json)
+        first_bot = self._get_first_bot(team, team_crd)
+        if first_bot is None:
+            raise ValueError(f"Team '{team.namespace}/{team.name}' has no runnable Bot")
+        return self._build_bot_config(
+            team,
+            team_crd,
+            first_bot,
+            user_id,
+        )
+
     def build(
         self,
         subtask: Subtask,

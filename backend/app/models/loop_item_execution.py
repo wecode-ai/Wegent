@@ -12,6 +12,7 @@ run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Column,
     DateTime,
     Index,
@@ -36,6 +37,18 @@ class LoopItemExecution(Base):
     loop_item_id = Column(String(64), nullable=False, default="", server_default="")
     cloud_project_id = Column(String(64), nullable=False, default="", server_default="")
     agent_id = Column(String(64), nullable=False, default="", server_default="")
+    actor_type = Column(String(16), nullable=False, default="", server_default="")
+    actor_id = Column(String(64), nullable=False, default="", server_default="")
+    actor_snapshot = Column(JSON, nullable=False, default=dict)
+    execution_target_type = Column(
+        String(24),
+        nullable=False,
+        default="registered_device",
+        server_default="registered_device",
+    )
+    execution_target_id = Column(
+        String(100), nullable=False, default="", server_default=""
+    )
     # Where the robot actually executes. "local" runs on the creator's App,
     # "cloud" runs on the creator's bound cloud device; the backend never
     # claims local rows and the App never claims cloud rows.
@@ -101,6 +114,9 @@ class LoopItemExecution(Base):
         String(255), nullable=False, default="", server_default=""
     )
     runtime_task_id = Column(String(255), nullable=False, default="", server_default="")
+    workflow_run_id = Column(String(64), nullable=False, default="", server_default="")
+    stage_run_id = Column(String(64), nullable=False, default="", server_default="")
+    attempt = Column(Integer, nullable=False, default=1, server_default="1")
     # Prebuilt runtime.tasks.create payload, so cloud dispatchers and local
     # pullers replay the exact task the App would have created (same pattern
     # as automations storing their task_payload).
@@ -124,6 +140,7 @@ class LoopItemExecution(Base):
         Index("idx_exec_agent_status", "agent_id", "status"),
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
+        Index("idx_exec_workflow_stage", "workflow_run_id", "stage_run_id"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )

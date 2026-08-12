@@ -84,6 +84,7 @@ function ProjectSpaceRow({
   return (
     <div
       role="button"
+      data-testid={`cloud-project-space-${project.id}`}
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={event => {

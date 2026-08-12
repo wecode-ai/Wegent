@@ -44,6 +44,22 @@ from app.models.plugin_marketplace import (
 )
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.project_workflow import (
+    ProjectAgentSquad,
+    ProjectRepositoryBinding,
+    ProjectWorkflowAutomation,
+    ProjectWorkflowAutomationRun,
+    ProjectWorkflowDefinition,
+    RepositoryProviderEvent,
+    TaskDevelopmentCheck,
+    TaskDevelopmentLink,
+    TaskDevelopmentReviewThread,
+    TaskExecutionBinding,
+    TaskStageRun,
+    TaskWorkflowArtifact,
+    TaskWorkflowRun,
+    TaskWorkspace,
+)
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
@@ -101,6 +117,18 @@ __all__ = [
     "KnowledgeArtifactRecord",
     "Project",
     "ProjectChatMessage",
+    "ProjectAgentSquad",
+    "ProjectRepositoryBinding",
+    "ProjectWorkflowDefinition",
+    "RepositoryProviderEvent",
+    "TaskDevelopmentCheck",
+    "TaskDevelopmentLink",
+    "TaskDevelopmentReviewThread",
+    "TaskExecutionBinding",
+    "TaskStageRun",
+    "TaskWorkflowArtifact",
+    "TaskWorkflowRun",
+    "TaskWorkspace",
     "Plugin",
     "PluginRelease",
     "PluginUpstream",
