@@ -10,6 +10,7 @@ import type { ProjectChatAgent, createProjectChatAgentApi } from '@/api/projectC
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/SettingsGroup'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
@@ -128,6 +129,7 @@ export function ProjectAutomationRulesSection({
   onOpenTask?: (taskId: string) => void
 }) {
   const { t } = useTranslation('common')
+  const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
   const [rules, setRules] = useState<ProjectAutomationRule[]>([])
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [devices, setDevices] = useState<DeviceInfo[]>([])
@@ -526,7 +528,7 @@ export function ProjectAutomationRulesSection({
                   {t('workbench.project_automation_webhook_event_id')}
                 </p>
                 <code className="mt-1 block break-all text-code text-text-primary">
-                  /api/v1/cloud-projects/automation-events/{selected.webhookEventId}
+                  {backendUrl}/api/v1/cloud-projects/automation-events/{selected.webhookEventId}
                 </code>
               </div>
             ) : null}

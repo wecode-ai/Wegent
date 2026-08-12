@@ -48,7 +48,7 @@ export function ProjectAutomationView({
         </header>
         <ProjectAutomationRulesSection
           projectId={project.id}
-          api={project.task_provider === 'local' ? projectAutomationApi : undefined}
+          api={projectAutomationApi}
           agentApi={projectChatAgentApi}
           canManage={canManageAgents}
           deviceApi={deviceApi}
