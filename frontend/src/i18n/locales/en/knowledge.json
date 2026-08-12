@@ -161,8 +161,8 @@
       "wikispace": "Knowledge Base",
       "wikispaceSyncHint": "Click sync to pull knowledge bases from DingTalk",
       "wikispaceEmpty": "No knowledge base content",
-      "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
-      "wikispaceConfigureHint": "Please go to settings to configure DingTalk Knowledge Base MCP"
+      "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
+      "wikispaceConfigureHint": "Please configure DingTalk Knowledge Base MCP and DingTalk Docs MCP in settings"
     },
     "groupFilter": {
       "all": "All Groups"
