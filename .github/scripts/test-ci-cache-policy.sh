@@ -153,8 +153,10 @@ python_action="$action_dir/setup-python-uv-cache/action.yml"
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'default: "false"' "$python_action" ||
-  ! grep -Fq 'save-cache: ${{ inputs.save-cache }}' "$python_action" ||
-  ! grep -Fq 'cache-suffix: python-${{ inputs.python-version }}' \
+  ! grep -Fq "if: inputs.setup-python == 'true'" "$python_action" ||
+  ! grep -Fq "if: inputs.setup-uv == 'true'" "$python_action" ||
+  ! grep -Fq "if: inputs.save-cache == 'true'" "$python_action" ||
+  ! grep -Fq 'uv-v1-python-${{ inputs.python-version }}' \
     "$python_action"; then
   fail "Python caches must be shared by version and read-only by default"
 fi
@@ -201,7 +203,8 @@ workspace_manifests="hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace
 if ! grep -Fq 'node-24-workspace-v2-${{ hashFiles(' "$node_action" ||
   ! grep -Fq "$workspace_manifests" "$node_action" ||
   ! grep -Fq 'frontend/public/fonts' "$node_action" ||
-  ! grep -Fq 'default: "false"' "$node_action"; then
+  ! grep -Fq 'default: "false"' "$node_action" ||
+  ! grep -Fq "if: inputs.setup-toolchain == 'true'" "$node_action"; then
   fail "Node dependencies and generated fonts must share a read-only-by-default cache"
 fi
 
@@ -213,7 +216,9 @@ if ! validate_yaml_steps checkout "$warmup_workflow" ||
 fi
 
 if ! ruby "$script_dir/lib/validate-ci-cache-policy.rb" docker-sha \
-  "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
+  "$warmup_workflow" \
+  "$workflow_dir/e2e-tests.yml" \
+  "$workflow_dir/wework-e2e.yml"; then
   fail "Docker actions introduced by cache workflows must be pinned by SHA"
 fi
 
@@ -239,9 +244,17 @@ done
 # shellcheck disable=SC2016
 playwright_key='playwright-chromium-v2-${{ steps.playwright-version.outputs.version }}'
 if ! grep -Fq "$playwright_key" "$workflow_dir/e2e-tests.yml" ||
-  ! grep -Fq "$playwright_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$playwright_key" "$warmup_workflow"; then
-  fail "Platform, Wework, and warmup must share the Playwright browser cache"
+  fail "Platform E2E and warmup must share the Playwright browser cache"
+fi
+
+wework_workflow="$workflow_dir/wework-e2e.yml"
+if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
+  ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
+  [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
+  grep -Eq 'playwright (install|install-deps)|install-wework-tauri-system-dependencies' \
+    "$wework_workflow"; then
+  fail "Wework E2E must consume its immutable dependency image without runtime installs"
 fi
 
 # GitHub expressions are matched literally in workflow source.
