@@ -48,9 +48,18 @@ const agent = {
 
 describe('ProjectAutomationRulesSection', () => {
   it('creates a board-task event rule', async () => {
+    const eventRule = {
+      ...rule,
+      id: 'event-rule-1',
+      triggerType: 'event' as const,
+      eventType: 'task.created' as const,
+      webhookEventId: 'event-rule-1',
+      webhookSecret: 'one-time-secret',
+      cronExpression: null,
+    }
     const api = {
-      list: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue(rule),
+      list: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([eventRule]),
+      create: vi.fn().mockResolvedValue(eventRule),
       update: vi.fn(),
       delete: vi.fn(),
       runNow: vi.fn(),
@@ -87,6 +96,9 @@ describe('ProjectAutomationRulesSection', () => {
           agentId: 'agent-1',
         })
       )
+    )
+    expect(await screen.findByTestId('project-automation-rule-event-rule-1')).toHaveTextContent(
+      'one-time-secret'
     )
   })
 

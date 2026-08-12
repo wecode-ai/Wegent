@@ -341,22 +341,6 @@ export function ProjectAutomationRulesSection({
       </div>
 
       {error && !draft ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
-      {createdWebhook ? (
-        <div className="mb-3 rounded-xl border border-border bg-surface px-4 py-3">
-          <p className="text-xs text-text-muted">
-            {t('workbench.project_automation_webhook_event_id')}
-          </p>
-          <code className="mt-1 block break-all text-code text-text-primary">
-            {backendUrl}/api/v1/cloud-projects/automation-events/{createdWebhook.eventId}
-          </code>
-          <p className="mt-3 text-xs text-text-muted">
-            {t('workbench.project_automation_webhook_secret')}
-          </p>
-          <code className="mt-1 block break-all text-code text-text-primary">
-            {createdWebhook.secret}
-          </code>
-        </div>
-      ) : null}
       <div className="space-y-2" data-testid="project-automation-rule-list">
         {rules.length ? (
           rules.map(rule => (
@@ -372,49 +356,62 @@ export function ProjectAutomationRulesSection({
                   void selectRule(rule)
                 }
               }}
-              className="flex w-full cursor-pointer items-center gap-4 rounded-xl border border-border px-4 py-3 text-left transition hover:border-text-tertiary hover:bg-surface"
+              className="overflow-hidden rounded-xl border border-border transition hover:border-text-tertiary"
             >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                <CalendarClock className="h-4 w-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{rule.name}</span>
-                <span className="mt-0.5 block text-xs text-text-muted">
-                  {rule.triggerType === 'event'
-                    ? t('workbench.project_automation_task_created')
-                    : `${formatSchedule(cronToSchedule(rule.cronExpression ?? '0 3 * * *'), t)} · ${timezoneLabel(rule.timezone, t)}`}{' '}
-                  · {rule.agentName}
+              <div className="flex w-full cursor-pointer items-center gap-4 px-4 py-3 text-left hover:bg-surface">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                  <CalendarClock className="h-4 w-4" />
                 </span>
-              </span>
-              <span className="shrink-0 text-right text-xs text-text-muted">
-                <span className="block">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{rule.name}</span>
+                  <span className="mt-0.5 block text-xs text-text-muted">
+                    {rule.triggerType === 'event'
+                      ? t('workbench.project_automation_task_created')
+                      : `${formatSchedule(cronToSchedule(rule.cronExpression ?? '0 3 * * *'), t)} · ${timezoneLabel(rule.timezone, t)}`}{' '}
+                    · {rule.agentName}
+                  </span>
+                </span>
+                <span className="shrink-0 text-right text-xs text-text-muted">
                   {rule.lastRunStatus
                     ? statusLabel[executionDisplayStatus(rule.lastRunStatus) ?? 'running']
                     : rule.nextRunAt
-                      ? `${formatTimestamp(rule.nextRunAt, rule.timezone)} · ${timezoneLabel(
-                          rule.timezone,
-                          t
-                        )}`
+                      ? `${formatTimestamp(rule.nextRunAt, rule.timezone)} · ${timezoneLabel(rule.timezone, t)}`
                       : t('workbench.project_automation_disabled')}
                 </span>
-              </span>
-              <span
-                className="shrink-0"
-                onClick={event => event.stopPropagation()}
-                onKeyDown={event => event.stopPropagation()}
-              >
-                <SettingsSwitch
-                  data-testid={`project-automation-toggle-${rule.id}`}
-                  checked={rule.enabled}
-                  disabled={busy || !canManage}
-                  onCheckedChange={enabled => void toggleRuleEnabled(rule, enabled)}
-                  aria-label={
-                    rule.enabled
-                      ? t('workbench.project_automation_enabled')
-                      : t('workbench.project_automation_disabled')
-                  }
-                />
-              </span>
+                <span
+                  className="shrink-0"
+                  onClick={event => event.stopPropagation()}
+                  onKeyDown={event => event.stopPropagation()}
+                >
+                  <SettingsSwitch
+                    data-testid={`project-automation-toggle-${rule.id}`}
+                    checked={rule.enabled}
+                    disabled={busy || !canManage}
+                    onCheckedChange={enabled => void toggleRuleEnabled(rule, enabled)}
+                    aria-label={
+                      rule.enabled
+                        ? t('workbench.project_automation_enabled')
+                        : t('workbench.project_automation_disabled')
+                    }
+                  />
+                </span>
+              </div>
+              {createdWebhook?.eventId === rule.webhookEventId ? (
+                <div className="border-t border-border bg-surface px-4 py-3">
+                  <p className="text-xs text-text-muted">
+                    {t('workbench.project_automation_webhook_event_id')}
+                  </p>
+                  <code className="mt-1 block break-all text-code text-text-primary">
+                    {backendUrl}/api/v1/cloud-projects/automation-events/{createdWebhook.eventId}
+                  </code>
+                  <p className="mt-3 text-xs text-text-muted">
+                    {t('workbench.project_automation_webhook_secret')}
+                  </p>
+                  <code className="mt-1 block break-all text-code text-text-primary">
+                    {createdWebhook.secret}
+                  </code>
+                </div>
+              ) : null}
             </div>
           ))
         ) : (
