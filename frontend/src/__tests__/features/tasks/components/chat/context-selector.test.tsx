@@ -771,7 +771,65 @@ describe('ContextSelector organization grouping', () => {
           folder_ids: [20],
           folder_names: ['Guides'],
           include_subfolders: true,
-          document_ids: [102],
+          document_ids: undefined,
+        }),
+      ]
+    )
+  })
+
+  it('expands a parent folder when removing one of its child folders', async () => {
+    const onReplaceContexts = jest.fn()
+    mockGetFolderTree.mockResolvedValue([
+      {
+        id: 10,
+        name: 'Parent',
+        children: [
+          { id: 11, name: 'Keep', children: [] },
+          { id: 12, name: 'Remove', children: [] },
+        ],
+      },
+    ])
+    mockListDocuments.mockResolvedValue({
+      items: [
+        { id: 101, name: 'Keep.md', folder_id: 11 },
+        { id: 102, name: 'Remove.md', folder_id: 12 },
+      ],
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[
+          {
+            id: 1,
+            name: 'Org KB',
+            type: 'knowledge_base',
+            scope_restricted: true,
+            folder_ids: [10],
+            folder_names: ['Parent'],
+            include_subfolders: true,
+          },
+        ]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    fireEvent.click(await screen.findByTestId('knowledge-picker-source-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-1'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-folder-scope-12'))
+
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [1],
+      [
+        expect.objectContaining({
+          folder_ids: undefined,
+          document_ids: [101],
+          document_names: ['Keep.md'],
         }),
       ]
     )

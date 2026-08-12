@@ -861,7 +861,7 @@ export function KnowledgeSourcePicker({
       const removedDocumentIds = new Set(
         collectInternalDocuments(node).map(document => document.id)
       )
-      const nextDocuments = getEffectiveInternalDocuments(
+      const nextSelectedDocuments = getEffectiveInternalDocuments(
         existing,
         treeState.tree,
         treeState.documents
@@ -869,20 +869,27 @@ export function KnowledgeSourcePicker({
       const remainingFolders = existingFolderIds.flatMap((folderId, index) => {
         if (folderId === node.folderId) return []
         const folderNode = findInternalFolderNode(treeState.tree, folderId)
-        if (
-          !folderNode ||
-          collectInternalDocuments(folderNode).some(document => removedDocumentIds.has(document.id))
-        ) {
+        if (!folderNode) {
           return []
         }
-        return [{ id: folderId, name: existingFolderNames[index] }]
+        const folderDocuments = collectInternalDocuments(folderNode)
+        if (folderDocuments.some(document => removedDocumentIds.has(document.id))) {
+          return []
+        }
+        return [{ id: folderId, name: existingFolderNames[index], documents: folderDocuments }]
       })
+      const remainingFolderDocumentIds = new Set(
+        remainingFolders.flatMap(folder => folder.documents.map(document => document.id))
+      )
+      const nextExplicitDocuments = nextSelectedDocuments.filter(
+        document => !remainingFolderDocumentIds.has(document.id)
+      )
       replaceContexts(
         [existing.id],
-        nextDocuments.length > 0 || remainingFolders.length > 0
+        nextSelectedDocuments.length > 0 || remainingFolders.length > 0
           ? [
               toKnowledgeContext(kb, {
-                documents: nextDocuments,
+                documents: nextExplicitDocuments,
                 folderIds: remainingFolders.map(folder => folder.id),
                 folderNames: remainingFolders
                   .map(folder => folder.name)
