@@ -637,6 +637,19 @@ async function dragDesktopControlElement(command: DesktopControlCommand): Promis
   return element.textContent?.trim() ?? ''
 }
 
+function contextMenuDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      ...desktopControlEventOptions(element),
+      button: 2,
+      buttons: 0,
+    })
+  )
+  return element.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -968,6 +981,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'contextMenu':
+      return contextMenuDesktopControlElement(command.selector)
     case 'dropFile':
       return dropDesktopControlFile(command)
     case 'dropPaths':
@@ -1359,6 +1374,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
         )
       }
+      await waitForDesktopControlTick()
       return element.textContent?.trim() ?? ''
     }
     case 'select': {
