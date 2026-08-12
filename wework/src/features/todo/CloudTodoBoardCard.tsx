@@ -12,8 +12,9 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
-import { cn } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
@@ -147,6 +148,7 @@ export function CloudTodoBoardCard({
   dragDisabled = false,
   archiveDisabled = false,
 }: CloudTodoBoardCardProps) {
+  const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const {
     attributes,
@@ -176,7 +178,7 @@ export function CloudTodoBoardCard({
     >
       {item.can_edit !== false && !archiveDisabled ? (
         <div className="absolute right-2 top-2 z-20">
-          <Tooltip label="任务操作" side="bottom" align="end">
+          <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
             <button
               type="button"
               data-testid={`cloud-todo-card-more-${item.id}`}
@@ -185,7 +187,7 @@ export function CloudTodoBoardCard({
                 setMenuOpen(current => !current)
               }}
               className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
-              aria-label="任务操作"
+              aria-label={t('todo.project_actions', '项目操作')}
               aria-expanded={menuOpen}
             >
               <Ellipsis className="h-3.5 w-3.5" />

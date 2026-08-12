@@ -8,6 +8,7 @@ describe('Tooltip', () => {
   })
 
   afterEach(() => {
+    vi.advanceTimersByTime(301)
     vi.useRealTimers()
   })
 
@@ -73,5 +74,53 @@ describe('Tooltip', () => {
     const tooltip = screen.getByTestId('project-space-tooltip')
     expect(document.body).toContainElement(tooltip)
     expect(container).not.toContainElement(tooltip)
+  })
+
+  test('shows the next tooltip immediately during the warm handoff window', () => {
+    render(
+      <>
+        <Tooltip label="第一个提示" testId="first-tooltip">
+          <button type="button">first</button>
+        </Tooltip>
+        <Tooltip label="第二个提示" testId="second-tooltip">
+          <button type="button">second</button>
+        </Tooltip>
+      </>
+    )
+    const firstWrapper = screen.getByRole('button', { name: 'first' }).parentElement as HTMLElement
+    const secondWrapper = screen.getByRole('button', {
+      name: 'second',
+    }).parentElement as HTMLElement
+
+    fireEvent.pointerEnter(firstWrapper)
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+    expect(screen.getByTestId('first-tooltip')).toBeInTheDocument()
+
+    fireEvent.pointerLeave(firstWrapper)
+    fireEvent.pointerEnter(secondWrapper)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+
+    expect(screen.getByTestId('second-tooltip')).toBeInTheDocument()
+  })
+
+  test('wraps long unbroken labels within the maximum width', () => {
+    render(
+      <Tooltip label={'a'.repeat(400)} testId="long-tooltip">
+        <button type="button">trigger</button>
+      </Tooltip>
+    )
+    const wrapper = screen.getByRole('button').parentElement as HTMLElement
+
+    fireEvent.pointerEnter(wrapper)
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+
+    expect(screen.getByTestId('long-tooltip')).toHaveClass('whitespace-normal', 'break-words')
+    expect(screen.getByTestId('long-tooltip')).not.toHaveClass('whitespace-nowrap')
   })
 })

@@ -21,8 +21,10 @@ interface TooltipProps {
 }
 
 const SHOW_DELAY_MS = 700
+const WARM_HANDOFF_MS = 300
 const VIEWPORT_PADDING_PX = 8
 const TRIGGER_GAP_PX = 8
+let lastTooltipDismissedAt = Number.NEGATIVE_INFINITY
 
 export function Tooltip({
   label,
@@ -37,6 +39,7 @@ export function Tooltip({
   const showTimerRef = useRef<number | null>(null)
   const triggerRef = useRef<HTMLSpanElement>(null)
   const tooltipRef = useRef<HTMLSpanElement>(null)
+  const visibleRef = useRef(false)
 
   const clearShowTimer = useCallback(() => {
     if (showTimerRef.current !== null) {
@@ -47,14 +50,18 @@ export function Tooltip({
 
   const scheduleShow = () => {
     clearShowTimer()
+    const delay = Date.now() - lastTooltipDismissedAt <= WARM_HANDOFF_MS ? 0 : SHOW_DELAY_MS
     showTimerRef.current = window.setTimeout(() => {
+      visibleRef.current = true
       setVisible(true)
       showTimerRef.current = null
-    }, SHOW_DELAY_MS)
+    }, delay)
   }
 
   const hide = useCallback(() => {
     clearShowTimer()
+    if (visibleRef.current) lastTooltipDismissedAt = Date.now()
+    visibleRef.current = false
     setVisible(false)
   }, [clearShowTimer])
 
@@ -132,7 +139,7 @@ export function Tooltip({
               data-testid={testId}
               style={position}
               className={cn(
-                'pointer-events-none fixed z-system-popover max-w-[20rem] whitespace-nowrap rounded-lg border border-border/70 bg-popover/95 px-2 py-1 text-sm leading-5 text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-md',
+                'pointer-events-none fixed z-system-popover max-w-[20rem] whitespace-normal break-words rounded-lg border border-border/70 bg-popover/95 px-2 py-1 text-sm leading-5 text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.18)] backdrop-blur-md',
                 position ? 'opacity-100' : 'opacity-0'
               )}
             >

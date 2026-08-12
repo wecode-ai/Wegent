@@ -3,12 +3,14 @@ import { Download, File, Folder, FolderPlus, Pencil, Trash2, Upload } from 'luci
 import type { CloudProject, CloudProjectFile, ProjectDeliveryFile } from '@/api/deliveries'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { track } from '@/telemetry/client'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
 export function CloudFilesView({ api, project }: { api: DeliveryApi; project: CloudProject }) {
+  const { t } = useTranslation('common')
   const [files, setFiles] = useState<CloudProjectFile[]>([])
   const [deliveryFiles, setDeliveryFiles] = useState<ProjectDeliveryFile[]>([])
   const [folderName, setFolderName] = useState('')
@@ -239,7 +241,11 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
                   {entry.kind === 'file' ? `${entry.size_bytes} B` : '—'}
                 </span>
                 <span className="flex justify-end gap-1 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
-                  <Tooltip label={`重命名或移动 ${entry.path}`}>
+                  <Tooltip
+                    label={t('todo.rename_or_move_file', '重命名或移动 {{path}}', {
+                      path: entry.path,
+                    })}
+                  >
                     <button
                       type="button"
                       data-testid={`cloud-file-rename-${entry.id}`}
@@ -248,31 +254,42 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
                         setEditingPath(entry.path)
                       }}
                       className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted"
-                      aria-label={`重命名或移动 ${entry.path}`}
+                      aria-label={t('todo.rename_or_move_file', '重命名或移动 {{path}}', {
+                        path: entry.path,
+                      })}
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                   </Tooltip>
                   {entry.kind === 'file' && (
-                    <Tooltip label={`打开 ${entry.path}`}>
+                    <Tooltip
+                      label={t('todo.open_file_path', '打开 {{path}}', { path: entry.path })}
+                    >
                       <button
                         type="button"
                         data-testid={`cloud-file-open-${entry.id}`}
                         onClick={() => void openFile(entry)}
                         className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                        aria-label={`打开 ${entry.path}`}
+                        aria-label={t('todo.open_file_path', '打开 {{path}}', {
+                          path: entry.path,
+                        })}
                       >
                         <Download className="h-3.5 w-3.5" />
                       </button>
                     </Tooltip>
                   )}
-                  <Tooltip label={`删除 ${entry.path}`} align="end">
+                  <Tooltip
+                    label={t('todo.delete_file_path', '删除 {{path}}', { path: entry.path })}
+                    align="end"
+                  >
                     <button
                       type="button"
                       data-testid={`cloud-file-delete-${entry.id}`}
                       onClick={() => void deleteFile(entry)}
                       className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-destructive"
-                      aria-label={`删除 ${entry.path}`}
+                      aria-label={t('todo.delete_file_path', '删除 {{path}}', {
+                        path: entry.path,
+                      })}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -328,13 +345,20 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
                   <span className="truncate text-text-muted">{entry.content_type || '文件'}</span>
                   <span className="text-text-muted">{entry.delivered_at.slice(0, 10)}</span>
                   <span className="text-text-muted">{entry.size_bytes} B</span>
-                  <Tooltip label={`打开交付文件 ${entry.relative_path}`} align="end">
+                  <Tooltip
+                    label={t('todo.open_delivery_file', '打开交付文件 {{path}}', {
+                      path: entry.relative_path,
+                    })}
+                    align="end"
+                  >
                     <button
                       type="button"
                       data-testid={`delivery-file-open-${entry.asset_id}`}
                       onClick={() => void openDeliveryFile(entry)}
                       className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted"
-                      aria-label={`打开交付文件 ${entry.relative_path}`}
+                      aria-label={t('todo.open_delivery_file', '打开交付文件 {{path}}', {
+                        path: entry.relative_path,
+                      })}
                     >
                       <Download className="h-3.5 w-3.5" />
                     </button>

@@ -2095,17 +2095,17 @@ export function CloudTodoWorkspace({
                 ) : null}
                 {projectView === 'board' && (
                   <>
-                    <Tooltip label="搜索任务" side="bottom" align="end">
+                    <Tooltip label={t('todo.search_tasks', '搜索任务')} side="bottom" align="end">
                       <button
                         ref={projectHeaderSearchRef}
                         type="button"
                         data-testid="cloud-project-task-search-toggle"
-                        aria-label="搜索任务"
+                        aria-label={t('todo.search_tasks', '搜索任务')}
                         onClick={() => setProjectSearchOpen(current => !current)}
                         className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
                       >
                         <Search className="h-3.5 w-3.5" />
-                        {projectHeaderLevel < 1 ? '搜索任务' : null}
+                        {projectHeaderLevel < 1 ? t('todo.search_tasks', '搜索任务') : null}
                       </button>
                     </Tooltip>
                     {projectSearchOpen && (
@@ -2125,19 +2125,19 @@ export function CloudTodoWorkspace({
                       />
                     )}
                     {canCreateBoardTask && (
-                      <Tooltip label="新建任务" side="bottom" align="end">
+                      <Tooltip label={t('todo.new_task', '新建任务')} side="bottom" align="end">
                         <button
                           ref={projectHeaderAddRef}
                           type="button"
                           data-testid="cloud-todo-add"
-                          aria-label="新建任务"
+                          aria-label={t('todo.new_task', '新建任务')}
                           onClick={() =>
                             openTodoCreation(projectView === 'board' ? boardParent : null)
                           }
                           className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
-                          {projectHeaderLevel < 1 ? '新建任务' : null}
+                          {projectHeaderLevel < 1 ? t('todo.new_task', '新建任务') : null}
                         </button>
                       </Tooltip>
                     )}
@@ -2417,7 +2417,11 @@ export function CloudTodoWorkspace({
                                     !isAITableProject &&
                                     nativeGroupBy === 'status' && (
                                       <Tooltip
-                                        label={`在${column.label}中新建任务`}
+                                        label={t(
+                                          'todo.new_task_in_column',
+                                          '在{{column}}中新建任务',
+                                          { column: column.label }
+                                        )}
                                         side="bottom"
                                         align="end"
                                       >
@@ -2428,7 +2432,11 @@ export function CloudTodoWorkspace({
                                             openTodoCreation(boardParent, column.status)
                                           }
                                           className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                          aria-label={`在${column.label}中新建任务`}
+                                          aria-label={t(
+                                            'todo.new_task_in_column',
+                                            '在{{column}}中新建任务',
+                                            { column: column.label }
+                                          )}
                                         >
                                           <Plus className="h-3.5 w-3.5" />
                                         </button>
