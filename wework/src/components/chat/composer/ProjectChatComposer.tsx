@@ -71,7 +71,7 @@ interface ProjectChatComposerProps {
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
   contextUsage?: RuntimeContextUsage
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -108,6 +108,8 @@ interface ProjectChatComposerProps {
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
   toolbarLeadingContext?: ReactNode
+  projectWorkBarTrailingContext?: ReactNode
+  modelSelectorOverride?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -178,6 +180,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       showWorkspaceMenu,
       inputLeadingContext,
       toolbarLeadingContext,
+      projectWorkBarTrailingContext,
+      modelSelectorOverride,
     },
     ref
   ) {
@@ -305,6 +309,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            trailingContext={projectWorkBarTrailingContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
             buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
           />
@@ -428,6 +433,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSelectModelAndOptions={onSelectModelAndOptions}
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
+            modelSelectorOverride={modelSelectorOverride}
             contextUsage={contextUsage}
             onFileSelect={onFileSelect}
             planModeActive={planModeActive}

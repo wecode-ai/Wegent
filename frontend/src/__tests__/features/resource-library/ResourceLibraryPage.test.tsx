@@ -234,6 +234,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.view_capabilities': '查看当前能力',
         'actions.add_capability': '从资源库添加',
         'actions.retry': '重试',
+        'external_skill_market.providers_load_failed': '技能市场加载失败',
         'fields.type': '类型',
         'fields.source': '来源',
         'fields.team_scope': '团队范围',
@@ -321,6 +322,25 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('external-skill-marketplace-partner')).toHaveAttribute(
       'data-namespace',
       'default'
+    )
+  })
+
+  it('shows and retries skill marketplace provider discovery errors', async () => {
+    const user = userEvent.setup()
+    mockedListSkillMarketProviders
+      .mockRejectedValueOnce(new Error('service unavailable'))
+      .mockResolvedValueOnce([{ key: 'community', name: 'Community Hub' }])
+    mockSearchParams = new URLSearchParams('type=skill')
+
+    render(<ResourceLibraryPage />)
+
+    expect(await screen.findByTestId('skill-marketplace-providers-error')).toHaveTextContent(
+      'service unavailable'
+    )
+    await user.click(screen.getByTestId('skill-marketplace-providers-retry'))
+
+    expect(await screen.findByTestId('marketplace-external-source-community')).toHaveTextContent(
+      'Community Hub'
     )
   })
 

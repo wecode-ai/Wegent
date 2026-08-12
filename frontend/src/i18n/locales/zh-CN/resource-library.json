@@ -28,6 +28,7 @@
     "mcp": "MCP 市场"
   },
   "mcp_market": {
+    "unknown_error": "MCP 市场发生未知错误",
     "sources": "MCP 来源",
     "search_placeholder": "搜索 MCP 名称、描述或标签",
     "open_market": "打开平台",
@@ -63,6 +64,7 @@
   "external_skill_market": {
     "title": "从 {{marketName}} 搜索",
     "description": "搜索并安装 {{marketName}} 中的技能",
+    "providers_load_failed": "技能市场加载失败",
     "search": "搜索",
     "open_market": "打开 {{marketName}}",
     "search_placeholder": "在 {{marketName}} 中搜索...",

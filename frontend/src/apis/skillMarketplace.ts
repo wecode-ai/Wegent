@@ -84,30 +84,28 @@ export interface SkillMarketProvider {
 
 export async function listSkillMarketProviders(): Promise<SkillMarketProvider[]> {
   const token = getToken()
-  if (!token) return []
+  if (!token) throw new Error('No authentication token')
 
-  try {
-    const response = await fetch(`${getApiUrl()}/skill-market/providers`, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-    })
-    if (!response.ok) return []
-
-    const data = (await response.json()) as {
-      providers?: Array<{ key?: string; name?: string; market_url?: string | null }>
-    }
-    return (data.providers ?? [])
-      .filter(provider => provider.key && provider.name)
-      .map(provider => ({
-        key: provider.key as string,
-        name: provider.name as string,
-        marketUrl: provider.market_url || undefined,
-      }))
-  } catch {
-    return []
+  const response = await fetch(`${getApiUrl()}/skill-market/providers`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: Failed to load skill market providers`)
   }
+
+  const data = (await response.json()) as {
+    providers?: Array<{ key?: string; name?: string; market_url?: string | null }>
+  }
+  return (data.providers ?? [])
+    .filter(provider => provider.key && provider.name)
+    .map(provider => ({
+      key: provider.key as string,
+      name: provider.name as string,
+      marketUrl: provider.market_url || undefined,
+    }))
 }
 
 /**

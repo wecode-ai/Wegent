@@ -90,6 +90,7 @@ describe('PluginPickerMenu', () => {
     expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
     expect(screen.getByTestId('composer-plugin-preview-icons')).toHaveClass('-space-x-1')
     expect(screen.getByTestId('composer-plugin-preview-icon-github')).toHaveClass(
+      'plugin-icon-slot',
       'h-6',
       'w-6',
       'rounded-full',

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -24,6 +24,7 @@ import {
   Search,
 } from 'lucide-react'
 import { mcpProviderApis, type MCPProvider, type MCPServer } from '@/apis/mcpProviders'
+import { matchesMcpServerKeyword } from '@/features/resource-library/mcpMarketplace'
 
 interface McpProviderBrowserProps {
   onImportServer: (server: MCPServer) => void
@@ -48,6 +49,9 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
   const [addedServers, setAddedServers] = useState<Set<string>>(new Set())
   const [showSettings, setShowSettings] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const serverRequestId = useRef(0)
+  const selectedProviderKey = useRef<string | null>(null)
+  selectedProviderKey.current = selectedProvider?.key ?? null
 
   const loadProviders = useCallback(async () => {
     try {
@@ -70,34 +74,46 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
     }
   }, [toast, t])
 
-  const syncServers = useCallback(async () => {
-    if (!selectedProvider) return
+  const syncServers = useCallback(
+    async (provider: MCPProvider) => {
+      const requestId = ++serverRequestId.current
 
-    try {
-      setSyncing(true)
-      const response = await mcpProviderApis.syncServers(selectedProvider.key)
-      if (response.success) {
-        setServers(response.servers)
-        if (response.servers.length === 0) {
+      try {
+        setSyncing(true)
+        const response = await mcpProviderApis.syncServers(provider.key)
+        const isCurrent =
+          requestId === serverRequestId.current && selectedProviderKey.current === provider.key
+        if (!isCurrent) return
+
+        if (response.success) {
+          setServers(response.servers)
+          if (response.servers.length === 0) {
+            toast({
+              title: t('mcpProviders.no_servers_found'),
+            })
+          }
+        } else {
           toast({
-            title: t('mcpProviders.no_servers_found'),
+            variant: 'destructive',
+            title: response.message || t('mcpProviders.errors.sync_failed'),
           })
         }
-      } else {
+      } catch (_error) {
+        if (requestId !== serverRequestId.current || selectedProviderKey.current !== provider.key) {
+          return
+        }
         toast({
           variant: 'destructive',
-          title: response.message || t('mcpProviders.errors.sync_failed'),
+          title: t('mcpProviders.errors.sync_failed'),
         })
+      } finally {
+        if (requestId === serverRequestId.current && selectedProviderKey.current === provider.key) {
+          setSyncing(false)
+        }
       }
-    } catch (_error) {
-      toast({
-        variant: 'destructive',
-        title: t('mcpProviders.errors.sync_failed'),
-      })
-    } finally {
-      setSyncing(false)
-    }
-  }, [selectedProvider, toast, t])
+    },
+    [toast, t]
+  )
 
   useEffect(() => {
     loadProviders()
@@ -112,8 +128,10 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
       setShowSettings(selectedProvider.requires_token && !selectedProvider.has_token)
       // Auto sync servers if provider doesn't require token or already has token
       if (!selectedProvider.requires_token || selectedProvider.has_token) {
-        syncServers()
+        void syncServers(selectedProvider)
       } else {
+        serverRequestId.current += 1
+        setSyncing(false)
         setServers([])
       }
     }
@@ -137,7 +155,7 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
       setShowSettings(false)
 
       // Auto sync servers after saving API key
-      await syncServers()
+      await syncServers(selectedProvider)
     } catch (_error) {
       toast({
         variant: 'destructive',
@@ -174,14 +192,7 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
   const hasServers = servers.length > 0
   const isLoadingServers = syncing && servers.length === 0
   const filteredServers = useMemo(() => {
-    const keyword = searchQuery.trim().toLocaleLowerCase()
-    if (!keyword) return servers
-
-    return servers.filter(server =>
-      [server.name, server.description, server.provider, ...(server.tags || [])]
-        .filter(Boolean)
-        .some(value => value?.toLocaleLowerCase().includes(keyword))
-    )
+    return servers.filter(server => matchesMcpServerKeyword(server, searchQuery))
   }, [searchQuery, servers])
 
   return (
@@ -193,7 +204,11 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
             {providers.map(provider => (
               <button
                 key={provider.key}
-                onClick={() => setSelectedProvider(provider)}
+                onClick={() => {
+                  serverRequestId.current += 1
+                  setSelectedProvider(provider)
+                }}
+                data-testid={`mcp-provider-option-${provider.key}`}
                 className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all duration-200 cursor-pointer ${
                   selectedProvider?.key === provider.key
                     ? 'bg-primary text-primary-foreground shadow-sm'
@@ -232,7 +247,7 @@ export function McpProviderBrowser({ onImportServer }: McpProviderBrowserProps) 
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => syncServers()}
+                  onClick={() => void syncServers(selectedProvider)}
                   disabled={
                     syncing || (selectedProvider.requires_token && !selectedProvider.has_token)
                   }

@@ -10,6 +10,8 @@ used by the frontend department auth section when adding org_department members.
 """
 
 import logging
+import re
+import unicodedata
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -18,12 +20,29 @@ from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from wecode.service.dept_visibility import filter_hidden_for_user
-from wecode.service.erp_client import erp_client
+from wecode.service.erp_client import DepartmentInfo, erp_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _MAX_QUERY_LEN = 100
+# Department names are NFKC-normalized before matching, so full-width
+# parentheses are converted to ASCII parentheses.
+_DEPARTMENT_MARKER_PATTERN = re.compile(r"\(([^()]*)\)")
+_OBSOLETE_DEPARTMENT_MARKERS = frozenset(
+    {"失效", "无效", "旧", "old", "待失效", "待撤销"}
+)
+
+
+def _is_obsolete_department(department: DepartmentInfo) -> bool:
+    """Return whether the displayed department name has an obsolete marker."""
+    display_name = department.name or department.label
+    if not display_name:
+        return False
+
+    normalized_name = unicodedata.normalize("NFKC", display_name).casefold()
+    markers = _DEPARTMENT_MARKER_PATTERN.findall(normalized_name)
+    return any(marker.strip() in _OBSOLETE_DEPARTMENT_MARKERS for marker in markers)
 
 
 @router.get("/search")
@@ -56,6 +75,7 @@ def search_departments(
             detail=f"Search query too long (max {_MAX_QUERY_LEN} chars)",
         )
     results = erp_client.search_departments(q)
+    results = [d for d in results if not _is_obsolete_department(d)]
     results = filter_hidden_for_user(current_user.user_name, results)
     # Drop departments with missing or empty ids to avoid React key-prop
     # warnings in the frontend dropdown that maps over this list.

@@ -14,12 +14,12 @@ from app.services.mcp_providers.core.http_client import (
 )
 
 
-def test_mcprouter_uses_current_api_key_url():
+def test_mcprouter_uses_current_api_key_url() -> None:
     assert MCPROUTER_CONFIG.api_key_url == "https://mcprouter.co/settings/keys"
 
 
 @pytest.mark.anyio
-async def test_fetch_all_servers_posts_mcprouter_pagination_body():
+async def test_fetch_all_servers_posts_mcprouter_pagination_body() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -54,7 +54,7 @@ async def test_fetch_all_servers_posts_mcprouter_pagination_body():
     assert requests[0].url.query == b""
 
 
-def test_check_response_accepts_mcprouter_zero_code():
+def test_check_response_accepts_mcprouter_zero_code() -> None:
     client = MCPProviderHTTPClient(MCPROUTER_CONFIG)
     response = httpx.Response(
         200,
@@ -64,7 +64,7 @@ def test_check_response_accepts_mcprouter_zero_code():
     assert client._check_response(response)["code"] == 0
 
 
-def test_check_response_rejects_mcprouter_nonzero_code():
+def test_check_response_rejects_mcprouter_nonzero_code() -> None:
     client = MCPProviderHTTPClient(MCPROUTER_CONFIG)
     response = httpx.Response(
         200,

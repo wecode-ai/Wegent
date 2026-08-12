@@ -27,6 +27,8 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
+    RuntimeIMNotificationPresenceResponse,
+    RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
     RuntimeSendResponse,
@@ -354,6 +356,26 @@ async def update_global_im_notification_endpoint(
     set_span_attribute("runtime.im_notifications.global.enabled", request.enabled)
     return await runtime_work_service.update_global_im_notification(
         db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.put(
+    "/im-notifications/presence",
+    response_model=RuntimeIMNotificationPresenceResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.im_notifications.presence.update", "runtime_work.api")
+async def update_im_notification_presence_endpoint(
+    request: RuntimeIMNotificationPresenceUpdateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Refresh one Wework client's foreground or away presence."""
+
+    set_span_attribute("user.id", current_user.id)
+    set_span_attribute("runtime.im_notifications.presence.away", request.away)
+    return await runtime_work_service.update_im_notification_presence(
         user_id=current_user.id,
         request=request,
     )

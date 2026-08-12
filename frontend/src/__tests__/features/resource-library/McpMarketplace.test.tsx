@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { mcpProviderApis, type MCPServer } from '@/apis/mcpProviders'
@@ -34,6 +34,14 @@ jest.mock('@/features/resource-library/components/McpTargetSelectorDialog', () =
 }))
 
 const mockedApis = mcpProviderApis as jest.Mocked<typeof mcpProviderApis>
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(promiseResolve => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
 
 describe('McpMarketplace', () => {
   beforeEach(() => {
@@ -133,6 +141,56 @@ describe('McpMarketplace', () => {
 
     expect(screen.getByTestId('mcp-target-selector')).toHaveTextContent('Content Search')
     expect(mockTargetServer?.id).toBe('@community/search')
+  })
+
+  it('ignores a stale response after switching providers', async () => {
+    const user = userEvent.setup()
+    const communityResponse = deferred<Awaited<ReturnType<typeof mcpProviderApis.syncServers>>>()
+    const partnerResponse = deferred<Awaited<ReturnType<typeof mcpProviderApis.syncServers>>>()
+    mockedApis.syncServers.mockImplementation(providerKey =>
+      providerKey === 'community' ? communityResponse.promise : partnerResponse.promise
+    )
+
+    render(<McpMarketplace />)
+
+    await user.click(await screen.findByTestId('mcp-marketplace-provider-partner'))
+    await act(async () => {
+      partnerResponse.resolve({
+        success: true,
+        message: 'ok',
+        servers: [
+          {
+            id: 'partner-server',
+            name: 'Partner Server',
+            description: '',
+            type: 'streamable-http',
+            is_active: true,
+            provider: 'Partner MCP',
+          },
+        ],
+      })
+    })
+    expect(await screen.findByTestId('mcp-marketplace-card-partner-server')).toBeInTheDocument()
+
+    await act(async () => {
+      communityResponse.resolve({
+        success: true,
+        message: 'ok',
+        servers: [
+          {
+            id: 'community-server',
+            name: 'Community Server',
+            description: '',
+            type: 'streamable-http',
+            is_active: true,
+            provider: 'Community MCP',
+          },
+        ],
+      })
+    })
+
+    expect(screen.getByTestId('mcp-marketplace-card-partner-server')).toBeInTheDocument()
+    expect(screen.queryByTestId('mcp-marketplace-card-community-server')).not.toBeInTheDocument()
   })
 
   it('guides users to configure a required API key before loading MCPs', async () => {

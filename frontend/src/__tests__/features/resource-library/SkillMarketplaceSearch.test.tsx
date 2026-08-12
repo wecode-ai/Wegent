@@ -111,8 +111,10 @@ describe('SkillMarketplaceSearch', () => {
       })
     )
 
-    await user.type(screen.getByPlaceholderText('Search Partner Skills'), 'summary')
-    await user.click(screen.getByRole('button', { name: 'Search' }))
+    expect(screen.getByTestId('skill-marketplace-search-input-partner')).toBeInTheDocument()
+    expect(screen.getByTestId('skill-marketplace-search-button-partner')).toBeInTheDocument()
+    await user.type(screen.getByTestId('skill-marketplace-search-input-partner'), 'summary')
+    await user.click(screen.getByTestId('skill-marketplace-search-button-partner'))
 
     expect(await screen.findByText('Summary')).toBeInTheDocument()
     expect(screen.getByTestId('skill-marketplace-grid')).toHaveClass(
@@ -147,5 +149,24 @@ describe('SkillMarketplaceSearch', () => {
       'engineering'
     )
     expect(onSkillsChange).toHaveBeenCalled()
+  })
+
+  it('uses provider-scoped test IDs for pagination controls', async () => {
+    mockedSearchSkills.mockResolvedValue({
+      total: 40,
+      page: 1,
+      pageSize: 20,
+      skills: [],
+    })
+
+    render(
+      <SkillMarketplaceSearch
+        provider={{ key: 'partner', name: 'Partner Skills' }}
+        namespace="engineering"
+      />
+    )
+
+    expect(await screen.findByTestId('skill-marketplace-previous-partner')).toBeInTheDocument()
+    expect(screen.getByTestId('skill-marketplace-next-partner')).toBeInTheDocument()
   })
 })

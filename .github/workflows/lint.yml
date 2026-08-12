@@ -159,6 +159,9 @@ jobs:
       - name: Test CI cache policy
         run: .github/scripts/test-ci-cache-policy.sh
 
+      - name: Test Wegent release policy
+        run: scripts/test-publish-image-release-policy.sh
+
       - name: Test repository policy workflow
         run: scripts/test-repository-policy-workflow.sh
 

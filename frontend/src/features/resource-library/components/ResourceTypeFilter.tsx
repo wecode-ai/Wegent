@@ -6,7 +6,7 @@
 
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ResourceLibraryTypeFilter } from '@/features/resource-library/types'
+import type { ResourceNavigationType } from '@/features/resource-library/types'
 
 type ResourceNavigationType = ResourceLibraryTypeFilter | 'mcp'
 

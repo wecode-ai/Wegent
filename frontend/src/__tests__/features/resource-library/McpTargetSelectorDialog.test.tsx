@@ -77,7 +77,7 @@ describe('McpTargetSelectorDialog', () => {
           name: 'research-agent',
           displayName: '研究智能体',
           description: '',
-          bots: [{ bot_id: 20, bot_prompt: '', bot: { name: '搜索机器人' } }],
+          bots: [{ bot_id: 20, bot_prompt: '' }],
           workflow: {},
           is_active: true,
           user_id: 1,
@@ -89,7 +89,7 @@ describe('McpTargetSelectorDialog', () => {
           name: 'image-agent',
           displayName: '图片智能体',
           description: '生成图片',
-          bots: [{ bot_id: 21, bot_prompt: '', bot: { name: '图片机器人' } }],
+          bots: [{ bot_id: 21, bot_prompt: '' }],
           workflow: {},
           is_active: true,
           user_id: 1,
@@ -189,7 +189,7 @@ describe('McpTargetSelectorDialog', () => {
       expect(mockedBotApis.updateBot).toHaveBeenCalledWith(20, {
         mcp_servers: {
           existing: { type: 'stdio', command: 'existing' },
-          _community_search: {
+          '%40community%2Fsearch': {
             type: 'http',
             url: 'https://example.test/mcp',
             headers: { Authorization: 'Bearer token' },
@@ -199,7 +199,7 @@ describe('McpTargetSelectorDialog', () => {
     )
     expect(mockedBotApis.updateBot).toHaveBeenCalledWith(21, {
       mcp_servers: {
-        _community_search: {
+        '%40community%2Fsearch': {
           type: 'streamable-http',
           url: 'https://example.test/mcp',
           headers: { Authorization: 'Bearer token' },
@@ -297,7 +297,7 @@ describe('McpTargetSelectorDialog', () => {
           name: 'dify-agent',
           displayName: 'Dify 智能体',
           description: '',
-          bots: [{ bot_id: 22, bot_prompt: '', bot: { name: 'Dify 机器人' } }],
+          bots: [{ bot_id: 22, bot_prompt: '' }],
           workflow: {},
           is_active: true,
           user_id: 1,

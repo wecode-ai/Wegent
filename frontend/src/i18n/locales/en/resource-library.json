@@ -28,6 +28,7 @@
     "mcp": "MCP Marketplace"
   },
   "mcp_market": {
+    "unknown_error": "Unknown MCP marketplace error",
     "sources": "MCP sources",
     "search_placeholder": "Search MCP names, descriptions, or tags",
     "open_market": "Open platform",
@@ -63,6 +64,7 @@
   "external_skill_market": {
     "title": "Search {{marketName}}",
     "description": "Search and install skills from {{marketName}}",
+    "providers_load_failed": "Failed to load skill marketplaces",
     "search": "Search",
     "open_market": "Open {{marketName}}",
     "search_placeholder": "Search {{marketName}}...",

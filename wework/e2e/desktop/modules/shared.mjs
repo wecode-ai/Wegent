@@ -236,6 +236,9 @@ const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
 const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLETE'
+const MULTIMODAL_VISION_PROMPT =
+  'WEWORK_DESKTOP_E2E_MULTIMODAL_VISION: inspect the attached verification image.'
+const MULTIMODAL_VISION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MULTIMODAL_VISION_COMPLETE'
 const LOCAL_VISION_SIDECAR_CASE = {
   source: 'local',
   mainOptionId: 'local-model:desktop-e2e-vision-main',
@@ -249,6 +252,12 @@ const CLOUD_VISION_SIDECAR_CASE = {
   mainLabel: 'Desktop E2E Cloud Vision Main',
   mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
   sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
+}
+const CLOUD_MULTIMODAL_VISION_CASE = {
+  source: 'cloud-multimodal',
+  mainOptionId: 'desktop-e2e-cloud-multimodal-vision',
+  mainLabel: 'Desktop E2E Cloud Multimodal Vision',
+  mainModelId: 'desktop-e2e-cloud-multimodal-vision-upstream',
 }
 const IMAGE_ARTIFACT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
@@ -413,8 +422,10 @@ const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
-const SIDE_CHAT_QUEUE_INITIAL = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL'
 const SIDE_CHAT_QUEUE_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_FOLLOW_UP'
+const SIDE_CHAT_GUIDANCE_INITIAL = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_GUIDANCE_INITIAL'
+const SIDE_CHAT_GUIDANCE_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_GUIDANCE_FOLLOW_UP'
+const SIDE_CHAT_GUIDANCE_COMPLETION = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_GUIDANCE_COMPLETE'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -447,6 +458,7 @@ const DROPPED_WORKSPACE_PATHS_ONLY = process.argv.includes('--dropped-workspace-
 const SYSTEM_DRAG_PANEL_ONLY = process.argv.includes('--system-drag-panel-only')
 const MODEL_SWITCH_ONLY = process.argv.includes('--model-switch-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
+const CLOUD_VISION_ONLY = process.argv.includes('--cloud-vision-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const AUTOMATION_ONLY = process.argv.includes('--automation-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -546,6 +558,7 @@ function getActiveOnlyModes() {
     ['--system-drag-panel-only', SYSTEM_DRAG_PANEL_ONLY],
     ['--model-switch-only', MODEL_SWITCH_ONLY],
     ['--cloud-only', CLOUD_ONLY],
+    ['--cloud-vision-only', CLOUD_VISION_ONLY],
     ['--plugins-only', PLUGINS_ONLY],
     ['--automation-only', AUTOMATION_ONLY],
     ['--memory-only', MEMORY_ONLY],
@@ -1495,8 +1508,11 @@ export {
   VISION_SIDECAR_PROMPT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_COMPLETION_TEXT,
+  MULTIMODAL_VISION_PROMPT,
+  MULTIMODAL_VISION_COMPLETION_TEXT,
   LOCAL_VISION_SIDECAR_CASE,
   CLOUD_VISION_SIDECAR_CASE,
+  CLOUD_MULTIMODAL_VISION_CASE,
   IMAGE_ARTIFACT_BASE64,
   GIT_SEED_NAME,
   GIT_SEED_CONTENT,
@@ -1570,8 +1586,10 @@ export {
   SIDE_CHAT_PROMPT,
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
-  SIDE_CHAT_QUEUE_INITIAL,
   SIDE_CHAT_QUEUE_FOLLOW_UP,
+  SIDE_CHAT_GUIDANCE_INITIAL,
+  SIDE_CHAT_GUIDANCE_FOLLOW_UP,
+  SIDE_CHAT_GUIDANCE_COMPLETION,
   CLOUD_TASK_PROMPT,
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
@@ -1601,6 +1619,7 @@ export {
   SYSTEM_DRAG_PANEL_ONLY,
   MODEL_SWITCH_ONLY,
   CLOUD_ONLY,
+  CLOUD_VISION_ONLY,
   PLUGINS_ONLY,
   AUTOMATION_ONLY,
   MEMORY_ONLY,

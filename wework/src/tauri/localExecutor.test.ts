@@ -192,7 +192,7 @@ describe('localExecutor', () => {
     await registration
   })
 
-  test('repairs a stale bundled marketplace using local-only discovery', async () => {
+  test('repairs a stale marketplace source even when discovery reports the requested path', async () => {
     const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-repaired'
     let addAttempts = 0
     invokeMock.mockImplementation(command => {
@@ -229,7 +229,7 @@ describe('localExecutor', () => {
         }
         if (request?.params?.method === 'plugin/list') {
           return Promise.resolve({
-            marketplaces: [{ name: 'wework-personal', path: '/Users/test/old-marketplace' }],
+            marketplaces: [{ name: 'wework-personal', path }],
           })
         }
         if (request?.params?.method === 'marketplace/remove') {

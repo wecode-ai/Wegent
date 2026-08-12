@@ -340,7 +340,7 @@ export function RemoteTerminal({
           terminal,
           terminalKind: 'remote',
         })
-        terminal.focus()
+        terminal.textarea?.focus({ preventScroll: true })
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
         return

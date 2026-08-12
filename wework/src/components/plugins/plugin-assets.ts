@@ -1,24 +1,14 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { ResolvedAppearanceMode } from '@/features/appearance/types'
 
-const PLUGIN_ICON_FALLBACKS: Record<string, string> = {
-  github: '/plugin-icons/github.svg',
-  gitlab: '/plugin-icons/gitlab.svg',
-  'weibo-api': '/plugin-icons/weibo.svg',
-  weibo: '/plugin-icons/weibo.svg',
-  review: '/plugin-icons/wework.svg',
-  'code-review': '/plugin-icons/wework.svg',
-  'product-design': '/plugin-icons/openai.svg',
-  analytics: '/plugin-icons/data-analytics.svg',
-  'data-analytics': '/plugin-icons/data-analytics.svg',
-  'plugin-creator': '/plugin-icons/openai.svg',
-  ding: '/plugin-icons/wework.svg',
-  'release-check': '/plugin-icons/wework.svg',
-}
+/** Neutral default when a plugin package does not ship a logo. */
+const NEUTRAL_PLUGIN_ICON = '/plugin-icons/wework.svg'
 
-/** Built-in fallback icons that need a light-on-dark variant. */
-const PLUGIN_ICON_DARK_FALLBACKS: Record<string, string> = {
-  '/plugin-icons/github.svg': '/plugin-icons/github-dark.svg',
+export type ResolvedPluginLogo = {
+  url: string
+  source: 'provided' | 'fallback'
+  /** Dark theme soft pad when the package has no logoDark and a light logo is shown. */
+  contrastPad: boolean
 }
 
 function isLocalAssetPath(value: string): boolean {
@@ -57,37 +47,6 @@ function isRenderablePluginLogoUrl(value: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(value)
 }
 
-function withDarkFallbackVariant(url: string, appearanceMode: ResolvedAppearanceMode): string {
-  if (appearanceMode !== 'dark') return url
-  return PLUGIN_ICON_DARK_FALLBACKS[url] ?? url
-}
-
-function fallbackPluginIconUrl(
-  pluginKey: string | null | undefined,
-  appearanceMode: ResolvedAppearanceMode
-): string {
-  const normalized = (pluginKey || '').trim().toLowerCase()
-  let url = '/plugin-icons/wework.svg'
-
-  if (normalized) {
-    if (PLUGIN_ICON_FALLBACKS[normalized]) {
-      url = PLUGIN_ICON_FALLBACKS[normalized]
-    } else if (normalized.includes('github')) {
-      url = '/plugin-icons/github.svg'
-    } else if (normalized.includes('gitlab')) {
-      url = '/plugin-icons/gitlab.svg'
-    } else if (normalized.includes('weibo')) {
-      url = '/plugin-icons/weibo.svg'
-    } else if (normalized.includes('analytics') || normalized.includes('data')) {
-      url = '/plugin-icons/data-analytics.svg'
-    } else if (normalized.includes('openai') || normalized.includes('design')) {
-      url = '/plugin-icons/openai.svg'
-    }
-  }
-
-  return withDarkFallbackVariant(url, appearanceMode)
-}
-
 function firstRenderableLogo(candidates: Array<string | null | undefined>): string {
   for (const candidate of candidates) {
     const resolved = resolvePluginAssetUrl(candidate)
@@ -120,24 +79,23 @@ export function resolvePluginLogo(options: {
   logoDark?: string | null
   composerIcon?: string | null
   appearanceMode?: ResolvedAppearanceMode
-}): {
-  url: string
-  source: 'provided' | 'fallback'
-} {
+}): ResolvedPluginLogo {
   const appearanceMode = options.appearanceMode ?? 'light'
-  const provided =
-    appearanceMode === 'dark'
-      ? firstRenderableLogo([options.logoDark, options.logo, options.composerIcon])
-      : firstRenderableLogo([options.logo, options.composerIcon])
+  const darkLogo = firstRenderableLogo([options.logoDark])
+  const lightLogo = firstRenderableLogo([options.logo, options.composerIcon])
 
-  if (provided) {
-    return {
-      url: provided,
-      source: 'provided',
+  if (appearanceMode === 'dark') {
+    if (darkLogo) {
+      return { url: darkLogo, source: 'provided', contrastPad: false }
     }
+    if (lightLogo) {
+      return { url: lightLogo, source: 'provided', contrastPad: true }
+    }
+    return { url: NEUTRAL_PLUGIN_ICON, source: 'fallback', contrastPad: false }
   }
-  return {
-    url: fallbackPluginIconUrl(options.pluginKey, appearanceMode),
-    source: 'fallback',
+
+  if (lightLogo) {
+    return { url: lightLogo, source: 'provided', contrastPad: false }
   }
+  return { url: NEUTRAL_PLUGIN_ICON, source: 'fallback', contrastPad: false }
 }

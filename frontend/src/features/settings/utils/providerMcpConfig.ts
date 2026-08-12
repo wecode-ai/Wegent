@@ -4,8 +4,12 @@
 
 import type { MCPServer } from '@/apis/mcpProviders'
 
+export function encodeProviderMcpServerKey(serverId: string): string {
+  return encodeURIComponent(serverId)
+}
+
 export function buildProviderMcpConfig(server: MCPServer): Record<string, unknown> {
-  const serverKey = server.id.replace(/[@/]/g, '_')
+  const serverKey = encodeProviderMcpServerKey(server.id)
   const serverConfig: Record<string, unknown> = {
     type: server.type === 'streamableHttp' ? 'streamable-http' : server.type,
   }

@@ -84,9 +84,9 @@ describe('ResourceIcon', () => {
   })
 
   it('handles a null marketplace tag list from provider APIs', () => {
-    render(<ResourceIcon resourceType="mcp" name="内部搜索" marketplaceTags={null} />)
+    render(<ResourceIcon resourceType="mcp" name="知识检索" marketplaceTags={null} />)
 
     expect(screen.getByTestId('resource-icon')).toHaveAttribute('data-icon-source', 'initial')
-    expect(screen.getByTestId('resource-icon')).toHaveTextContent('内')
+    expect(screen.getByTestId('resource-icon')).toHaveTextContent('知')
   })
 })

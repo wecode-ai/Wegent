@@ -58,6 +58,32 @@ const mergedDefaultPreferences = {
       mode: 'goal',
     },
   ],
+  localHarnesses: [
+    {
+      id: 'opencode',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
+    },
+    {
+      id: 'claude_code',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
+    },
+    {
+      id: 'kimi_code',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
+    },
+  ],
 }
 
 describe('appPreferences', () => {

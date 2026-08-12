@@ -57,6 +57,49 @@ describe('skillMarketplace API', () => {
     })
   })
 
+  it('propagates provider discovery failures', async () => {
+    mockedFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+      })
+      .mockRejectedValueOnce(new Error('network unavailable'))
+
+    await expect(listSkillMarketProviders()).rejects.toThrow(
+      'HTTP 503: Failed to load skill market providers'
+    )
+    await expect(listSkillMarketProviders()).rejects.toThrow('network unavailable')
+  })
+
+  it('normalizes nullable provider tags before returning skills', async () => {
+    mockedFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        total: 1,
+        page: 1,
+        pageSize: 20,
+        skills: [
+          {
+            skillKey: 'partner/summary',
+            name: 'Summary',
+            tags: null,
+          },
+        ],
+      }),
+    })
+
+    await expect(
+      searchSkills('partner', {
+        page: 1,
+        pageSize: 20,
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({
+        skills: [expect.objectContaining({ tags: [] })],
+      })
+    )
+  })
+
   it('routes search and download requests by provider key', async () => {
     const skillBlob = new Blob(['skill'])
     mockedFetch

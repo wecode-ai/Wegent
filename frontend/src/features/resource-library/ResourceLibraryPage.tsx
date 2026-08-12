@@ -52,7 +52,7 @@ import { PublishedResources } from './components/PublishedResources'
 import type { ResourceCreateRequest } from './components/ResourceCreateButton'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import { SkillMarketplaceSearch } from './components/SkillMarketplaceSearch'
-import type { ManagedResourceType } from './types'
+import type { ManagedResourceType, ResourceNavigationType } from './types'
 import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
 import {
@@ -60,9 +60,9 @@ import {
   type ResourceListState,
 } from '@/features/settings/components/SkillListWithScope'
 
-type ResourceNavigationType = ManagedResourceType | 'mcp'
+type ActiveResourceNavigationType = Exclude<ResourceNavigationType, 'all'>
 
-const discoverTypes: ResourceNavigationType[] = ['agent', 'skill', 'mcp']
+const discoverTypes: ActiveResourceNavigationType[] = ['agent', 'skill', 'mcp']
 const mineTypes: ManagedResourceType[] = ['agent', 'skill', 'model', 'shell', 'retriever']
 const coreCreateTypes: Array<{ type: ManagedResourceType; icon: typeof Bot }> = [
   { type: 'agent', icon: Bot },
@@ -160,6 +160,7 @@ function TeamSkillResources({
 
 export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
+  const skillMarketProvidersLoadFailedLabel = t('external_skill_market.providers_load_failed')
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -169,8 +170,8 @@ export function ResourceLibraryPage() {
   const isPublishedView = tabParam === 'published'
   const isMineView = tabParam === 'mine' || isLegacyTeamView || isPublishedView
   const availableTypes = isMineView ? mineTypes : discoverTypes
-  const resourceType = availableTypes.includes(typeParam as ResourceNavigationType)
-    ? (typeParam as ResourceNavigationType)
+  const resourceType = availableTypes.includes(typeParam as ActiveResourceNavigationType)
+    ? (typeParam as ActiveResourceNavigationType)
     : 'agent'
   const managedResourceType: ManagedResourceType = resourceType === 'mcp' ? 'agent' : resourceType
   const sourceParam = searchParams.get('source')
@@ -221,6 +222,7 @@ export function ResourceLibraryPage() {
   const [publishedRevision, setPublishedRevision] = useState(0)
   const [isAdvancedCreateOpen, setIsAdvancedCreateOpen] = useState(false)
   const [skillMarketProviders, setSkillMarketProviders] = useState<SkillMarketProvider[]>([])
+  const [skillMarketProvidersError, setSkillMarketProvidersError] = useState('')
   const [activeSkillMarketProviderKey, setActiveSkillMarketProviderKey] = useState<string | null>(
     null
   )
@@ -276,23 +278,40 @@ export function ResourceLibraryPage() {
   useEffect(() => {
     if (isMineView || resourceType !== 'skill') {
       setSkillMarketProviders([])
+      setSkillMarketProvidersError('')
       setActiveSkillMarketProviderKey(null)
       return
     }
 
     let isMounted = true
+    setSkillMarketProvidersError('')
     listSkillMarketProviders()
       .then(providers => {
-        if (isMounted) setSkillMarketProviders(providers)
+        if (!isMounted) return
+        setSkillMarketProviders(providers)
       })
-      .catch(() => {
-        if (isMounted) setSkillMarketProviders([])
+      .catch(loadError => {
+        if (!isMounted) return
+        setSkillMarketProvidersError(
+          loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
+        )
       })
 
     return () => {
       isMounted = false
     }
-  }, [isMineView, resourceType])
+  }, [isMineView, resourceType, skillMarketProvidersLoadFailedLabel])
+
+  const retrySkillMarketProviders = () => {
+    setSkillMarketProvidersError('')
+    listSkillMarketProviders()
+      .then(setSkillMarketProviders)
+      .catch(loadError => {
+        setSkillMarketProvidersError(
+          loadError instanceof Error ? loadError.message : skillMarketProvidersLoadFailedLabel
+        )
+      })
+  }
 
   const handleNewCapabilityType = (type: ManagedResourceType) => {
     createRequestId.current += 1
@@ -402,6 +421,27 @@ export function ResourceLibraryPage() {
       return (
         <>
           {resourceType === 'agent' && <FeaturedScenarios />}
+          {resourceType === 'skill' && skillMarketProvidersError && (
+            <div
+              className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3"
+              role="alert"
+              data-testid="skill-marketplace-providers-error"
+            >
+              <p className="min-w-0 text-sm text-destructive">
+                {skillMarketProvidersLoadFailedLabel}: {skillMarketProvidersError}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 shrink-0"
+                onClick={retrySkillMarketProviders}
+                data-testid="skill-marketplace-providers-retry"
+              >
+                <RefreshCw className="h-4 w-4" aria-hidden />
+                {t('actions.retry')}
+              </Button>
+            </div>
+          )}
           <DiscoverResources
             resourceType={resourceType}
             systemOnly

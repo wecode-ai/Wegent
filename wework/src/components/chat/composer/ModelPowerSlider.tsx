@@ -4,6 +4,7 @@ import {
   type ModelControlConfig,
   getControlsForModel,
   getModelDisplayLabel,
+  isSameModelSelection,
   normalizeModelOptionValue,
 } from '@/lib/model-ui'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
@@ -67,9 +68,7 @@ export function ModelPowerSlider({
       const setting = powerSettings.find(candidate => candidate.id === settingId)
       if (!setting) return
 
-      const sameModel =
-        setting.model.name === selectedModel?.name && setting.model.type === selectedModel?.type
-      if (sameModel) {
+      if (isSameModelSelection(setting.model, selectedModel)) {
         onSelectModelOption('reasoning', setting.reasoningEffort)
         return
       }

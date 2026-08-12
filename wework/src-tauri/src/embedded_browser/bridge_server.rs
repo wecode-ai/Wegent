@@ -64,12 +64,17 @@ fn bridge_runtime_path(executor_home: &Path) -> PathBuf {
         .join(BRIDGE_RUNTIME_FILE)
 }
 
+pub(crate) fn embedded_browser_bridge_runtime_path() -> Result<PathBuf, String> {
+    Ok(bridge_runtime_path(
+        &crate::local_executor::local_executor_home_path()?,
+    ))
+}
+
 fn write_bridge_runtime_record(
-    executor_home: &Path,
+    path: &Path,
     address: SocketAddr,
     token: &str,
 ) -> Result<PathBuf, String> {
-    let path = bridge_runtime_path(executor_home);
     let directory = path
         .parent()
         .ok_or_else(|| "Embedded browser bridge runtime path has no parent".to_string())?;
@@ -99,7 +104,7 @@ fn write_bridge_runtime_record(
         .and_then(|_| file.sync_all())
         .map_err(|error| format!("Failed to write embedded browser bridge runtime: {error}"))?;
     replace_runtime_file(&temporary, &path)?;
-    Ok(path)
+    Ok(path.to_path_buf())
 }
 
 fn replace_runtime_file(temporary: &Path, destination: &Path) -> Result<(), String> {
@@ -367,11 +372,8 @@ pub(crate) fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(),
         .local_addr()
         .map_err(|error| format!("Failed to read embedded browser bridge address: {error}"))?;
     let bridge_token = generate_bridge_token()?;
-    write_bridge_runtime_record(
-        &crate::local_executor::local_executor_home_path()?,
-        listening_addr,
-        &bridge_token,
-    )?;
+    let runtime_path = embedded_browser_bridge_runtime_path()?;
+    write_bridge_runtime_record(&runtime_path, listening_addr, &bridge_token)?;
     env::set_var(EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, listening_addr.to_string());
     env::set_var(EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, bridge_token);
     let state = app.state::<EmbeddedBrowserState>().inner().clone();

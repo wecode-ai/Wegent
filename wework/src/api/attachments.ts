@@ -4,6 +4,16 @@ import { createHttpClient, shouldUseTauriFetch } from './http'
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 
+export interface AttachmentApi {
+  uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
+  deleteAttachment: (attachmentId: number) => Promise<void>
+}
+
+interface CreateAttachmentApiOptions {
+  apiBaseUrl?: string
+  getToken?: () => string | null
+}
+
 type UploadAttachmentResponse = Omit<Attachment, 'created_at' | 'file_extension' | 'subtask_id'> &
   Partial<Pick<Attachment, 'created_at' | 'file_extension' | 'subtask_id'>>
 
@@ -47,69 +57,83 @@ function toAttachmentResponse(response: UploadAttachmentResponse, file: File): A
   }
 }
 
+export function createAttachmentApi(options: CreateAttachmentApiOptions = {}): AttachmentApi {
+  const apiBaseUrl = options.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl
+  const getToken = options.getToken ?? (() => localStorage.getItem('auth_token'))
+
+  return {
+    uploadAttachment(file, onProgress) {
+      if (!isValidFileSize(file.size)) {
+        return Promise.reject(new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`))
+      }
+
+      const formData = new FormData()
+      formData.append('file', file)
+
+      if (shouldUseTauriFetch()) {
+        onProgress?.(0)
+        const client = createHttpClient({ baseUrl: apiBaseUrl, getToken })
+        return client
+          .post<UploadAttachmentResponse>('/attachments/upload', formData)
+          .then(response => {
+            onProgress?.(100)
+            return toAttachmentResponse(response, file)
+          })
+      }
+
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+
+        xhr.upload.addEventListener('progress', event => {
+          if (event.lengthComputable && onProgress) {
+            onProgress(Math.round((event.loaded / event.total) * 100))
+          }
+        })
+
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const response = JSON.parse(xhr.responseText)
+              resolve(toAttachmentResponse(response, file))
+            } catch {
+              reject(new Error('Failed to parse upload response'))
+            }
+            return
+          }
+
+          try {
+            const error = JSON.parse(xhr.responseText)
+            reject(new Error(error.detail || 'Upload failed'))
+          } catch {
+            reject(new Error(`Upload failed: ${xhr.status}`))
+          }
+        })
+
+        xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
+        xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')))
+
+        xhr.open('POST', `${apiBaseUrl}/attachments/upload`)
+        const token = getToken()
+        if (token) {
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+        }
+        xhr.send(formData)
+      })
+    },
+    async deleteAttachment(attachmentId) {
+      const client = createHttpClient({ baseUrl: apiBaseUrl, getToken })
+      await client.delete(`/attachments/${attachmentId}`)
+    },
+  }
+}
+
 export function uploadAttachment(
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<Attachment> {
-  if (!isValidFileSize(file.size)) {
-    return Promise.reject(new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`))
-  }
-
-  const { apiBaseUrl } = getRuntimeConfig()
-  const token = localStorage.getItem('auth_token')
-  const formData = new FormData()
-  formData.append('file', file)
-
-  if (shouldUseTauriFetch()) {
-    onProgress?.(0)
-    const client = createHttpClient({ baseUrl: apiBaseUrl })
-    return client.post<UploadAttachmentResponse>('/attachments/upload', formData).then(response => {
-      onProgress?.(100)
-      return toAttachmentResponse(response, file)
-    })
-  }
-
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-
-    xhr.upload.addEventListener('progress', event => {
-      if (event.lengthComputable && onProgress) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
-      }
-    })
-
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const response = JSON.parse(xhr.responseText)
-          resolve(toAttachmentResponse(response, file))
-        } catch {
-          reject(new Error('Failed to parse upload response'))
-        }
-        return
-      }
-
-      try {
-        const error = JSON.parse(xhr.responseText)
-        reject(new Error(error.detail || 'Upload failed'))
-      } catch {
-        reject(new Error(`Upload failed: ${xhr.status}`))
-      }
-    })
-
-    xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
-    xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')))
-
-    xhr.open('POST', `${apiBaseUrl}/attachments/upload`)
-    if (token) {
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-    }
-    xhr.send(formData)
-  })
+  return createAttachmentApi().uploadAttachment(file, onProgress)
 }
 
-export async function deleteAttachment(attachmentId: number): Promise<void> {
-  const { apiBaseUrl } = getRuntimeConfig()
-  const client = createHttpClient({ baseUrl: apiBaseUrl })
-  await client.delete(`/attachments/${attachmentId}`)
+export function deleteAttachment(attachmentId: number): Promise<void> {
+  return createAttachmentApi().deleteAttachment(attachmentId)
 }

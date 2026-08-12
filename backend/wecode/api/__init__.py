@@ -68,6 +68,7 @@ from wecode.api.admin_published_apps import router as admin_published_apps_route
 from wecode.api.agent_usage import router as agent_usage_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
+from wecode.api.cloud_device_ip_index import router as cloud_device_ip_index_router
 from wecode.api.cloud_devices import router as cloud_devices_router
 from wecode.api.department_search import router as department_search_router
 from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
@@ -191,6 +192,11 @@ api_router.include_router(
 api_router.include_router(
     ip_user_lookup_router,
     prefix="/internal/admin/users",
+    tags=["internal-admin"],
+)
+api_router.include_router(
+    cloud_device_ip_index_router,
+    prefix="/internal/admin/cloud-device-ip-index",
     tags=["internal-admin"],
 )
 api_router.include_router(

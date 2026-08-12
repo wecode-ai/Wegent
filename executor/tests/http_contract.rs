@@ -4,6 +4,7 @@
 
 use std::{
     fs,
+    io::{Cursor, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -64,6 +65,102 @@ async fn health_check_matches_executor_readiness_contract() {
         body,
         json!({"status": "healthy", "service": "task_executor"})
     );
+}
+
+#[tokio::test]
+async fn sandbox_skill_sync_installs_required_abtest_script_before_success() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("sandbox-skill-sync-home");
+    let archive = abtest_skill_zip();
+    let backend_url = spawn_skill_server(archive, StatusCode::OK).await;
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let payload = json!({
+        "task_id": 37520834448496_i64,
+        "subtask_id": 1,
+        "type": "sandbox",
+        "auth_token": "task-jwt",
+        "team_namespace": "default",
+        "bot": [{
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"],
+            "skill_refs": {
+                "abtest-file-analyzer": {
+                    "skill_id": 237510,
+                    "namespace": "default"
+                }
+            }
+        }],
+        "skill_names": ["abtest-file-analyzer"],
+        "required_skills": ["abtest-file-analyzer"]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/skills/sync")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(home
+        .join(".claude/skills/abtest-file-analyzer/scripts/abtest_cli.py")
+        .is_file());
+}
+
+#[tokio::test]
+async fn sandbox_skill_sync_rejects_missing_required_skill() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("sandbox-skill-sync-failure-home");
+    let backend_url = spawn_skill_server(Vec::new(), StatusCode::NOT_FOUND).await;
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let payload = json!({
+        "task_id": 37520834448496_i64,
+        "subtask_id": 1,
+        "type": "sandbox",
+        "auth_token": "task-jwt",
+        "bot": [{
+            "shell_type": "ClaudeCode",
+            "skills": ["abtest-file-analyzer"],
+            "skill_refs": {
+                "abtest-file-analyzer": {
+                    "skill_id": 237510,
+                    "namespace": "default"
+                }
+            }
+        }],
+        "required_skills": ["abtest-file-analyzer"]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/skills/sync")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert!(body["detail"]
+        .as_str()
+        .unwrap()
+        .contains("required Skill deployment failed: abtest-file-analyzer"));
 }
 
 #[tokio::test]
@@ -766,6 +863,37 @@ async fn spawn_storage_server(archive: Arc<Mutex<Vec<u8>>>) -> String {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{addr}")
+}
+
+async fn spawn_skill_server(archive: Vec<u8>, status: StatusCode) -> String {
+    let app = Router::new().route(
+        "/api/v1/kinds/skills/237510/download",
+        get(move || {
+            let archive = archive.clone();
+            async move { (status, [(header::CONTENT_TYPE, "application/zip")], archive) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+fn abtest_skill_zip() -> Vec<u8> {
+    let cursor = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    let options = zip::write::FileOptions::default();
+    writer
+        .start_file("abtest-file-analyzer/SKILL.md", options)
+        .unwrap();
+    writer.write_all(b"# ABTest file analyzer\n").unwrap();
+    writer
+        .start_file("abtest-file-analyzer/scripts/abtest_cli.py", options)
+        .unwrap();
+    writer.write_all(b"print('ready')\n").unwrap();
+    writer.finish().unwrap().into_inner()
 }
 
 fn connect_envelope(flags: u8, data: &[u8]) -> Vec<u8> {

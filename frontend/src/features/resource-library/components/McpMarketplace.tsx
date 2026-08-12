@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ExternalLink, KeyRound, Loader2, Package, Search } from 'lucide-react'
 
 import { mcpProviderApis, type MCPProvider, type MCPServer } from '@/apis/mcpProviders'
@@ -12,17 +12,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useTranslation } from '@/hooks/useTranslation'
+import { matchesMcpServerKeyword } from '../mcpMarketplace'
 import { McpMarketplaceCard } from './McpMarketplaceCard'
 import { McpTargetSelectorDialog } from './McpTargetSelectorDialog'
-
-function matchesKeyword(server: MCPServer, keyword: string): boolean {
-  const normalizedKeyword = keyword.trim().toLocaleLowerCase()
-  if (!normalizedKeyword) return true
-
-  return [server.name, server.description, server.provider, ...(server.tags || [])]
-    .filter(Boolean)
-    .some(value => value?.toLocaleLowerCase().includes(normalizedKeyword))
-}
 
 export function McpMarketplace() {
   const { t } = useTranslation('resource-library')
@@ -36,23 +28,27 @@ export function McpMarketplace() {
   const [apiKeyError, setApiKeyError] = useState('')
   const [savingApiKey, setSavingApiKey] = useState(false)
   const [selectedServer, setSelectedServer] = useState<MCPServer | null>(null)
+  const serverRequestId = useRef(0)
 
   const loadServers = useCallback(
     async (providerKey: string) => {
+      const requestId = ++serverRequestId.current
       setLoading(true)
       setError('')
       setServers([])
 
       try {
         const response = await mcpProviderApis.syncServers(providerKey)
+        if (requestId !== serverRequestId.current) return
         if (!response.success) throw new Error(response.message)
         setServers(response.servers.filter(server => server.is_active))
       } catch (loadError) {
+        if (requestId !== serverRequestId.current) return
         const message =
           loadError instanceof Error ? loadError.message : t('mcp_market.unknown_error')
         setError(message)
       } finally {
-        setLoading(false)
+        if (requestId === serverRequestId.current) setLoading(false)
       }
     },
     [t]
@@ -91,6 +87,7 @@ export function McpMarketplace() {
     setApiKey('')
     setApiKeyError('')
     if (provider.requires_token && !provider.has_token) {
+      serverRequestId.current += 1
       setServers([])
       setLoading(false)
       setError('')
@@ -101,7 +98,7 @@ export function McpMarketplace() {
   }, [activeProviderKey, loadServers, providers])
 
   const filteredServers = useMemo(
-    () => servers.filter(server => matchesKeyword(server, keyword)),
+    () => servers.filter(server => matchesMcpServerKeyword(server, keyword)),
     [keyword, servers]
   )
   const activeProvider = providers.find(provider => provider.key === activeProviderKey)
@@ -151,6 +148,7 @@ export function McpMarketplace() {
               role="tab"
               aria-selected={provider.key === activeProviderKey}
               onClick={() => {
+                serverRequestId.current += 1
                 setKeyword('')
                 setActiveProviderKey(provider.key)
               }}

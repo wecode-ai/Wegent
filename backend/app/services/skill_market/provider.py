@@ -152,7 +152,7 @@ class SkillMarketProviderRegistry:
     Manages registered skill market providers by stable provider key.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._providers: Dict[str, ISkillMarketProvider] = {}
 
     def register(self, provider: ISkillMarketProvider) -> None:

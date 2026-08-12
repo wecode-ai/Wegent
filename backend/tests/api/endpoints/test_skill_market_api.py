@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Optional, cast
 
@@ -69,7 +70,7 @@ class StubSkillMarketProvider(ISkillMarketProvider):
 
 
 @pytest.fixture(autouse=True)
-def clear_skill_market_registry():
+def clear_skill_market_registry() -> Iterator[None]:
     skill_market_registry.clear()
     yield
     skill_market_registry.clear()

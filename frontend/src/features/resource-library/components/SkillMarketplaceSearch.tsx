@@ -188,6 +188,7 @@ export function SkillMarketplaceSearch({
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
           <Input
+            data-testid={`skill-marketplace-search-input-${provider.key}`}
             placeholder={t('external_skill_market.search_placeholder', {
               marketName: provider.name,
             })}
@@ -198,6 +199,7 @@ export function SkillMarketplaceSearch({
           />
         </div>
         <Button
+          data-testid={`skill-marketplace-search-button-${provider.key}`}
           variant="primary"
           className="h-11 min-w-[44px] px-4 sm:h-10"
           onClick={() => handleSearch(1)}
@@ -277,6 +279,7 @@ export function SkillMarketplaceSearch({
           data-testid="skill-marketplace-pagination"
         >
           <Button
+            data-testid={`skill-marketplace-previous-${provider.key}`}
             variant="outline"
             size="sm"
             onClick={() => handlePageChange(page - 1)}
@@ -289,6 +292,7 @@ export function SkillMarketplaceSearch({
             {t('external_skill_market.page_info', { current: page, total: totalPages })}
           </span>
           <Button
+            data-testid={`skill-marketplace-next-${provider.key}`}
             variant="outline"
             size="sm"
             onClick={() => handlePageChange(page + 1)}
