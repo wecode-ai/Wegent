@@ -3883,6 +3883,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('starts Claude Code without overriding its native model by default', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessesMock.mockResolvedValue([
       {
@@ -3896,8 +3897,23 @@ describe('DesktopWorkbenchLayout', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={{ ...activeProjectState, input: '分析并修复测试失败' }}
+        state={{
+          ...activeProjectState,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+          input: '分析并修复测试失败',
+        }}
         projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+        onSend={onSend}
       />
     )
 
@@ -3915,25 +3931,18 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.submit(form)
 
     await waitFor(() =>
-      expect(startLocalHarnessMock).toHaveBeenCalledWith({
-        harnessId: 'claude_code',
-        prompt: '分析并修复测试失败',
-        isPrimary: true,
-        projectId: 1,
-        cwd: '/workspace/github_wegent',
-        executablePath: null,
-        args: [],
-        pluginRoots: [],
-        proxyToken: undefined,
-        modelKey: null,
-        resumeSessionId: undefined,
-        env: {
-          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
-        },
-      })
+      expect(onSend).toHaveBeenCalledWith(
+        '分析并修复测试失败',
+        expect.objectContaining({
+          runtime: 'claude_code',
+          runtimeExecutablePath: '/usr/local/bin/claude',
+          modelSelection: null,
+        })
+      )
     )
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
     expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
-    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
   test('starts OpenCode from the Wework dev workspace without selecting a project', async () => {

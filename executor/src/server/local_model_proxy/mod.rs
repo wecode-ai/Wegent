@@ -151,6 +151,74 @@ impl LocalModelProxyUpstream {
     }
 }
 
+pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalModelProxyUpstream> {
+    let base_url = non_empty_string(model_config, "base_url")
+        .or_else(|| non_empty_string(model_config, "baseUrl"))?;
+    let api_key = non_empty_string(model_config, "api_key")
+        .or_else(|| non_empty_string(model_config, "apiKey"))
+        .or_else(|| non_empty_string(model_config, "auth_token"))
+        .unwrap_or_default();
+    Some(LocalModelProxyUpstream {
+        base_url: base_url.trim_end_matches('/').to_owned(),
+        request_url: non_empty_string(model_config, "responses_url")
+            .or_else(|| non_empty_string(model_config, "responsesUrl"))
+            .or_else(|| non_empty_string(model_config, "request_url"))
+            .or_else(|| non_empty_string(model_config, "requestUrl")),
+        api_format: non_empty_string(model_config, "upstream_api_format")
+            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+            .or_else(|| non_empty_string(model_config, "api_format"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+        convert_custom_tools: non_empty_string(model_config, "tool_profile")
+            .or_else(|| non_empty_string(model_config, "toolProfile"))
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
+        native_tool_search: boolean_value(model_config, "native_tool_search")
+            .or_else(|| boolean_value(model_config, "nativeToolSearch"))
+            .unwrap_or(false),
+        native_namespace_tools: boolean_value(model_config, "native_namespace_tools")
+            .or_else(|| boolean_value(model_config, "nativeNamespaceTools"))
+            .unwrap_or(false),
+        api_key,
+        default_headers: header_pairs(model_config.get("default_headers")),
+        proxy_url: model_config
+            .get("proxy")
+            .and_then(|proxy| {
+                non_empty_string(proxy, "url").or_else(|| non_empty_string(proxy, "proxy_url"))
+            })
+            .or_else(|| non_empty_string(model_config, "proxy_url")),
+        model_id: non_empty_string(model_config, "model_id")
+            .or_else(|| non_empty_string(model_config, "modelId")),
+        routing_model_id: None,
+        max_output_tokens: model_config
+            .get("max_output_tokens")
+            .or_else(|| model_config.get("maxOutputTokens"))
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0),
+    })
+}
+
+fn non_empty_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn boolean_value(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
+}
+
+fn header_pairs(value: Option<&Value>) -> Vec<(String, String)> {
+    match value {
+        Some(Value::Object(headers)) => headers
+            .iter()
+            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct VisionSidecarUpstream {
     pub request_url: String,

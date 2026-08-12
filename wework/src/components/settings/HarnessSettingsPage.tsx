@@ -345,8 +345,14 @@ export function HarnessSettingsPage() {
                           <option value="default">
                             {t('workbench.harness_permission_default', '默认')}
                           </option>
+                          <option value="acceptEdits">
+                            {t('workbench.harness_permission_accept_edits', '自动接受编辑')}
+                          </option>
                           <option value="plan">
                             {t('workbench.harness_permission_plan', '计划模式')}
+                          </option>
+                          <option value="auto">
+                            {t('workbench.harness_permission_auto', '自动模式')}
                           </option>
                           <option value="bypass">
                             {t('workbench.harness_permission_bypass', '跳过权限确认（危险）')}

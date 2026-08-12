@@ -1,6 +1,6 @@
 export type LocalHarnessId = 'opencode' | 'claude_code' | 'kimi_code'
 
-export type ClaudeCodePermissionMode = 'default' | 'plan' | 'bypass'
+export type ClaudeCodePermissionMode = 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypass'
 
 export interface LocalHarnessPreference {
   id: LocalHarnessId
@@ -79,7 +79,10 @@ export function normalizeLocalHarnessPreferences(value: unknown): LocalHarnessPr
         : {}
     const permissionMode: ClaudeCodePermissionMode =
       defaultPreference.id === 'claude_code' &&
-      (record.permissionMode === 'plan' || record.permissionMode === 'bypass')
+      (record.permissionMode === 'acceptEdits' ||
+        record.permissionMode === 'plan' ||
+        record.permissionMode === 'auto' ||
+        record.permissionMode === 'bypass')
         ? record.permissionMode
         : 'default'
     const modelKey =
@@ -105,11 +108,11 @@ export function buildLocalHarnessLaunchArgs(
     ? removeConfiguredModelArgs(preference.args)
     : [...preference.args]
   const args =
-    preference.id === 'claude_code' && preference.permissionMode === 'plan'
-      ? ['--permission-mode', 'plan', ...configuredArgs]
-      : preference.id === 'claude_code' && preference.permissionMode === 'bypass'
+    preference.id !== 'claude_code' || preference.permissionMode === 'default'
+      ? configuredArgs
+      : preference.permissionMode === 'bypass'
         ? ['--dangerously-skip-permissions', ...configuredArgs]
-        : configuredArgs
+        : ['--permission-mode', preference.permissionMode, ...configuredArgs]
   return model?.trim() ? [...args, '--model', model.trim()] : args
 }
 

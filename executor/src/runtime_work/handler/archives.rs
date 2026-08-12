@@ -233,6 +233,11 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn get_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        if is_claude_runtime(&link.runtime) {
+            let mut response = task_action_success(&link);
+            response["goal"] = self.get_claude_goal(&link).unwrap_or(Value::Null);
+            return Ok(response);
+        }
         let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
@@ -258,6 +263,12 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        if is_claude_runtime(&link.runtime) {
+            let goal = self.set_claude_goal(&link, &payload);
+            let mut response = task_action_success(&link);
+            response["goal"] = goal;
+            return Ok(response);
+        }
         let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
@@ -299,6 +310,12 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        if is_claude_runtime(&link.runtime) {
+            let cleared = self.clear_claude_goal(&link);
+            let mut response = task_action_success(&link);
+            response["cleared"] = Value::Bool(cleared);
+            return Ok(response);
+        }
         let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
