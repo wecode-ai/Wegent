@@ -8,8 +8,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ResourceNavigationType } from '@/features/resource-library/types'
 
-type ResourceNavigationType = ResourceLibraryTypeFilter | 'mcp'
-
 interface ResourceTypeFilterProps {
   value: ResourceNavigationType
   onValueChange: (value: ResourceNavigationType) => void
