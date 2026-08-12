@@ -153,6 +153,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const [activeLocalHarnessSessionId, setActiveLocalHarnessSessionId] = useState<string | null>(
     null
   )
+  const currentRuntimeTaskRef = useRef(state.currentRuntimeTask)
+  useEffect(() => {
+    currentRuntimeTaskRef.current = state.currentRuntimeTask
+  }, [state.currentRuntimeTask])
   const loadLocalHarnessSessions = useCallback(async () => {
     const sessions = await listLocalHarnessSessions()
     return sessions.map(session => ({
@@ -178,7 +182,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       .then(restored => {
         if (cancelled) return
         setLocalHarnessSessions(restored)
-        setActiveLocalHarnessSessionId(current => current ?? restored[0]?.sessionId ?? null)
+        setActiveLocalHarnessSessionId(
+          current =>
+            current ?? (currentRuntimeTaskRef.current ? null : (restored[0]?.sessionId ?? null))
+        )
       })
       .catch(error => {
         console.error('Failed to restore local harness sessions:', error)
