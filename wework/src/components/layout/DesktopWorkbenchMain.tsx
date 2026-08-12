@@ -163,6 +163,8 @@ import {
 } from './TaskSupervisorControl'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type {
+  ModelSelectionConfig,
+  RuntimeName,
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
@@ -895,7 +897,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorFeatureAvailable = Boolean(
     experimentalFeaturesEnabled &&
     services?.runtimeWorkApi &&
-    (!currentRuntimeTask || currentRuntimeTaskSupportsSupervisor)
+    (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
   const supervisorModels = projectChat.models.filter(
     model => model.isActive !== false && !model.compatibilityDisabled
@@ -921,8 +923,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const sendPaneInputWithContext = useCallback(
-    (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
-      const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
+    (
+      value?: string,
+      options?: {
+        guideWhenBusy?: boolean
+        interruptWhenBusy?: boolean
+        runtime?: RuntimeName
+        runtimeExecutablePath?: string
+        runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+        modelSelection?: ModelSelectionConfig | null
+      }
+    ) => {
+      const supervisorConfig =
+        currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
       const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
@@ -957,7 +970,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   })
 
   const submitPaneInput = useCallback(
-    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+    async (
+      value?: string,
+      options?: {
+        guideWhenBusy?: boolean
+        interruptWhenBusy?: boolean
+        runtime?: RuntimeName
+        runtimeExecutablePath?: string
+        runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+        modelSelection?: ModelSelectionConfig | null
+      }
+    ) => {
       const submitted = (value ?? paneSession.input).trim()
       if (submitted) {
         const gate = await connectorAuthGate.gateBeforeSend(submitted)
@@ -1544,6 +1567,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedHarnessPreference &&
     localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
   )
+  const selectedHarnessExecutablePath =
+    selectedHarnessPreference?.executablePath ??
+    localHarnesses.find(harness => harness.id === selectedHarnessPreference?.id)?.executable_path ??
+    undefined
   const selectedHarnessAvailable = Boolean(
     selectedHarnessInstalled &&
     isLocalHarnessAvailable() &&
@@ -1873,10 +1900,35 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const submitWorkbenchInput = async (
     value?: string,
-    options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }
+    options?: {
+      guideWhenBusy?: boolean
+      interruptWhenBusy?: boolean
+      runtime?: 'codex' | 'claude_code'
+      runtimeExecutablePath?: string
+      runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+      modelSelection?: ModelSelectionConfig | null
+    }
   ) => {
     if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
       return submitPaneInput(value, options)
+    }
+    if (activeNewChatRuntime === 'claude_code') {
+      return submitPaneInput(value, {
+        ...options,
+        runtime: 'claude_code',
+        runtimeExecutablePath: selectedHarnessExecutablePath,
+        runtimePermissionMode:
+          selectedHarnessPreference?.permissionMode === 'bypass'
+            ? 'bypassPermissions'
+            : (selectedHarnessPreference?.permissionMode ?? 'default'),
+        modelSelection: selectedHarnessModel
+          ? {
+              modelName: selectedHarnessModel.model.name,
+              modelType: selectedHarnessModel.model.type,
+              options: selectedHarnessModel.options,
+            }
+          : null,
+      })
     }
 
     const prompt = (value ?? paneInput).trim()
@@ -2240,13 +2292,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
-  const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
+  const currentRuntimeUsesCodex =
+    (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
+    'codex'
+  const currentRuntimeSupportsGoal =
+    currentRuntimeUsesCodex || currentRuntimeTask?.runtime === 'claude_code'
+  const currentRuntimeTaskSupportsGoal = Boolean(
+    currentRuntimeTask && currentRuntimeSupportsGoal && activeDeviceSupportsGoal
+  )
   const canEditLastUserMessage = Boolean(
-    currentRuntimeTask && activeDeviceSupportsGoal && !paneSession.status.isBusy
+    currentRuntimeTask &&
+    currentRuntimeUsesCodex &&
+    activeDeviceSupportsGoal &&
+    !paneSession.status.isBusy
   )
   const composerSupportsGoal = currentRuntimeTask
     ? currentRuntimeTaskSupportsGoal
-    : activeDeviceSupportsGoal
+    : (activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code') &&
+      activeDeviceSupportsGoal
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
@@ -3084,7 +3147,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(
-    experimentalFeaturesEnabled && currentRuntimeTask && forkCurrentRuntimeTask
+    experimentalFeaturesEnabled &&
+    currentRuntimeTask &&
+    currentRuntimeUsesCodex &&
+    forkCurrentRuntimeTask
   )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
@@ -3581,7 +3647,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     toolbarLeadingContext={pendingProjectSpaceContext}
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
-                                    onCompactContext={compactCurrentContext}
+                                    onCompactContext={
+                                      currentRuntimeUsesCodex ||
+                                      currentRuntimeTask?.runtime === 'claude_code'
+                                        ? compactCurrentContext
+                                        : undefined
+                                    }
                                     goal={paneSession.goal}
                                     goalContinuing={paneSession.goalContinuing}
                                     taskPlan={paneSession.taskPlan}
@@ -3609,7 +3680,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       paneSession.resumeQueuedMessagesWithInput
                                     }
                                     onClearQueue={paneSession.clearQueuedMessages}
-                                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                                    onSendQueuedAsGuidance={
+                                      currentRuntimeUsesCodex
+                                        ? paneSession.sendQueuedAsGuidance
+                                        : undefined
+                                    }
                                     onInterruptAndSendQueuedMessage={
                                       paneSession.interruptAndSendQueued
                                     }
@@ -3673,18 +3748,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onOpenAssistantPlan={openAssistantPlan}
                 onEditLastUserMessage={paneSession.editLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
-                onForkMessage={message => {
-                  const workspacePath =
-                    currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
-                  if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                  return forkCurrentRuntimeTask(
-                    {
-                      deviceId: currentRuntimeTask.deviceId,
-                      workspacePath,
-                    },
-                    { lastTurnId: message.turnId }
-                  )
-                }}
+                onForkMessage={
+                  currentRuntimeUsesCodex
+                    ? message => {
+                        const workspacePath =
+                          currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                        if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                        return forkCurrentRuntimeTask(
+                          {
+                            deviceId: currentRuntimeTask.deviceId,
+                            workspacePath,
+                          },
+                          { lastTurnId: message.turnId }
+                        )
+                      }
+                    : undefined
+                }
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 onAddSelectionToConversation={addSelectionToConversation}
@@ -3722,15 +3801,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       onSubmit={submitWorkbenchInput}
                       disabled={
                         centralHarnessStarting ||
-                        (activeNewChatRuntime === 'codex' && composerDisabled)
+                        ((activeNewChatRuntime === 'codex' ||
+                          activeNewChatRuntime === 'claude_code') &&
+                          composerDisabled)
                       }
                       submitDisabled={
                         centralHarnessStarting ||
-                        (activeNewChatRuntime === 'codex' && paneSession.status.isSubmitting)
+                        ((activeNewChatRuntime === 'codex' ||
+                          activeNewChatRuntime === 'claude_code') &&
+                          paneSession.status.isSubmitting)
                       }
                       error={centralHarnessError ?? paneSession.error}
                       disabledReason={
-                        activeNewChatRuntime === 'codex' ? inlineComposerDisabledReason : undefined
+                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
+                          ? inlineComposerDisabledReason
+                          : undefined
                       }
                       placeholder={
                         showComposerProjectMenuAction
@@ -3802,7 +3887,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       toolbarLeadingContext={pendingProjectSpaceContext}
                       isStreaming={paneIsBusy}
                       onPause={pauseCurrentResponse}
-                      onCompactContext={compactCurrentContext}
+                      onCompactContext={
+                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
+                          ? compactCurrentContext
+                          : undefined
+                      }
                       goal={paneSession.goal}
                       goalContinuing={paneSession.goalContinuing}
                       taskPlan={paneSession.taskPlan}
@@ -3824,7 +3913,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       onResumeQueue={paneSession.resumeQueuedMessages}
                       onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                       onClearQueue={paneSession.clearQueuedMessages}
-                      onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                      onSendQueuedAsGuidance={
+                        activeNewChatRuntime === 'codex'
+                          ? paneSession.sendQueuedAsGuidance
+                          : undefined
+                      }
                       onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                       onEditQueuedMessage={paneSession.editQueuedMessage}
                       onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}

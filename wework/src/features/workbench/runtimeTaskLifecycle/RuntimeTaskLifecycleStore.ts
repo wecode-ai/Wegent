@@ -331,6 +331,7 @@ function getRuntimeTaskAddress(
   return {
     deviceId: workspace.deviceId,
     taskId: task.taskId,
+    ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     threadId: task.threadId,
     workspacePath: task.workspacePath || workspace.workspacePath,
     runtimeHandle: task.runtimeHandle,
@@ -343,7 +344,7 @@ function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummar
     threadId: address.threadId,
     workspacePath: address.workspacePath ?? '',
     title: address.taskId,
-    runtime: 'codex',
+    runtime: address.runtime ?? 'codex',
     runtimeHandle: address.runtimeHandle,
   }
 }

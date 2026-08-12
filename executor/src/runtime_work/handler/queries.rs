@@ -178,10 +178,14 @@ impl RuntimeWorkRpcHandler {
             if matched_local_task_ids.contains(&link.local_task_id) {
                 continue;
             }
-            let Some(thread_id) = link.thread_id.as_deref() else {
-                continue;
+            let messages = if runtime_has_provider_transcript_reader(&link.runtime) {
+                let Some(thread_id) = link.thread_id.as_deref() else {
+                    continue;
+                };
+                self.thread_messages(thread_id).await
+            } else {
+                cached_runtime_transcript_messages(link)
             };
-            let messages = self.thread_messages(thread_id).await;
             if let Some(item) = first_message_search_result(link, &self.device_id, messages, &query)
             {
                 items.push(item);
