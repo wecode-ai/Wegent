@@ -88,6 +88,8 @@ Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保
 
 前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
 
+Wework 的 Claude Code 普通对话通过非交互子进程运行，无法展示或完成 Claude CLI 自带的审批提示。因此，Claude Code 设置中的 `default` 在这条执行路径上会映射为 `bypassPermissions`；用户明确选择的 `acceptEdits`、`plan`、`auto` 或 `bypassPermissions` 仍会原样传递。交互式本地终端不经过这项映射。
+
 Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval` 和 `item/permissions/requestApproval` 请求会映射为 Wework 的 `request_user_input` 卡片。卡片保持 `availableDecisions` 的顺序，只展示协议实际提供的决定，并使用稳定协议值回传。Executor 支持单次批准 `accept`、会话批准 `acceptForSession`、命令规则 `acceptWithExecpolicyAmendment`、网络 host 规则 `applyNetworkPolicyAmendment`、拒绝 `decline` 和停止 `cancel`；结构化规则直接使用 Codex 请求携带的 amendment，缺失或不匹配时安全拒绝，不会根据显示文本自行扩大授权。权限请求可以按 turn 或 session scope 授权，也可以在当前 turn 启用 `strictAutoReview`，逐一审查之后的命令；拒绝时不授予任何额外权限。
 
 ## 模型列表
