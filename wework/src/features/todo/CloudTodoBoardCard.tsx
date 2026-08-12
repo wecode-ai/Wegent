@@ -13,6 +13,7 @@ import {
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { cn } from '@/lib/utils'
+import { Tooltip } from '@/components/ui/tooltip'
 import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
@@ -100,15 +101,16 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
           ) : null}
           {display.showAssignee ? (
             assigneeName ? (
-              <span
-                data-testid={`cloud-todo-card-assignee-${item.id}`}
-                title={assigneeName}
-                className="ml-auto inline-flex min-w-0 items-center gap-1.5"
-              >
-                <span className="sr-only">负责人</span>
-                {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
-                <span className="truncate">{assigneeName}</span>
-              </span>
+              <Tooltip label={assigneeName} align="end" className="ml-auto min-w-0 shrink">
+                <span
+                  data-testid={`cloud-todo-card-assignee-${item.id}`}
+                  className="inline-flex min-w-0 items-center gap-1.5"
+                >
+                  <span className="sr-only">负责人</span>
+                  {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
+                  <span className="truncate">{assigneeName}</span>
+                </span>
+              </Tooltip>
             ) : (
               <span className="ml-auto">未指定</span>
             )
@@ -174,19 +176,21 @@ export function CloudTodoBoardCard({
     >
       {item.can_edit !== false && !archiveDisabled ? (
         <div className="absolute right-2 top-2 z-20">
-          <button
-            type="button"
-            data-testid={`cloud-todo-card-more-${item.id}`}
-            onClick={event => {
-              event.stopPropagation()
-              setMenuOpen(current => !current)
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
-            aria-label="任务操作"
-            aria-expanded={menuOpen}
-          >
-            <Ellipsis className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label="任务操作" side="bottom" align="end">
+            <button
+              type="button"
+              data-testid={`cloud-todo-card-more-${item.id}`}
+              onClick={event => {
+                event.stopPropagation()
+                setMenuOpen(current => !current)
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+              aria-label="任务操作"
+              aria-expanded={menuOpen}
+            >
+              <Ellipsis className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           {menuOpen ? (
             <div
               data-testid={`cloud-todo-card-menu-${item.id}`}
@@ -244,7 +248,6 @@ export function CloudTodoBoardCard({
               onClick={onAddChild}
               className="flex h-7 shrink-0 items-center gap-1 border-l border-border/60 pl-3 text-xs text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 disabled:hidden"
               aria-label="新建子任务"
-              title="新建子任务"
             >
               <Plus className="h-3.5 w-3.5" />
               添加子任务

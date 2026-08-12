@@ -18,22 +18,22 @@ describe('Tooltip', () => {
       </Tooltip>
     )
     const wrapper = screen.getByRole('button').parentElement as HTMLElement
-    const tooltip = screen.getByTestId('composer-tooltip')
-    expect(tooltip).toHaveClass('opacity-0')
+    expect(screen.queryByTestId('composer-tooltip')).not.toBeInTheDocument()
 
     fireEvent.pointerEnter(wrapper)
     act(() => {
       vi.advanceTimersByTime(699)
     })
-    expect(tooltip).toHaveClass('opacity-0')
+    expect(screen.queryByTestId('composer-tooltip')).not.toBeInTheDocument()
     act(() => {
       vi.advanceTimersByTime(1)
     })
+    const tooltip = screen.getByTestId('composer-tooltip')
     expect(tooltip).toHaveClass('opacity-100')
     expect(tooltip).toHaveTextContent('添加上下文')
 
     fireEvent.pointerLeave(wrapper)
-    expect(tooltip).toHaveClass('opacity-0')
+    expect(screen.queryByTestId('composer-tooltip')).not.toBeInTheDocument()
   })
 
   test('hides on Escape while focused', () => {
@@ -43,15 +43,35 @@ describe('Tooltip', () => {
       </Tooltip>
     )
     const wrapper = screen.getByRole('button').parentElement as HTMLElement
-    const tooltip = screen.getByTestId('composer-tooltip')
 
     fireEvent.focus(wrapper)
     act(() => {
       vi.advanceTimersByTime(700)
     })
+    const tooltip = screen.getByTestId('composer-tooltip')
     expect(tooltip).toHaveClass('opacity-100')
 
     fireEvent.keyDown(wrapper, { key: 'Escape' })
-    expect(tooltip).toHaveClass('opacity-0')
+    expect(screen.queryByTestId('composer-tooltip')).not.toBeInTheDocument()
+  })
+
+  test('renders through a portal so clipped controls can show the tooltip', () => {
+    const { container } = render(
+      <div className="overflow-hidden">
+        <Tooltip label="新建项目空间" testId="project-space-tooltip">
+          <button type="button">trigger</button>
+        </Tooltip>
+      </div>
+    )
+    const wrapper = screen.getByRole('button').parentElement as HTMLElement
+
+    fireEvent.pointerEnter(wrapper)
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+
+    const tooltip = screen.getByTestId('project-space-tooltip')
+    expect(document.body).toContainElement(tooltip)
+    expect(container).not.toContainElement(tooltip)
   })
 })

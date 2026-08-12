@@ -42,6 +42,7 @@ import {
   DesktopSidebarNavItem,
 } from '@/components/layout/DesktopSidebarPrimitives'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { Tooltip } from '@/components/ui/tooltip'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -1680,16 +1681,17 @@ export function CloudTodoWorkspace({
                     className="gap-0"
                     toggleTestId="cloud-todo-collapse-sidebar"
                   />
-                  <button
-                    type="button"
-                    data-testid="cloud-search-toggle"
-                    onClick={() => setGlobalSearchOpen(true)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                    title={t('workbench.search')}
-                    aria-label={t('workbench.search')}
-                  >
-                    <Search className="h-4 w-4" />
-                  </button>
+                  <Tooltip label={t('workbench.search')} side="bottom" align="end">
+                    <button
+                      type="button"
+                      data-testid="cloud-search-toggle"
+                      onClick={() => setGlobalSearchOpen(true)}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                      aria-label={t('workbench.search')}
+                    >
+                      <Search className="h-4 w-4" />
+                    </button>
+                  </Tooltip>
                 </>
               }
             />
@@ -1714,14 +1716,22 @@ export function CloudTodoWorkspace({
             </nav>
             <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
               项目空间
-              <button
-                type="button"
-                data-testid="cloud-project-add"
-                onClick={() => setCreateProjectOpen(true)}
-                className="ml-auto h-6 w-6 rounded-md hover:bg-muted"
+              <Tooltip
+                label={t('todo.new_project_space', '新建项目空间')}
+                side="bottom"
+                align="end"
+                className="ml-auto"
               >
-                <Plus className="mx-auto h-3.5 w-3.5" />
-              </button>
+                <button
+                  type="button"
+                  data-testid="cloud-project-add"
+                  onClick={() => setCreateProjectOpen(true)}
+                  className="h-6 w-6 rounded-md hover:bg-muted"
+                  aria-label={t('todo.new_project_space', '新建项目空间')}
+                >
+                  <Plus className="mx-auto h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
             </div>
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
               {projects.map(project => {
@@ -1756,18 +1766,24 @@ export function CloudTodoWorkspace({
                         {projectCounts[project.id]}
                       </span>
                     ) : null}
-                    <button
-                      type="button"
-                      data-testid={`cloud-sidebar-project-more-${project.id}`}
-                      onClick={() => {
-                        setProjectMenuId(current => (current === project.id ? null : project.id))
-                      }}
-                      className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
-                      aria-expanded={projectMenuId === project.id}
-                      aria-label={t('todo.project_actions', '项目操作')}
+                    <Tooltip
+                      label={t('todo.project_actions', '项目操作')}
+                      side="bottom"
+                      align="end"
                     >
-                      <Ellipsis className="h-3.5 w-3.5" />
-                    </button>
+                      <button
+                        type="button"
+                        data-testid={`cloud-sidebar-project-more-${project.id}`}
+                        onClick={() => {
+                          setProjectMenuId(current => (current === project.id ? null : project.id))
+                        }}
+                        className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
+                        aria-expanded={projectMenuId === project.id}
+                        aria-label={t('todo.project_actions', '项目操作')}
+                      >
+                        <Ellipsis className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
                     {projectMenuId === project.id ? (
                       <div
                         data-testid={`cloud-sidebar-project-menu-${project.id}`}
@@ -2061,35 +2077,37 @@ export function CloudTodoWorkspace({
                 )}
                 <span className="flex-1" />
                 {selectedProject && !projectAssistantOpen ? (
-                  <button
-                    ref={projectHeaderAskAiRef}
-                    type="button"
-                    data-testid="cloud-project-ask-ai"
-                    aria-label={t('workbench.project_chat')}
-                    title={t('workbench.project_chat')}
-                    onClick={() => {
-                      setProjectAssistantOpen(true)
-                    }}
-                    className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
-                  >
-                    <Bot className="h-3.5 w-3.5" />
-                    {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
-                  </button>
+                  <Tooltip label={t('workbench.project_chat')} side="bottom" align="end">
+                    <button
+                      ref={projectHeaderAskAiRef}
+                      type="button"
+                      data-testid="cloud-project-ask-ai"
+                      aria-label={t('workbench.project_chat')}
+                      onClick={() => {
+                        setProjectAssistantOpen(true)
+                      }}
+                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+                    >
+                      <Bot className="h-3.5 w-3.5" />
+                      {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
+                    </button>
+                  </Tooltip>
                 ) : null}
                 {projectView === 'board' && (
                   <>
-                    <button
-                      ref={projectHeaderSearchRef}
-                      type="button"
-                      data-testid="cloud-project-task-search-toggle"
-                      aria-label="搜索任务"
-                      title="搜索任务"
-                      onClick={() => setProjectSearchOpen(current => !current)}
-                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
-                    >
-                      <Search className="h-3.5 w-3.5" />
-                      {projectHeaderLevel < 1 ? '搜索任务' : null}
-                    </button>
+                    <Tooltip label="搜索任务" side="bottom" align="end">
+                      <button
+                        ref={projectHeaderSearchRef}
+                        type="button"
+                        data-testid="cloud-project-task-search-toggle"
+                        aria-label="搜索任务"
+                        onClick={() => setProjectSearchOpen(current => !current)}
+                        className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                        {projectHeaderLevel < 1 ? '搜索任务' : null}
+                      </button>
+                    </Tooltip>
                     {projectSearchOpen && (
                       <TaskSearchPanel
                         items={items}
@@ -2107,20 +2125,21 @@ export function CloudTodoWorkspace({
                       />
                     )}
                     {canCreateBoardTask && (
-                      <button
-                        ref={projectHeaderAddRef}
-                        type="button"
-                        data-testid="cloud-todo-add"
-                        aria-label="新建任务"
-                        title="新建任务"
-                        onClick={() =>
-                          openTodoCreation(projectView === 'board' ? boardParent : null)
-                        }
-                        className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        {projectHeaderLevel < 1 ? '新建任务' : null}
-                      </button>
+                      <Tooltip label="新建任务" side="bottom" align="end">
+                        <button
+                          ref={projectHeaderAddRef}
+                          type="button"
+                          data-testid="cloud-todo-add"
+                          aria-label="新建任务"
+                          onClick={() =>
+                            openTodoCreation(projectView === 'board' ? boardParent : null)
+                          }
+                          className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {projectHeaderLevel < 1 ? '新建任务' : null}
+                        </button>
+                      </Tooltip>
                     )}
                   </>
                 )}
@@ -2397,15 +2416,23 @@ export function CloudTodoWorkspace({
                                   {canCreateBoardTask &&
                                     !isAITableProject &&
                                     nativeGroupBy === 'status' && (
-                                      <button
-                                        type="button"
-                                        data-testid={`cloud-todo-column-add-${column.key}`}
-                                        onClick={() => openTodoCreation(boardParent, column.status)}
-                                        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
-                                        aria-label={`在${column.label}中新建任务`}
+                                      <Tooltip
+                                        label={`在${column.label}中新建任务`}
+                                        side="bottom"
+                                        align="end"
                                       >
-                                        <Plus className="h-3.5 w-3.5" />
-                                      </button>
+                                        <button
+                                          type="button"
+                                          data-testid={`cloud-todo-column-add-${column.key}`}
+                                          onClick={() =>
+                                            openTodoCreation(boardParent, column.status)
+                                          }
+                                          className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                          aria-label={`在${column.label}中新建任务`}
+                                        >
+                                          <Plus className="h-3.5 w-3.5" />
+                                        </button>
+                                      </Tooltip>
                                     )}
                                 </header>
                                 <TodoColumnDropzone status={column.key}>
