@@ -898,7 +898,7 @@ class DesktopE2EServer {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'delete'],
+            capabilities: ['create', 'publish', 'edit', 'delete'],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',

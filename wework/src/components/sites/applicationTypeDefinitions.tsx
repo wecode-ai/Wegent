@@ -43,7 +43,7 @@ export interface ResolvedApplicationTypeDefinition {
 const siteDefinition: ApplicationTypeDefinition = {
   appType: 'web',
   icon: Globe2,
-  capabilities: ['create', 'publish', 'delete'],
+  capabilities: ['create', 'publish', 'edit', 'delete'],
   tab: { key: 'site_tab', fallback: '站点' },
   search: { key: 'search', fallback: '搜索站点' },
   loading: { key: 'loading', fallback: '正在加载站点' },
