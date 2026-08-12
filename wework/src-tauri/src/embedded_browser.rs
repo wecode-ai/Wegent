@@ -637,7 +637,6 @@ fn wait_for_browser_ready_with_observer(
 fn wait_for_browser_navigation(
     state: &EmbeddedBrowserState,
     label: &str,
-    expected_url: &str,
     timeout_ms: u64,
 ) -> Result<(), String> {
     let started = std::time::Instant::now();
@@ -650,13 +649,11 @@ fn wait_for_browser_navigation(
             .ok_or_else(|| "Embedded browser is not open".to_string())?
             .loaded_url
             .clone();
-        if loaded_url.as_deref() == Some(expected_url) {
+        if loaded_url.is_some() {
             return Ok(());
         }
         if started.elapsed() >= Duration::from_millis(timeout_ms) {
-            return Err(format!(
-                "Timed out waiting for embedded browser navigation to {expected_url}"
-            ));
+            return Err("Timed out waiting for embedded browser navigation".to_string());
         }
         thread::sleep(Duration::from_millis(BRIDGE_OPEN_WAIT_INTERVAL_MS));
     }
@@ -1388,7 +1385,7 @@ fn handle_bridge_request(
             }
             let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
             navigate_label(state, &label, url.clone())?;
-            wait_for_browser_navigation(state, &label, &url, timeout_ms)?;
+            wait_for_browser_navigation(state, &label, timeout_ms)?;
             Ok(json!({ "ok": true }))
         }
         "reload" => {
