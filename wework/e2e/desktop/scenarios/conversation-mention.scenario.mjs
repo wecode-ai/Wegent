@@ -80,6 +80,19 @@ async function selectConversationOption(control, timeoutMs) {
   throw new Error('The referenced conversation could not be selected from the @ menu')
 }
 
+async function waitForNewTaskRow(control, knownTaskRows, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const taskRow = snapshot.testIds.find(
+      testId => testId.startsWith('runtime-local-task-row-') && !knownTaskRows.has(testId)
+    )
+    if (taskRow) return taskRow
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The conversation mention task row did not appear')
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let sourceRequest = null
@@ -119,6 +132,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
     async verify(control) {
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const initialTaskRows = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
       await control.command('fill', COMPOSER_SELECTOR, { value: SOURCE_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -126,9 +144,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       assert.ok(sourceRequest, 'The source conversation was not sent through the real runtime')
+      const sourceTaskRow = await waitForNewTaskRow(control, initialTaskRows, uiTimeoutMs)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const sourceOnlyTaskRows = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
       await control.command('fill', COMPOSER_SELECTOR, {
         value: '@WEWORK_CONVERSATION_REFERENCE_SOURCE',
       })
@@ -149,6 +173,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         text: TARGET_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const targetTaskRow = await waitForNewTaskRow(control, sourceOnlyTaskRows, uiTimeoutMs)
 
       assert.ok(targetRequest, 'Selecting the conversation mention did not send a model request')
       const serializedTarget = JSON.stringify(targetRequest)
@@ -169,6 +194,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'The referenced conversation content was not delivered to the model'
       )
       await capture(control, 'conversation-mention-03-sent.png')
+
+      await control.command('click', `[data-testid="${sourceTaskRow}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: SOURCE_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="${targetTaskRow}"]`)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TARGET_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      const restoredSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        !restoredSnapshot.text.includes(SOURCE_COMPLETION),
+        'Switching back exposed the referenced assistant response in the user message'
+      )
+      assert.ok(
+        !restoredSnapshot.text.includes('untrusted background context'),
+        'Switching back exposed the serialized referenced-conversation context'
+      )
+      assert.ok(
+        !restoredSnapshot.text.includes('{"role":"assistant"'),
+        'Switching back rendered referenced-conversation JSON as user-visible text'
+      )
+      await capture(control, 'conversation-mention-04-restored.png')
     },
 
     diagnostics() {

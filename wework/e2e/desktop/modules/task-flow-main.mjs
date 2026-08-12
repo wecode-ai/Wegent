@@ -2747,6 +2747,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         otherTaskRowTestId: secondTaskRowTestId,
       })
+      if (desktopScenario) {
+        phase = 'conversation-mention-switch-restore'
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
       if (shouldStopAfterDesktopCheckpoint('conversation-state')) {
         console.log(`Wework desktop conversation-state checkpoint passed. Evidence: ${resultDir}`)
         return
