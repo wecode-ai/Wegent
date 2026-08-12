@@ -811,6 +811,9 @@ function ProjectSendProbe() {
       </span>
       <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="trial-plugin-app">
+        {workbench.projectChat.trialPluginApp?.pluginKey ?? 'none'}
+      </span>
       <span data-testid="message-contents">
         {paneSession.messages.map(message => message.content).join('|')}
       </span>
@@ -8781,6 +8784,18 @@ describe('WorkbenchProvider runtime tasks', () => {
       JSON.stringify({
         input: '[$Documents](plugin://documents@OpenAI Bundled) ',
         pluginName: 'Documents',
+        app: {
+          id: 'plugin:documents',
+          name: 'Documents',
+          pluginKey: 'documents',
+        },
+        templates: [
+          {
+            name: 'Draft a document',
+            path: 'draft-document',
+            description: 'Draft a document from the current context',
+          },
+        ],
       })
     )
 
@@ -8788,6 +8803,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
     expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents')
+    expect(screen.getByTestId('trial-plugin-app')).toHaveTextContent('documents')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 

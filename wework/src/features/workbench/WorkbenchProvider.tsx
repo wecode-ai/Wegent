@@ -42,9 +42,16 @@ import {
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
+import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
+import {
+  getPluginMarketplaceCache,
+  pluginMarketplaceCacheKey,
+  subscribePluginMarketplaceCache,
+} from '@/features/plugins/pluginMarketplaceCache'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
+  InstalledPlugin,
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -356,16 +363,21 @@ export function WorkbenchProvider({
     Record<string, PluginPathComponent[]>
   >({})
   const [trialPluginNameByScope, setTrialPluginNameByScope] = useState<Record<string, string>>({})
+  const [trialPluginAppByScope, setTrialPluginAppByScope] = useState<
+    Record<string, LocalDeviceApp>
+  >({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
+  const trialPluginApp = trialPluginAppByScope[projectChatScopeKey]
   useEffect(() => {
     const showGuide = (event: Event) => {
       const detail = (
         event as CustomEvent<{
           pluginName?: unknown
           templates?: unknown
+          app?: unknown
         }>
       ).detail
       if (typeof detail?.pluginName !== 'string' || !Array.isArray(detail.templates)) return
@@ -385,6 +397,24 @@ export function WorkbenchProvider({
         ...current,
         [projectChatScopeKey]: templates.slice(0, 6),
       }))
+      if (
+        detail.app &&
+        typeof detail.app === 'object' &&
+        typeof (detail.app as LocalDeviceApp).id === 'string' &&
+        typeof (detail.app as LocalDeviceApp).name === 'string'
+      ) {
+        setTrialPluginAppByScope(current => ({
+          ...current,
+          [projectChatScopeKey]: detail.app as LocalDeviceApp,
+        }))
+      } else {
+        setTrialPluginAppByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
+      }
     }
     window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
     return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
@@ -403,6 +433,12 @@ export function WorkbenchProvider({
           return next
         })
         setTrialPluginNameByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
+        setTrialPluginAppByScope(current => {
           if (!current[projectChatScopeKey]) return current
           const next = { ...current }
           delete next[projectChatScopeKey]
@@ -443,6 +479,12 @@ export function WorkbenchProvider({
       delete next[projectChatScopeKey]
       return next
     })
+    setTrialPluginAppByScope(current => {
+      if (!current[projectChatScopeKey]) return current
+      const next = { ...current }
+      delete next[projectChatScopeKey]
+      return next
+    })
   }, [projectChatScopeKey, trialPluginName])
   const applyTrialTemplate = useCallback(
     (template: PluginPathComponent) => {
@@ -463,6 +505,16 @@ export function WorkbenchProvider({
           ...current,
           [scopeKey]: trial.templates.slice(0, 6),
         }))
+        const app = trial.app
+        if (app) setTrialPluginAppByScope(current => ({ ...current, [scopeKey]: app }))
+        else {
+          setTrialPluginAppByScope(current => {
+            if (!current[scopeKey]) return current
+            const next = { ...current }
+            delete next[scopeKey]
+            return next
+          })
+        }
         return
       }
       setTrialPluginNameByScope(current => {
@@ -472,6 +524,12 @@ export function WorkbenchProvider({
         return next
       })
       setTrialTemplatesByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginAppByScope(current => {
         if (!current[scopeKey]) return current
         const next = { ...current }
         delete next[scopeKey]
@@ -1866,7 +1924,7 @@ export function WorkbenchProvider({
         // here — it reconciles for ~10s and stalls turns on the shared app-server
         // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
-        let apps = await loadComposerPluginApps({
+        const composerPluginSources = {
           listCodexApps: () => localPluginApi.listApps(),
           readLocalInstalledPlugins: async () => {
             currentComposerDeviceId =
@@ -1892,11 +1950,30 @@ export function WorkbenchProvider({
               return []
             }
           },
+          readLocalInstalledPluginDetail: (plugin: InstalledPlugin) => {
+            const labels = plugin.metadata.labels
+            const id =
+              labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
+            return localPluginApi.readInstalledPluginForTrial(
+              typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
+            )
+          },
           listCloudInstalledPlugins: () =>
             cloudPluginApi
               .listInstalledPlugins(currentComposerDeviceId ?? undefined)
               .then(response => response.items),
-        })
+        }
+
+        const marketplaceCache = getPluginMarketplaceCache(
+          pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
+        )
+        const marketplaceItems = marketplaceCache?.marketplaceItems ?? []
+
+        // Paint installed plugins before connector sync / relative-logo detail reads.
+        let apps = await loadComposerPluginApps(composerPluginSources, { marketplaceItems })
+        if (apps.length > 0) {
+          publishComposerApps(apps)
+        }
 
         if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
           try {
@@ -1935,9 +2012,36 @@ export function WorkbenchProvider({
               }))
             const existingIds = new Set(apps.map(app => app.id))
             apps = [...apps, ...connectorApps.filter(app => !existingIds.has(app.id))]
+            if (apps.length > 0) {
+              publishComposerApps(apps)
+            }
           } catch (error) {
             console.warn('[Wework] Failed to load Wegent connector apps.', error)
           }
+        }
+
+        // Best-effort package logo hydration after the picker is already usable.
+        if (loadGeneration === localAppsLoadGenerationRef.current) {
+          void loadComposerPluginApps(composerPluginSources, {
+            enrichRelativeLogos: true,
+            marketplaceItems,
+          })
+            .then(enriched => {
+              if (loadGeneration !== localAppsLoadGenerationRef.current || enriched.length === 0) {
+                return
+              }
+              const byId = new Map(apps.map(app => [app.id, app]))
+              for (const app of enriched) byId.set(app.id, app)
+              const merged = [...byId.values()]
+              publishComposerApps(merged)
+              localAppsCacheRef.current = {
+                expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+                apps: merged,
+              }
+            })
+            .catch(error => {
+              console.warn('[Wework] Failed to enrich composer plugin logos.', error)
+            })
         }
 
         const isCurrentGeneration = loadGeneration === localAppsLoadGenerationRef.current
@@ -2011,6 +2115,29 @@ export function WorkbenchProvider({
     }
   }, [listLocalApps])
 
+  // Plugin market UI resolves package logos into the catalog cache; overlay those
+  // onto composer apps when the cache arrives after the warm path.
+  useEffect(() => {
+    const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
+    return subscribePluginMarketplaceCache(snapshot => {
+      if (!snapshot || snapshot.cacheKey !== cacheKey) return
+      const current = getComposerApps()
+      if (current.length === 0) return
+      const overlayed = overlayMarketplaceLogosOnComposerApps(current, snapshot.marketplaceItems)
+      if (overlayed === current) return
+      const changed = overlayed.some(
+        (app, index) =>
+          app.logoUrl !== current[index]?.logoUrl || app.logoUrlDark !== current[index]?.logoUrlDark
+      )
+      if (!changed) return
+      publishComposerApps(overlayed)
+      const cached = localAppsCacheRef.current
+      if (cached) {
+        localAppsCacheRef.current = { ...cached, apps: overlayed }
+      }
+    })
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
+
   const workspaceFileApi = useMemo(
     () => ({
       listWorkspaceEntries: executorClient.files.listWorkspaceEntries,
@@ -2060,6 +2187,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2101,6 +2229,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2140,6 +2269,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2181,6 +2311,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,

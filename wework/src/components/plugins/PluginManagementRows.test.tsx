@@ -71,13 +71,11 @@ describe('InstalledPluginRow', () => {
     expect(screen.getByTestId('installed-plugin-row-59')).toHaveClass('min-h-[76px]')
   })
 
-  test('uses the neutral default icon when the plugin has no logo metadata', () => {
+  test('uses the plugin name initial when the plugin has no logo metadata', () => {
     render(<InstalledPluginRow plugin={createPlugin()} onToggle={vi.fn()} onUninstall={vi.fn()} />)
 
-    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
-      'src',
-      '/plugin-icons/wework.svg'
-    )
+    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveTextContent('G')
+    expect(screen.getByTestId('installed-plugin-logo-59').tagName).toBe('SPAN')
     expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-fallback')
   })
 

@@ -175,6 +175,7 @@ export interface WorkbenchContextValue {
     composerError?: string | null
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
+    trialPluginApp?: LocalDeviceApp
     hasConversationContext?: boolean
     dismissTrialGuide?: () => void
     applyTrialTemplate?: (template: PluginPathComponent) => void

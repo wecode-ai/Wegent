@@ -484,7 +484,9 @@ async function main() {
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
-  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
+    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E,
+  })
   const modelSwitchVerification = []
   let app
   let appBundlePath
