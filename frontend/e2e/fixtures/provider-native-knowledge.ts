@@ -148,8 +148,16 @@ export async function deleteProviderNativeKnowledgeFixture(
   request: APIRequestContext,
   apiBaseUrl: string,
   token: string,
-  knowledgeBaseId: number
+  knowledgeBaseId: number,
+  documentIds: number[]
 ): Promise<void> {
+  for (const documentId of documentIds) {
+    const response = await request.delete(`${apiBaseUrl}/api/knowledge-documents/${documentId}`, {
+      headers: authHeaders(token),
+    })
+    expect(response.ok(), await response.text()).toBeTruthy()
+  }
+
   const response = await request.delete(`${apiBaseUrl}/api/knowledge-bases/${knowledgeBaseId}`, {
     headers: authHeaders(token),
   })

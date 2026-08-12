@@ -68,6 +68,14 @@ test.describe('Provider-native ClaudeCode access', () => {
       {
         toolCalls: [
           {
+            toolName: 'Skill',
+            arguments: { skill: 'wegent-knowledge' },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
             toolName: READ_DOCUMENT_TOOL,
             arguments: { document_id: resources.fixture.documents.a1.id },
           },
@@ -92,12 +100,16 @@ test.describe('Provider-native ClaudeCode access', () => {
     const task = await getTask(request, resources.token, taskId)
     const bodies = await getScenarioModelBodies(request, prompt)
     const requestText = modelRequestText(bodies)
+    const initialRequestText = modelRequestText(bodies.slice(0, 1))
+    const requestTextAfterSkillLoad = modelRequestText(bodies.slice(1))
 
-    expect(bodies.length).toBeGreaterThan(0)
+    expect(bodies.length).toBeGreaterThan(1)
     expect(requestText).toContain('<selected_knowledge_sources>')
     expect(requestText).toContain('provider="wegent"')
     expect(requestText).toContain(`resource_id="${resources.fixture.documents.a1.id}"`)
-    expect(requestText).toContain('# Wegent Knowledge Base Skill')
+    expect(requestText).toContain('**wegent-knowledge** [USER SELECTED - PRIORITIZE]')
+    expect(initialRequestText).not.toContain('# Wegent Knowledge Base Skill')
+    expect(requestTextAfterSkillLoad).toContain('# Wegent Knowledge Base Skill')
     expect(requestText).not.toContain(`resource_id="${resources.fixture.documents.a2.id}"`)
     const calls = collectTaskToolCalls(task).filter(call => call.name.endsWith(READ_DOCUMENT_TOOL))
     expect(calls).toHaveLength(1)

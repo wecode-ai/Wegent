@@ -128,17 +128,40 @@ export async function deleteProviderNativeResources(
   request: APIRequestContext,
   resources: ProviderNativeResources
 ): Promise<void> {
+  const cleanupErrors: unknown[] = []
+  const attemptCleanup = async (cleanup: () => Promise<unknown>) => {
+    try {
+      await cleanup()
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+  }
+
   await configureDingTalkService(request, resources.token, 'docs', false).catch(() => null)
   await configureDingTalkService(request, resources.token, 'wikispace', false).catch(() => null)
   await configureDingTalkService(request, resources.token, 'ai_table', false).catch(() => null)
-  for (const id of [resources.fixture.knowledgeBase.id, resources.fixture.otherKnowledgeBase.id]) {
-    await deleteProviderNativeKnowledgeFixture(
+  await attemptCleanup(() =>
+    deleteProviderNativeKnowledgeFixture(
       request,
       PROVIDER_NATIVE_API_URL,
       resources.token,
-      id
-    ).catch(() => null)
-  }
+      resources.fixture.knowledgeBase.id,
+      [
+        resources.fixture.documents.a1.id,
+        resources.fixture.documents.a2.id,
+        resources.fixture.documents.a3.id,
+      ]
+    )
+  )
+  await attemptCleanup(() =>
+    deleteProviderNativeKnowledgeFixture(
+      request,
+      PROVIDER_NATIVE_API_URL,
+      resources.token,
+      resources.fixture.otherKnowledgeBase.id,
+      [resources.fixture.documents.b1.id]
+    )
+  )
   await request
     .delete(`${PROVIDER_NATIVE_API_URL}/api/v1/namespaces/default/teams/${resources.teamName}`, {
       headers: authHeaders(resources.token),
@@ -155,6 +178,8 @@ export async function deleteProviderNativeResources(
     })
     .catch(() => null)
   await resetMockMcp(request).catch(() => null)
+
+  if (cleanupErrors.length > 0) throw cleanupErrors[0]
 }
 
 export async function configureDingTalkService(

@@ -1,5 +1,8 @@
 import { APIRequestContext, expect, Page, test } from '@playwright/test'
-import { PROVIDER_NATIVE_MARKERS } from '../../fixtures/provider-native-knowledge'
+import {
+  deleteProviderNativeKnowledgeFixture,
+  PROVIDER_NATIVE_MARKERS,
+} from '../../fixtures/provider-native-knowledge'
 import { ProviderNativeKnowledgePage } from '../../pages/tasks/provider-native-knowledge.page'
 import {
   authHeaders,
@@ -369,6 +372,7 @@ test.describe('Provider-native binding state and contracts', () => {
     })
     expect([200, 201]).toContain(kbResponse.status())
     const kb = (await kbResponse.json()) as { id: number; name: string }
+    let documentId: number | null = null
     try {
       const documentResponse = await request.post(
         `${PROVIDER_NATIVE_API_URL}/api/knowledge/documents`,
@@ -386,11 +390,13 @@ test.describe('Provider-native binding state and contracts', () => {
       )
       expect([200, 201]).toContain(documentResponse.status())
       const document = (await documentResponse.json()) as { id: number }
+      documentId = document.id
       const prompt = makePrompt('027', '输出唯一断言标记。')
       await scenario(request, prompt, [
         toolStep(READ_DOCUMENT_TOOL, { document_id: document.id }),
         { responseContent: marker },
       ])
+      await openProviderNativeChat(page, resources)
       const knowledge = new ProviderNativeKnowledgePage(page)
       await knowledge.selectDocuments(kb.id, kb.name, [document.id])
       const task = await sendCurrentTask(page, request, prompt)
@@ -410,9 +416,13 @@ test.describe('Provider-native binding state and contracts', () => {
       )
       expect(extractTaskAnswer(task)).toBe(marker)
     } finally {
-      await request.delete(`${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${kb.id}`, {
-        headers: authHeaders(resources.token),
-      })
+      await deleteProviderNativeKnowledgeFixture(
+        request,
+        PROVIDER_NATIVE_API_URL,
+        resources.token,
+        kb.id,
+        documentId === null ? [] : [documentId]
+      )
     }
   })
 

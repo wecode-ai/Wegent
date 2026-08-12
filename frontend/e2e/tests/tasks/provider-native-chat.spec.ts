@@ -104,7 +104,13 @@ test.describe('Provider-native Wegent knowledge access', () => {
     await attemptCleanup(() => clearConfiguredToolScenario(request))
     if (fixture?.knowledgeBase.id) {
       await attemptCleanup(() =>
-        deleteProviderNativeKnowledgeFixture(request, API_BASE_URL, token, fixture.knowledgeBase.id)
+        deleteProviderNativeKnowledgeFixture(
+          request,
+          API_BASE_URL,
+          token,
+          fixture.knowledgeBase.id,
+          [fixture.documents.a1.id, fixture.documents.a2.id, fixture.documents.a3.id]
+        )
       )
     }
     if (fixture?.otherKnowledgeBase.id) {
@@ -113,7 +119,8 @@ test.describe('Provider-native Wegent knowledge access', () => {
           request,
           API_BASE_URL,
           token,
-          fixture.otherKnowledgeBase.id
+          fixture.otherKnowledgeBase.id,
+          [fixture.documents.b1.id]
         )
       )
     }
@@ -234,8 +241,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
-    expect(evidence.boundKnowledgeBases.total).toBe(0)
-    expect(evidence.boundKnowledgeBases.items).toHaveLength(0)
+    expectNoWholeKnowledgeBaseBinding(evidence.boundKnowledgeBases)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [fixture.folders.requirements.id])
     expect(evidence.modelText).toContain(
@@ -302,7 +308,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
-    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
+    expectNoWholeKnowledgeBaseBinding(evidence.boundKnowledgeBases)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [fixture.documents.a1.id])
     expect(evidence.modelText).toContain(
@@ -361,7 +367,7 @@ test.describe('Provider-native Wegent knowledge access', () => {
     const taskId = await sendAndWait(knowledgePage, page, request, prompt)
 
     const evidence = await collectEvidence(request, taskId, prompt)
-    expectBoundKnowledgeBase(evidence.boundKnowledgeBases, fixture.knowledgeBase)
+    expectNoWholeKnowledgeBaseBinding(evidence.boundKnowledgeBases)
     expectSingleSource(evidence.modelBodies, fixture.knowledgeBase.id)
     expectSelectedResources(evidence.modelBodies, [
       fixture.documents.a1.id,
@@ -776,6 +782,14 @@ test.describe('Provider-native Wegent knowledge access', () => {
     expect(response.items).toHaveLength(1)
     expect(response.items[0].id).toBe(knowledgeBase.id)
     expect(response.items[0].name).toBe(knowledgeBase.name)
+  }
+
+  function expectNoWholeKnowledgeBaseBinding(response: {
+    items: BoundKnowledgeBase[]
+    total: number
+  }): void {
+    expect(response.total).toBe(0)
+    expect(response.items).toHaveLength(0)
   }
 
   function expectFinalAnswer(finalAnswer: string, markers: string[]): void {
