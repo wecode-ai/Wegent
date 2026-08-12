@@ -70,7 +70,9 @@ class ProjectChatMessage(Base):
     # trigger. The unique index turns "exactly one comment per run" into a
     # database invariant instead of a check-then-insert convention that races
     # across threads. Non-runtime and deleted messages use their message id.
-    runtime_activity_key = Column(String(64), nullable=False)
+    runtime_activity_key = Column(
+        String(64), nullable=False, default="", server_default=""
+    )
     status = Column(
         String(16), nullable=False, default="completed", server_default="completed"
     )

@@ -33,10 +33,67 @@ def upgrade() -> None:
             "runtime_activity_key",
             sa.String(64),
             nullable=False,
+            server_default="",
             comment=(
                 "Stable runtime identity for agent activity; message identity otherwise"
             ),
         ),
+    )
+    # The schema requires a deterministic default. Populate every historical
+    # row with its own message identity before adding the unique index; normal
+    # application inserts do the same through the model insert event.
+    op.execute(
+        """
+        UPDATE project_chat_messages
+        SET runtime_activity_key = SHA2(
+            CONCAT(
+                CASE
+                    WHEN deleted_at = '1970-01-01 00:00:00'
+                        THEN 'message'
+                    ELSE 'deleted'
+                END,
+                CHAR(0),
+                message_id
+            ),
+            256
+        )
+        """
+    )
+    # Give each current top-level agent activity a stable runtime identity.
+    # Existing duplicate activities keep their unique message keys; only the
+    # latest row owns the canonical runtime key.
+    op.execute(
+        """
+        UPDATE project_chat_messages AS message
+        JOIN (
+            SELECT
+                runtime_device_id,
+                runtime_task_id,
+                trigger_message_id,
+                MAX(id) AS latest_id
+            FROM project_chat_messages
+            WHERE sender_type = 'agent'
+              AND runtime_device_id <> ''
+              AND runtime_task_id <> ''
+              AND deleted_at = '1970-01-01 00:00:00'
+              AND JSON_EXTRACT(metadata, '$.run_id') IS NOT NULL
+            GROUP BY
+                runtime_device_id,
+                runtime_task_id,
+                trigger_message_id
+        ) AS latest
+          ON latest.latest_id = message.id
+        SET message.runtime_activity_key = SHA2(
+            CONCAT(
+                message.runtime_device_id,
+                CHAR(0),
+                message.runtime_task_id,
+                CHAR(0),
+                message.trigger_message_id
+            ),
+            256
+        )
+        """
     )
     op.create_index(
         "uniq_project_chat_runtime_activity",
