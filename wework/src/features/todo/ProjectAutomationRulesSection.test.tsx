@@ -10,6 +10,7 @@ const rule = {
   triggerType: 'schedule' as const,
   eventType: null,
   eventConfig: {},
+  assignmentMode: 'manual' as const,
   webhookEventId: null,
   webhookSecret: null,
   cronExpression: '0 3 * * *',

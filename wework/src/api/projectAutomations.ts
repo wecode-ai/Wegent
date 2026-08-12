@@ -18,11 +18,12 @@ export interface ProjectAutomationRule {
   triggerType: 'schedule' | 'event'
   eventType: 'task.created' | null
   eventConfig: Record<string, unknown>
+  assignmentMode: 'manual' | 'automatic'
   webhookEventId: string | null
   webhookSecret: string | null
   cronExpression: string | null
   timezone: string
-  agentId: string
+  agentId: string | null
   agentName: string
   executionEnvironment: 'local' | 'cloud'
   executionDeviceId: string | null
@@ -57,9 +58,10 @@ export interface ProjectAutomationInput {
   triggerType: 'schedule' | 'event'
   eventType: 'task.created' | null
   eventConfig: Record<string, unknown>
+  assignmentMode: 'manual' | 'automatic'
   cronExpression: string | null
   timezone: string
-  agentId: string
+  agentId: string | null
   enabled: boolean
 }
 

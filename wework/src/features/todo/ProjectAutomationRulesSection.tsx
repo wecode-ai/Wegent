@@ -107,9 +107,10 @@ const defaultInput = (): ProjectAutomationInput => ({
   triggerType: 'schedule',
   eventType: null,
   eventConfig: {},
+  assignmentMode: 'manual',
   cronExpression: '0 3 * * *',
   timezone: 'Asia/Shanghai',
-  agentId: '',
+  agentId: null,
   enabled: true,
 })
 
@@ -176,6 +177,7 @@ export function ProjectAutomationRulesSection({
       triggerType: rule.triggerType,
       eventType: rule.eventType,
       eventConfig: rule.eventConfig,
+      assignmentMode: rule.assignmentMode,
       cronExpression: rule.cronExpression,
       timezone: rule.timezone,
       agentId: rule.agentId,
@@ -193,7 +195,7 @@ export function ProjectAutomationRulesSection({
 
   const createRule = () => {
     const input = defaultInput()
-    input.agentId = agents[0]?.id ?? ''
+    input.agentId = agents[0]?.id ?? null
     setSelected(null)
     setRuns([])
     setCreatedWebhook(null)
@@ -203,7 +205,11 @@ export function ProjectAutomationRulesSection({
 
   const save = async () => {
     if (!api || !draft) return
-    if (!draft.name.trim() || !draft.prompt.trim() || !draft.agentId) {
+    if (
+      !draft.name.trim() ||
+      !draft.prompt.trim() ||
+      (draft.assignmentMode === 'manual' && !draft.agentId)
+    ) {
       setError(t('workbench.project_automation_required_fields'))
       return
     }
@@ -467,6 +473,11 @@ export function ProjectAutomationRulesSection({
                       ...draft,
                       triggerType: value as 'schedule' | 'event',
                       eventType: value === 'event' ? 'task.created' : null,
+                      assignmentMode: value === 'schedule' ? 'manual' : draft.assignmentMode,
+                      agentId:
+                        value === 'schedule' && !draft.agentId
+                          ? (agents[0]?.id ?? null)
+                          : draft.agentId,
                     })
                   }
                   options={[
@@ -561,10 +572,26 @@ export function ProjectAutomationRulesSection({
                 <SettingsRow label={t('workbench.project_automation_robot')}>
                   <MenuSelect
                     testId="project-automation-agent"
-                    value={draft.agentId}
+                    value={
+                      draft.assignmentMode === 'automatic' ? 'automatic' : (draft.agentId ?? '')
+                    }
                     pill
-                    onChange={value => setDraft({ ...draft, agentId: value })}
+                    onChange={value =>
+                      setDraft({
+                        ...draft,
+                        assignmentMode: value === 'automatic' ? 'automatic' : 'manual',
+                        agentId: value === 'automatic' ? null : value,
+                      })
+                    }
                     options={[
+                      ...(draft.triggerType === 'event'
+                        ? [
+                            {
+                              value: 'automatic',
+                              label: t('workbench.project_automation_auto_robot'),
+                            },
+                          ]
+                        : []),
                       { value: '', label: t('workbench.project_automation_select_robot') },
                       ...agents.map(agent => ({
                         value: agent.id,
@@ -682,7 +709,12 @@ export function ProjectAutomationRulesSection({
             <button
               type="button"
               data-testid="project-automation-save"
-              disabled={busy || !draft.name.trim() || !draft.prompt.trim() || !draft.agentId}
+              disabled={
+                busy ||
+                !draft.name.trim() ||
+                !draft.prompt.trim() ||
+                (draft.assignmentMode === 'manual' && !draft.agentId)
+              }
               onClick={() => void save()}
               className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
             >

@@ -1115,6 +1115,7 @@ def test_task_created_event_assigns_matching_project_automation_robot(
     test_db: Session,
     test_user: User,
     test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_db.add(
         Kind(
@@ -1145,6 +1146,14 @@ def test_task_created_event_assigns_matching_project_automation_robot(
             "executionDeviceId": "event-cloud-device",
         },
     ).json()
+
+    async def select_agent(db: Session, rule: object, event: object) -> str:
+        return agent["id"]
+
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor._select_agent",
+        select_agent,
+    )
     created_rule = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/automations",
         headers=_auth(test_token),
@@ -1154,12 +1163,14 @@ def test_task_created_event_assigns_matching_project_automation_robot(
             "triggerType": "event",
             "eventType": "task.created",
             "eventConfig": {"priorities": ["high"]},
-            "agentId": agent["id"],
+            "assignmentMode": "automatic",
         },
     )
     assert created_rule.status_code == 201
     rule = created_rule.json()
     assert rule["triggerType"] == "event"
+    assert rule["assignmentMode"] == "automatic"
+    assert rule["agentId"] is None
     assert rule["webhookEventId"] == rule["id"]
     assert rule["nextRunAt"] is None
 

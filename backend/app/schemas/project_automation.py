@@ -29,7 +29,8 @@ class ProjectAutomationCreate(ProjectChatSchema):
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
-    agent_id: str = Field(min_length=1, max_length=64)
+    assignment_mode: Literal["manual", "automatic"] = "manual"
+    agent_id: str | None = Field(default=None, min_length=1, max_length=64)
     enabled: bool = True
 
 
@@ -40,6 +41,7 @@ class ProjectAutomationUpdate(ProjectChatSchema):
     trigger_type: Literal["schedule", "event"] | None = None
     event_type: Literal["task.created"] | None = None
     event_config: dict[str, Any] | None = None
+    assignment_mode: Literal["manual", "automatic"] | None = None
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -54,11 +56,12 @@ class ProjectAutomationView(ProjectChatSchema):
     trigger_type: Literal["schedule", "event"]
     event_type: Literal["task.created"] | None
     event_config: dict[str, Any]
+    assignment_mode: Literal["manual", "automatic"]
     webhook_event_id: str | None
     webhook_secret: str | None = None
     cron_expression: str | None
     timezone: str
-    agent_id: str
+    agent_id: str | None
     agent_name: str
     execution_environment: str
     execution_device_id: str | None

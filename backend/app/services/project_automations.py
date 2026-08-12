@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
 )
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.schemas.base_role import BaseRole
@@ -33,12 +35,14 @@ from app.schemas.project_automation import (
     ProjectAutomationUpdate,
 )
 from app.schemas.project_chat import LoopItemAssign
+from app.services.chat.config import extract_and_process_model_config
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import bot_config
+from app.services.simple_chat import simple_chat_service
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 logger = logging.getLogger(__name__)
@@ -111,7 +115,14 @@ class ProjectAutomationService:
         values: ProjectAutomationCreate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        agent = self._agent(db, project_id, values.agent_id)
+        self._validate_assignment(
+            values.assignment_mode, values.agent_id, values.trigger_type
+        )
+        agent = (
+            self._agent(db, project_id, values.agent_id)
+            if values.agent_id is not None
+            else None
+        )
         self._validate_trigger(
             values.trigger_type, values.event_type, values.cron_expression
         )
@@ -128,7 +139,7 @@ class ProjectAutomationService:
             cloud_project_id=project_id,
             title=values.name,
             description=values.prompt,
-            assignee_agent_id=agent.id,
+            assignee_agent_id=agent.id if agent else "",
             status="enabled" if values.enabled else "disabled",
             due_at=next_run_at if values.enabled else None,
             created_by_user_id=user_id,
@@ -137,6 +148,7 @@ class ProjectAutomationService:
                 "trigger_type": values.trigger_type,
                 "event_type": values.event_type,
                 "event_config": values.event_config,
+                "assignment_mode": values.assignment_mode,
                 "webhook_secret_encrypted": (
                     encrypt_sensitive_data_with_embedded_iv(webhook_secret)
                     if webhook_secret
@@ -174,8 +186,17 @@ class ProjectAutomationService:
             metadata.get("timezone") or "Asia/Shanghai"
         )
         self._validate_trigger(trigger_type, event_type, expression)
+        assignment_mode = values.assignment_mode or str(
+            metadata.get("assignment_mode") or "manual"
+        )
+        agent_id = (
+            values.agent_id if values.agent_id is not None else row.assignee_agent_id
+        )
+        self._validate_assignment(assignment_mode, agent_id or None, trigger_type)
         if values.agent_id is not None:
             row.assignee_agent_id = self._agent(db, project_id, values.agent_id).id
+        elif assignment_mode == "automatic":
+            row.assignee_agent_id = ""
         if values.name is not None:
             row.title = values.name
         if values.prompt is not None:
@@ -191,6 +212,7 @@ class ProjectAutomationService:
                     if values.event_config is not None
                     else metadata.get("event_config", {})
                 ),
+                "assignment_mode": assignment_mode,
                 "cron_expression": expression,
                 "timezone": timezone_name,
             }
@@ -395,6 +417,21 @@ class ProjectAutomationService:
         return dispatched
 
     @staticmethod
+    def _validate_assignment(
+        assignment_mode: str, agent_id: str | None, trigger_type: str
+    ) -> None:
+        if assignment_mode == "automatic" and trigger_type != "event":
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Automatic robot selection requires an event trigger",
+            )
+        if assignment_mode == "manual" and not agent_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "agent_id is required for manual assignment",
+            )
+
+    @staticmethod
     def _validate_trigger(
         trigger_type: str, event_type: str | None, cron_expression: str | None
     ) -> None:
@@ -422,7 +459,7 @@ class ProjectAutomationService:
                 run.status,
             )
             return
-        agent = db.get(ProjectChatAgent, rule.assignee_agent_id)
+        agent = db.get(ProjectChatAgent, run.assignee_agent_id)
         if agent is None or agent.status != "active":
             run.status = "failed"
             run.description = "Automation robot is unavailable"
@@ -430,7 +467,7 @@ class ProjectAutomationService:
             logger.warning(
                 "[ProjectAutomation] Run=%s failed because agent=%s is unavailable",
                 run.id,
-                rule.assignee_agent_id,
+                run.assignee_agent_id,
             )
             return
         config = bot_config(agent)
@@ -758,15 +795,18 @@ class ProjectAutomationService:
             "trigger_type": str(metadata.get("trigger_type") or "schedule"),
             "event_type": metadata.get("event_type"),
             "event_config": metadata.get("event_config") or {},
+            "assignment_mode": str(metadata.get("assignment_mode") or "manual"),
             "webhook_event_id": (
                 row.id if metadata.get("trigger_type") == "event" else None
             ),
             "webhook_secret": webhook_secret,
             "cron_expression": metadata.get("cron_expression"),
             "timezone": str(metadata.get("timezone") or "Asia/Shanghai"),
-            "agent_id": row.assignee_agent_id,
+            "agent_id": row.assignee_agent_id or None,
             "agent_name": (
-                (agent.title or agent.name or "AI") if agent else "Unavailable"
+                (agent.title or agent.name or "AI")
+                if agent
+                else "AI automatic selection"
             ),
             "execution_environment": str(
                 config.get("execution_environment") or "local"
@@ -843,6 +883,24 @@ class ProjectAutomationProcessor:
                 continue
             if not self._matches(metadata.get("event_config"), event):
                 continue
+            agent_id = rule.assignee_agent_id
+            if metadata.get("assignment_mode") == "automatic":
+                try:
+                    agent_id = await self._select_agent(db, rule, event)
+                except Exception as exc:
+                    logger.exception(
+                        "[ProjectAutomation] Automatic assignment failed rule=%s",
+                        rule.id,
+                    )
+                    run = project_automation_service._create_run(
+                        db, rule, "event", utcnow(), None
+                    )
+                    run.task_id = event.subject_id
+                    run.status = "failed"
+                    run.description = str(exc)[:2000]
+                    db.commit()
+                    dispatched += 1
+                    continue
             run = project_automation_service._create_run(
                 db,
                 rule,
@@ -850,6 +908,7 @@ class ProjectAutomationProcessor:
                 utcnow(),
                 None,
             )
+            run.assignee_agent_id = agent_id
             run.task_id = event.subject_id
             run_metadata = _metadata(run)
             run_metadata["event"] = {
@@ -863,6 +922,92 @@ class ProjectAutomationProcessor:
             await project_automation_service._dispatch_if_available(db, rule, run)
             dispatched += 1
         return dispatched
+
+    async def _select_agent(
+        self,
+        db: Session,
+        rule: ProjectAutomationRule,
+        event: ProjectAutomationEvent,
+    ) -> str:
+        owner = db.get(User, rule.created_by_user_id)
+        if owner is None:
+            raise ValueError("Automation owner is unavailable")
+        agents = (
+            db.query(ProjectChatAgent)
+            .filter(
+                ProjectChatAgent.cloud_project_id == event.project_id,
+                ProjectChatAgent.status == "active",
+                loop_datetime_is_unset(ProjectChatAgent.deleted_at),
+            )
+            .order_by(ProjectChatAgent.created_at)
+            .all()
+        )
+        if not agents:
+            raise ValueError("No active project robots are available")
+        model = self._selection_model(db, owner)
+        candidates = [
+            {
+                "agent_id": agent.id,
+                "name": agent.title or agent.name or "AI",
+                "capability": str(bot_config(agent).get("system_prompt") or ""),
+            }
+            for agent in agents
+        ]
+        response = await simple_chat_service.chat_completion(
+            message=json.dumps(
+                {
+                    "rule_instruction": rule.description or "",
+                    "task": event.payload,
+                    "candidates": candidates,
+                },
+                ensure_ascii=False,
+            ),
+            model_config=model,
+            system_prompt=(
+                "Select exactly one project robot for the task. Base the decision "
+                "only on the task and candidate capabilities. Return JSON only: "
+                '{"agent_id":"<one candidate agent_id>"}.'
+            ),
+        )
+        selected_id = self._selected_agent_id(response)
+        if selected_id not in {agent.id for agent in agents}:
+            raise ValueError("AI returned an invalid project robot")
+        return selected_id
+
+    @staticmethod
+    def _selection_model(db: Session, owner: User) -> dict:
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.is_active == True,
+                Kind.user_id.in_([owner.id, 0]),
+            )
+            .order_by((Kind.user_id == owner.id).desc(), Kind.id)
+            .first()
+        )
+        if model is None:
+            raise ValueError("No model is available for automatic assignment")
+        return extract_and_process_model_config(
+            model_spec=(model.json or {}).get("spec", {}),
+            user_id=owner.id,
+            user_name=owner.user_name or "",
+        )
+
+    @staticmethod
+    def _selected_agent_id(response: str) -> str:
+        text = response.strip()
+        if text.startswith("```"):
+            text = text.removeprefix("```json").removeprefix("```")
+            text = text.removesuffix("```").strip()
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("AI returned invalid assignment JSON") from exc
+        agent_id = value.get("agent_id") if isinstance(value, dict) else None
+        if not isinstance(agent_id, str) or not agent_id:
+            raise ValueError("AI did not select a project robot")
+        return agent_id
 
     @staticmethod
     def _matches(config: object, event: ProjectAutomationEvent) -> bool:

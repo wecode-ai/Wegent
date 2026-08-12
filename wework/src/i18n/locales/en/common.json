@@ -174,6 +174,7 @@
     "project_automation_timezone_shanghai": "Shanghai time",
     "project_automation_robot": "Robot",
     "project_automation_select_robot": "Select a robot",
+    "project_automation_auto_robot": "Let AI select a robot",
     "project_automation_run_now": "Run now",
     "project_automation_runs": "Recent runs",
     "project_automation_open_task": "Open task",
