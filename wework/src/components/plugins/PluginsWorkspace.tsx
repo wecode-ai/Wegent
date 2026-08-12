@@ -62,6 +62,7 @@ import {
   type PluginMarketplaceCacheSnapshot,
 } from '@/features/plugins/pluginMarketplaceCache'
 import {
+  beginPluginDeviceSync,
   hasAttemptedPluginDeviceAutoSync,
   hasSettledPluginDeviceAutoSync,
   marketplaceItemOffersDeviceSyncRetry,
@@ -70,6 +71,10 @@ import {
   markPluginDeviceAutoSyncSettled,
   withOptimisticDevicePending,
 } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  marketplaceItemNeedsPluginAutoUpdate,
+  runPluginAutoUpdate,
+} from '@/features/plugins/pluginAutoUpdate'
 import type {
   InstalledPlugin,
   PluginAccessResponse,
@@ -1360,6 +1365,7 @@ export function PluginsWorkspace({
   const marketplaceScrollRegionRef = useRef<HTMLDivElement>(null)
   const marketplaceReturnScrollTopRef = useRef<number | null>(null)
   const preparingInstallPluginIdsRef = useRef(new Set<string | number>())
+  const autoUpdateAttemptKeysRef = useRef(new Set<string>())
   // Durable peek / warm cache already paints the catalog — do not start in a
   // "refreshing" skeleton state just because Codex plugin/list will revalidate.
   const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false)
@@ -2300,7 +2306,11 @@ export function PluginsWorkspace({
           : (installedPlugins.find(
               plugin => String(plugin.id) === String(item.installedPluginId)
             ) ?? null)
-      if (item.updateAvailable && item.latestReleaseId && item.installedPluginId) {
+      if (
+        marketplaceItemNeedsPluginAutoUpdate(item) &&
+        item.latestReleaseId &&
+        item.installedPluginId
+      ) {
         const confirmed = window.confirm(
           t(
             'workbench.plugins_update_confirm',
@@ -3616,8 +3626,90 @@ export function PluginsWorkspace({
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
+    if (!pluginMarketplaceState.items.some(marketplaceItemNeedsPluginAutoUpdate)) return
+    const attemptKey = `${marketplaceCacheKeyValue}:${currentDeviceId}`
+    if (autoUpdateAttemptKeysRef.current.has(attemptKey)) return
+
+    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
+    if (!finishDeviceSync) return
+    autoUpdateAttemptKeysRef.current.add(attemptKey)
+    const deviceId = currentDeviceId
+
+    void runPluginAutoUpdate({
+      updateBatch: () => pluginApi.autoUpdateInstalledPlugins(),
+      syncDevice: () => pluginApi.syncInstalledPluginsToDevice(deviceId),
+      syncWhenNoUpdates: true,
+      onProgress: ({ updatedCount, remainingCount }) => {
+        if (currentDeviceIdRef.current !== deviceId) return
+        setPluginOperationNotice({
+          id: `plugin-auto-update-${deviceId}`,
+          kind: 'authorization',
+          message: t(
+            'workbench.plugins_auto_update_progress',
+            '正在自动更新插件：已处理 {{updated}} 个，剩余 {{remaining}} 个',
+            { updated: updatedCount, remaining: remainingCount }
+          ),
+        })
+      },
+    })
+      .then(updatedCount => {
+        if (currentDeviceIdRef.current !== deviceId) return
+        if (updatedCount > 0) {
+          setPluginOperationNotice({
+            id: `plugin-auto-update-complete-${deviceId}`,
+            kind: 'success',
+            message: t('workbench.plugins_auto_update_complete', '已自动更新 {{count}} 个插件', {
+              count: updatedCount,
+            }),
+          })
+        }
+        markPluginDeviceAutoSyncAttempted(deviceId)
+        markPluginDeviceAutoSyncSettled(deviceId)
+        setDeviceAutoSyncSettled(true)
+      })
+      .catch(error => {
+        if (currentDeviceIdRef.current !== deviceId) return
+        markPluginDeviceAutoSyncAttempted(deviceId)
+        markPluginDeviceAutoSyncSettled(deviceId)
+        setDeviceAutoSyncSettled(true)
+        setPluginOperationNotice({
+          id: `plugin-auto-update-error-${deviceId}`,
+          kind: 'error',
+          message: t(
+            'workbench.plugins_auto_update_failed',
+            '插件自动更新失败，当前设备继续使用原版本：{{error}}',
+            { error: getErrorMessage(error, 'Unknown error') }
+          ),
+        })
+        track('operation_failed', { operation: 'plugin_auto_update' })
+      })
+      .finally(() => {
+        finishDeviceSync()
+        if (currentDeviceIdRef.current === deviceId) {
+          setMarketplaceRefreshTick(previous => previous + 1)
+        }
+      })
+  }, [
+    cloudMarketplaceAvailable,
+    cloudToken,
+    currentDeviceId,
+    localInstalledStateReadyKey,
+    marketplaceCacheKeyValue,
+    pluginApi,
+    pluginMarketplaceState.isLoading,
+    pluginMarketplaceState.items,
+    t,
+  ])
+
+  useEffect(() => {
+    if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
+    if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
+    if (pluginMarketplaceState.isLoading) return
     if (hasAttemptedPluginDeviceAutoSync(currentDeviceId)) return
     if (!marketplaceNeedsDeviceSync(pluginMarketplaceState.items)) return
+
+    const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
+    if (!finishDeviceSync) return
 
     markPluginDeviceAutoSyncAttempted(currentDeviceId)
     const deviceId = currentDeviceId
@@ -3686,6 +3778,7 @@ export function PluginsWorkspace({
           setDeviceAutoSyncSettled(true)
         }
       })
+      .finally(finishDeviceSync)
   }, [
     cloudMarketplaceAvailable,
     cloudToken,
@@ -4354,8 +4447,8 @@ export function PluginsWorkspace({
       uninstallingPluginIds.has(detailUninstallId)
     const isActionPending = isInstalling || isUninstalling || isDeviceSyncing
     const canUpdate =
-      Boolean(selectedMarketplacePlugin.updateAvailable) &&
-      isInstalled &&
+      marketplaceItemNeedsPluginAutoUpdate(selectedMarketplacePlugin) &&
+      selectedMarketplacePlugin.installed &&
       selectedMarketplacePlugin.installedPluginId
     const showDetailActionMenu =
       isInstalled ||

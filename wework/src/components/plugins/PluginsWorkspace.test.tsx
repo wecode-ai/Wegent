@@ -382,9 +382,13 @@ function mockSystemSkillsFetch(
     marketplaceName: string
     marketplaceDisplayName: string
     deviceAutoSyncSucceeds: boolean
+    marketplaceUpdateAvailable: boolean
+    autoUpdateBatchSizes: number[]
   }> = {}
 ) {
-  let marketplaceUpdateAvailable = false
+  let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
+  const autoUpdateBatchSizes = [...(overrides.autoUpdateBatchSizes ?? [])]
+  let autoUpdateBatchCalls = 0
   let cloudMarketplacePluginInstalled = Boolean(overrides.marketplaceInstalled)
   let marketplaceDeviceState: 'installed' | 'failed' | 'pending' =
     overrides.marketplaceDeviceState ?? 'installed'
@@ -889,6 +893,28 @@ function mockSystemSkillsFetch(
             }),
         })
       }
+      if (requestUrl.pathname === '/api/plugins/installed/auto-update-batch') {
+        autoUpdateBatchCalls += 1
+        const updatedCount = autoUpdateBatchSizes.shift() ?? 0
+        const remainingCount = autoUpdateBatchSizes.reduce((total, count) => total + count, 0)
+        if (remainingCount === 0) marketplaceUpdateAvailable = false
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              updated: Array.from({ length: updatedCount }, (_, index) => ({
+                installedPluginId: index + 101,
+                pluginId: index + 201,
+                fromReleaseId: index + 301,
+                toReleaseId: index + 401,
+                version: '2.0.0',
+              })),
+              updatedCount,
+              remainingCount,
+            }),
+        })
+      }
       if (requestUrl.pathname === '/api/plugins/marketplace') {
         const keyword = requestUrl.searchParams.get('q')
         const currentMarketplacePlugins = buildMarketplacePlugins().map((plugin, index) =>
@@ -993,6 +1019,7 @@ function mockSystemSkillsFetch(
       marketplaceUpdateAvailable = true
     },
     getSyncDeviceCalls: () => syncDeviceCalls,
+    getAutoUpdateBatchCalls: () => autoUpdateBatchCalls,
   }
 }
 
@@ -1721,6 +1748,32 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    )
+  })
+
+  test('automatically updates cloud plugins in bounded serial batches', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      autoUpdateBatchSizes: [5, 1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(2))
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(2))
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('已自动更新 6 个插件')
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'success'
     )
   })
 

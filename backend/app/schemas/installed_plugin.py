@@ -164,7 +164,7 @@ class InstalledPluginSpec(BaseModel):
     pluginId: Optional[int] = None
     releaseId: Optional[int] = None
     desiredVersion: Optional[str] = None
-    updatePolicy: Literal["manual"] = "manual"
+    updatePolicy: Literal["manual", "auto"] = "manual"
     sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
     sourceLabel: str = "Wegent 官方"
     visibility: Literal["personal", "workspace", "public"] = "workspace"
@@ -319,6 +319,24 @@ class PluginDeviceSyncResponse(BaseModel):
     deviceId: str
     pendingCount: int = 0
     sync: DeviceCapabilitySyncResponse
+
+
+class PluginAutoUpdateItem(BaseModel):
+    """One account installation advanced to a newer marketplace release."""
+
+    installedPluginId: int
+    pluginId: int
+    fromReleaseId: int
+    toReleaseId: int
+    version: str
+
+
+class PluginAutoUpdateBatchResponse(BaseModel):
+    """One bounded batch of automatic marketplace plugin updates."""
+
+    updated: List[PluginAutoUpdateItem] = Field(default_factory=list)
+    updatedCount: int = 0
+    remainingCount: int = 0
 
 
 class PluginMarketplaceCapabilities(BaseModel):

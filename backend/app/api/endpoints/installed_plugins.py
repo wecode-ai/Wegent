@@ -24,6 +24,7 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessResponse,
     PluginAccessUpdateRequest,
+    PluginAutoUpdateBatchResponse,
     PluginCopyResponse,
     PluginDeviceSyncResponse,
     PluginMarketplaceCapabilities,
@@ -70,6 +71,21 @@ def list_installed_plugins(
             user_id=current_user.id,
         ),
         device_id=device_id,
+    )
+
+
+@router.post(
+    "/installed/auto-update-batch",
+    response_model=PluginAutoUpdateBatchResponse,
+)
+def auto_update_installed_plugins(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginAutoUpdateBatchResponse:
+    """Advance one bounded batch of cloud marketplace plugin installations."""
+    return plugin_marketplace_service.auto_update_batch(
+        db,
+        user_id=current_user.id,
     )
 
 

@@ -2077,7 +2077,7 @@ export interface InstalledPlugin {
     pluginId?: number | null
     releaseId?: number | null
     desiredVersion?: string | null
-    updatePolicy?: 'manual'
+    updatePolicy?: 'manual' | 'auto'
     sourceProvider?: 'wegent' | 'codex' | 'user'
     sourceLabel?: string
     visibility?: 'personal' | 'workspace' | 'public'
@@ -2205,6 +2205,20 @@ export interface PluginDeviceSyncResponse {
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse
+}
+
+export interface PluginAutoUpdateItem {
+  installedPluginId: number
+  pluginId: number
+  fromReleaseId: number
+  toReleaseId: number
+  version: string
+}
+
+export interface PluginAutoUpdateBatchResponse {
+  updated: PluginAutoUpdateItem[]
+  updatedCount: number
+  remainingCount: number
 }
 
 export interface PluginMarketplaceCapabilities {

@@ -769,6 +769,171 @@ def test_catalog_marks_manual_update_available(test_db, test_user, monkeypatch):
     assert item.updateAvailable is True
 
 
+def _create_auto_update_install(
+    db: Session,
+    *,
+    user_id: int,
+    index: int,
+    current_version: str = "1.0.0",
+    latest_version: str = "2.0.0",
+) -> tuple[Kind, Plugin, PluginRelease, PluginRelease]:
+    service = PluginMarketplaceService()
+    slug = f"auto-update-{index}"
+    plugin = Plugin(
+        slug=slug,
+        name=slug,
+        display_name=f"Auto Update {index}",
+        summary="Automatic update fixture",
+        listing_type="plugin",
+        source_type="native",
+        source_provider="wework",
+        owner_user_id=0,
+        keywords_json=[],
+        interface_json={},
+        visibility="workspace",
+        status="published",
+    )
+    db.add(plugin)
+    db.flush()
+    current = PluginRelease(
+        plugin_id=plugin.id,
+        version=current_version,
+        manifest_json={"name": slug, "version": current_version},
+        interface_json={},
+        storage_key=f"plugins/{slug}-{current_version}.zip",
+        sha256=f"{index % 16:x}" * 64,
+        size_bytes=100,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={"components": {"skills": []}},
+        published_at=datetime.now(),
+    )
+    latest = PluginRelease(
+        plugin_id=plugin.id,
+        version=latest_version,
+        manifest_json={"name": slug, "version": latest_version},
+        interface_json={},
+        storage_key=f"plugins/{slug}-{latest_version}.zip",
+        sha256=f"{(index + 1) % 16:x}" * 64,
+        size_bytes=200,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={"components": {"skills": []}},
+        published_at=datetime.now(),
+    )
+    db.add_all([current, latest])
+    db.flush()
+    plugin.latest_release_id = latest.id
+    payload = service._installed_payload(plugin, current)
+    payload["spec"]["enabled"] = False
+    payload["spec"]["componentStates"] = {"skills:review": False}
+    installed = Kind(
+        user_id=user_id,
+        kind="InstalledPlugin",
+        name=slug,
+        namespace="default",
+        json=payload,
+        is_active=True,
+    )
+    db.add(installed)
+    db.flush()
+    return installed, plugin, current, latest
+
+
+@pytest.mark.parametrize(
+    ("install_count", "expected_batches"),
+    [(0, 0), (1, 1), (5, 1), (6, 2), (12, 3)],
+)
+def test_auto_update_batches_are_bounded_and_drain_all_candidates(
+    test_db, test_user, install_count, expected_batches
+):
+    service = PluginMarketplaceService()
+    installs = [
+        _create_auto_update_install(
+            test_db,
+            user_id=test_user.id,
+            index=index + 1,
+        )
+        for index in range(install_count)
+    ]
+    test_db.commit()
+
+    batch_sizes: list[int] = []
+    while True:
+        result = service.auto_update_batch(test_db, user_id=test_user.id)
+        if result.updatedCount == 0:
+            break
+        batch_sizes.append(result.updatedCount)
+        if result.remainingCount == 0:
+            break
+
+    assert len(batch_sizes) == expected_batches
+    assert all(size <= 5 for size in batch_sizes)
+    assert sum(batch_sizes) == install_count
+    for installed, _, _, latest in installs:
+        test_db.refresh(installed)
+        assert installed.json["spec"]["releaseId"] == latest.id
+        assert installed.json["spec"]["version"] == "2.0.0"
+        assert installed.json["spec"]["updatePolicy"] == "auto"
+        assert installed.json["spec"]["enabled"] is False
+        assert installed.json["spec"]["componentStates"] == {"skills:review": False}
+
+
+def test_auto_update_is_idempotent_and_excludes_invalid_installations(
+    test_db, test_user
+):
+    service = PluginMarketplaceService()
+    valid, _, _, latest = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=1,
+    )
+    invalid_scan, _, _, invalid_latest = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=2,
+    )
+    invalid_latest.scan_status = "pending"
+    invalid_source, _, _, _ = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=3,
+    )
+    invalid_source.json["spec"]["source"]["type"] = "upload"
+    invalid_catalog, _, _, _ = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=4,
+    )
+    invalid_catalog.json["spec"]["releaseId"] = 999999
+    inaccessible, inaccessible_plugin, _, _ = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=5,
+    )
+    inaccessible_plugin.visibility = "personal"
+    inaccessible_plugin.owner_user_id = test_user.id + 1000
+    test_db.commit()
+
+    first = service.auto_update_batch(test_db, user_id=test_user.id)
+    second = service.auto_update_batch(test_db, user_id=test_user.id)
+
+    assert first.updatedCount == 1
+    assert first.updated[0].installedPluginId == valid.id
+    assert first.updated[0].toReleaseId == latest.id
+    assert first.remainingCount == 0
+    assert second.updatedCount == 0
+    assert second.remainingCount == 0
+    for excluded in (
+        invalid_scan,
+        invalid_source,
+        invalid_catalog,
+        inaccessible,
+    ):
+        test_db.refresh(excluded)
+        assert excluded.json["spec"]["version"] == "1.0.0"
+
+
 @pytest.mark.parametrize(
     ("package_factory", "error"),
     [
