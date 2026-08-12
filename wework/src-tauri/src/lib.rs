@@ -548,6 +548,32 @@ fn env_flag_enabled(key: &str) -> bool {
 #[cfg(desktop)]
 const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopE2ERuntimeConfig {
+    cloud_backend_url: Option<String>,
+    cloud_token: Option<String>,
+    control_url: Option<String>,
+    model_server_url: Option<String>,
+    posthog_host: Option<String>,
+}
+
+#[tauri::command]
+fn get_desktop_e2e_runtime_config() -> Option<DesktopE2ERuntimeConfig> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
+        return None;
+    }
+
+    let read = |key| std::env::var(key).ok().and_then(normalized_non_empty);
+    Some(DesktopE2ERuntimeConfig {
+        cloud_backend_url: read("WEWORK_E2E_CLOUD_BACKEND_URL"),
+        cloud_token: read("WEWORK_E2E_CLOUD_TOKEN"),
+        control_url: read("WEWORK_E2E_CONTROL_URL"),
+        model_server_url: read("WEWORK_E2E_MODEL_SERVER_URL"),
+        posthog_host: read("WEWORK_E2E_POSTHOG_HOST"),
+    })
+}
+
 #[cfg(desktop)]
 fn should_activate_main_window() -> bool {
     !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
@@ -5147,6 +5173,7 @@ pub fn run() {
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
             get_app_log_directory,
+            get_desktop_e2e_runtime_config,
             get_app_preferences,
             close_main_window_to_tray,
             open_app_log_directory,

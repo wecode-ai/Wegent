@@ -583,7 +583,15 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
+      WEWORK_E2E_CLOUD_TOKEN:
+        cloudEnvironment?.authToken ??
+        desktopScenario?.authToken ??
+        'wework-desktop-e2e-cloud-token',
+      WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      WEWORK_E2E_MODEL_SERVER_URL: control.url,
+      WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
       ...(RUNS_PLUGIN_E2E
