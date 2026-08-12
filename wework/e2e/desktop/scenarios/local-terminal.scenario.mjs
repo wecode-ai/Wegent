@@ -751,6 +751,10 @@ export async function createDesktopScenario({
       )
       await captureWorkbench(control, 'local-harness-21-session-closed.png')
 
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'click',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
