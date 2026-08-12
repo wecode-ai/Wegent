@@ -47,3 +47,38 @@ async def test_update_mcp_provider_keys_encrypts_values(monkeypatch):
     assert saved_keys is not None
     assert saved_keys.mcp_router != "plain-router-token"
     assert is_data_encrypted(saved_keys.mcp_router)
+
+
+@pytest.mark.anyio
+async def test_update_mcp_provider_keys_preserves_dynamic_fields(monkeypatch):
+    captured = {}
+
+    def _fake_update_current_user(*, db, user, obj_in):  # noqa: ARG001
+        captured["obj_in"] = obj_in
+        return user
+
+    monkeypatch.setattr(
+        mcp_providers_endpoint.user_service,
+        "update_current_user",
+        _fake_update_current_user,
+    )
+
+    request = MCPProviderKeysRequest(custom_provider="new-token")
+    current_user = DummyUser(
+        preferences=json.dumps(
+            {"mcp_provider_keys": {"existing_provider": "existing-token"}}
+        )
+    )
+
+    response = await mcp_providers_endpoint.update_mcp_provider_keys(
+        keys=request,
+        db=Mock(),
+        current_user=current_user,
+    )
+
+    saved_keys = captured["obj_in"].preferences.mcp_provider_keys
+    saved_values = saved_keys.model_dump()
+
+    assert response.success is True
+    assert is_data_encrypted(saved_values["custom_provider"])
+    assert is_data_encrypted(saved_values["existing_provider"])

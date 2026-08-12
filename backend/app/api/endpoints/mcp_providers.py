@@ -145,20 +145,10 @@ async def update_mcp_provider_keys(
         # Get existing keys or create new
         existing_keys = existing_prefs.mcp_provider_keys or MCPProviderKeys()
 
-        # Update only provided keys (merge with existing)
-        updated_keys = MCPProviderKeys(
-            bailian=keys.bailian if keys.bailian is not None else existing_keys.bailian,
-            modelscope=(
-                keys.modelscope
-                if keys.modelscope is not None
-                else existing_keys.modelscope
-            ),
-            mcp_router=(
-                keys.mcp_router
-                if keys.mcp_router is not None
-                else existing_keys.mcp_router
-            ),
-        )
+        # Merge all configured provider fields, including extension providers.
+        updated_key_values = existing_keys.model_dump()
+        updated_key_values.update(keys.model_dump(exclude_none=True))
+        updated_keys = MCPProviderKeys(**updated_key_values)
         existing_prefs.mcp_provider_keys = encrypt_mcp_provider_keys(updated_keys)
 
         # Update user via service

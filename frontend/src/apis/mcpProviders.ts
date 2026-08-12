@@ -43,6 +43,7 @@ export interface MCPServer {
 }
 
 export interface MCPProviderKeysRequest {
+  [providerKey: string]: string | undefined
   bailian?: string
   modelscope?: string
   mcp_router?: string

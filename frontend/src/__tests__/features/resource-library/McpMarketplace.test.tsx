@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { mcpProviderApis, type MCPServer } from '@/apis/mcpProviders'
@@ -16,6 +16,7 @@ jest.mock('@/apis/mcpProviders', () => ({
   mcpProviderApis: {
     getProviders: jest.fn(),
     syncServers: jest.fn(),
+    updateKeys: jest.fn(),
   },
 }))
 
@@ -91,6 +92,10 @@ describe('McpMarketplace', () => {
         },
       ],
     })
+    mockedApis.updateKeys.mockResolvedValue({
+      success: true,
+      message: 'ok',
+    })
   })
 
   it('loads all MCPs and filters them locally', async () => {
@@ -128,5 +133,40 @@ describe('McpMarketplace', () => {
 
     expect(screen.getByTestId('mcp-target-selector')).toHaveTextContent('Content Search')
     expect(mockTargetServer?.id).toBe('@community/search')
+  })
+
+  it('guides users to configure a required API key before loading MCPs', async () => {
+    const user = userEvent.setup()
+    mockedApis.getProviders.mockResolvedValue({
+      providers: [
+        {
+          key: 'mcp_router',
+          name: 'MCP Router',
+          description: '',
+          discover_url: 'https://mcprouter.co',
+          api_key_url: 'https://mcprouter.co/settings/keys',
+          token_field_name: 'mcp_router',
+          has_token: false,
+          requires_token: true,
+        },
+      ],
+    })
+
+    render(<McpMarketplace />)
+
+    expect(await screen.findByTestId('mcp-marketplace-api-key-required')).toBeInTheDocument()
+    expect(mockedApis.syncServers).not.toHaveBeenCalled()
+    expect(screen.getByTestId('mcp-marketplace-get-api-key-mcp_router')).toHaveAttribute(
+      'href',
+      'https://mcprouter.co/settings/keys'
+    )
+
+    await user.type(screen.getByTestId('mcp-marketplace-api-key-input'), 'router-key')
+    await user.click(screen.getByTestId('mcp-marketplace-save-api-key'))
+
+    await waitFor(() => {
+      expect(mockedApis.updateKeys).toHaveBeenCalledWith({ mcp_router: 'router-key' })
+      expect(mockedApis.syncServers).toHaveBeenCalledWith('mcp_router')
+    })
   })
 })
