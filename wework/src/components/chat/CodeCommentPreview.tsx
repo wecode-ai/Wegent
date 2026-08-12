@@ -1,4 +1,4 @@
-import { FileCode2, MessageSquare } from 'lucide-react'
+import { FileCode2, MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
@@ -123,15 +123,27 @@ function CodeCommentPreviewItem({
   const { t } = useTranslation('common')
   const browser = isBrowserAnnotationContext(comment)
   const target = comment.browserAnnotation?.target
+  const adjustments = comment.adjustments ?? []
   const label = target
     ? `#${comment.browserAnnotation?.number ?? number} <${target.tagName}> ${truncate(target.text, TARGET_TEXT_LIMIT)}`
     : `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`
+  const hasAdjustmentsOnly = browser && !comment.comment && adjustments.length > 0
 
   return (
     <div className="rounded-lg px-2 py-1.5 text-sm text-text-primary">
       <div className="flex min-w-0 items-center gap-1.5 font-medium">
         {browser ? (
-          <MessageSquare className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden="true" />
+          hasAdjustmentsOnly ? (
+            <MessageSquarePlus
+              className="h-3.5 w-3.5 shrink-0 text-text-secondary"
+              aria-hidden="true"
+            />
+          ) : (
+            <MessageSquare
+              className="h-3.5 w-3.5 shrink-0 text-text-secondary"
+              aria-hidden="true"
+            />
+          )
         ) : (
           <FileCode2 className="h-3.5 w-3.5 shrink-0 text-text-secondary" aria-hidden="true" />
         )}
@@ -148,13 +160,25 @@ function CodeCommentPreviewItem({
       {comment.comment && (
         <PreviewLine label={t('workbench.code_comment_preview_comment')} value={comment.comment} />
       )}
-      {comment.adjustments?.map(adjustment => (
+      {hasAdjustmentsOnly && (
+        <p className="mt-1 text-xs font-medium leading-4 text-text-secondary">
+          {t('workbench.browser_annotation_adjustments_count', {
+            count: adjustments.length,
+          })}
+        </p>
+      )}
+      {adjustments.slice(0, 3).map(adjustment => (
         <PreviewLine
           key={`${comment.id}:${adjustment.property}`}
           label={t(`workbench.browser_annotation_adjustment_${adjustment.property}`)}
           value={`${truncate(adjustment.before, VALUE_LIMIT)} -> ${truncate(adjustment.after, VALUE_LIMIT)}`}
         />
       ))}
+      {adjustments.length > 3 && (
+        <p className="mt-1 text-xs leading-4 text-text-tertiary">
+          {t('workbench.browser_annotation_more_adjustments', { count: adjustments.length - 3 })}
+        </p>
+      )}
     </div>
   )
 }

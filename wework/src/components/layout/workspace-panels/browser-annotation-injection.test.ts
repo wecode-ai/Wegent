@@ -38,7 +38,10 @@ function openEditor(target: HTMLElement) {
 }
 
 function saveButton() {
-  return document.querySelector<HTMLButtonElement>('[data-wework-annotation="save"]')
+  return (
+    document.querySelector<HTMLButtonElement>('[data-wework-annotation="save"]') ||
+    document.querySelector<HTMLButtonElement>('[data-wework-annotation="submit"]')
+  )
 }
 
 describe('browser annotation injection', () => {
@@ -69,7 +72,7 @@ describe('browser annotation injection', () => {
       revision: 1,
       annotations: [{ comment: 'First comment', number: 1 }],
     })
-    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(1)
+    expect(document.querySelectorAll('[data-wework-annotation="marker"]')).toHaveLength(1)
   })
 
   test('edits a published annotation without changing its number', () => {
@@ -77,7 +80,7 @@ describe('browser annotation injection', () => {
     input!.value = 'First comment'
     input!.dispatchEvent(new Event('input', { bubbles: true }))
     click(saveButton()!)
-    click(document.querySelector('[data-wework-annotation="badge"]')!)
+    click(document.querySelector('[data-wework-annotation="marker"]')!)
 
     const editorInput = document.querySelector<HTMLInputElement>(
       '[data-wework-annotation="comment-input"]'
@@ -92,16 +95,15 @@ describe('browser annotation injection', () => {
     })
   })
 
-  test('deletes one annotation after the injected confirmation', () => {
+  test('deletes one annotation without a confirmation dialog', () => {
     const input = openEditor(document.querySelector('#first-target')!)
     input!.value = 'First comment'
     input!.dispatchEvent(new Event('input', { bubbles: true }))
     click(saveButton()!)
-    click(document.querySelector('[data-wework-annotation="badge"]')!)
+    click(document.querySelector('[data-wework-annotation="marker"]')!)
     click(document.querySelector('[data-wework-annotation="delete"]')!)
 
-    expect(document.querySelector('[data-wework-annotation="delete-confirmation"]')).not.toBeNull()
-    click(document.querySelector('[data-wework-annotation="delete-confirm"]')!)
+    expect(document.querySelector('[data-wework-annotation="delete-confirmation"]')).toBeNull()
     expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()).toMatchObject({
       revision: 2,
       annotations: [],
@@ -115,13 +117,13 @@ describe('browser annotation injection', () => {
     click(saveButton()!)
 
     annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.suspend()
-    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(0)
+    expect(document.querySelectorAll('[data-wework-annotation="marker"]')).toHaveLength(0)
     expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot().annotations).toHaveLength(
       1
     )
 
     annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.resume()
-    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(1)
+    expect(document.querySelectorAll('[data-wework-annotation="marker"]')).toHaveLength(1)
   })
 
   test('clears annotations while keeping the runtime available', () => {
@@ -159,5 +161,75 @@ describe('browser annotation injection', () => {
     expect(target.style.color).toBe('rgb(255, 0, 0)')
     annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.clear()
     expect(target.style.color).toBe('blue')
+  })
+
+  test('renders grouped adjustment rows with reset and unit after opening tweaks', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    openEditor(target)
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+
+    expect(document.querySelector('[data-wework-annotation="adjustments"]')).not.toBeNull()
+    expect(
+      document.querySelectorAll('[data-wework-annotation="adjustment-row"]').length
+    ).toBeGreaterThan(0)
+    expect(document.querySelector('[data-wework-annotation="adjustment-color"]')).not.toBeNull()
+    expect(
+      document.querySelector('[data-wework-annotation="adjustment-font-weight"]')
+    ).not.toBeNull()
+    expect(
+      document.querySelector('[data-wework-annotation="adjustment-font-family"]')
+    ).not.toBeNull()
+    expect(document.querySelector('[data-wework-annotation="adjustment-width"]')).not.toBeNull()
+  })
+
+  test('resets a draft adjustment back to its baseline', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    target.style.color = 'blue'
+    openEditor(target)
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+
+    const color = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-color"]'
+    )!
+    color.value = '#ff0000'
+    color.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+
+    click(document.querySelector('[data-wework-annotation="reset-color"]')!)
+    expect(target.style.color).toBe('blue')
+    expect(document.querySelector('[data-wework-annotation="adjustment-color"]')).not.toBeNull()
+  })
+
+  test('scrubs numeric values with pointer movement', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    openEditor(target)
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+
+    const width = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-width"]'
+    )!
+    width.value = '120'
+    width.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientY: 100 })
+    )
+    width.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientY: 96 })
+    )
+    width.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }))
+    expect(target.style.width).toBe('121px')
+  })
+
+  test('closes the editor on Escape even while focused in an adjustment field', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    openEditor(target)
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+    const color = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-color"]'
+    )!
+    color.focus()
+    color.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    )
+    expect(document.querySelector('[data-wework-annotation="editor"]')).toBeNull()
   })
 })
