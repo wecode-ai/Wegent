@@ -1252,15 +1252,27 @@ describe('createHybridWorkbenchServices', () => {
     const services = createServices()
 
     const archiveResponse = await services.runtimeWorkApi?.archiveAllConversations()
-    await services.userApi?.updateCurrentUser({ preferences: { theme: 'dark' } })
+    const preferences = {
+      theme: 'dark',
+      wework_new_chat_model_selection: {
+        modelName: 'codex-gpt-5.5',
+        modelType: 'runtime',
+        options: { reasoning: 'medium' },
+      },
+      wework_project_work_preferences: {
+        'project:7': {
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/alpha',
+        },
+      },
+    }
+    await services.userApi?.updateCurrentUser({ preferences })
     await services.projectApi.listProjects()
 
     expect(archiveResponse?.accepted).toBe(true)
     expect(mocks.localArchiveAllConversations).toHaveBeenCalledTimes(1)
     expect(mocks.cloudArchiveAllConversations).toHaveBeenCalledTimes(1)
-    expect(mocks.cloudUpdateCurrentUser).toHaveBeenCalledWith({
-      preferences: { theme: 'dark' },
-    })
+    expect(mocks.cloudUpdateCurrentUser).toHaveBeenCalledWith({ preferences })
     expect(mocks.localUpdateCurrentUser).not.toHaveBeenCalled()
     expect(mocks.localListProjects).toHaveBeenCalledTimes(1)
   })

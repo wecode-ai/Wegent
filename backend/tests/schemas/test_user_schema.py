@@ -31,7 +31,7 @@ def test_user_preferences_accept_runtime_model_selection():
     assert user.preferences.wework_new_chat_model_selection.modelType == "runtime"
 
 
-def test_user_preferences_accept_per_project_work_preferences():
+def test_user_preferences_accept_per_project_work_preferences() -> None:
     user = UserInDB(
         id=1,
         user_name="admin",

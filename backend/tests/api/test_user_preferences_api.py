@@ -103,3 +103,12 @@ def test_update_user_preferences_preserves_quick_access(
         "executionMode": "git_worktree",
         "worktreeBranch": "feature/alpha",
     }
+
+    read_response = user_preferences_client.get("/api/users/me")
+    assert read_response.status_code == 200
+    assert read_response.json()["preferences"]["wework_project_work_preferences"][
+        "project:7"
+    ] == {
+        "executionMode": "git_worktree",
+        "worktreeBranch": "feature/alpha",
+    }
