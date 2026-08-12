@@ -2681,6 +2681,75 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('does not let an older work-list refresh erase a queued task status', async () => {
+    const staleRefresh = deferred<RuntimeWorkListResponse>()
+    const latestRefresh = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkWithStatus = (status: 'active' | 'queued', queuePosition?: number) =>
+      createRuntimeWork({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 22,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-queued',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Queued task',
+                    runtime: 'codex',
+                    running: false,
+                    status,
+                    queuePosition,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+        ],
+        totalTasks: 1,
+      })
+    const queuedRuntimeWork = runtimeWorkWithStatus('queued', 1)
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(queuedRuntimeWork)
+      .mockImplementationOnce(() => staleRefresh.promise)
+      .mockImplementationOnce(() => latestRefresh.promise)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await userEvent.click(screen.getByText('refresh work lists'))
+
+    await act(async () => {
+      latestRefresh.resolve(queuedRuntimeWork)
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+
+    await act(async () => {
+      staleRefresh.resolve(runtimeWorkWithStatus('active'))
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+  })
+
   test('does not let a stale cloud refresh roll back a generated runtime task title', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {

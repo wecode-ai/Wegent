@@ -34,6 +34,7 @@ import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { createLocalAppServices } from '@/api/local/localServices'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -51,6 +52,8 @@ interface SwitchRowProps {
 const GENERAL_ROW_CLASS_NAME = 'py-4'
 const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
 const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
+const DEFAULT_MAX_CONCURRENT_TASKS = 10
+const MAX_CONCURRENT_TASKS_LIMIT = 20
 
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
@@ -71,14 +74,23 @@ export function GeneralSettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
 
   useEffect(() => {
     let cancelled = false
 
-    getAppPreferences()
-      .then(nextPreferences => {
+    const runtimeSettings = Promise.resolve()
+      .then(() => createLocalAppServices().runtimeWorkApi?.getRuntimeSettings())
+      .catch(runtimeSettingsError => {
+        console.debug('[Wework] Runtime settings are unavailable', runtimeSettingsError)
+        return null
+      })
+
+    Promise.all([getAppPreferences(), runtimeSettings])
+      .then(([nextPreferences, runtimeSettings]) => {
         if (!cancelled) {
           setPreferences(nextPreferences)
+          setMaxConcurrentTasks(runtimeSettings?.maxConcurrentTasks ?? DEFAULT_MAX_CONCURRENT_TASKS)
           setError(null)
         }
       })
@@ -302,6 +314,25 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const saveMaxConcurrentTasks = async (value: number) => {
+    const previousValue = maxConcurrentTasks
+    setMaxConcurrentTasks(value)
+    setSaving(true)
+    setError(null)
+    try {
+      const settings = await createLocalAppServices().runtimeWorkApi?.updateRuntimeSettings({
+        maxConcurrentTasks: value,
+      })
+      setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
+    } catch (saveError) {
+      console.error('[Wework] Failed to update runtime concurrency settings', saveError)
+      setMaxConcurrentTasks(previousValue)
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
   const friendlyTitleModels = workbench?.projectChat.models ?? []
   const friendlyTitleModelKey = friendlyTitleModel
@@ -388,6 +419,32 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_runtime_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
+          <SettingsRow
+            label={t('workbench.general_settings_max_concurrent_tasks')}
+            description={t('workbench.general_settings_max_concurrent_tasks_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <select
+                data-testid="general-max-concurrent-tasks-select"
+                value={maxConcurrentTasks}
+                disabled={loading || saving}
+                aria-label={t('workbench.general_settings_max_concurrent_tasks')}
+                onChange={event => {
+                  void saveMaxConcurrentTasks(Number(event.target.value))
+                }}
+                className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary"
+              >
+                {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
+                  value => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  )
+                )}
+              </select>
+            }
+          />
           {renderSwitchRow({
             preferenceKey: 'closeToTrayEnabled',
             testId: 'general-close-to-tray-toggle',

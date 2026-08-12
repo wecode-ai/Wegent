@@ -80,6 +80,7 @@ function makeSnapshot(overrides?: {
       ],
     ]),
     runningTaskKeys: new Set(),
+    queuedTaskKeys: new Set(),
     unreadTaskKeys: new Set(),
   }
 }

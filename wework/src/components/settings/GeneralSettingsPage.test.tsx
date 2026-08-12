@@ -48,6 +48,8 @@ const translateMock = vi.hoisted(
 )
 const importExternalContentMock = vi.hoisted(() => vi.fn())
 const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
+const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
+const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -121,6 +123,15 @@ vi.mock('@/api/wegentUsage', () => ({
   getWegentUsageDisplay: getWegentUsageDisplayMock,
 }))
 
+vi.mock('@/api/local/localServices', () => ({
+  createLocalAppServices: () => ({
+    runtimeWorkApi: {
+      getRuntimeSettings: getRuntimeSettingsMock,
+      updateRuntimeSettings: updateRuntimeSettingsMock,
+    },
+  }),
+}))
+
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   useOptionalCloudConnection: () => ({
     isConnected: true,
@@ -137,6 +148,8 @@ describe('GeneralSettingsPage', () => {
     applyLanguagePreferenceMock.mockReset()
     importExternalContentMock.mockReset()
     getWegentUsageDisplayMock.mockReset()
+    getRuntimeSettingsMock.mockReset()
+    updateRuntimeSettingsMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -144,6 +157,8 @@ describe('GeneralSettingsPage', () => {
       importedEntries: ['config.toml'],
     })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
+    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 3 })
+    updateRuntimeSettingsMock.mockImplementation(settings => Promise.resolve(settings))
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
     )
@@ -169,6 +184,31 @@ describe('GeneralSettingsPage', () => {
     expect(await screen.findByTestId('general-language-system-button')).toBeInTheDocument()
     expect(screen.getByTestId('general-language-zh-CN-button')).toBeInTheDocument()
     expect(screen.getByTestId('general-language-en-button')).toBeInTheDocument()
+  })
+
+  test('loads and updates the maximum parallel task count', async () => {
+    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
+    render(<GeneralSettingsPage />)
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('5')
+
+    await userEvent.selectOptions(select, '2')
+
+    await waitFor(() => {
+      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
+    })
+    expect(select).toHaveValue('2')
+  })
+
+  test('uses ten parallel tasks when runtime settings are unavailable', async () => {
+    getRuntimeSettingsMock.mockResolvedValue(undefined)
+    render(<GeneralSettingsPage />)
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('10')
   })
 
   test('saves and applies the selected language', async () => {

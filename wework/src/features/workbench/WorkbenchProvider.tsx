@@ -25,7 +25,10 @@ import {
 } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
-import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
+import {
+  installMainRuntimeWorkChangedListener,
+  notifyMainRuntimeWorkChanged,
+} from '@/tauri/runtimeWorkSync'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
@@ -51,6 +54,7 @@ import type {
   RuntimeContextUsage,
   RuntimeWorkListResponse,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   UnifiedModel,
@@ -1688,8 +1692,27 @@ export function WorkbenchProvider({
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
     await executorClient.runtime.cancelRuntimeTask(address)
-    void refreshWorkLists()
+    await refreshWorkLists()
+    await notifyMainRuntimeWorkChanged(address)
   })
+  const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
+    const response = await executorClient.runtime.forceStartRuntimeTask(address)
+    if (!response.accepted) {
+      throw new Error(response.error || 'runtime task could not be force started')
+    }
+    await refreshWorkLists()
+    await notifyMainRuntimeWorkChanged(address)
+  })
+  const stableReorderQueuedRuntimeTask = useStableEvent(
+    async (data: RuntimeTaskQueueReorderRequest) => {
+      const response = await executorClient.runtime.reorderQueuedRuntimeTask(data)
+      if (!response.accepted) {
+        throw new Error(response.error || 'runtime task queue could not be reordered')
+      }
+      await refreshWorkLists()
+      await notifyMainRuntimeWorkChanged(data)
+    }
+  )
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -2154,6 +2177,8 @@ export function WorkbenchProvider({
     startNewProjectChat,
     openRuntimeTask: runtimeTasks.openRuntimeTask,
     cancelRuntimeTask: stableCancelRuntimeTask,
+    forceStartRuntimeTask: stableForceStartRuntimeTask,
+    reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2242,6 +2267,8 @@ export function WorkbenchProvider({
       startNewProjectChat: stableStartNewProjectChat,
       openRuntimeTask: stableOpenRuntimeTask,
       cancelRuntimeTask: stableCancelRuntimeTask,
+      forceStartRuntimeTask: stableForceStartRuntimeTask,
+      reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2336,6 +2363,7 @@ export function WorkbenchProvider({
       stableCreateProjectRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
+      stableForceStartRuntimeTask,
       stableGetDeviceHomeDirectory,
       stableGetRuntimeGoal,
       stableGetImNotificationSettings,
@@ -2361,6 +2389,7 @@ export function WorkbenchProvider({
       stableRemoveProject,
       stableReorderRuntimeProjects,
       stableReorderRuntimeProjectTasks,
+      stableReorderQueuedRuntimeTask,
       stableRenameRuntimeTask,
       stableRetryFailedMessage,
       stableRevertTurnFileChanges,

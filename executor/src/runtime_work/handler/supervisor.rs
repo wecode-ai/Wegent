@@ -144,7 +144,7 @@ impl RuntimeWorkRpcHandler {
                 for link in handler.local_task_links(false) {
                     if supervisor_needs_scheduled_check(
                         &link,
-                        handler.is_active_local_task(&link.local_task_id),
+                        handler.is_busy_local_task(&link.local_task_id),
                         now_ms(),
                     ) {
                         handler.schedule_supervisor_evaluation(link.local_task_id, None);
@@ -473,7 +473,8 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: (!link.ephemeral).then_some(thread_id),
             initial_thread_name: None,
             initial_thread_goal: None,
-        });
+        })
+        .map_err(|error| error.message)?;
         Ok(())
     }
 

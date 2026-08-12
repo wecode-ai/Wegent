@@ -68,6 +68,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskQueueReorderRequest,
+    RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
@@ -962,6 +964,66 @@ async def cancel_runtime_task(
             detail=str(exc),
         ) from exc
     return _runtime_cancel_response(result, normalized_address)
+
+
+async def force_start_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    """Force one queued LocalTask to run through the owning executor."""
+
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method="runtime.tasks.force_start",
+            payload=_runtime_task_address_payload(normalized_address),
+            timeout_seconds=RUNTIME_CANCEL_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_cancel_response(result, normalized_address)
+
+
+async def reorder_runtime_task_queue(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskQueueReorderRequest,
+) -> RuntimeTaskQueueReorderResponse:
+    """Move one queued LocalTask to a new persisted execution position."""
+
+    normalized_address = _normalized_address(request)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    payload = _runtime_task_address_payload(normalized_address)
+    payload["queuePosition"] = request.queue_position
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method="runtime.tasks.queue.reorder",
+            payload=payload,
+            timeout_seconds=RUNTIME_CANCEL_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    response = _runtime_cancel_response(result, normalized_address)
+    return RuntimeTaskQueueReorderResponse(
+        **response.model_dump(by_alias=True),
+        orderedTaskIds=[str(task_id) for task_id in result.get("orderedTaskIds", [])],
+    )
 
 
 async def list_archived_conversations(

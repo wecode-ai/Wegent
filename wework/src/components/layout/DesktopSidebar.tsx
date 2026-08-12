@@ -1,6 +1,8 @@
 import {
   Archive,
   AlarmClock,
+  ArrowDown,
+  ArrowUp,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -25,7 +27,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -44,6 +46,7 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycle,
@@ -753,6 +756,10 @@ function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
   return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
     status.includes(value)
   )
+}
+
+function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
+  return task.status?.trim().toLowerCase() === 'queued'
 }
 
 function getRuntimeTaskPriorityReason(
@@ -1504,6 +1511,9 @@ function RuntimeTaskRow({
   const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
   const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [forceStarting, setForceStarting] = useState(false)
+  const [queueReordering, setQueueReordering] = useState(false)
+  const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
   const titleShimmerDelayRef = useRef<number | null>(null)
@@ -1524,6 +1534,11 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const queued = isRuntimeTaskQueued(task)
+  const queuePosition =
+    queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
+      ? Number(task.queuePosition)
+      : null
   const threadId = getRuntimeTaskThreadId(task)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
@@ -1633,6 +1648,33 @@ function RuntimeTaskRow({
     event.currentTarget.blur()
     if (notificationsDisabled) return
     void onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed)
+  }
+  const forceStartTask = async () => {
+    if (!queued || !workbench || forceStarting) return
+    setForceStarting(true)
+    try {
+      await workbench.forceStartRuntimeTask(taskAddress)
+    } catch (forceStartError) {
+      console.error('[Wework] Failed to force start queued runtime task', forceStartError)
+      workbench.setWorkbenchError(t('workbench.runtime_task_force_start_failed'))
+    } finally {
+      setForceStarting(false)
+    }
+  }
+  const reorderQueuedTask = async (nextPosition: number) => {
+    if (!queued || !workbench || queueReordering) return
+    setQueueReordering(true)
+    try {
+      await workbench.reorderQueuedRuntimeTask({
+        ...taskAddress,
+        queuePosition: Math.max(1, nextPosition),
+      })
+    } catch (queueReorderError) {
+      console.error('[Wework] Failed to reorder queued runtime task', queueReorderError)
+      workbench.setWorkbenchError(t('workbench.runtime_task_queue_reorder_failed'))
+    } finally {
+      setQueueReordering(false)
+    }
   }
   const notificationActionLabel = notificationsSubscribed
     ? t('workbench.unsubscribe_runtime_task_notifications', '取消任务通知')
@@ -1794,7 +1836,41 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
               <span className="flex h-[30px] w-[30px] items-center justify-center">
-                {taskLifecycle?.derived.shouldShowSidebarRunning ? (
+                {queued ? (
+                  <span
+                    data-testid={`runtime-local-task-queued-${task.taskId}`}
+                    role="status"
+                    title={
+                      queuePosition
+                        ? `${t('workbench.runtime_task_queued')} · ${t(
+                            'workbench.runtime_task_queue_position',
+                            'Position {{position}}',
+                            { position: queuePosition }
+                          )}`
+                        : t('workbench.runtime_task_queued')
+                    }
+                    aria-label={
+                      queuePosition
+                        ? `${t('workbench.runtime_task_queued')} · ${t(
+                            'workbench.runtime_task_queue_position',
+                            'Position {{position}}',
+                            { position: queuePosition }
+                          )}`
+                        : t('workbench.runtime_task_queued')
+                    }
+                    className="flex h-[30px] min-w-[30px] items-center justify-center gap-0.5"
+                  >
+                    <AlarmClock className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    {queuePosition ? (
+                      <span
+                        data-testid={`runtime-local-task-queue-position-${task.taskId}`}
+                        className="text-xs tabular-nums text-[rgb(var(--color-sidebar-text-muted))]"
+                      >
+                        {queuePosition}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
@@ -1841,7 +1917,10 @@ function RuntimeTaskRow({
             </span>
             <span
               data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
-              className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[72px] -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+              className={cn(
+                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
+                queued ? 'w-[96px]' : 'w-[72px]'
+              )}
             >
               {experimentalFeaturesEnabled &&
                 renderNotificationButton(
@@ -1852,27 +1931,89 @@ function RuntimeTaskRow({
                     ? `runtime-local-task-notify-hover-icon-${task.taskId}`
                     : `runtime-local-task-notify-icon-${task.taskId}`
                 )}
-              <button
-                type="button"
-                data-testid={`runtime-local-task-mark-${task.taskId}`}
-                onClick={handleToggleMark}
-                disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
-                className={cn(
-                  'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
-                  marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
-                )}
-                title={
-                  marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
-                }
-                aria-label={
-                  marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
-                }
-              >
-                <Pin
-                  data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
-                  className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
-                />
-              </button>
+              {queued ? (
+                <>
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-queue-up-${task.taskId}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      void reorderQueuedTask((queuePosition ?? 1) - 1)
+                    }}
+                    disabled={
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null ||
+                      queuePosition <= 1
+                    }
+                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                    title={t('workbench.runtime_task_queue_move_up')}
+                    aria-label={t('workbench.runtime_task_queue_move_up')}
+                  >
+                    <ArrowUp className="h-[15px] w-[15px]" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-queue-down-${task.taskId}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      void reorderQueuedTask((queuePosition ?? 1) + 1)
+                    }}
+                    disabled={
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null
+                    }
+                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                    title={t('workbench.runtime_task_queue_move_down')}
+                    aria-label={t('workbench.runtime_task_queue_move_down')}
+                  >
+                    <ArrowDown className="h-[15px] w-[15px]" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-force-start-${task.taskId}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      void forceStartTask()
+                    }}
+                    disabled={!workspace.available || !workbench || forceStarting}
+                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                    title={t('workbench.runtime_task_force_start')}
+                    aria-label={t('workbench.runtime_task_force_start')}
+                  >
+                    {forceStarting ? (
+                      <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-[15px] w-[15px]" />
+                    )}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  data-testid={`runtime-local-task-mark-${task.taskId}`}
+                  onClick={handleToggleMark}
+                  disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
+                  className={cn(
+                    'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                    marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
+                  )}
+                  title={
+                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
+                  }
+                  aria-label={
+                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
+                  }
+                >
+                  <Pin
+                    data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
+                    className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
+                  />
+                </button>
+              )}
               <button
                 type="button"
                 data-testid={`runtime-local-task-archive-${task.taskId}`}
@@ -1902,6 +2043,49 @@ function RuntimeTaskRow({
         onContextMenuClose={() => setTaskMenuPosition(null)}
         triggerClassName="hidden"
         items={[
+          ...(queued
+            ? [
+                {
+                  label: t('workbench.runtime_task_force_start'),
+                  icon: Sparkles,
+                  testId: `runtime-local-task-menu-force-start-${task.taskId}`,
+                  disabled: !workspace.available || !workbench || forceStarting,
+                  onSelect: forceStartTask,
+                },
+                {
+                  label: t('workbench.runtime_task_queue_move_first'),
+                  icon: ArrowUp,
+                  testId: `runtime-local-task-menu-queue-first-${task.taskId}`,
+                  disabled:
+                    !workspace.available ||
+                    !workbench ||
+                    queueReordering ||
+                    queuePosition === null ||
+                    queuePosition <= 1,
+                  onSelect: () => reorderQueuedTask(1),
+                },
+                {
+                  label: t('workbench.runtime_task_queue_move_up'),
+                  icon: ArrowUp,
+                  testId: `runtime-local-task-menu-queue-up-${task.taskId}`,
+                  disabled:
+                    !workspace.available ||
+                    !workbench ||
+                    queueReordering ||
+                    queuePosition === null ||
+                    queuePosition <= 1,
+                  onSelect: () => reorderQueuedTask((queuePosition ?? 1) - 1),
+                },
+                {
+                  label: t('workbench.runtime_task_queue_move_down'),
+                  icon: ArrowDown,
+                  testId: `runtime-local-task-menu-queue-down-${task.taskId}`,
+                  disabled:
+                    !workspace.available || !workbench || queueReordering || queuePosition === null,
+                  onSelect: () => reorderQueuedTask((queuePosition ?? 1) + 1),
+                },
+              ]
+            : []),
           {
             label: marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task'),
             icon: Pin,
@@ -2553,12 +2737,9 @@ function ProjectItem({
       <div
         data-testid={`project-local-tasks-panel-${project.id}`}
         aria-hidden={!expanded}
-        className={cn(
-          'grid overflow-hidden transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
-          expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0'
-        )}
+        className={cn(!expanded && 'hidden')}
       >
-        <div className="min-h-0 overflow-hidden">
+        <div>
           <div className="space-y-0.5">
             {localHarnessSessions.map(session => (
               <LocalHarnessSessionRow

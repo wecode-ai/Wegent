@@ -20,10 +20,55 @@ function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
-  return [...tasks].sort((left, right) => {
-    return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
+function getRuntimeTaskQueuePosition(task: RuntimeTaskSummary) {
+  if (task.status?.trim().toLowerCase() !== 'queued') return null
+  if (!Number.isInteger(task.queuePosition) || Number(task.queuePosition) <= 0) return null
+  return Number(task.queuePosition)
+}
+
+function sortQueuedTasksWithinRecencyOrder<T>(
+  items: T[],
+  getTask: (item: T) => RuntimeTaskSummary,
+  getQueueKey: (item: T) => string
+) {
+  const sorted = [...items].sort(
+    (left, right) => getRuntimeTaskSortTime(getTask(right)) - getRuntimeTaskSortTime(getTask(left))
+  )
+  const queues = new Map<string, T[]>()
+
+  for (const item of sorted) {
+    const task = getTask(item)
+    if (getRuntimeTaskQueuePosition(task) === null) continue
+    const key = getQueueKey(item)
+    const queue = queues.get(key) ?? []
+    queue.push(item)
+    queues.set(key, queue)
+  }
+
+  for (const queue of queues.values()) {
+    queue.sort(
+      (left, right) =>
+        (getRuntimeTaskQueuePosition(getTask(left)) ?? 0) -
+        (getRuntimeTaskQueuePosition(getTask(right)) ?? 0)
+    )
+  }
+
+  const queueOffsets = new Map<string, number>()
+  return sorted.map(item => {
+    if (getRuntimeTaskQueuePosition(getTask(item)) === null) return item
+    const key = getQueueKey(item)
+    const offset = queueOffsets.get(key) ?? 0
+    queueOffsets.set(key, offset + 1)
+    return queues.get(key)?.[offset] ?? item
   })
+}
+
+export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
+  return sortQueuedTasksWithinRecencyOrder(
+    tasks,
+    task => task,
+    () => 'local'
+  )
 }
 
 export function getRuntimeTaskRuntimeLabel(runtime: string) {
@@ -47,9 +92,11 @@ export function getRuntimeChatSidebarTaskItems(
 }
 
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
-  return [...items].sort((left, right) => {
-    return getRuntimeTaskSortTime(right.task) - getRuntimeTaskSortTime(left.task)
-  })
+  return sortQueuedTasksWithinRecencyOrder(
+    items,
+    item => item.task,
+    item => item.workspace.deviceId
+  )
 }
 
 export function getVisibleRuntimeSidebarTaskItems(

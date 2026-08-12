@@ -1086,6 +1086,8 @@ export function useWorkbenchRuntimeMessaging({
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
+              status: response.status ?? 'running',
+              queuePosition: response.queuePosition,
               workspaceKind:
                 payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
               modelSelection: createModelSelection,
@@ -1731,6 +1733,7 @@ function buildOptimisticRuntimeTask({
   title,
   runtime,
   status = 'creating',
+  queuePosition,
   workspaceKind,
   error,
   modelSelection,
@@ -1739,7 +1742,8 @@ function buildOptimisticRuntimeTask({
   workspacePath: string
   title: string
   runtime: RuntimeTaskSummary['runtime']
-  status?: 'creating' | 'failed'
+  status?: 'creating' | 'failed' | 'queued' | 'running'
+  queuePosition?: number | null
   workspaceKind?: RuntimeTaskSummary['workspaceKind']
   error?: string | null
   modelSelection?: ModelSelectionConfig | null
@@ -1754,9 +1758,10 @@ function buildOptimisticRuntimeTask({
     ...(workspaceKind ? { workspaceKind } : {}),
     createdAt: now,
     updatedAt: now,
-    running: status === 'creating',
+    running: status === 'creating' || status === 'running',
     status,
     optimistic: true,
+    ...(queuePosition != null ? { queuePosition } : {}),
     ...(error ? { error } : {}),
     ...(modelSelection ? { modelSelection } : {}),
   }

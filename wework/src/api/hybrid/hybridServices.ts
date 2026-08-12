@@ -658,6 +658,12 @@ export function createHybridWorkbenchServices(
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
     },
+    getRuntimeSettings() {
+      return localServices.runtimeWorkApi!.getRuntimeSettings()
+    },
+    updateRuntimeSettings(data) {
+      return localServices.runtimeWorkApi!.updateRuntimeSettings(data)
+    },
     updateKeybindings(data) {
       return localServices.runtimeWorkApi!.updateKeybindings(data)
     },
@@ -918,6 +924,12 @@ export function createHybridWorkbenchServices(
     },
     cancelRuntimeTask(address: RuntimeTaskAddress) {
       return routeByAddress(address).cancelRuntimeTask(address)
+    },
+    forceStartRuntimeTask(address: RuntimeTaskAddress) {
+      return routeByAddress(address).forceStartRuntimeTask(address)
+    },
+    reorderQueuedRuntimeTask(data) {
+      return routeByAddress(data).reorderQueuedRuntimeTask(data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest) {
       return (await runtimeApiForCreate(data.deviceId)).createRuntimeTask(data)

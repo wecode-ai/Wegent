@@ -1,4 +1,7 @@
 import {
+  AlarmClock,
+  ArrowDown,
+  ArrowUp,
   Edit3,
   Folder,
   FolderOpen,
@@ -8,10 +11,11 @@ import {
   Monitor,
   RotateCw,
   Search,
+  Sparkles,
   SquarePen,
   X,
 } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useContext, useMemo, useRef, useState } from 'react'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -22,6 +26,7 @@ import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   CreateGitWorkspaceProjectRequest,
@@ -123,6 +128,9 @@ export function MobileDrawer({
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
+  const workbench = useContext(WorkbenchContext)
+  const [forceStartingTaskId, setForceStartingTaskId] = useState<string | null>(null)
+  const [queueReorderingTaskId, setQueueReorderingTaskId] = useState<string | null>(null)
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
   const {
     scrollRef,
@@ -178,6 +186,99 @@ export function MobileDrawer({
     action?.()
     onClose()
   }
+
+  const forceStartRuntimeTask = async (address: RuntimeTaskAddress) => {
+    if (!workbench || forceStartingTaskId) return
+    setForceStartingTaskId(address.taskId)
+    try {
+      await workbench.forceStartRuntimeTask(address)
+    } catch (error) {
+      console.error('[Wework] Failed to force start queued runtime task on mobile', error)
+      workbench.setWorkbenchError(t('workbench.runtime_task_force_start_failed'))
+    } finally {
+      setForceStartingTaskId(null)
+    }
+  }
+
+  const reorderQueuedRuntimeTask = async (address: RuntimeTaskAddress, queuePosition: number) => {
+    if (!workbench || queueReorderingTaskId) return
+    setQueueReorderingTaskId(address.taskId)
+    try {
+      await workbench.reorderQueuedRuntimeTask({
+        ...address,
+        queuePosition: Math.max(1, queuePosition),
+      })
+    } catch (error) {
+      console.error('[Wework] Failed to reorder queued runtime task on mobile', error)
+      workbench.setWorkbenchError(t('workbench.runtime_task_queue_reorder_failed'))
+    } finally {
+      setQueueReorderingTaskId(null)
+    }
+  }
+
+  const renderQueuedTaskActions = (
+    address: RuntimeTaskAddress,
+    queuePosition: number | null | undefined,
+    testIdPrefix: string,
+    available: boolean
+  ) => (
+    <div className="flex shrink-0 items-center">
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-queue-up-${address.taskId}`}
+        disabled={
+          !available ||
+          !workbench ||
+          Boolean(queueReorderingTaskId) ||
+          queuePosition === null ||
+          queuePosition === undefined ||
+          queuePosition <= 1
+        }
+        onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) - 1)}
+        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
+        title={t('workbench.runtime_task_queue_move_up')}
+        aria-label={t('workbench.runtime_task_queue_move_up')}
+      >
+        <ArrowUp className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-queue-down-${address.taskId}`}
+        disabled={
+          !available ||
+          !workbench ||
+          Boolean(queueReorderingTaskId) ||
+          queuePosition === null ||
+          queuePosition === undefined
+        }
+        onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) + 1)}
+        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
+        title={t('workbench.runtime_task_queue_move_down')}
+        aria-label={t('workbench.runtime_task_queue_move_down')}
+      >
+        {queueReorderingTaskId === address.taskId ? (
+          <RotateCw className="h-4 w-4 animate-spin" />
+        ) : (
+          <ArrowDown className="h-4 w-4" />
+        )}
+      </button>
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-force-start-${address.taskId}`}
+        disabled={!available || !workbench || Boolean(forceStartingTaskId)}
+        onClick={() => void forceStartRuntimeTask(address)}
+        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
+        title={t('workbench.runtime_task_force_start')}
+        aria-label={t('workbench.runtime_task_force_start')}
+      >
+        {forceStartingTaskId === address.taskId ? (
+          <RotateCw className="h-4 w-4 animate-spin" />
+        ) : (
+          <Sparkles className="h-4 w-4" />
+        )}
+      </button>
+    </div>
+  )
 
   const canOpenProjectSheet = devices.length > 0
   const unavailableProjectAction = async () => {
@@ -359,54 +460,79 @@ export function MobileDrawer({
                       )
                       const disabled = !workspace.available || !onOpenRuntimeTask
                       const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
+                      const queued = task.status?.trim().toLowerCase() === 'queued'
+                      const taskAddress = getRuntimeTaskAddress(workspace, task)
                       return (
-                        <button
+                        <div
                           key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
-                          type="button"
-                          data-testid="mobile-chat-runtime-task-button"
-                          disabled={disabled}
-                          onClick={() => {
-                            if (disabled) return
-                            void onOpenRuntimeTask?.(getRuntimeTaskAddress(workspace, task))
-                            onClose()
-                          }}
-                          className={[
-                            'mx-3 flex h-12 min-w-[44px] w-[calc(100%-24px)] items-center rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
-                            selectedTask
-                              ? 'bg-[#F1F1F1] text-[#111111]'
-                              : 'text-[#111111] hover:bg-[#F7F7F7]',
-                          ].join(' ')}
+                          className="mx-3 flex w-[calc(100%-24px)] items-center gap-1"
                         >
-                          <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                          {lifecycleSnapshot.runningTaskKeys.has(
-                            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
-                          ) ? (
-                            renderRuntimeTaskRunningStatus(
-                              `mobile-chat-runtime-task-running-${task.taskId}`
-                            )
-                          ) : visibleUnreadRuntimeTaskKeys.has(
-                              getRuntimeTaskReminderItemKey(workspace, task)
-                            ) ? (
-                            <span
-                              data-testid={`mobile-chat-runtime-task-unread-dot-${task.taskId}`}
-                              aria-label={t('workbench.runtime_task_unread', '未读')}
-                              title={t('workbench.runtime_task_unread', '未读')}
-                              className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
-                            />
-                          ) : (
-                            <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                          <button
+                            type="button"
+                            data-testid="mobile-chat-runtime-task-button"
+                            disabled={disabled}
+                            onClick={() => {
+                              if (disabled) return
+                              void onOpenRuntimeTask?.(taskAddress)
+                              onClose()
+                            }}
+                            className={[
+                              'flex h-12 min-w-[44px] flex-1 items-center rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                              selectedTask
+                                ? 'bg-[#F1F1F1] text-[#111111]'
+                                : 'text-[#111111] hover:bg-[#F7F7F7]',
+                            ].join(' ')}
+                          >
+                            <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                            {queued ? (
                               <span
-                                title={workspaceTitle}
-                                aria-label={workspaceTitle}
-                                role="img"
-                                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                data-testid={`mobile-chat-runtime-task-queued-${task.taskId}`}
+                                role="status"
+                                title={t('workbench.runtime_task_queued')}
+                                aria-label={t('workbench.runtime_task_queued')}
+                                className="ml-2 flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 text-sm text-[#6B7280]"
                               >
-                                <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                                <AlarmClock className="h-3.5 w-3.5" />
+                                {task.queuePosition ?? null}
                               </span>
-                              <span>{formatRelativeSidebarTime(getRuntimeTaskTime(task))}</span>
-                            </span>
-                          )}
-                        </button>
+                            ) : lifecycleSnapshot.runningTaskKeys.has(
+                                getRuntimeTaskLifecycleKey(taskAddress)
+                              ) ? (
+                              renderRuntimeTaskRunningStatus(
+                                `mobile-chat-runtime-task-running-${task.taskId}`
+                              )
+                            ) : visibleUnreadRuntimeTaskKeys.has(
+                                getRuntimeTaskReminderItemKey(workspace, task)
+                              ) ? (
+                              <span
+                                data-testid={`mobile-chat-runtime-task-unread-dot-${task.taskId}`}
+                                aria-label={t('workbench.runtime_task_unread', '未读')}
+                                title={t('workbench.runtime_task_unread', '未读')}
+                                className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
+                              />
+                            ) : (
+                              <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                <span
+                                  title={workspaceTitle}
+                                  aria-label={workspaceTitle}
+                                  role="img"
+                                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                >
+                                  <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                                </span>
+                                <span>{formatRelativeSidebarTime(getRuntimeTaskTime(task))}</span>
+                              </span>
+                            )}
+                          </button>
+                          {queued
+                            ? renderQueuedTaskActions(
+                                taskAddress,
+                                task.queuePosition,
+                                'mobile-chat-runtime-task',
+                                workspace.available
+                              )
+                            : null}
+                        </div>
                       )
                     })
                   )}
@@ -527,66 +653,87 @@ export function MobileDrawer({
                                 )
                                 const disabled = !workspace.available || !onOpenRuntimeTask
                                 const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
+                                const queued = task.status?.trim().toLowerCase() === 'queued'
+                                const taskAddress = getRuntimeTaskAddress(workspace, task)
                                 return (
-                                  <button
+                                  <div
                                     key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
-                                    type="button"
-                                    data-testid="mobile-runtime-task-button"
-                                    disabled={disabled}
-                                    onClick={() => {
-                                      if (disabled) return
-                                      void onOpenRuntimeTask?.(
-                                        getRuntimeTaskAddress(workspace, task)
-                                      )
-                                      onClose()
-                                    }}
-                                    className={[
-                                      'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
-                                      selectedTask
-                                        ? 'bg-[#F1F1F1] text-[#111111]'
-                                        : 'text-[#111111] hover:bg-[#F7F7F7]',
-                                    ].join(' ')}
+                                    className="flex w-full items-center gap-1"
                                   >
-                                    <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                                    {lifecycleSnapshot.runningTaskKeys.has(
-                                      getRuntimeTaskLifecycleKey(
-                                        getRuntimeTaskAddress(workspace, task)
-                                      )
-                                    ) ? (
-                                      renderRuntimeTaskRunningStatus(
-                                        `mobile-runtime-task-running-${task.taskId}`
-                                      )
-                                    ) : visibleUnreadRuntimeTaskKeys.has(
-                                        getRuntimeTaskReminderItemKey(workspace, task)
-                                      ) ? (
-                                      <span
-                                        data-testid={`mobile-runtime-task-unread-dot-${task.taskId}`}
-                                        aria-label={t('workbench.runtime_task_unread', '未读')}
-                                        title={t('workbench.runtime_task_unread', '未读')}
-                                        className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
-                                      />
-                                    ) : (
-                                      <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                    <button
+                                      type="button"
+                                      data-testid="mobile-runtime-task-button"
+                                      disabled={disabled}
+                                      onClick={() => {
+                                        if (disabled) return
+                                        void onOpenRuntimeTask?.(taskAddress)
+                                        onClose()
+                                      }}
+                                      className={[
+                                        'flex h-12 min-w-[44px] flex-1 items-center rounded-[14px] px-2 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                                        selectedTask
+                                          ? 'bg-[#F1F1F1] text-[#111111]'
+                                          : 'text-[#111111] hover:bg-[#F7F7F7]',
+                                      ].join(' ')}
+                                    >
+                                      <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                                      {queued ? (
                                         <span
-                                          title={workspaceTitle}
-                                          aria-label={workspaceTitle}
-                                          role="img"
-                                          className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                          data-testid={`mobile-runtime-task-queued-${task.taskId}`}
+                                          role="status"
+                                          title={t('workbench.runtime_task_queued')}
+                                          aria-label={t('workbench.runtime_task_queued')}
+                                          className="ml-2 flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 text-sm text-[#6B7280]"
                                         >
-                                          <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                                          <AlarmClock className="h-3.5 w-3.5" />
+                                          {task.queuePosition ?? null}
                                         </span>
-                                        {isRuntimeWorktreeTask(task) && (
-                                          <GitCompareArrows
-                                            className="h-3.5 w-3.5 shrink-0"
-                                            aria-label="Worktree"
-                                          />
-                                        )}
-                                        <span>
-                                          {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+                                      ) : lifecycleSnapshot.runningTaskKeys.has(
+                                          getRuntimeTaskLifecycleKey(taskAddress)
+                                        ) ? (
+                                        renderRuntimeTaskRunningStatus(
+                                          `mobile-runtime-task-running-${task.taskId}`
+                                        )
+                                      ) : visibleUnreadRuntimeTaskKeys.has(
+                                          getRuntimeTaskReminderItemKey(workspace, task)
+                                        ) ? (
+                                        <span
+                                          data-testid={`mobile-runtime-task-unread-dot-${task.taskId}`}
+                                          aria-label={t('workbench.runtime_task_unread', '未读')}
+                                          title={t('workbench.runtime_task_unread', '未读')}
+                                          className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
+                                        />
+                                      ) : (
+                                        <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                          <span
+                                            title={workspaceTitle}
+                                            aria-label={workspaceTitle}
+                                            role="img"
+                                            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                          >
+                                            <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
+                                          </span>
+                                          {isRuntimeWorktreeTask(task) && (
+                                            <GitCompareArrows
+                                              className="h-3.5 w-3.5 shrink-0"
+                                              aria-label="Worktree"
+                                            />
+                                          )}
+                                          <span>
+                                            {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+                                          </span>
                                         </span>
-                                      </span>
-                                    )}
-                                  </button>
+                                      )}
+                                    </button>
+                                    {queued
+                                      ? renderQueuedTaskActions(
+                                          taskAddress,
+                                          task.queuePosition,
+                                          'mobile-runtime-task',
+                                          workspace.available
+                                        )
+                                      : null}
+                                  </div>
                                 )
                               })}
                               {(hasHiddenTasks || canCollapseTasks) && (

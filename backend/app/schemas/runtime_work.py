@@ -10,7 +10,7 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
-LocalTaskStatus = Literal["active", "archived"]
+LocalTaskStatus = Literal["active", "archived", "queued", "running"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
 
@@ -112,6 +112,7 @@ class LocalTaskSummary(BaseModel):
         alias="runtimeHandle",
         exclude=True,
     )
+    queue_position: Optional[int] = Field(default=None, alias="queuePosition", ge=1)
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
@@ -709,6 +710,18 @@ class RuntimeTaskCancelResponse(BaseModel):
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     error: Optional[str] = None
+
+
+class RuntimeTaskQueueReorderRequest(RuntimeTaskAddress):
+    """Move one queued runtime task to a one-based queue position."""
+
+    queue_position: int = Field(..., alias="queuePosition", ge=1)
+
+
+class RuntimeTaskQueueReorderResponse(RuntimeTaskCancelResponse):
+    """Acknowledgement and resulting task order for a queue reorder."""
+
+    ordered_task_ids: list[str] = Field(default_factory=list, alias="orderedTaskIds")
 
 
 class RuntimeTaskCreateRequest(BaseModel):

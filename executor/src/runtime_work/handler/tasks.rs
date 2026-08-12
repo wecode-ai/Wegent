@@ -342,7 +342,7 @@ impl RuntimeWorkRpcHandler {
         {
             link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
         }
-        let runtime_handle = runtime_handle_json(&link);
+        let mut runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         self.schedule_worktree_prune();
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
@@ -361,7 +361,15 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: None,
             initial_thread_name: Some(title.clone()),
             initial_thread_goal,
-        });
+        })?;
+        let queue_position = self
+            .queued_local_task_position(&local_task_id)
+            .map(|position| position + 1);
+        if let (Some(queue_position), Some(runtime_handle)) =
+            (queue_position, runtime_handle.as_object_mut())
+        {
+            runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
+        }
         match payload.get("friendlyTitleExecutionRequest").cloned() {
             Some(value) => match serde_json::from_value::<ExecutionRequest>(value) {
                 Ok(execution_request) => {
@@ -411,6 +419,8 @@ impl RuntimeWorkRpcHandler {
             "workspacePath": workspace_path,
             "runtime": "codex",
             "runtimeHandle": runtime_handle,
+            "status": if queue_position.is_some() { "queued" } else { "running" },
+            "queuePosition": queue_position,
         }))
     }
 
@@ -490,7 +500,7 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
-        if self.is_active_local_task(&local_task_id) {
+        if self.is_busy_local_task(&local_task_id) {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -619,7 +629,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_name: None,
             initial_thread_goal,
-        });
+        })?;
 
         Ok(json!({
             "success": true,
@@ -731,7 +741,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.task_link_from_payload(&payload, false).await?;
         let local_task_id = existing_link.local_task_id.clone();
-        if self.is_active_local_task(&existing_link.local_task_id) {
+        if self.is_busy_local_task(&existing_link.local_task_id) {
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -799,7 +809,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: None,
             initial_thread_name: None,
             initial_thread_goal: None,
-        });
+        })?;
 
         Ok(json!({
             "success": true,
@@ -1060,6 +1070,17 @@ impl RuntimeWorkRpcHandler {
             })
             .or_else(|| self.local_task_link(&local_task_id));
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
+        if self.remove_queued_turn(&local_task_id)? {
+            return Ok(match link {
+                Some(link) => task_action_success(&link),
+                None => json!({
+                    "success": true,
+                    "accepted": true,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }),
+            });
+        }
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -1080,6 +1101,109 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }),
         })
+    }
+
+    pub(super) async fn force_start_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let queued_turn = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            let Some(position) = scheduler
+                .queued_turns
+                .iter()
+                .position(|turn| turn.local_task_id == local_task_id)
+            else {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                    "error": "runtime task is not queued",
+                    "code": "not_queued",
+                }));
+            };
+            let mut remaining_turns = scheduler.queued_turns.clone();
+            let Some(turn) = remaining_turns.remove(position) else {
+                return Err(AppIpcError::new(
+                    "runtime_queue_failed",
+                    "queued runtime task disappeared",
+                ));
+            };
+            turns::write_runtime_turn_queue(&self.turn_queue_path, &remaining_turns)
+                .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
+            scheduler.queued_turns.remove(position);
+            scheduler.active_tasks += 1;
+            turn
+        };
+        log_executor_event(
+            "runtime work queued turn force started",
+            &[("local_task_id", local_task_id.clone())],
+        );
+        self.start_turn(queued_turn);
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "taskId": local_task_id,
+            "runtime": "codex",
+        }))
+    }
+
+    pub(super) async fn reorder_queued_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let target_position = integer_field(&payload, "queuePosition")
+            .or_else(|| integer_field(&payload, "queue_position"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "queuePosition is required"))?;
+        if target_position < 1 {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "queuePosition must be at least 1",
+            ));
+        }
+        let ordered_task_ids = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            if scheduler.queued_position(&local_task_id).is_none() {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                    "error": "runtime task is not queued",
+                    "code": "not_queued",
+                }));
+            }
+            let reordered = scheduler
+                .reordered_queue(&local_task_id, target_position as usize)
+                .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
+            turns::write_runtime_turn_queue(&self.turn_queue_path, &reordered)
+                .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
+            scheduler.queued_turns = reordered;
+            scheduler
+                .queued_turns
+                .iter()
+                .map(|turn| turn.local_task_id.clone())
+                .collect::<Vec<_>>()
+        };
+        log_executor_event(
+            "runtime work queued turn reordered",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("queue_position", target_position.to_string()),
+            ],
+        );
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "taskId": local_task_id,
+            "runtime": "codex",
+            "orderedTaskIds": ordered_task_ids,
+        }))
     }
 
     pub(super) fn resolve_pending_request_user_input_for_stop(&self, local_task_id: &str) {

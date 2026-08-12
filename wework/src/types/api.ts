@@ -375,6 +375,7 @@ export interface RuntimeTaskSummary {
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
@@ -383,6 +384,18 @@ export interface RuntimeTaskSummary {
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
+}
+
+export interface RuntimeSettings {
+  maxConcurrentTasks: number
+}
+
+export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
+  queuePosition: number
+}
+
+export interface RuntimeTaskQueueReorderResponse extends RuntimeTaskCancelResponse {
+  orderedTaskIds?: string[]
 }
 
 export type RuntimeSupervisorMode = 'suggest' | 'auto'
@@ -1209,6 +1222,8 @@ export interface RuntimeTaskCreateResponse {
   workspacePath: string
   runtime: RuntimeName
   runtimeHandle?: Record<string, unknown> | null
+  status?: 'queued' | 'running'
+  queuePosition?: number | null
   error?: string | null
 }
 

@@ -5,6 +5,15 @@
 use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
+#[test]
+fn defaults_to_ten_parallel_runtime_tasks() {
+    assert_eq!(
+        RuntimeSettings::default().max_concurrent_tasks,
+        DEFAULT_MAX_CONCURRENT_TASKS
+    );
+    assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
+}
+
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();

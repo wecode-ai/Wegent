@@ -5,6 +5,7 @@ export const DESKTOP_CHECKPOINTS = [
   'automation-lifecycle',
   'model-routing',
   'core-task-flow',
+  'runtime-task-queue',
   'window-lifecycle',
   'goal-lifecycle',
   'supervisor-lifecycle',

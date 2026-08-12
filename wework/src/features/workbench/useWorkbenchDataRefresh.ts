@@ -212,6 +212,7 @@ export function useWorkbenchDataRefresh({
   const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
   const cloudBackgroundRequestControllerRef = useRef<AbortController | null>(null)
+  const workListRefreshRevisionRef = useRef(0)
   const runtimeWorkRef = useRef(state.runtimeWork)
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const runtimeTaskTitleOverridesRef = useRef(
@@ -656,6 +657,7 @@ export function useWorkbenchDataRefresh({
 
   const refreshWorkLists: RefreshWorkLists = useCallback(
     async options => {
+      const refreshRevision = ++workListRefreshRevisionRef.current
       const [devicesResult, runtimeWorkResult] = await Promise.all([
         executorClient.commands.listDevices().catch(error => {
           const cachedDevices = readCachedDeviceList()
@@ -664,6 +666,7 @@ export function useWorkbenchDataRefresh({
         }),
         executorClient.runtime.listRuntimeWork().catch(() => undefined),
       ])
+      if (refreshRevision !== workListRefreshRevisionRef.current) return
       const devices = resolveDeviceListWithCache(devicesResult)
       const visibleDevices = resolveDeviceListWithCache(
         selectVisibleDevices(devices, cloudRuntimeStateRef.current)

@@ -60,6 +60,25 @@ describe('runtimeWorkSync', () => {
     expect(emitToMock).not.toHaveBeenCalled()
   })
 
+  test('refreshes sibling workbench providers in the same window', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    getCurrentWindowMock.mockReturnValue({ label: 'main' })
+    listenMock.mockResolvedValue(vi.fn())
+    const refreshRuntimeWork = vi.fn().mockResolvedValue(undefined)
+
+    const { installMainRuntimeWorkChangedListener, notifyMainRuntimeWorkChanged } =
+      await import('./runtimeWorkSync')
+
+    const unlisten = await installMainRuntimeWorkChangedListener(refreshRuntimeWork)
+    await notifyMainRuntimeWorkChanged({
+      deviceId: 'local-device',
+      taskId: 'task-1',
+    })
+
+    await vi.waitFor(() => expect(refreshRuntimeWork).toHaveBeenCalledOnce())
+    unlisten()
+  })
+
   test('refreshes runtime work when the main window receives the event', async () => {
     let eventHandler: ((event: { payload: { deviceId: string; taskId: string } }) => void) | null =
       null
@@ -86,13 +105,16 @@ describe('runtimeWorkSync', () => {
     await vi.waitFor(() => expect(refreshRuntimeWork).toHaveBeenCalledOnce())
   })
 
-  test('does not install the refresh listener in a secondary window', async () => {
+  test('installs only the same-window refresh listener in a secondary window', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     getCurrentWindowMock.mockReturnValue({ label: 'popout-window' })
 
     const { installMainRuntimeWorkChangedListener } = await import('./runtimeWorkSync')
 
-    expect(installMainRuntimeWorkChangedListener(vi.fn())).toBeNull()
+    const unlisten = await installMainRuntimeWorkChangedListener(vi.fn())
+
     expect(listenMock).not.toHaveBeenCalled()
+    expect(unlisten).toEqual(expect.any(Function))
+    unlisten()
   })
 })
