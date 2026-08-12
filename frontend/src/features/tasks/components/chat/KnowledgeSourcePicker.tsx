@@ -1287,7 +1287,10 @@ export function KnowledgeSourcePicker({
           error={dingtalkTrees.error}
           configured={dingtalkTrees.isConfigured}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.syncing}
+          lastSyncedAt={dingtalkTrees.lastSyncedAt}
           onRetry={dingtalkTrees.fetchDocs}
+          onSync={dingtalkTrees.syncDocs}
           onToggle={() => toggleDingTalkNodeList(dingtalkTrees.nodes)}
         />
       )
@@ -1303,7 +1306,10 @@ export function KnowledgeSourcePicker({
           configured={dingtalkTrees.wikispaceConfigured}
           selectedIds={selectedDingTalkIds}
           activeNode={activeDingTalkSpace}
+          syncing={dingtalkTrees.wikispaceSyncing}
+          lastSyncedAt={dingtalkTrees.wikispaceLastSyncedAt}
           onRetry={dingtalkTrees.fetchWikispace}
+          onSync={dingtalkTrees.syncWikispace}
           onOpen={setActiveDingTalkSpace}
           onToggle={node => toggleDingTalkNode(node, node)}
         />
@@ -1538,7 +1544,9 @@ export function KnowledgeSourcePicker({
           emptyLabel={tChat('dingtalkDocs.empty')}
           query={searchValue}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.syncing}
           onRetry={dingtalkTrees.fetchDocs}
+          onSync={dingtalkTrees.syncDocs}
           onToggle={toggleDingTalkNode}
           onToggleAll={toggleDingTalkNodeList}
         />
@@ -1561,7 +1569,9 @@ export function KnowledgeSourcePicker({
           emptyLabel={tChat('dingtalkDocs.wikispaceEmpty')}
           query={searchValue}
           selectedIds={selectedDingTalkIds}
+          syncing={dingtalkTrees.wikispaceSyncing}
           onRetry={dingtalkTrees.fetchWikispace}
+          onSync={dingtalkTrees.syncWikispace}
           onToggle={node => toggleDingTalkNode(node, activeDingTalkSpace)}
           onToggleAll={nodes => toggleDingTalkNodeList(nodes, activeDingTalkSpace)}
         />
