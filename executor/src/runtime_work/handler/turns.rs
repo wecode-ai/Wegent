@@ -242,6 +242,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn start_turn(&self, mut turn: SpawnTurnRequest) {
+        let is_claude = self
+            .store
+            .get_task(&turn.local_task_id)
+            .is_some_and(|link| is_claude_runtime(&link.runtime));
+        if is_claude {
+            self.start_claude_turn(turn.local_task_id, turn.request);
+            return;
+        }
         self.apply_backend_connection(&mut turn.request);
         crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
@@ -530,7 +538,7 @@ impl RuntimeWorkRpcHandler {
         Ok(true)
     }
 
-    fn finish_scheduled_turn(&self) {
+    pub(super) fn finish_scheduled_turn(&self) {
         {
             let mut scheduler = self
                 .turn_scheduler

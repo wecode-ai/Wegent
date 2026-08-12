@@ -252,9 +252,21 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "codex".to_owned());
+        if !is_codex_runtime(&runtime) && !is_claude_runtime(&runtime) {
+            return Err(AppIpcError::new(
+                "unsupported_runtime",
+                format!("unsupported runtime: {runtime}"),
+            ));
+        }
+        let runtime = if is_claude_runtime(&runtime) {
+            "claude_code".to_owned()
+        } else {
+            "codex".to_owned()
+        };
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
-            .unwrap_or_else(|| format!("codex-local-{}", now_ms()));
+            .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
         let payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
@@ -266,18 +278,20 @@ impl RuntimeWorkRpcHandler {
         // link out of the sidebar while still creating a durable Codex thread
         // (a rollout) so a follow-up can resume the same session after restart.
         let continuable = bool_field(&payload, "continuable").unwrap_or(false);
-        if let (Some(project_key), Some(project_name)) = (
-            request.runtime_project_key.as_deref(),
-            request.runtime_project_name.as_deref(),
-        ) {
-            if !request.runtime_workspace_roots.is_empty() {
-                upsert_codex_global_local_project(
-                    project_key,
-                    project_name,
-                    &request.runtime_workspace_roots,
-                    None,
-                )
-                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        if is_codex_runtime(&runtime) {
+            if let (Some(project_key), Some(project_name)) = (
+                request.runtime_project_key.as_deref(),
+                request.runtime_project_name.as_deref(),
+            ) {
+                if !request.runtime_workspace_roots.is_empty() {
+                    upsert_codex_global_local_project(
+                        project_key,
+                        project_name,
+                        &request.runtime_workspace_roots,
+                        None,
+                    )
+                    .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+                }
             }
         }
         let payload_has_workspace_path = payload_workspace_path.is_some();
@@ -311,10 +325,11 @@ impl RuntimeWorkRpcHandler {
         }
         self.apply_project_workspace_roots(&mut request);
 
-        let mut link = RuntimeTaskLink::new_pending(
+        let mut link = RuntimeTaskLink::new_pending_with_runtime(
             local_task_id.clone(),
             workspace_path.clone(),
             title.clone(),
+            runtime.clone(),
         );
         link.ephemeral =
             request.ephemeral || continuable || bool_field(&payload, "ephemeral").unwrap_or(false);
@@ -324,6 +339,37 @@ impl RuntimeWorkRpcHandler {
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        if let Some(executable_path) = request
+            .extra
+            .get("runtime_executable_path")
+            .or_else(|| request.extra.get("runtimeExecutablePath"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        {
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert(
+                    "runtimeExecutablePath".to_owned(),
+                    Value::String(executable_path),
+                );
+            }
+        }
+        if let Some(permission_mode) = request
+            .extra
+            .get("claude_permission_mode")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        {
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert(
+                    "claudePermissionMode".to_owned(),
+                    Value::String(permission_mode),
+                );
+            }
+        }
         if let (Some(runtime_handle), Some(project_id)) = (
             link.runtime_handle.as_object_mut(),
             cloud_project_id(&request),
@@ -336,32 +382,39 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
-        if let Some(supervisor) = payload
-            .get("initialSupervisor")
-            .or_else(|| payload.get("initial_supervisor"))
-        {
-            link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+        if is_codex_runtime(&runtime) {
+            if let Some(supervisor) = payload
+                .get("initialSupervisor")
+                .or_else(|| payload.get("initial_supervisor"))
+            {
+                link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+            }
         }
         let mut runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         self.schedule_worktree_prune();
-        let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-        let mut side_source = side_source_thread(&payload);
-        if let Some(source) = &mut side_source {
-            if source.thread_path.is_none() {
-                source.thread_path = self.thread_path_for_id(&source.thread_id).await;
+        if is_claude_runtime(&runtime) {
+            self.prepare_claude_goal(&local_task_id, &mut request, &payload);
+            self.spawn_claude_turn(local_task_id.clone(), request)?;
+        } else {
+            let initial_thread_goal = initial_thread_goal_from_payload(&payload);
+            let mut side_source = side_source_thread(&payload);
+            if let Some(source) = &mut side_source {
+                if source.thread_path.is_none() {
+                    source.thread_path = self.thread_path_for_id(&source.thread_id).await;
+                }
             }
+            self.spawn_turn(SpawnTurnRequest {
+                local_task_id: local_task_id.clone(),
+                request,
+                direct_thread_id: None,
+                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
+                fork_thread_path: side_source.and_then(|source| source.thread_path),
+                resume_thread_id: None,
+                initial_thread_name: Some(title.clone()),
+                initial_thread_goal,
+            })?;
         }
-        self.spawn_turn(SpawnTurnRequest {
-            local_task_id: local_task_id.clone(),
-            request,
-            direct_thread_id: None,
-            fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-            fork_thread_path: side_source.and_then(|source| source.thread_path),
-            resume_thread_id: None,
-            initial_thread_name: Some(title.clone()),
-            initial_thread_goal,
-        })?;
         let queue_position = self
             .queued_local_task_position(&local_task_id)
             .map(|position| position + 1);
@@ -370,7 +423,11 @@ impl RuntimeWorkRpcHandler {
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
         }
-        match payload.get("friendlyTitleExecutionRequest").cloned() {
+        match payload
+            .get("friendlyTitleExecutionRequest")
+            .cloned()
+            .filter(|_| is_codex_runtime(&runtime))
+        {
             Some(value) => match serde_json::from_value::<ExecutionRequest>(value) {
                 Ok(execution_request) => {
                     log_executor_event(
@@ -417,7 +474,7 @@ impl RuntimeWorkRpcHandler {
             "deviceId": self.device_id,
             "taskId": local_task_id,
             "workspacePath": workspace_path,
-            "runtime": "codex",
+            "runtime": runtime,
             "runtimeHandle": runtime_handle,
             "status": if queue_position.is_some() { "queued" } else { "running" },
             "queuePosition": queue_position,
@@ -549,6 +606,50 @@ impl RuntimeWorkRpcHandler {
             request.project_workspace_path = Some(workspace_path.clone());
         }
         self.apply_project_workspace_roots(&mut request);
+        let runtime = existing_link
+            .as_ref()
+            .map(|link| link.runtime.clone())
+            .or_else(|| string_field(&payload, "runtime"))
+            .unwrap_or_else(|| "codex".to_owned());
+        if is_claude_runtime(&runtime) {
+            if request.extra.get("runtime_executable_path").is_none() {
+                if let Some(executable_path) = existing_link
+                    .as_ref()
+                    .and_then(|link| string_field(&link.runtime_handle, "runtimeExecutablePath"))
+                {
+                    request.extra.insert(
+                        "runtime_executable_path".to_owned(),
+                        Value::String(executable_path),
+                    );
+                }
+            }
+            if request.extra.get("claude_permission_mode").is_none() {
+                if let Some(permission_mode) = existing_link
+                    .as_ref()
+                    .and_then(|link| string_field(&link.runtime_handle, "claudePermissionMode"))
+                {
+                    request.extra.insert(
+                        "claude_permission_mode".to_owned(),
+                        Value::String(permission_mode),
+                    );
+                }
+            }
+            self.prepare_claude_goal(&local_task_id, &mut request, &payload);
+            self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
+            self.spawn_claude_turn(local_task_id.clone(), request)?;
+            let queue_position = self
+                .queued_local_task_position(&local_task_id)
+                .map(|position| position + 1);
+            return Ok(json!({
+                "success": true,
+                "accepted": true,
+                "deviceId": self.device_id,
+                "taskId": local_task_id,
+                "runtime": "claude_code",
+                "status": if queue_position.is_some() { "queued" } else { "running" },
+                "queuePosition": queue_position,
+            }));
+        }
         let recovered_link = self
             .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
             .await;
@@ -1109,6 +1210,11 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn force_start_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let runtime = self
+            .store
+            .get_task(&local_task_id)
+            .map(|link| link.runtime)
+            .unwrap_or_else(|| "codex".to_owned());
         let queued_turn = {
             let mut scheduler = self
                 .turn_scheduler
@@ -1123,7 +1229,7 @@ impl RuntimeWorkRpcHandler {
                     "success": false,
                     "accepted": false,
                     "taskId": local_task_id,
-                    "runtime": "codex",
+                    "runtime": runtime,
                     "error": "runtime task is not queued",
                     "code": "not_queued",
                 }));
@@ -1150,13 +1256,18 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "taskId": local_task_id,
-            "runtime": "codex",
+            "runtime": runtime,
         }))
     }
 
     pub(super) async fn reorder_queued_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let runtime = self
+            .store
+            .get_task(&local_task_id)
+            .map(|link| link.runtime)
+            .unwrap_or_else(|| "codex".to_owned());
         let target_position = integer_field(&payload, "queuePosition")
             .or_else(|| integer_field(&payload, "queue_position"))
             .ok_or_else(|| AppIpcError::new("bad_request", "queuePosition is required"))?;
@@ -1176,7 +1287,7 @@ impl RuntimeWorkRpcHandler {
                     "success": false,
                     "accepted": false,
                     "taskId": local_task_id,
-                    "runtime": "codex",
+                    "runtime": runtime,
                     "error": "runtime task is not queued",
                     "code": "not_queued",
                 }));
@@ -1204,7 +1315,7 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "taskId": local_task_id,
-            "runtime": "codex",
+            "runtime": runtime,
             "orderedTaskIds": ordered_task_ids,
         }))
     }

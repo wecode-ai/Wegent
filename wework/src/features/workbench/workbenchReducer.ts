@@ -624,6 +624,7 @@ function findRuntimeTaskAddressByTaskId(
     const address = {
       deviceId: workspace.deviceId,
       taskId,
+      ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
       workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.threadId ? { threadId: task.threadId } : {}),

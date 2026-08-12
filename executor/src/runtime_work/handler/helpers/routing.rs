@@ -387,6 +387,13 @@ fn is_codex_runtime(runtime: &str) -> bool {
     runtime.eq_ignore_ascii_case("codex")
 }
 
+fn is_claude_runtime(runtime: &str) -> bool {
+    matches!(
+        runtime.trim().to_ascii_lowercase().as_str(),
+        "claude" | "claudecode" | "claude_code"
+    )
+}
+
 fn append_unique_links(links: &mut Vec<RuntimeTaskLink>, new_links: Vec<RuntimeTaskLink>) {
     let mut keys = links.iter().map(link_key).collect::<HashSet<_>>();
     for link in new_links {

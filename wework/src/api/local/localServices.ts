@@ -1436,6 +1436,8 @@ function executionWithWorkspace(
 interface BuildLocalRuntimeExecutionRequestInput {
   taskId?: string | null
   runtime: string
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: RuntimeTaskCreateRequest['runtimePermissionMode']
   teamId: number
   title: string
   message: string
@@ -1494,16 +1496,23 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
-  const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(
-      input.runtime,
-      input.modelId,
-      input.modelType,
-      input.modelOptions,
-      input.cloudModelGateway
-    ),
-    input.modelOptions
+  const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
+    input.runtime.trim().toLowerCase()
   )
+  const modelConfig =
+    claudeRuntime && !input.modelId
+      ? {}
+      : applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            input.runtime,
+            input.modelId,
+            input.modelType,
+            input.modelOptions,
+            input.cloudModelGateway,
+            !claudeRuntime
+          ),
+          input.modelOptions
+        )
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1540,7 +1549,16 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot: [],
+    bot: [
+      {
+        id: 0,
+        shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex',
+      },
+    ],
+    ...(input.runtimeExecutablePath
+      ? { runtime_executable_path: input.runtimeExecutablePath }
+      : {}),
+    ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
@@ -1727,6 +1745,8 @@ async function createLocalRuntimeTaskPayload(
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId: normalizedData.taskId,
       runtime: normalizedData.runtime,
+      runtimeExecutablePath: normalizedData.runtimeExecutablePath,
+      runtimePermissionMode: normalizedData.runtimePermissionMode,
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
@@ -1784,6 +1804,10 @@ function createLocalRuntimeSendPayload(
     taskId,
     ...(workspacePath ? { workspacePath } : {}),
   }
+  const runtime =
+    stringValue(normalizedAddress.runtime) ??
+    stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
+    'codex'
 
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
@@ -1796,7 +1820,7 @@ function createLocalRuntimeSendPayload(
       ...(collaborationMode ? { collaborationMode } : {}),
       executionRequest: buildLocalRuntimeExecutionRequest({
         taskId,
-        runtime: 'codex',
+        runtime,
         teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
         message: normalizedData.message,
@@ -1837,7 +1861,7 @@ function createLocalRuntimeSendPayload(
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
-      runtime: 'codex',
+      runtime,
       teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
       message: normalizedData.message,
