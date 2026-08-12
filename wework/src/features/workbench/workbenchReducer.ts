@@ -327,6 +327,14 @@ function mergeRuntimeTasks(
     .map(task => {
       const nextTask = nextById.get(task.taskId)
       if (nextTask) {
+        if (
+          isFreshOptimisticRuntimeTask(task) &&
+          isActiveOptimisticRuntimeTask(task) &&
+          nextTask.running === false &&
+          nextTask.status !== 'queued'
+        ) {
+          return task
+        }
         return nextTask
       }
       if (
@@ -348,7 +356,11 @@ function mergeRuntimeTasks(
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating' || (task.optimistic === true && task.status === 'failed')
+  return task.status === 'creating' || task.optimistic === true
+}
+
+function isActiveOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
+  return task.status === 'creating' || task.status === 'queued' || task.status === 'running'
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {

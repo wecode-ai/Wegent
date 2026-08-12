@@ -217,6 +217,7 @@ export function useWorkbenchDataRefresh({
   const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
   const cloudBackgroundRequestControllerRef = useRef<AbortController | null>(null)
+  const workListRefreshRevisionRef = useRef(0)
   const runtimeWorkRef = useRef(state.runtimeWork)
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const runtimeTaskTitleOverridesRef = useRef(
@@ -574,6 +575,7 @@ export function useWorkbenchDataRefresh({
     }, 5000)
 
     async function bootstrap() {
+      const bootstrapRevision = ++workListRefreshRevisionRef.current
       const [defaultTeamResult, devicesResult] = await Promise.all([
         timedWorkbenchBootstrapRequest('defaultTeam', services.teamApi.getDefaultWorkbenchTeam()),
         timedWorkbenchBootstrapRequest('devices', executorClient.commands.listDevices()),
@@ -620,7 +622,10 @@ export function useWorkbenchDataRefresh({
                 true
               )
             : EMPTY_RUNTIME_WORK
-        if (runtimeWorkResult.status === 'fulfilled') {
+        if (
+          runtimeWorkResult.status === 'fulfilled' &&
+          bootstrapRevision === workListRefreshRevisionRef.current
+        ) {
           localRuntimeWorkRef.current = runtimeWork
           dispatch({
             type: 'runtime_work_refreshed',
@@ -668,6 +673,7 @@ export function useWorkbenchDataRefresh({
 
   const refreshWorkLists: RefreshWorkLists = useCallback(
     async options => {
+      const refreshRevision = ++workListRefreshRevisionRef.current
       const [devicesResult, runtimeWorkResult] = await Promise.all([
         executorClient.commands.listDevices().catch(error => {
           const cachedDevices = readCachedDeviceList()
@@ -676,6 +682,7 @@ export function useWorkbenchDataRefresh({
         }),
         executorClient.runtime.listRuntimeWork().catch(() => undefined),
       ])
+      if (refreshRevision !== workListRefreshRevisionRef.current) return
       const devices = resolveDeviceListWithCache(devicesResult, { useCacheFallback: false })
       const visibleDevices = resolveDeviceListWithCache(
         selectVisibleDevices(devices, cloudRuntimeStateRef.current),

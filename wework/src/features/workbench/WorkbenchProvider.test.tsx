@@ -705,6 +705,9 @@ function BootstrapProbe() {
       <button type="button" onClick={() => void workbench.refreshDevices()}>
         Refresh devices
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        Refresh work lists
+      </button>
     </div>
   )
 }
@@ -2014,6 +2017,51 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('keeps the runtime event subscription across connected user preference updates', async () => {
+    setTauriRuntime()
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+    const user = {
+      id: 1,
+      user_name: 'alice',
+      email: 'a@b.c',
+      preferences: { send_key: 'enter' as const },
+    }
+    const cloudConnectionValue = (connectedUser: User): CloudConnectionContextValue => ({
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'test-disconnected',
+      user: connectedUser,
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    })
+    const renderTree = (connectedUser: User) => (
+      <CloudConnectionContext.Provider value={cloudConnectionValue(connectedUser)}>
+        <WorkbenchProvider user={LOCAL_USER}>
+          <WorkbenchProbeSessionProvider>
+            <BootstrapProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+    const rendered = render(renderTree(user))
+
+    await waitFor(() => expect(localExecutorMocks.subscribeLocalExecutorEvents).toHaveBeenCalled())
+    const subscriptionCount = localExecutorMocks.subscribeLocalExecutorEvents.mock.calls.length
+
+    rendered.rerender(
+      renderTree({
+        ...user,
+        preferences: { send_key: 'cmd_enter' },
+      })
+    )
+
+    await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
+    expect(localExecutorMocks.subscribeLocalExecutorEvents).toHaveBeenCalledTimes(subscriptionCount)
+  })
+
   test('bootstraps projects and runtime work without DB task APIs', async () => {
     const services = createWorkbenchServices()
 
@@ -2025,6 +2073,35 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not let a stale bootstrap runtime request overwrite a manual refresh', async () => {
+    const bootstrapRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const manualRuntimeWork = createRuntimeWork({
+      projects: [],
+      chats: [],
+      totalTasks: 4,
+    })
+    const listRuntimeWork = vi
+      .fn()
+      .mockImplementationOnce(() => bootstrapRuntimeWork.promise)
+      .mockResolvedValueOnce(manualRuntimeWork)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh work lists' }))
+    await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('4'))
+
+    bootstrapRuntimeWork.resolve(createRuntimeWork({ projects: [], chats: [], totalTasks: 1 }))
+    await act(async () => {
+      await bootstrapRuntimeWork.promise
+    })
+
+    expect(screen.getByTestId('runtime-total')).toHaveTextContent('4')
   })
 
   test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {
@@ -2703,6 +2780,75 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-titles')).toHaveTextContent('New local task')
+    )
+  })
+
+  test('does not let an older work-list refresh erase a queued task status', async () => {
+    const staleRefresh = deferred<RuntimeWorkListResponse>()
+    const latestRefresh = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkWithStatus = (status: 'active' | 'queued', queuePosition?: number) =>
+      createRuntimeWork({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 22,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-queued',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Queued task',
+                    runtime: 'codex',
+                    running: false,
+                    status,
+                    queuePosition,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+        ],
+        totalTasks: 1,
+      })
+    const queuedRuntimeWork = runtimeWorkWithStatus('queued', 1)
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(queuedRuntimeWork)
+      .mockImplementationOnce(() => staleRefresh.promise)
+      .mockImplementationOnce(() => latestRefresh.promise)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await userEvent.click(screen.getByText('refresh work lists'))
+
+    await act(async () => {
+      latestRefresh.resolve(queuedRuntimeWork)
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+
+    await act(async () => {
+      staleRefresh.resolve(runtimeWorkWithStatus('active'))
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
     )
   })
 

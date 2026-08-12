@@ -68,6 +68,30 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
   })
 
+  test('reconciles an optimistic start into a queued executor snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'queued' })))
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution).toMatchObject({
+      known: true,
+      running: false,
+      phase: 'queued',
+    })
+    expect(snapshot?.derived).toMatchObject({
+      isQueued: true,
+      isBusy: true,
+      shouldShowSidebarRunning: false,
+    })
+    expect(store.getSnapshot().queuedTaskKeys).toEqual(
+      new Set([getRuntimeTaskLifecycleKey(address)])
+    )
+    expect(store.getSnapshot().unreadTaskKeys).toEqual(new Set())
+  })
+
   test('owns optimistic send, accepted, stream, and settled turn transitions', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task()))

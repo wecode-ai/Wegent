@@ -368,8 +368,9 @@ function findDesktopControlElements(selector: string): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>(selector))
 }
 
-function desktopControlElementText(selector: string): string {
-  return findDesktopControlElements(selector)
+function desktopControlElementText(selector: string, visible = false): string {
+  const elements = findDesktopControlElements(selector)
+  return (visible ? elements.filter(desktopControlElementVisible) : elements)
     .map(element => element.textContent?.trim() ?? '')
     .filter(Boolean)
     .join('\n')
@@ -509,17 +510,27 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
 }
 
 function desktopControlElementVisible(element: HTMLElement): boolean {
-  const style = window.getComputedStyle(element)
+  let current: HTMLElement | null = element
+  while (current) {
+    const style = window.getComputedStyle(current)
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      current.getAttribute('aria-hidden') === 'true'
+    ) {
+      return false
+    }
+    current = current.parentElement
+  }
+
   const rect = element.getBoundingClientRect()
-  return (
-    style.display !== 'none' &&
-    style.visibility !== 'hidden' &&
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.bottom > 0 &&
-    rect.right > 0 &&
-    rect.top < window.innerHeight &&
-    rect.left < window.innerWidth
+  return !(
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    rect.bottom <= 0 ||
+    rect.right <= 0 ||
+    rect.top >= window.innerHeight ||
+    rect.left >= window.innerWidth
   )
 }
 
@@ -979,9 +990,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
-      return desktopControlElementText(command.selector)
+      return desktopControlElementText(command.selector, command.visible)
     case 'getElementCount':
-      return String(findDesktopControlElements(command.selector).length)
+      return String(
+        command.visible
+          ? findDesktopControlElements(command.selector).filter(desktopControlElementVisible).length
+          : findDesktopControlElements(command.selector).length
+      )
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
     case 'startScrollStabilitySampling': {
@@ -1075,9 +1090,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getAttribute': {
       const elements = findDesktopControlElements(command.selector)
+      const candidates = command.visible ? elements.filter(desktopControlElementVisible) : elements
       const element = command.text
-        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
-        : elements[0]
+        ? candidates.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : candidates[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const attribute = command.value?.trim()
       if (!attribute) throw new Error('getAttribute requires an attribute name')
@@ -1209,7 +1225,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(scroller.scrollTop)
     }
     case 'click': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)

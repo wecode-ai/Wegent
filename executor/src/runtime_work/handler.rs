@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -125,9 +125,16 @@ const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
 const WORKTREE_AUTO_CLEANUP_MAX_EMPTY_ROUNDS: usize = 3;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
+const MIN_MAX_CONCURRENT_TASKS: usize = 1;
+const MAX_MAX_CONCURRENT_TASKS: usize = 20;
 
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SpawnTurnRequest {
     local_task_id: String,
+    #[serde(default = "default_turn_runtime")]
+    runtime: String,
     request: ExecutionRequest,
     direct_thread_id: Option<String>,
     fork_thread_id: Option<String>,
@@ -135,6 +142,101 @@ struct SpawnTurnRequest {
     resume_thread_id: Option<String>,
     initial_thread_name: Option<String>,
     initial_thread_goal: Option<Value>,
+}
+
+fn default_turn_runtime() -> String {
+    "codex".to_owned()
+}
+
+#[derive(Clone)]
+struct RuntimeTurnScheduler {
+    max_concurrent_tasks: usize,
+    active_tasks: usize,
+    queued_turns: VecDeque<SpawnTurnRequest>,
+}
+
+impl RuntimeTurnScheduler {
+    fn new(max_concurrent_tasks: usize, queued_turns: VecDeque<SpawnTurnRequest>) -> Self {
+        Self {
+            max_concurrent_tasks,
+            active_tasks: 0,
+            queued_turns,
+        }
+    }
+
+    fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
+        if self.active_tasks >= self.max_concurrent_tasks || !self.queued_turns.is_empty() {
+            self.queued_turns.push_back(turn);
+            return None;
+        }
+        self.active_tasks += 1;
+        Some(turn)
+    }
+
+    fn queued_position(&self, local_task_id: &str) -> Option<usize> {
+        self.queued_turns
+            .iter()
+            .position(|turn| turn.local_task_id == local_task_id)
+    }
+
+    fn reordered_queue(
+        &self,
+        local_task_id: &str,
+        target_position: usize,
+    ) -> Result<VecDeque<SpawnTurnRequest>, &'static str> {
+        let current_position = self
+            .queued_position(local_task_id)
+            .ok_or("runtime task is not queued")?;
+        let mut reordered = self.queued_turns.clone();
+        let turn = reordered
+            .remove(current_position)
+            .ok_or("queued runtime task disappeared")?;
+        reordered.insert(target_position.saturating_sub(1).min(reordered.len()), turn);
+        Ok(reordered)
+    }
+
+    fn finish(&mut self) -> Vec<SpawnTurnRequest> {
+        self.active_tasks = self.active_tasks.saturating_sub(1);
+        self.take_available()
+    }
+
+    fn force_start(&mut self, local_task_id: &str) -> Option<SpawnTurnRequest> {
+        let position = self
+            .queued_turns
+            .iter()
+            .position(|turn| turn.local_task_id == local_task_id)?;
+        let turn = self.queued_turns.remove(position)?;
+        self.active_tasks += 1;
+        Some(turn)
+    }
+
+    fn update_limit(&mut self, max_concurrent_tasks: usize) -> Vec<SpawnTurnRequest> {
+        self.max_concurrent_tasks = max_concurrent_tasks;
+        self.take_available()
+    }
+
+    fn take_available(&mut self) -> Vec<SpawnTurnRequest> {
+        let available = self.max_concurrent_tasks.saturating_sub(self.active_tasks);
+        let turns = (0..available)
+            .filter_map(|_| self.queued_turns.pop_front())
+            .collect::<Vec<_>>();
+        self.active_tasks += turns.len();
+        turns
+    }
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(default, rename_all = "camelCase")]
+struct RuntimeSettings {
+    max_concurrent_tasks: usize,
+}
+
+impl Default for RuntimeSettings {
+    fn default() -> Self {
+        Self {
+            max_concurrent_tasks: DEFAULT_MAX_CONCURRENT_TASKS,
+        }
+    }
 }
 
 fn standalone_chat_workspace_path(
@@ -308,6 +410,9 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    turn_queue_operation: Arc<AsyncMutex<()>>,
+    turn_queue_path: Arc<PathBuf>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
@@ -368,6 +473,27 @@ struct RuntimeThreadEventRoute {
     active: bool,
 }
 
+struct ScheduledTurnGuard {
+    handler: RuntimeWorkRpcHandler,
+}
+
+impl ScheduledTurnGuard {
+    fn new(handler: RuntimeWorkRpcHandler) -> Self {
+        Self { handler }
+    }
+}
+
+impl Drop for ScheduledTurnGuard {
+    fn drop(&mut self) {
+        let handler = self.handler.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                handler.finish_scheduled_turn().await;
+            });
+        }
+    }
+}
+
 struct SideSourceThread {
     thread_id: String,
     thread_path: Option<String>,
@@ -389,6 +515,13 @@ impl RuntimeWorkRpcHandler {
         let codex_binary = codex_binary.into();
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
         let codex_app_server = CodexAppServerClient::new(codex_binary);
+        let runtime_settings = system::read_runtime_settings();
+        let turn_queue_path = turns::runtime_turn_queue_path();
+        let queued_turns =
+            turns::read_runtime_turn_queue(&turn_queue_path).unwrap_or_else(|error| {
+                log_executor_event("runtime turn queue restore failed", &[("error", error)]);
+                VecDeque::new()
+            });
         let handler = Self {
             device_id: normalize_device_id(device_id.into()),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
@@ -400,6 +533,12 @@ impl RuntimeWorkRpcHandler {
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
+                runtime_settings.max_concurrent_tasks,
+                queued_turns,
+            ))),
+            turn_queue_operation: Arc::new(AsyncMutex::new(())),
+            turn_queue_path: Arc::new(turn_queue_path),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
@@ -493,6 +632,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
+        self.resume_persisted_turns().await;
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
@@ -509,6 +649,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.archive" => self.archive_task(payload).await,
             "runtime.tasks.rename" => self.rename_task(payload).await,
             "runtime.tasks.cancel" => self.cancel_task(payload).await,
+            "runtime.tasks.force_start" => self.force_start_task(payload).await,
+            "runtime.tasks.queue.reorder" => self.reorder_queued_task(payload).await,
             "runtime.automations.list" => self.list_automations().await,
             "runtime.automations.get" => self.get_automation(payload).await,
             "runtime.automations.create" => self.create_automation(payload).await,
@@ -526,6 +668,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.supervisor.resolve" => self.resolve_task_supervisor(payload).await,
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
+            "runtime.settings.get" => self.get_runtime_settings().await,
+            "runtime.settings.update" => self.update_runtime_settings(payload).await,
             "runtime.hooks.list" | "runtime.hooks.reload" => {
                 Ok(json!({"plugins": self.hook_service.list()}))
             }

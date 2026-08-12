@@ -887,6 +887,7 @@ describe('App plugins route', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {
@@ -918,6 +919,7 @@ describe('App plugins route', () => {
       status: 500,
       text: () => Promise.resolve('Internal server error'),
     } as Response)
+    vi.stubGlobal('fetch', fetchMock)
     window.history.pushState({}, '', '/sites')
 
     renderApp()

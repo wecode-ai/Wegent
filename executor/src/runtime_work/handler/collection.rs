@@ -101,7 +101,8 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let running = self.is_active_local_task(&link.local_task_id);
-            apply_local_execution_state(&mut link, running);
+            let queue_position = self.queued_local_task_position(&link.local_task_id);
+            apply_local_execution_state(&mut link, running, queue_position);
             link.list_order = Some(links.len());
             links.push(link);
         }
@@ -548,11 +549,17 @@ impl RuntimeWorkRpcHandler {
         let local_active = local_link
             .as_ref()
             .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
+        let queue_position = local_link
+            .as_ref()
+            .and_then(|link| self.queued_local_task_position(&link.local_task_id));
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
         let mut link =
             RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);
+        if queue_position.is_some() {
+            apply_local_execution_state(&mut link, local_active, queue_position);
+        }
         if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle

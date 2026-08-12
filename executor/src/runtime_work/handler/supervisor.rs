@@ -144,7 +144,7 @@ impl RuntimeWorkRpcHandler {
                 for link in handler.local_task_links(false) {
                     if supervisor_needs_scheduled_check(
                         &link,
-                        handler.is_active_local_task(&link.local_task_id),
+                        handler.is_busy_local_task(&link.local_task_id),
                         now_ms(),
                     ) {
                         handler.schedule_supervisor_evaluation(link.local_task_id, None);
@@ -465,6 +465,7 @@ impl RuntimeWorkRpcHandler {
         );
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.to_owned(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id: link.ephemeral.then(|| thread_id.clone()),
             fork_thread_id: None,
@@ -472,7 +473,9 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: (!link.ephemeral).then_some(thread_id),
             initial_thread_name: None,
             initial_thread_goal: None,
-        });
+        })
+        .await
+        .map_err(|error| error.message)?;
         Ok(())
     }
 

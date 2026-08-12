@@ -33,6 +33,7 @@ import type {
   RuntimeSendRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
@@ -223,6 +224,8 @@ export interface WorkbenchContextValue {
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
   cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (

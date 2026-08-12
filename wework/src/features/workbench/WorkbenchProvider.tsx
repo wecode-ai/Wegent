@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -25,7 +26,10 @@ import {
 } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
-import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
+import {
+  installMainRuntimeWorkChangedListener,
+  notifyMainRuntimeWorkChanged,
+} from '@/tauri/runtimeWorkSync'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
@@ -58,9 +62,11 @@ import type {
   RuntimeContextUsage,
   RuntimeWorkListResponse,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   UnifiedModel,
+  User,
   UserPreferences,
 } from '@/types/api'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
@@ -215,7 +221,21 @@ export function WorkbenchProvider({
   onStartupReadyChange,
   workspaceTabId,
 }: WorkbenchProviderProps) {
+  const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  // Preferences can change while a turn is running. Runtime transports only
+  // need the account identity, so keep their service graph stable across those
+  // updates and avoid an event-subscription gap during terminal delivery.
+  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
+  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const runtimeServiceUser = useMemo<User>(
+    () => ({
+      id: workbenchIdentity.id,
+      user_name: workbenchIdentity.user_name,
+      email: workbenchIdentity.email,
+    }),
+    [workbenchIdentity.email, workbenchIdentity.id, workbenchIdentity.user_name]
+  )
   const resolvedServices = useMemo(
     () =>
       services ??
@@ -226,7 +246,7 @@ export function WorkbenchProvider({
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
-        user: cloudConnection.user ?? user,
+        user: runtimeServiceUser,
       }),
     [
       cloudConnection.apiBaseUrl,
@@ -235,9 +255,8 @@ export function WorkbenchProvider({
       cloudConnection.socketBaseUrl,
       cloudConnection.socketPath,
       cloudConnection.token,
-      cloudConnection.user,
+      runtimeServiceUser,
       services,
-      user,
     ]
   )
   const executorClient = useMemo(() => {
@@ -256,8 +275,6 @@ export function WorkbenchProvider({
   // no real cloud provider is mounted; never let that placeholder override the
   // authenticated user. With a real connection, the cloud identity is the one
   // used for cloud API calls, so it must drive workbench ownership checks.
-  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   useEffect(() => {
     if (!workbenchIdentity) return
     if (state.user?.id !== workbenchIdentity.id) {
@@ -1794,9 +1811,31 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    await executorClient.runtime.cancelRuntimeTask(address)
-    void refreshWorkLists()
+    const response = await executorClient.runtime.cancelRuntimeTask(address)
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    }
+    await notifyMainRuntimeWorkChanged(address)
+    await refreshWorkLists()
   })
+  const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
+    const response = await executorClient.runtime.forceStartRuntimeTask(address)
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.runtime_task_force_start_failed'))
+    }
+    await notifyMainRuntimeWorkChanged(address)
+    await refreshWorkLists()
+  })
+  const stableReorderQueuedRuntimeTask = useStableEvent(
+    async (data: RuntimeTaskQueueReorderRequest) => {
+      const response = await executorClient.runtime.reorderQueuedRuntimeTask(data)
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.runtime_task_queue_reorder_failed'))
+      }
+      await notifyMainRuntimeWorkChanged(data)
+      await refreshWorkLists()
+    }
+  )
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -2334,6 +2373,8 @@ export function WorkbenchProvider({
     startNewProjectChat,
     openRuntimeTask: runtimeTasks.openRuntimeTask,
     cancelRuntimeTask: stableCancelRuntimeTask,
+    forceStartRuntimeTask: stableForceStartRuntimeTask,
+    reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2422,6 +2463,8 @@ export function WorkbenchProvider({
       startNewProjectChat: stableStartNewProjectChat,
       openRuntimeTask: stableOpenRuntimeTask,
       cancelRuntimeTask: stableCancelRuntimeTask,
+      forceStartRuntimeTask: stableForceStartRuntimeTask,
+      reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2516,6 +2559,7 @@ export function WorkbenchProvider({
       stableCreateProjectRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
+      stableForceStartRuntimeTask,
       stableGetDeviceHomeDirectory,
       stableGetRuntimeGoal,
       stableGetImNotificationSettings,
@@ -2541,6 +2585,7 @@ export function WorkbenchProvider({
       stableRemoveProject,
       stableReorderRuntimeProjects,
       stableReorderRuntimeProjectTasks,
+      stableReorderQueuedRuntimeTask,
       stableRenameRuntimeTask,
       stableRetryFailedMessage,
       stableRevertTurnFileChanges,

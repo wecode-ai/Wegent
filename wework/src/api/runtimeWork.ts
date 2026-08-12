@@ -45,7 +45,10 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeSettings,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
@@ -94,6 +97,12 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return client.get('/runtime-work/keybindings')
+    },
+    getRuntimeSettings(): Promise<RuntimeSettings> {
+      return client.get('/runtime-work/settings')
+    },
+    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
+      return client.put('/runtime-work/settings', data)
     },
     updateKeybindings(data: {
       keybindings: KeybindingOverride[]
@@ -319,6 +328,14 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return client.post('/runtime-work/cancel', address)
+    },
+    forceStartRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return client.post('/runtime-work/force-start', address)
+    },
+    reorderQueuedRuntimeTask(
+      data: RuntimeTaskQueueReorderRequest
+    ): Promise<RuntimeTaskQueueReorderResponse> {
+      return client.post('/runtime-work/queue/reorder', data)
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
