@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 
@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   closeRequestHandler: undefined as (() => void) | undefined,
   installRuntimeTaskCloseGuard: vi.fn(),
   closeMainWindowToTray: vi.fn(),
-  updateAppPreferences: vi.fn(),
   unlisten: vi.fn(),
 }))
 
@@ -16,10 +15,6 @@ vi.mock('@/hooks/useTranslation', () => ({
 
 vi.mock('@/lib/runtime-environment', () => ({
   isTauriRuntime: () => true,
-}))
-
-vi.mock('@/tauri/appPreferences', () => ({
-  updateAppPreferences: mocks.updateAppPreferences,
 }))
 
 vi.mock('@/tauri/runtimeTaskCloseGuard', () => ({
@@ -46,5 +41,21 @@ describe('RuntimeTaskCloseGuard', () => {
     })
 
     expect(screen.getByTestId('runtime-task-close-confirm-overlay')).toBeInTheDocument()
+  })
+
+  test('closes the dialog immediately and sends one native close-to-tray command', async () => {
+    render(<RuntimeTaskCloseGuard />)
+
+    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
+    act(() => {
+      mocks.closeRequestHandler?.()
+    })
+
+    fireEvent.click(screen.getByTestId('runtime-task-close-confirm-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('runtime-task-close-confirm-overlay')).not.toBeInTheDocument()
+    )
+    await waitFor(() => expect(mocks.closeMainWindowToTray).toHaveBeenCalledTimes(1))
   })
 })

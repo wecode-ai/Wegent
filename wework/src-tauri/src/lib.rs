@@ -3247,6 +3247,13 @@ fn close_main_window_to_tray(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    let mut preferences = read_app_preferences_impl(&app);
+    if !preferences.close_to_tray_hint_seen {
+        preferences.close_to_tray_hint_seen = true;
+        if let Err(error) = write_app_preferences_impl(&app, &preferences) {
+            log::warn!("Failed to persist close-to-tray hint acknowledgement: {error}");
+        }
+    }
     let state = app.state::<MainWindowLifecycleState>();
     state
         .destroy_to_tray_in_progress
