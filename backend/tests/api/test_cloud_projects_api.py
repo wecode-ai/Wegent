@@ -1162,7 +1162,7 @@ def test_task_created_event_assigns_matching_project_automation_robot(
             "prompt": "Read the task and choose its owner.",
             "triggerType": "event",
             "eventType": "task.created",
-            "eventConfig": {"priorities": ["high"]},
+            "eventConfig": {"statuses": ["pending"], "priorities": ["high"]},
             "assignmentMode": "automatic",
         },
     )
@@ -1174,10 +1174,18 @@ def test_task_created_event_assigns_matching_project_automation_robot(
     assert rule["webhookEventId"] == rule["id"]
     assert rule["nextRunAt"] is None
 
+    ignored = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Low priority bug", "status": "pending", "priority": "low"},
+    )
+    assert ignored.status_code == 201
+    assert ignored.json()["assignee_agent_id"] is None
+
     task = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
-        json={"title": "Production bug", "priority": "high"},
+        json={"title": "Production bug", "status": "pending", "priority": "high"},
     )
     assert task.status_code == 201
     assert task.json()["assignee_agent_id"] == agent["id"]
@@ -1193,6 +1201,7 @@ def test_task_created_event_assigns_matching_project_automation_robot(
         headers=_auth(test_token),
     )
     assert runs.status_code == 200
+    assert len(runs.json()) == 1
     assert runs.json()[0]["trigger"] == "event"
     assert runs.json()[0]["taskId"] == task.json()["id"]
 

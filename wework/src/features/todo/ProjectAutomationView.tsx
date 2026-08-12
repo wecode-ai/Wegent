@@ -52,6 +52,9 @@ export function ProjectAutomationView({
           agentApi={projectChatAgentApi}
           canManage={canManageAgents}
           deviceApi={deviceApi}
+          statuses={project.board_config?.statuses ?? []}
+          projectTags={project.tags ?? []}
+          taskProvider={project.task_provider}
           onOpenTask={taskId => {
             void api.getLoopItem(taskId).then(item => onOpenTask?.(item))
           }}

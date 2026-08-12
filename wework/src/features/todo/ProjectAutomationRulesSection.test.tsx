@@ -73,7 +73,15 @@ describe('ProjectAutomationRulesSection', () => {
       update: vi.fn(),
     }
 
-    render(<ProjectAutomationRulesSection projectId="1" api={api} agentApi={agentApi} canManage />)
+    render(
+      <ProjectAutomationRulesSection
+        projectId="1"
+        api={api}
+        agentApi={agentApi}
+        canManage
+        statuses={[{ id: 'pending', name: '待开始' }]}
+      />
+    )
 
     await waitFor(() => expect(agentApi.list).toHaveBeenCalledWith('1'))
     fireEvent.click(screen.getByTestId('project-automation-create'))
@@ -85,6 +93,8 @@ describe('ProjectAutomationRulesSection', () => {
     })
     fireEvent.click(screen.getByTestId('project-automation-trigger-type'))
     fireEvent.click(screen.getByTestId('project-automation-trigger-type-option-event'))
+    fireEvent.click(screen.getByTestId('project-automation-condition-statuses-pending'))
+    fireEvent.click(screen.getByTestId('project-automation-condition-priorities-high'))
     fireEvent.click(screen.getByTestId('project-automation-save'))
 
     await waitFor(() =>
@@ -93,6 +103,7 @@ describe('ProjectAutomationRulesSection', () => {
         expect.objectContaining({
           triggerType: 'event',
           eventType: 'task.created',
+          eventConfig: { statuses: ['pending'], priorities: ['high'] },
           cronExpression: null,
           agentId: 'agent-1',
         })

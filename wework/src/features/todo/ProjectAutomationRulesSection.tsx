@@ -101,6 +101,11 @@ const timezoneOptions = (current: string): string[] =>
     new Set([current, 'Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York', 'UTC'])
   ).filter(Boolean)
 
+const priorityLabel = (priority: string, t: (key: string) => string): string => {
+  if (priority === 'medium') return t('workbench.priority_normal')
+  return t(`workbench.priority_${priority}`)
+}
+
 const defaultInput = (): ProjectAutomationInput => ({
   name: '',
   prompt: '',
@@ -121,6 +126,9 @@ export function ProjectAutomationRulesSection({
   canManage,
   deviceApi,
   onOpenTask,
+  statuses = [],
+  projectTags = [],
+  taskProvider = 'local',
 }: {
   projectId: string
   api?: AutomationApi
@@ -128,6 +136,9 @@ export function ProjectAutomationRulesSection({
   canManage: boolean
   deviceApi?: { listDevices: () => Promise<DeviceInfo[]> }
   onOpenTask?: (taskId: string) => void
+  statuses?: Array<{ id: string; name: string }>
+  projectTags?: string[]
+  taskProvider?: string
 }) {
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
@@ -321,6 +332,41 @@ export function ProjectAutomationRulesSection({
   )
 
   if (!api || !agentApi) return null
+
+  const conditionValues = (key: 'statuses' | 'priorities' | 'tags' | 'sources'): string[] => {
+    const value = draft?.eventConfig[key]
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string')
+      : []
+  }
+  const toggleCondition = (key: 'statuses' | 'priorities' | 'tags' | 'sources', value: string) => {
+    if (!draft) return
+    const current = conditionValues(key)
+    const next = current.includes(value)
+      ? current.filter(candidate => candidate !== value)
+      : [...current, value]
+    setDraft({ ...draft, eventConfig: { ...draft.eventConfig, [key]: next } })
+  }
+  const conditionButton = (
+    key: 'statuses' | 'priorities' | 'tags',
+    value: string,
+    label: string
+  ) => {
+    const selected = conditionValues(key).includes(value)
+    return (
+      <button
+        key={value}
+        type="button"
+        data-testid={`project-automation-condition-${key}-${value}`}
+        onClick={() => toggleCondition(key, value)}
+        className={`rounded-full px-3 py-1 text-xs transition ${
+          selected ? 'bg-text-primary text-background' : 'bg-surface text-text-secondary'
+        }`}
+      >
+        {label}
+      </button>
+    )
+  }
 
   return (
     <section data-testid="project-automation-rules" className="border-b border-border pb-6">
@@ -565,6 +611,39 @@ export function ProjectAutomationRulesSection({
                   {backendUrl}/api/v1/cloud-projects/automation-events/{selected.webhookEventId}
                 </code>
               </div>
+            ) : null}
+
+            {draft.triggerType === 'event' ? (
+              <>
+                <SectionTitle title={t('workbench.project_automation_conditions')} />
+                <SettingsGroup>
+                  <SettingsRow label={t('workbench.project_automation_condition_source')}>
+                    <span className="text-sm font-medium">{taskProvider}</span>
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.project_automation_condition_status')}>
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      {statuses.map(status => conditionButton('statuses', status.id, status.name))}
+                    </div>
+                  </SettingsRow>
+                  <SettingsRow label={t('workbench.project_automation_condition_priority')}>
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      {(['none', 'low', 'medium', 'high', 'urgent'] as const).map(priority =>
+                        conditionButton('priorities', priority, priorityLabel(priority, t))
+                      )}
+                    </div>
+                  </SettingsRow>
+                  {projectTags.length ? (
+                    <SettingsRow label={t('workbench.project_automation_condition_tags')}>
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {projectTags.map(tag => conditionButton('tags', tag, tag))}
+                      </div>
+                    </SettingsRow>
+                  ) : null}
+                </SettingsGroup>
+                <p className="mt-2 px-1 text-xs text-text-muted">
+                  {t('workbench.project_automation_conditions_hint')}
+                </p>
+              </>
             ) : null}
 
             <div className="mt-7">
