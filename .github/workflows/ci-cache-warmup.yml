@@ -14,7 +14,6 @@ on:
       - ".github/scripts/classify-ci-cache-warmup.sh"
       - ".github/scripts/install-executor-rust-system-dependencies.sh"
       - ".github/scripts/install-playwright-browser.sh"
-      - ".github/scripts/install-wework-tauri-system-dependencies.sh"
       - ".github/scripts/lib/apt-packages.sh"
       - ".github/workflows/ci-cache-warmup.yml"
       - ".github/workflows/e2e-tests.yml"
@@ -41,6 +40,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: ci-cache-warmup-main
@@ -406,6 +406,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.wework_target == 'true'
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/wecode-ai/wegent-wework-e2e:ubuntu24.04-v1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 20
 
     steps:
@@ -413,34 +421,6 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-
-      - name: Set APT cache key
-        id: apt-cache-key
-        run: |
-          week="$(date -u +'%G-%V')"
-          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Restore shared Tauri system packages
-        id: wework-apt-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.apt-cache-key.outputs.key }}
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
-
-      - name: Install Tauri build dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: .github/scripts/install-wework-tauri-system-dependencies.sh full redis
-
-      - name: Save shared Tauri system packages
-        if: steps.wework-apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.wework-apt-cache.outputs.cache-primary-key }}
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
