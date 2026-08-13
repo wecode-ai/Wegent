@@ -6804,7 +6804,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a removed workspace under a different project identity', async () => {
+  test('does not restore a removed workspace under different project and device identities', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
@@ -6849,11 +6849,24 @@ describe('WorkbenchProvider runtime tasks', () => {
         createRuntimeWork({
           projects: [
             {
-              project: { id: 99, key: 'stale-cloud-project', name: 'Resurrected' },
-              deviceWorkspaces: staleRuntimeWork.projects[0].deviceWorkspaces,
-              totalTasks: 3,
+              project: { id: 8, key: 'cloud-project', name: 'Restored Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 8,
+                  deviceId: 'cloud-device',
+                  deviceName: 'Cloud Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+              totalTasks: 0,
             },
           ],
+          totalTasks: 0,
         })
       )
     })
