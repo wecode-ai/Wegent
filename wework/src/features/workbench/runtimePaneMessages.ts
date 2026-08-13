@@ -190,6 +190,13 @@ export function createRuntimeTaskStreamHandlers(
     },
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
+      const identity = runtimeStreamTaskSubtaskIdentity(payload)
+      if (!identity) {
+        warnAndDropRuntimeStreamEvent('chat:start', address, payload)
+        return
+      }
+      debugRuntimeStreamEvent('chat:start', address, payload, true)
+
       if (payload.runtimeGeneratedUserMessage) {
         handlers.onMessageAction({
           type: 'user_added',
@@ -204,13 +211,7 @@ export function createRuntimeTaskStreamHandlers(
           },
         })
       }
-      const identity = runtimeStreamTaskSubtaskIdentity(payload)
-      if (!identity) {
-        warnAndDropRuntimeStreamEvent('chat:start', address, payload)
-        return
-      }
-      debugRuntimeStreamEvent('chat:start', address, payload, true)
-      settledAssistantTurnIds.delete(identity.subtaskId)
+      if (settledAssistantTurnIds.has(identity.subtaskId)) return
       unsettledAssistantTurnIds.add(identity.subtaskId)
       handlers.onAssistantStart?.(identity.subtaskId)
       handlers.onMessageAction({
