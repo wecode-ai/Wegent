@@ -46,6 +46,20 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _note_position(attrs: dict[str, object]) -> dict[str, object]:
+    """Extract the diff position (file/line) GitLab attaches to diff notes."""
+    pos = attrs.get("position")
+    if not isinstance(pos, dict):
+        return {}
+    path = str(pos.get("new_path") or pos.get("old_path") or "")
+    line = int(pos.get("new_line") or pos.get("old_line") or 0)
+    return {
+        "path": path,
+        "line": line,
+        "position_type": str(pos.get("position_type") or ""),
+    }
+
+
 class MrService:
     @staticmethod
     def _client(project: CloudProject) -> ProjectScopedGitlabClient:
@@ -367,13 +381,25 @@ class MrService:
         note_list.append(
             {
                 "id": note_id,
-                "author": str((attrs.get("author") or {}).get("username") or ""),
+                # GitLab webhooks put the author at the payload top level (user);
+                # object_attributes.author is not sent, so fall back to it.
+                "author": str(
+                    (payload.get("user") or {}).get("username")
+                    or (attrs.get("author") or {}).get("username")
+                    or ""
+                ),
                 "note": body,
                 "web_url": str(attrs.get("url") or ""),
                 "created_at": str(attrs.get("created_at") or ""),
+                "position": _note_position(attrs),
             }
         )
         flag_modified(record, "rounds_json")
+        if self._has_active_run(db, record):
+            # A run is already working; the comment accumulates as pending
+            # feedback and the card is re-pulled once for it when the run ends.
+            db.flush()
+            return
         self.create_or_update_card(db, integration, project, record)
         self._maybe_retrigger(db, integration, project, record)
 
@@ -454,6 +480,7 @@ class MrService:
                             "note": body,
                             "web_url": str(note.get("web_url") or ""),
                             "created_at": str(note.get("created_at") or ""),
+                            "position": _note_position(note),
                         }
                     )
         except Exception:
@@ -481,17 +508,28 @@ class MrService:
         flag_modified(record, "rounds_json")
         self._cap_rounds(record)
 
-        # Only comments new to the current round keep the card actionable;
-        # comments from earlier rounds are assumed addressed by the fix.
-        previous_note_ids = {
-            int(n.get("id") or 0)
-            for item in rounds[:-1]
-            for n in (item.get("notes") or [])
-            if isinstance(n, dict)
-        }
-        new_notes = [
-            note for note in notes if int(note.get("id") or 0) not in previous_note_ids
-        ]
+        # Comments the last robot run already saw are assumed addressed by its
+        # fix; anything newer — including comments that arrived mid-run — stays
+        # actionable so the card is pulled back instead of being dropped. Before
+        # any run has ever dispatched (human-driven MR), fall back to the round
+        # boundary: earlier rounds' comments are addressed by the latest fix.
+        if record.seen_note_ids:
+            seen_note_ids = set(int(x) for x in record.seen_note_ids)
+            new_notes = [
+                note for note in notes if int(note.get("id") or 0) not in seen_note_ids
+            ]
+        else:
+            previous_note_ids = {
+                int(n.get("id") or 0)
+                for item in rounds[:-1]
+                for n in (item.get("notes") or [])
+                if isinstance(n, dict)
+            }
+            new_notes = [
+                note
+                for note in notes
+                if int(note.get("id") or 0) not in previous_note_ids
+            ]
         record.pipeline_status = terminal_status
         record.pipeline_id = pipeline_id
         actionable = terminal_status in FAILED_STATUSES or bool(new_notes)
@@ -503,6 +541,33 @@ class MrService:
             # A clean outcome (CI passed, no new comments) still refreshes the
             # card description so an in-review card reflects the green result.
             self._refresh_card(db, project, record)
+        db.flush()
+
+    def reconcile_pending_feedback(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        """Re-pull the card when a run finished with comments it never saw.
+
+        Called after an execution completes so mid-run review comments (which the
+        running AI never read) trigger one batched re-run instead of being
+        treated as addressed. ``finalize_round`` covers the fix-pushed path; this
+        covers runs that complete without pushing a new head.
+        """
+        if record.state in {"closed", "evaluating"}:
+            return
+        if not record.current_loop_item_id:
+            return
+        if self._has_active_run(db, record):
+            return
+        if not self._unseen_note_ids(record):
+            return
+        record.state = "actionable"
+        self.create_or_update_card(db, integration, project, record)
+        self._maybe_retrigger(db, integration, project, record)
         db.flush()
 
     # ----------------------------------------------------------------- cards
@@ -528,6 +593,10 @@ class MrService:
                 LoopItem.cloud_project_id == str(project.id),
                 LoopItem.deleted_at.is_(None),
             )
+            # Locking read: two concurrent note events for the same MR must not
+            # both see "no card" and race to INSERT (REPEATABLE READ snapshots
+            # hide the other transaction's committed insert).
+            .with_for_update()
             .first()
         )
         title = f"MR !{record.mr_iid} · {record.mr_title or ''}"
@@ -725,6 +794,40 @@ class MrService:
             )
 
     # ------------------------------------------------------------- helpers
+
+    @staticmethod
+    def _all_note_ids(record: MRRecord) -> set[int]:
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        return {
+            int(n.get("id") or 0)
+            for item in rounds
+            for n in (item.get("notes") or [])
+            if isinstance(n, dict)
+        }
+
+    def _unseen_note_ids(self, record: MRRecord) -> set[int]:
+        seen = set(int(x) for x in (record.seen_note_ids or []))
+        if not seen:
+            # No robot run has dispatched yet; nothing is "unseen by a run".
+            return set()
+        return self._all_note_ids(record) - seen
+
+    def _has_active_run(self, db: Session, record: MRRecord) -> bool:
+        if not record.current_loop_item_id:
+            return False
+        from app.models.loop_item_execution import LoopItemExecution
+
+        return (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == record.current_loop_item_id,
+                LoopItemExecution.status.in_(
+                    {"pending_approval", "queued", "claimed", "running"}
+                ),
+            )
+            .first()
+            is not None
+        )
 
     def _move_card(
         self,

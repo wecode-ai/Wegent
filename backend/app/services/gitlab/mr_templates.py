@@ -80,6 +80,25 @@ def _short_sha(sha: str) -> str:
     return sha[:8] if sha else ""
 
 
+def _unseen_note_ids(record: MRRecord) -> set[int]:
+    """Note ids the last robot run did not see at dispatch (pending feedback).
+
+    Empty when no run has dispatched yet — a human-driven MR has no run to be
+    "unseen by", so the round-based summary already handles it.
+    """
+    seen = set(int(x) for x in (record.seen_note_ids or []))
+    if not seen:
+        return set()
+    rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+    all_ids = {
+        int(n.get("id") or 0)
+        for item in rounds
+        for n in (item.get("notes") or [])
+        if isinstance(n, dict)
+    }
+    return all_ids - seen
+
+
 def _format_ts(iso: str) -> str:
     """Format a stored UTC ISO timestamp as ``MM-DD HH:mm`` China time."""
     if not iso:
@@ -111,9 +130,19 @@ def trace_tail(trace: str, limit_chars: int = 4000) -> str:
 def _task_instruction(record: MRRecord) -> str:
     """Instruction preamble for the model that will act on this card."""
     branch = record.source_branch or ""
+    snapshot = record.snapshot_json if isinstance(record.snapshot_json, dict) else {}
+    url = str(snapshot.get("web_url") or "")
+    unseen = _unseen_note_ids(record)
+    fetch_hint = (
+        f"评审意见的完整行内上下文（针对哪一行、原文）请查看 MR：{url}" if url else ""
+    )
+    precommit_hint = (
+        "提交前请重新拉取该 MR 的最新评审意见（如 gitlab api "
+        f"merge_requests/{record.mr_iid}/notes），确认没有新增遗漏后再 push。"
+    )
     if record.state == "closed":
         return "该 MR 已合并/关闭，无需处理。"
-    if record.state == "clean":
+    if record.state == "clean" and not unseen:
         return (
             "已提交修复且 CI 通过，等待人工/评审确认，无需再修改。"
             f"源分支：`{branch}`"
@@ -122,15 +151,17 @@ def _task_instruction(record: MRRecord) -> str:
         return (
             "这是一个 CI 未通过 / 有评审意见的 MR 修复任务。\n"
             "请根据下方的评审意见和 CI 失败信息修复代码，提交并 push 到源分支 "
-            f"`{branch}`（push 后会触发 CI 重跑），直到 CI 通过且评审意见得到回应。"
+            f"`{branch}`（push 后会触发 CI 重跑），直到 CI 通过且评审意见得到回应。\n"
+            f"{fetch_hint}\n{precommit_hint}"
         )
     if str(record.pipeline_status or "") == "success":
-        # CI is green but the current round added review comments: make clear the
-        # task is to respond to those, not to chase a failing pipeline.
+        # CI is green but there are review comments (current round or unseen from
+        # a mid-run arrival): make clear the task is to respond to those.
         return (
-            "CI 已通过，但本轮仍有新的评审意见需要处理。\n"
-            "请根据下方的评审意见修改代码，提交并 push 到源分支 "
-            f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。"
+            "CI 已通过，但仍有新的评审意见需要处理。\n"
+            "请根据下方或 MR 页面的评审意见修改代码，提交并 push 到源分支 "
+            f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。\n"
+            f"{fetch_hint}\n{precommit_hint}"
         )
     return "该 MR 正在等待 CI 结果，请稍后再查看。" f"源分支：`{branch}`"
 
@@ -189,6 +220,9 @@ def render_card_description(record: MRRecord) -> str:
     lines.append("### 评审意见")
     if feedback_round != record.round_number:
         lines.append(f"（第 {feedback_round} 轮意见，待处理）")
+    unseen = _unseen_note_ids(record)
+    if unseen:
+        lines.append(f"（本次运行后新增 {len(unseen)} 条评论待处理）")
     if feedback_notes:
         for note in sorted(
             feedback_notes, key=lambda n: str(n.get("created_at") or "")
@@ -196,10 +230,18 @@ def render_card_description(record: MRRecord) -> str:
             note_author = str(note.get("author") or "")
             note_body = str(note.get("note") or "")
             ts = _format_ts(str(note.get("created_at") or ""))
+            pos = note.get("position")
+            pos = pos if isinstance(pos, dict) else {}
+            loc = ""
+            if pos.get("path") and pos.get("line"):
+                loc = f" @ {pos['path']}:{pos['line']}"
             prefix = f"**{note_author}**（{ts}）" if ts else f"**{note_author}**"
-            lines.append(f"- {prefix}：{note_body}")
+            lines.append(f"- {prefix}{loc}：{note_body}")
     else:
         lines.append("暂无评审意见。")
+    mr_url = str(snapshot.get("web_url") or "")
+    if mr_url:
+        lines.append(f"（评审意见的完整行内上下文请查看 MR：{mr_url}）")
 
     lines.append("")
     lines.append(

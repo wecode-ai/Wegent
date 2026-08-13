@@ -157,7 +157,42 @@ class LoopItemExecutionService:
         )
         db.add(row)
         db.flush()
+        self._snapshot_mr_seen_notes(db, loop_item_id)
         return row
+
+    def _snapshot_mr_seen_notes(self, db: Session, loop_item_id: str) -> None:
+        """Mark every current MR comment as seen by the run being created.
+
+        The run reads the board card at dispatch, so comments arriving after this
+        point are pending feedback the running AI never saw; they must re-pull the
+        card when the run ends instead of being treated as addressed. Best-effort:
+        only applies to MR fix-task cards.
+        """
+        try:
+            from app.models.gitlab_mr import MRRecord
+
+            record = (
+                db.query(MRRecord)
+                .filter(MRRecord.current_loop_item_id == loop_item_id)
+                .first()
+            )
+            if record is None:
+                return
+            rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+            ids = sorted(
+                {
+                    int(n.get("id") or 0)
+                    for item in rounds
+                    for n in (item.get("notes") or [])
+                    if isinstance(n, dict)
+                }
+            )
+            record.seen_note_ids = ids
+            db.flush()
+        except Exception:
+            logger.exception(
+                "[RobotQueue] MR seen-note snapshot failed loop_item=%s", loop_item_id
+            )
 
     def approve(
         self, db: Session, *, execution_id: int, user_id: int
@@ -1063,8 +1098,38 @@ class LoopItemExecutionService:
         db.commit()
         if terminal == STATUS_COMPLETED:
             self._finish_project_automation_run(db, row.loop_item_id, "succeeded", None)
+            self._maybe_settle_mr_pending(db, row)
         db.refresh(row)
         return row
+
+    def _maybe_settle_mr_pending(
+        self, db: Session, execution: LoopItemExecution
+    ) -> None:
+        """Re-pull an MR fix card whose run finished with comments it never saw.
+
+        Lazy import keeps the gitlab state machine out of the execution module's
+        import graph; the settle is best-effort and never fails the run."""
+        try:
+            from app.models.gitlab_mr import MRIntegration, MRRecord
+            from app.services.gitlab.mr_service import mr_service
+
+            record = (
+                db.query(MRRecord)
+                .filter(MRRecord.current_loop_item_id == execution.loop_item_id)
+                .first()
+            )
+            if record is None:
+                return
+            integration = db.get(MRIntegration, record.integration_id)
+            project = db.get(CloudProject, record.cloud_project_id)
+            if integration is None or project is None or not integration.enabled:
+                return
+            mr_service.reconcile_pending_feedback(db, integration, project, record)
+        except Exception:
+            logger.exception(
+                "[RobotQueue] MR pending-feedback settle failed execution=%s",
+                execution.id,
+            )
 
     def resolve_task_context(
         self,

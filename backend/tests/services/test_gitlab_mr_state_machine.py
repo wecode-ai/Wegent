@@ -898,3 +898,213 @@ def test_reconcile_closes_merged_without_event(env: dict[str, Any]) -> None:
     db.commit()
     assert record.state == "closed"
     assert _card(db, env["project"]).status == "completed"
+
+
+def _start_run(env: dict[str, Any], db: Session, card: LoopItem) -> None:
+    """Create an agent and start a robot run on the card via the real path."""
+    from app.services.loop_item_executions.service import (
+        loop_item_execution_service,
+    )
+
+    agent = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=str(env["project"].id),
+        title="FixBot",
+        name="FixBot",
+        status="active",
+        created_by_user_id=env["integration"].created_by_user_id,
+        metadata_json={"execution_mode": "auto", "execution_environment": "local"},
+    )
+    db.add(agent)
+    db.flush()
+    card.assignee_agent_id = agent.id
+    db.flush()
+    loop_item_execution_service.create_for_assignment(
+        db,
+        loop_item_id=card.id,
+        cloud_project_id=str(env["project"].id),
+        agent=agent,
+        assigner_user_id=env["integration"].created_by_user_id,
+        environment="local",
+        execution_device_id=None,
+        priority="none",
+    )
+    db.commit()
+
+
+def test_mid_run_comment_repulls_card_after_fix(env: dict[str, Any]) -> None:
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    # Round 1: CI failed + comment c1 -> actionable, card created.
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    fake.notes = [
+        {
+            "id": 5,
+            "system": False,
+            "body": "c1",
+            "author": {"username": "bob"},
+            "web_url": "u",
+        }
+    ]
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    _start_run(env, db, card)
+    record = _record(db, env["integration"])
+    assert record.seen_note_ids == [5]
+    # A comment arrives mid-run: it accumulates but does not start a second run.
+    mr_service.handle_note_event(
+        db, env["integration"], env["project"], _note_event(1, 6, "c_mid")
+    )
+    db.commit()
+    from app.models.loop_item_execution import LoopItemExecution
+
+    assert (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .count()
+        == 1
+    )
+    # The robot run completes, then pushes a fix; round 2 CI is green but the
+    # mid-run comment is still unseen -> the card must be pulled back.
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    execution.status = "completed"
+    db.commit()
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
+    )
+    fake.jobs = []
+    fake.notes = [
+        {
+            "id": 5,
+            "system": False,
+            "body": "c1",
+            "author": {"username": "bob"},
+            "web_url": "u",
+        },
+        {
+            "id": 6,
+            "system": False,
+            "body": "c_mid",
+            "author": {"username": "bob"},
+            "web_url": "u",
+        },
+    ]
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA2, "success")
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    assert record.state == "actionable"
+    assert record.auto_retrigger_count == 1
+    assert (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .count()
+        == 2
+    )
+    assert _card(db, env["project"]).status == "in_progress"
+
+
+def test_reconcile_pending_feedback_repulls_after_run_ends_without_push(
+    env: dict[str, Any],
+) -> None:
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    fake.notes = [
+        {
+            "id": 5,
+            "system": False,
+            "body": "c1",
+            "author": {"username": "bob"},
+            "web_url": "u",
+        }
+    ]
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    _start_run(env, db, card)
+    # A mid-run comment accumulates; the run then completes WITHOUT pushing a fix.
+    mr_service.handle_note_event(
+        db, env["integration"], env["project"], _note_event(1, 6, "c_mid")
+    )
+    db.commit()
+    from app.models.loop_item_execution import LoopItemExecution
+
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    execution.status = "completed"
+    db.commit()
+    # Terminal fallback re-pulls: unseen comment exists and no run is active.
+    record = _record(db, env["integration"])
+    mr_service.reconcile_pending_feedback(
+        db, env["integration"], env["project"], record
+    )
+    db.commit()
+    assert record.state == "actionable"
+    assert record.auto_retrigger_count == 1
+    assert (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .count()
+        == 2
+    )
+
+
+def test_diff_note_position_and_author_from_webhook(env: dict[str, Any]) -> None:
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "success")
+    )
+    db.commit()
+    # GitLab webhooks put the author at the top level and the diff position in
+    # object_attributes.position; both must survive into the stored note.
+    payload = {
+        "object_kind": "note",
+        "user": {"username": "carol"},
+        "object_attributes": {
+            "id": 7,
+            "noteable_type": "MergeRequest",
+            "system": False,
+            "note": "函数名不符合命名规范，建议重命名",
+            "url": "u",
+            "created_at": "2026-08-13T08:00:00Z",
+            "position": {
+                "new_path": "review_demo/calculator.py",
+                "new_line": 17,
+                "position_type": "text",
+            },
+        },
+        "merge_request": {"iid": 1},
+    }
+    mr_service.handle_note_event(db, env["integration"], env["project"], payload)
+    db.commit()
+    record = _record(db, env["integration"])
+    note = (record.rounds_json[-1].get("notes") or [])[0]
+    assert note["author"] == "carol"
+    assert note["position"]["path"] == "review_demo/calculator.py"
+    assert note["position"]["line"] == 17
+    assert "calculator.py:17" in render_card_description(record)

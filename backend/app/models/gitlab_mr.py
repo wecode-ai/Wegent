@@ -114,6 +114,16 @@ class MRRecord(Base):
     auto_retrigger_count = Column(
         big_integer_id_type(), nullable=False, default=0, server_default="0"
     )
+    # Note ids the most recent robot run saw when it dispatched. Comments outside
+    # this set are pending feedback: they arrived after the run read the card, so
+    # they must pull the card back for another run instead of being treated as
+    # addressed by the fix.
+    seen_note_ids = Column(
+        JSON,
+        nullable=False,
+        default=list,
+        comment="Note ids the last robot run saw at dispatch; others are pending",
+    )
     snapshot_json = Column(JSON, nullable=False, default=dict)
     rounds_json = Column(JSON, nullable=False, default=list)
     version = Column(
