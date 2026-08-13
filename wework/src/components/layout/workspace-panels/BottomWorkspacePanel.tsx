@@ -1,6 +1,7 @@
 import { Monitor, SquareTerminal, X } from 'lucide-react'
 import { memo, useCallback, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -54,7 +55,10 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const { height, resizing, panelRef, handleResizeStart } = useResizableBottomPanel()
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const { height, resizing, panelRef, handleResizeStart } = useResizableBottomPanel(
+    appearance.codeFontSize
+  )
   const [terminalSequence, setTerminalSequence] = useState(2)
   const [tabs, setTabs] = useState<BottomWorkspacePanelTab[]>(() => [createTerminalTab(1)])
   const [activeTabId, setActiveTabId] = useState('terminal-1')

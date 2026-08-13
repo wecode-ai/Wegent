@@ -6,14 +6,18 @@ import {
   type PointerEvent,
   type RefObject,
 } from 'react'
+import { DEFAULT_CODE_FONT_SIZE } from '@/features/appearance/typography'
 
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
 export const RIGHT_SPLIT_PANEL_MIN_WIDTH = 260
 const BOTTOM_DEFAULT_HEIGHT = 320
-const BOTTOM_MIN_HEIGHT = 220
 const BOTTOM_MAX_HEIGHT = 560
+const BOTTOM_PANEL_BORDER_HEIGHT = 1
+const BOTTOM_PANEL_TAB_BAR_HEIGHT = 40
+const BOTTOM_TERMINAL_VERTICAL_PADDING = 24
+const TERMINAL_LINE_HEIGHT = 1.2
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
@@ -147,12 +151,23 @@ export function useResizableRightSplitChat({
   return { width, resizing, handleResizeStart }
 }
 
-export function useResizableBottomPanel() {
+export function getBottomPanelMinHeight(codeFontSize: number) {
+  return (
+    BOTTOM_PANEL_BORDER_HEIGHT +
+    BOTTOM_PANEL_TAB_BAR_HEIGHT +
+    BOTTOM_TERMINAL_VERTICAL_PADDING +
+    Math.ceil(codeFontSize * TERMINAL_LINE_HEIGHT)
+  )
+}
+
+export function useResizableBottomPanel(codeFontSize = DEFAULT_CODE_FONT_SIZE) {
   const [height, setHeight] = useState(BOTTOM_DEFAULT_HEIGHT)
   const [resizing, setResizing] = useState(false)
   const panelRef = useRef<HTMLElement | null>(null)
   const resizeFrameRef = useRef<number | null>(null)
   const activeResizeCleanupRef = useRef<(() => void) | null>(null)
+  const minimumHeight = getBottomPanelMinHeight(codeFontSize)
+  const resolvedHeight = Math.max(height, minimumHeight)
 
   useEffect(() => {
     return () => {
@@ -177,7 +192,7 @@ export function useResizableBottomPanel() {
     }
 
     const startY = event.clientY
-    const startHeight = height
+    const startHeight = resolvedHeight
     let nextHeight = startHeight
 
     const applyHeight = () => {
@@ -189,11 +204,7 @@ export function useResizableBottomPanel() {
     }
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      nextHeight = clamp(
-        startHeight + startY - moveEvent.clientY,
-        BOTTOM_MIN_HEIGHT,
-        BOTTOM_MAX_HEIGHT
-      )
+      nextHeight = clamp(startHeight + startY - moveEvent.clientY, minimumHeight, BOTTOM_MAX_HEIGHT)
       if (resizeFrameRef.current !== null) return
 
       resizeFrameRef.current = window.requestAnimationFrame(applyHeight)
@@ -237,5 +248,5 @@ export function useResizableBottomPanel() {
     activeResizeCleanupRef.current = cleanupResize
   }
 
-  return { height, resizing, panelRef, handleResizeStart }
+  return { height: resolvedHeight, resizing, panelRef, handleResizeStart }
 }
