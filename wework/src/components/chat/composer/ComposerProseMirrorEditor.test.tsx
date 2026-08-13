@@ -87,6 +87,7 @@ describe('ComposerProseMirrorEditor', () => {
     render(<ActivityEditorHarness />)
 
     const editor = screen.getByTestId('composer-editor') as HTMLElement & { value: string }
+    expect(editor).toHaveClass('composer-prosemirror-editor')
     act(() => {
       editor.value = '每个标签自己的草稿'
     })
@@ -171,6 +172,16 @@ describe('ComposerProseMirrorEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('first line\nsecond line\nthird line')
   })
 
+  test('models each plain-text line as its own paragraph', () => {
+    const doc = createComposerDocument('first line\n\nthird line')
+
+    expect(doc.childCount).toBe(3)
+    expect(doc.child(0).textContent).toBe('first line')
+    expect(doc.child(1).content.size).toBe(0)
+    expect(doc.child(2).textContent).toBe('third line')
+    expect(serializeComposerDocument(doc)).toBe('first line\n\nthird line')
+  })
+
   test('inserts pasted text exactly once through the ProseMirror paste pipeline', () => {
     const { editorRef, onChange } = renderEditor('existing ')
     const editor = screen.getByTestId('composer-editor')
@@ -230,6 +241,30 @@ describe('ComposerProseMirrorEditor', () => {
 
     expect(editorRef.current?.getSnapshot().value).toBe('first line\nsecond line\nthird line')
     expect(onChange).toHaveBeenCalledOnce()
+  })
+
+  test('scrolls the caret into view after inserting a line break', () => {
+    const { editorRef } = renderEditor('first line')
+    const editor = screen.getByTestId('composer-editor')
+    Object.defineProperties(editor, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 180 },
+    })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      callback(0)
+      return 1
+    })
+
+    act(() => editorRef.current?.setValue('first line', 'first line'.length))
+    fireEvent.keyDown(editor, {
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: true,
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('first line\n')
+    expect(editor.scrollTop).toBe(80)
+    expect(editor.querySelector('.composer-empty-caret')).toHaveAttribute('aria-hidden', 'true')
   })
 
   test('keeps the caret outside the skill while repeatedly moving left', () => {

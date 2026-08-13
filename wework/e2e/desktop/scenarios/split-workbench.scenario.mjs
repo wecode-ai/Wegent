@@ -149,6 +149,69 @@ async function createTask(control, prompt, timeoutMs) {
   return waitForNewTaskRow(control, knownRows, prompt, timeoutMs)
 }
 
+async function verifyMultilineComposerCaret(control, captureScreenshot) {
+  assert.match(
+    await control.command('getAttribute', COMPOSER, { value: 'class' }),
+    /\bcomposer-prosemirror-editor\b/,
+    'The split workbench did not render the ProseMirror composer'
+  )
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('click', COMPOSER)
+  const [singleLineCaretMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
+  )
+  assert.ok(singleLineCaretMetrics, 'The empty composer did not render its caret')
+  for (let line = 1; line < 12; line += 1) {
+    await control.command('press', COMPOSER, { key: 'Shift+Enter' })
+  }
+
+  await captureScreenshot(control, '00-composer-multiline-caret-stable.png', 'body')
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    12,
+    'Repeated line breaks did not create one composer paragraph per line'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} .composer-empty-caret`)),
+    1,
+    'The multiline composer did not render exactly one caret'
+  )
+
+  const [composerMetrics] = JSON.parse(await control.command('getElementMetrics', COMPOSER))
+  const [caretMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
+  )
+  assert.ok(
+    composerMetrics.scrollHeight > composerMetrics.clientHeight,
+    'The multiline composer did not reach its scrollable height'
+  )
+  assert.ok(
+    composerMetrics.scrollTop > 0,
+    'The multiline composer caret was not scrolled into view'
+  )
+  assert.equal(
+    caretMetrics.height,
+    singleLineCaretMetrics.height,
+    `The composer caret height changed from ${singleLineCaretMetrics.height}px to ${caretMetrics.height}px`
+  )
+  assert.equal(
+    caretMetrics.width,
+    singleLineCaretMetrics.width,
+    `The composer caret width changed from ${singleLineCaretMetrics.width}px to ${caretMetrics.width}px`
+  )
+  assert.ok(
+    caretMetrics.top >= composerMetrics.top && caretMetrics.bottom <= composerMetrics.bottom,
+    'The multiline composer caret was clipped outside the visible editor'
+  )
+
+  await control.command('fill', COMPOSER, { value: '' })
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    1,
+    'Clearing the multiline composer did not restore a single empty paragraph'
+  )
+}
+
 async function expandProject(control, timeoutMs) {
   const selector = `${ACTIVE_SURFACE} [data-testid="project-item-button"]`
   if ((await control.command('getAttribute', selector, { value: 'aria-expanded' })) !== 'true') {
@@ -314,6 +377,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const taskTimeoutMs = Math.max(uiTimeoutMs, 30_000)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+      await verifyMultilineComposerCaret(control, captureScreenshot)
       const firstTaskRow = await createTask(control, FIRST_PROMPT, taskTimeoutMs)
 
       await control.command('click', '[data-testid="new-chat-button"]')

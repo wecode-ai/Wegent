@@ -93,7 +93,7 @@ const linkNodeSpec: NodeSpec = {
 
 export const composerSchema = new Schema({
   nodes: {
-    doc: { content: 'paragraph' },
+    doc: { content: 'paragraph+' },
     paragraph: {
       content: 'inline*',
       toDOM: () => ['p', 0],
@@ -117,7 +117,8 @@ export const composerSchema = new Schema({
 
 export function createComposerDocument(value: string): ProseMirrorNode {
   const sanitizedValue = value.replace(/\r\n?/g, '\n').replaceAll(OBJECT_REPLACEMENT_CHARACTER, '')
-  const content: ProseMirrorNode[] = []
+  const paragraphs: ProseMirrorNode[] = []
+  let content: ProseMirrorNode[] = []
   const mentions = parseComposerMentions(sanitizedValue)
   const links = parseComposerLinks(sanitizedValue)
   const tokens = mergeComposerTokens(mentions, links)
@@ -125,7 +126,7 @@ export function createComposerDocument(value: string): ProseMirrorNode {
 
   for (const token of tokens) {
     if (token.start < offset) continue
-    appendComposerText(content, sanitizedValue.slice(offset, token.start))
+    content = appendComposerText(paragraphs, content, sanitizedValue.slice(offset, token.start))
     if (token.kind === 'mention') {
       content.push(composerSchema.nodes.composer_mention.create(token.payload))
     } else {
@@ -139,15 +140,25 @@ export function createComposerDocument(value: string): ProseMirrorNode {
       offset += 1
     }
   }
-  appendComposerText(content, sanitizedValue.slice(offset))
-  return composerSchema.node('doc', null, [composerSchema.node('paragraph', null, content)])
+  content = appendComposerText(paragraphs, content, sanitizedValue.slice(offset))
+  paragraphs.push(composerSchema.node('paragraph', null, content))
+  return composerSchema.node('doc', null, paragraphs)
 }
 
-function appendComposerText(content: ProseMirrorNode[], text: string): void {
+function appendComposerText(
+  paragraphs: ProseMirrorNode[],
+  initialContent: ProseMirrorNode[],
+  text: string
+): ProseMirrorNode[] {
+  let content = initialContent
   text.split('\n').forEach((line, index) => {
-    if (index > 0) content.push(composerSchema.nodes.hard_break.create())
+    if (index > 0) {
+      paragraphs.push(composerSchema.node('paragraph', null, content))
+      content = []
+    }
     if (line) content.push(composerSchema.text(line))
   })
+  return content
 }
 
 interface MergedToken {
@@ -203,17 +214,31 @@ export function serializeComposerSlice(slice: Slice): string {
 
 function serializeComposerFragment(fragment: Fragment): string {
   const parts: string[] = []
-  fragment.descendants(node => {
-    if (node.isText) {
-      parts.push(node.text ?? '')
-    } else if (node.type === composerSchema.nodes.composer_mention) {
-      parts.push(String(node.attrs.reference ?? ''))
-    } else if (node.type === composerSchema.nodes.composer_link) {
-      parts.push(serializeComposerLinkNode(node))
-    } else if (node.type === composerSchema.nodes.hard_break) {
-      parts.push('\n')
+  fragment.forEach((node, _offset, index) => {
+    if (node.type === composerSchema.nodes.paragraph) {
+      if (index > 0) parts.push('\n')
+      appendSerializedComposerContent(parts, node.content)
+      return
     }
-    return !node.isText && node.type !== composerSchema.nodes.composer_mention
+    appendSerializedComposerNode(parts, node)
   })
   return parts.join('')
+}
+
+function appendSerializedComposerContent(parts: string[], fragment: Fragment): void {
+  fragment.forEach(node => appendSerializedComposerNode(parts, node))
+}
+
+function appendSerializedComposerNode(parts: string[], node: ProseMirrorNode): void {
+  if (node.isText) {
+    parts.push(node.text ?? '')
+  } else if (node.type === composerSchema.nodes.composer_mention) {
+    parts.push(String(node.attrs.reference ?? ''))
+  } else if (node.type === composerSchema.nodes.composer_link) {
+    parts.push(serializeComposerLinkNode(node))
+  } else if (node.type === composerSchema.nodes.hard_break) {
+    parts.push('\n')
+  } else {
+    appendSerializedComposerContent(parts, node.content)
+  }
 }
