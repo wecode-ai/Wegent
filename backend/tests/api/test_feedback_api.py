@@ -106,10 +106,12 @@ def test_submit_feedback_creates_board_item_for_feedback_project_owner(
     assert item is not None
     assert item.created_by_user_id == test_user.id
     assert item.status == "inbox"
-    assert item.metadata_json == {
-        "tags": ["feedback", "wework"],
-        "feedback_report_id": "WF-100",
-    }
+    metadata = item.metadata_json
+    assert metadata["tags"] == ["feedback", "wework"]
+    assert metadata["feedback_report_id"] == "WF-100"
+    assert metadata["status_history"][0]["trigger"] == "create"
+    assert metadata["status_history"][0]["to_status"] == "inbox"
+    assert metadata["assignment_history"][0]["action"] == "assign"
     assert item.description == (
         "The send button remained disabled.\n\nFeedback report: WF-100"
     )
