@@ -568,6 +568,11 @@ async function main() {
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }`
       )
+      await writeFile(
+        join(codexHome, 'auth.json'),
+        `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
+        'utf8'
+      )
     }
 
     const appEnvironment = {

@@ -1367,7 +1367,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
       setQueuedMessages(messages =>
         messages.map(message =>
-          message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
+          message.id === queuedMessage.id
+            ? { ...message, status: 'sending', deliveryMode: 'message' }
+            : message
         )
       )
 
@@ -1381,11 +1383,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             },
           })
           if (sent) {
-            setQueuedMessages(messages =>
-              messages.map(message =>
-                message.id === queuedMessage.id ? { ...message, deliveryMode: 'message' } : message
-              )
-            )
             if (
               currentRuntimeTask &&
               lifecycleStore.getTask(currentRuntimeTask)?.turn.phase === 'streaming'
