@@ -572,6 +572,7 @@ export function AutomationsPage() {
               locale={locale}
               loading={loading}
               error={error}
+              detailOpen={Boolean(draft)}
               mobileDetailOpen={isMobile && Boolean(draft)}
               onQueryChange={setQuery}
               onFilterChange={setStatusFilter}
@@ -604,11 +605,7 @@ export function AutomationsPage() {
                 onToggle={() => editing && void toggleAutomation(editing)}
                 onDelete={() => editing && void deleteAutomation(editing)}
               />
-            ) : (
-              <div className="hidden min-w-0 flex-1 items-center justify-center text-sm text-text-tertiary md:flex">
-                {t('workbench.automation_select_hint', '选择一个任务查看详情')}
-              </div>
-            )}
+            ) : null}
           </>
         ) : (
           <AutomationEmptyState
@@ -641,6 +638,7 @@ function AutomationListPane({
   locale,
   loading,
   error,
+  detailOpen,
   mobileDetailOpen,
   onQueryChange,
   onFilterChange,
@@ -656,6 +654,7 @@ function AutomationListPane({
   locale: string
   loading: boolean
   error: string | null
+  detailOpen: boolean
   mobileDetailOpen: boolean
   onQueryChange: (query: string) => void
   onFilterChange: (filter: StatusFilter) => void
@@ -670,7 +669,8 @@ function AutomationListPane({
     <aside
       data-testid="automation-list-pane"
       className={cn(
-        'w-full shrink-0 overflow-y-auto border-r border-border bg-background md:w-[430px] xl:w-[500px]',
+        'w-full overflow-y-auto bg-background',
+        detailOpen ? 'shrink-0 border-r border-border md:w-[430px] xl:w-[500px]' : 'min-w-0 flex-1',
         mobileDetailOpen && 'hidden md:block'
       )}
     >

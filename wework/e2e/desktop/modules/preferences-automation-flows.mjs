@@ -366,6 +366,26 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     },
     'The automation execution config did not route the complete cloud model identity'
   )
+  const [openListMetrics] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="automation-list-pane"]')
+  )
+  await control.command('click', '[data-testid="automation-detail-close"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('automation-detail-panel'),
+    'The automation detail panel did not close'
+  )
+  const [closedListMetrics] = JSON.parse(
+    await control.command('getElementMetrics', '[data-testid="automation-list-pane"]')
+  )
+  assert.ok(
+    closedListMetrics.width > openListMetrics.width + 100,
+    `The automation list did not expand after closing details: ${openListMetrics.width}px -> ${closedListMetrics.width}px`
+  )
+  await control.command('click', `[data-testid="${automationRow}"]`)
+  await control.command('waitFor', '[data-testid="automation-detail-panel"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, 'automations-02-goal-persisted.png')
 
   const previousScenario = control.scenario

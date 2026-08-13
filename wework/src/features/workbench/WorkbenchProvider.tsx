@@ -17,6 +17,7 @@ import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
@@ -283,6 +284,7 @@ export function WorkbenchProvider({
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
   const remoteProjectSyncRevisionRef = useRef(0)
+  const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
@@ -878,8 +880,13 @@ export function WorkbenchProvider({
     []
   )
 
-  const invalidateRemoteProjectSync = useCallback(() => {
+  const invalidateRemoteProjectSync = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.add(normalizeRuntimeWorkspacePath(workspacePath))
     remoteProjectSyncRevisionRef.current += 1
+  }, [])
+
+  const clearRemoteProjectSyncRemoval = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.delete(normalizeRuntimeWorkspacePath(workspacePath))
     remoteProjectSyncSignatureRef.current = ''
   }, [])
 
@@ -887,7 +894,14 @@ export function WorkbenchProvider({
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
       localRuntimeStateDeviceId
-    ).sort((left, right) => left.id.localeCompare(right.id))
+    )
+      .filter(
+        project =>
+          !removedRemoteProjectPathsRef.current.has(
+            normalizeRuntimeWorkspacePath(project.remotePath)
+          )
+      )
+      .sort((left, right) => left.id.localeCompare(right.id))
     if (!localRuntimeStateDeviceId || projects.length === 0) {
       remoteProjectSyncSignatureRef.current = ''
       return
@@ -1160,6 +1174,7 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
+        response.roots.forEach(clearRemoteProjectSyncRemoval)
         rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
@@ -1182,6 +1197,7 @@ export function WorkbenchProvider({
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
       const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
+      clearRemoteProjectSyncRemoval(openedWorkspacePath)
       const openedDeviceId =
         resolveLocalWorkbenchDeviceId(
           devicesForResolution,
@@ -1200,7 +1216,14 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, refreshWorkLists, rememberExecutionDevice, state.devices, user.id]
+    [
+      clearRemoteProjectSyncRemoval,
+      executorClient,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      state.devices,
+      user.id,
+    ]
   )
 
   const startNewChat = useCallback(() => {
@@ -1476,6 +1499,7 @@ export function WorkbenchProvider({
     refreshWorkLists,
     markRuntimeProjectRemoved,
     invalidateRemoteProjectSync,
+    clearRemoteProjectSyncRemoval,
     rememberExecutionDevice,
     enqueueRemoteProjectStateMutation,
   })
