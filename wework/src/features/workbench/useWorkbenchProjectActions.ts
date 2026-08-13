@@ -30,7 +30,7 @@ import type {
 } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
-import type { ProjectMutationOptions } from './workbenchContextTypes'
+import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
@@ -47,12 +47,13 @@ interface UseWorkbenchProjectActionsOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
   markRuntimeProjectRemoved: (
     projectId: number,
     workspace?: { deviceId: string; workspacePath: string }
   ) => void
-  clearRuntimeProjectRemoval: (workspace: { deviceId: string; workspacePath: string }) => void
+  invalidateRemoteProjectSync: (workspacePath: string) => void
+  clearRemoteProjectSyncRemoval: (workspacePath: string) => void
   rememberExecutionDevice: (deviceId: string) => void
   enqueueRemoteProjectStateMutation: <T>(mutation: () => Promise<T>) => Promise<T>
 }
@@ -65,7 +66,8 @@ export function useWorkbenchProjectActions({
   services,
   refreshWorkLists,
   markRuntimeProjectRemoved,
-  clearRuntimeProjectRemoval,
+  invalidateRemoteProjectSync,
+  clearRemoteProjectSyncRemoval,
   rememberExecutionDevice,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
@@ -220,12 +222,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
-      response.roots.forEach(workspacePath =>
-        clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
-      )
+      response.roots.forEach(clearRemoteProjectSyncRemoval)
       await refreshWorkLists()
     },
-    [clearRuntimeProjectRemoval, dispatch, executorClient, refreshWorkLists]
+    [clearRemoteProjectSyncRemoval, dispatch, executorClient, refreshWorkLists]
   )
 
   const removeListedRuntimeProject = useCallback(
@@ -258,6 +258,7 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
+      invalidateRemoteProjectSync(runtimeWorkspace.workspacePath)
       if (
         runtimeProject?.sidebarStateKey &&
         runtimeProject.stateDeviceId &&
@@ -285,7 +286,7 @@ export function useWorkbenchProjectActions({
         deviceId: runtimeWorkspace.deviceId,
         workspacePath: runtimeWorkspace.workspacePath,
       })
-      await refreshWorkLists()
+      await refreshWorkLists({ syncCloud: false })
       dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
         dispatch({
@@ -302,6 +303,7 @@ export function useWorkbenchProjectActions({
       dispatch,
       enqueueRemoteProjectStateMutation,
       executorClient,
+      invalidateRemoteProjectSync,
       markRuntimeProjectRemoved,
       refreshWorkLists,
       state.runtimeWork,
@@ -339,11 +341,12 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
+      invalidateRemoteProjectSync(standaloneWorkspacePath)
       markRuntimeProjectRemoved(projectId, {
         deviceId: standaloneDeviceId,
         workspacePath: standaloneWorkspacePath,
       })
-      await refreshWorkLists()
+      await refreshWorkLists({ syncCloud: false })
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId,
@@ -356,6 +359,7 @@ export function useWorkbenchProjectActions({
     [
       dispatch,
       executorClient,
+      invalidateRemoteProjectSync,
       markRuntimeProjectRemoved,
       refreshWorkLists,
       state.standaloneDeviceId,

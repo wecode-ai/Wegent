@@ -453,8 +453,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   )
   const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
-  // Ref for dialog content to use as Popover container (fixes pointer-events issue in Dialog)
-  const dialogContentRef = React.useRef<HTMLDivElement>(null)
+  // Keep the Popover portal container stable across asynchronous form updates.
+  const [dialogContentElement, setDialogContentElement] = useState<HTMLDivElement | null>(null)
 
   // Reset form when dialog opens/closes or initialData changes
   useEffect(() => {
@@ -1447,7 +1447,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
-      <DialogContent ref={dialogContentRef} className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        ref={setDialogContentElement}
+        className="max-w-2xl max-h-[90vh] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>
             {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
@@ -1638,7 +1641,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   className="w-[--radix-popover-trigger-width] p-0"
                   align="start"
                   onOpenAutoFocus={e => e.preventDefault()}
-                  container={dialogContentRef.current}
+                  container={dialogContentElement}
                 >
                   <div className="p-2 border-b">
                     <Input

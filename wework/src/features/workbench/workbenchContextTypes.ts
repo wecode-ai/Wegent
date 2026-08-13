@@ -33,6 +33,8 @@ import type {
   RuntimeSendRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
   RuntimeProjectSpaceRef,
@@ -117,6 +119,7 @@ export interface CreateProjectRuntimeTaskOptions {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   modelId?: string | null
   /** Full execution model fields resolved from a UnifiedModel; replaces the
    * global workbench model when provided, matching task-message execution. */
@@ -135,11 +138,6 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Force the runtime task onto a specific device (robot execution
    * environment), bypassing the default project/standalone device pick. */
   deviceId?: string | null
-  /** Keep task-scoped automation out of the global conversation sidebar. */
-  hiddenFromSidebar?: boolean
-  /** Keep the underlying Codex thread durable so a follow-up can resume the
-   * same executor session after an app restart, even while hidden. */
-  continuable?: boolean
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
@@ -158,12 +156,15 @@ export interface RuntimePaneGuidanceResult {
 
 export interface WorkbenchContextValue {
   services: WorkbenchServices
+  workspaceTabId?: string
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
+    scopeKey: string
+    inputByScope: Readonly<Record<string, string>>
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
@@ -174,6 +175,7 @@ export interface WorkbenchContextValue {
     composerError?: string | null
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
+    trialPluginApp?: LocalDeviceApp
     hasConversationContext?: boolean
     dismissTrialGuide?: () => void
     applyTrialTemplate?: (template: PluginPathComponent) => void
@@ -191,6 +193,7 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
@@ -225,6 +228,8 @@ export interface WorkbenchContextValue {
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
   cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (
@@ -421,4 +426,5 @@ export interface WorkbenchProviderProps {
   services?: WorkbenchServices
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  syncRemoteProjects?: boolean
 }

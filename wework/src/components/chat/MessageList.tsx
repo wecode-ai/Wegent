@@ -52,10 +52,12 @@ import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
+import { pluginNameInitial } from '@/components/plugins/plugin-assets'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
+import { CodeCommentPreview } from './CodeCommentPreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { getDurationText } from './blocks/processingDuration'
 import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
@@ -1132,13 +1134,19 @@ function UserMessage({
               )}
               {codeCommentCount > 0 && (
                 <div className="mt-1.5 flex">
-                  <span
-                    data-testid="message-code-comment-context-badge"
-                    className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  <CodeCommentPreview
+                    comments={message.codeComments ?? []}
+                    testId="message-code-comment-context-preview"
                   >
-                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>{t('workbench.code_comment_count', { count: codeCommentCount })}</span>
-                  </span>
+                    <span
+                      data-testid="message-code-comment-context-badge"
+                      tabIndex={0}
+                      className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{t('workbench.code_comment_count', { count: codeCommentCount })}</span>
+                    </span>
+                  </CodeCommentPreview>
                 </div>
               )}
               {shouldCollapse && !isExpanded && (
@@ -1807,6 +1815,13 @@ function renderUserContent(
             alt=""
             className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
           />
+        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+          <span
+            data-testid={iconTestId}
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+          >
+            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+          </span>
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}

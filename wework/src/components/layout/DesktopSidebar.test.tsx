@@ -20,7 +20,13 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import {
+  dispatchWorkbenchSidebarPaneDragCancel,
+  dispatchWorkbenchSidebarPaneDragStart,
+} from './workbenchPaneDrag'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -103,7 +109,8 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
 function renderSidebar(
   overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
   cloudConnection?: Partial<CloudConnectionContextValue>,
-  appUpdate?: Partial<AppUpdateContextValue>
+  appUpdate?: Partial<AppUpdateContextValue>,
+  workbench?: Partial<WorkbenchContextValue>
 ) {
   const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
   const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-test')
@@ -114,6 +121,13 @@ function renderSidebar(
       <DesktopSidebar {...props} />
     </RuntimeTaskLifecycleProvider>
   )
+  if (workbench) {
+    tree = (
+      <WorkbenchContext.Provider value={workbench as WorkbenchContextValue}>
+        {tree}
+      </WorkbenchContext.Provider>
+    )
+  }
   if (appUpdate) {
     const value: AppUpdateContextValue = {
       updateChannel: 'stable',
@@ -1424,6 +1438,43 @@ describe('DesktopSidebar', () => {
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })
 
+  test('locks native sidebar scrolling while a task drag is outside the sidebar', () => {
+    renderSidebar()
+
+    const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
+    vi.spyOn(scrollContainer, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 280,
+      bottom: 700,
+      width: 280,
+      height: 700,
+      toJSON: () => ({}),
+    } as DOMRect)
+    scrollContainer.scrollTop = 120
+
+    act(() => {
+      dispatchWorkbenchSidebarPaneDragStart({ paneKey: 'task:1', title: 'Task 1' })
+      fireEvent.pointerMove(window, { clientX: 600, clientY: 680 })
+    })
+
+    expect(scrollContainer).toHaveClass('overflow-y-hidden')
+    scrollContainer.scrollTop = 240
+    fireEvent.scroll(scrollContainer)
+    expect(scrollContainer.scrollTop).toBe(120)
+
+    act(() => {
+      fireEvent.pointerMove(window, { clientX: 120, clientY: 680 })
+    })
+    expect(scrollContainer).toHaveClass('overflow-y-auto')
+
+    act(() => {
+      dispatchWorkbenchSidebarPaneDragCancel()
+    })
+  })
+
   test('matches Codex sidebar text emphasis levels', () => {
     renderSidebar({ onToggleSidebar: vi.fn() }, { status: 'disconnected', isConnected: false })
 
@@ -2115,6 +2166,13 @@ describe('DesktopSidebar', () => {
     expect(onOpenRuntimeTask).toHaveBeenCalledTimes(2)
     expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
 
+    firstSortable.focus()
+    fireEvent.keyDown(firstSortable, { key: ' ', code: 'Space' })
+    expect(firstSortable).toHaveAttribute('data-dragging', 'true')
+    await waitForSidebarPointerSensorCleanup()
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    await waitFor(() => expect(firstSortable).not.toHaveAttribute('data-dragging'))
+
     for (const [pointerId, target] of [firstTitleSpace, firstTrailing, firstActions].entries()) {
       fireEvent.pointerDown(target, {
         button: 0,
@@ -2226,9 +2284,10 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-time-chat-time')).toHaveTextContent('2m')
   })
 
-  test('renames a runtime conversation from double click dialog', async () => {
+  test('renames a runtime conversation from its context menu without space starting drag', async () => {
     const user = userEvent.setup()
     const onOpenRuntimeTask = vi.fn()
+    const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
     const onRenameRuntimeTask = vi.fn().mockResolvedValue(undefined)
 
     renderSidebar({
@@ -2248,7 +2307,7 @@ describe('DesktopSidebar', () => {
                 taskId: 'codex-rename',
                 workspacePath: '/workspace/chats/chat-rename',
                 workspaceKind: 'chat',
-                title: '对齐需求核心点',
+                title: '对齐 需求 核心点',
                 runtime: 'codex',
               },
             ],
@@ -2257,18 +2316,34 @@ describe('DesktopSidebar', () => {
         totalTasks: 1,
       },
       onOpenRuntimeTask,
+      onReorderRuntimeProjectTasks,
       onRenameRuntimeTask,
     })
 
-    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-rename'))
+    const taskRow = screen.getByTestId('runtime-local-task-row-codex-rename')
+    const sortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:codex-rename"]'
+    ) as HTMLElement
+
+    fireEvent.contextMenu(taskRow, {
+      clientX: 20,
+      clientY: 10,
+    })
+    await user.click(screen.getByTestId('runtime-local-task-menu-rename-codex-rename'))
 
     expect(screen.getByTestId('rename-runtime-local-task-input-codex-rename')).toHaveValue(
-      '对齐需求核心点'
+      '对齐 需求 核心点'
     )
     expect(screen.getByText('保持简短且易于识别')).toBeInTheDocument()
+    expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
 
-    await user.clear(screen.getByTestId('rename-runtime-local-task-input-codex-rename'))
-    await user.type(screen.getByTestId('rename-runtime-local-task-input-codex-rename'), '对齐方案')
+    const renameInput = screen.getByTestId('rename-runtime-local-task-input-codex-rename')
+    await user.type(renameInput, ' ')
+    expect(sortable).not.toHaveAttribute('data-dragging')
+    expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
+
+    await user.clear(renameInput)
+    await user.type(renameInput, '对齐方案')
     await user.click(screen.getByTestId('confirm-rename-runtime-local-task-codex-rename'))
 
     await waitFor(() => {
@@ -2610,6 +2685,91 @@ describe('DesktopSidebar', () => {
     expect(runningStatus).not.toHaveTextContent('运行中')
     expect(runningStatus.querySelector('svg')).not.toBeNull()
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
+  })
+
+  test('shows queued positions and runs queue actions through the workbench', async () => {
+    const forceStartRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const reorderQueuedRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    renderSidebar(
+      {
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              totalTasks: 2,
+              deviceWorkspaces: [
+                {
+                  id: 91,
+                  deviceId: 'local-device',
+                  deviceName: 'Local Mac',
+                  deviceStatus: 'online',
+                  available: true,
+                  workspacePath: '/repo/Wegent',
+                  tasks: [
+                    {
+                      taskId: 'queued-first',
+                      workspacePath: '/repo/Wegent',
+                      title: 'First queued task',
+                      runtime: 'codex',
+                      status: 'queued',
+                      queuePosition: 1,
+                      running: false,
+                      updatedAt: '2026-08-12T03:00:00Z',
+                    },
+                    {
+                      taskId: 'queued-second',
+                      workspacePath: '/repo/Wegent',
+                      title: 'Second queued task',
+                      runtime: 'codex',
+                      status: 'queued',
+                      queuePosition: 2,
+                      running: false,
+                      updatedAt: '2026-08-12T02:00:00Z',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 2,
+        },
+      },
+      undefined,
+      undefined,
+      {
+        forceStartRuntimeTask,
+        reorderQueuedRuntimeTask,
+        setWorkbenchError: vi.fn(),
+      }
+    )
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getByTestId('runtime-local-task-queue-position-queued-first')).toHaveTextContent(
+      '1'
+    )
+    expect(screen.getByTestId('runtime-local-task-queue-position-queued-second')).toHaveTextContent(
+      '2'
+    )
+    await userEvent.click(screen.getByTestId('runtime-local-task-queue-up-queued-second'))
+    await waitFor(() => {
+      expect(reorderQueuedRuntimeTask).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        taskId: 'queued-second',
+        workspacePath: '/repo/Wegent',
+        queuePosition: 1,
+      })
+    })
+
+    await userEvent.click(screen.getByTestId('runtime-local-task-force-start-queued-first'))
+    await waitFor(() => {
+      expect(forceStartRuntimeTask).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        taskId: 'queued-first',
+        workspacePath: '/repo/Wegent',
+      })
+    })
   })
 
   test('shows unread dot from shared runtime task reminder state', async () => {
@@ -4394,25 +4554,19 @@ describe('DesktopSidebar', () => {
 
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(panel).toHaveAttribute('aria-hidden', 'true')
-    expect(panel).toHaveClass(
-      'grid',
-      'overflow-hidden',
-      'transition-[grid-template-rows,opacity]',
-      'grid-rows-[0fr]',
-      'opacity-0'
-    )
+    expect(panel).toHaveClass('hidden')
 
     await user.click(button)
 
     expect(button).toHaveAttribute('aria-expanded', 'true')
     expect(panel).toHaveAttribute('aria-hidden', 'false')
-    expect(panel).toHaveClass('grid-rows-[1fr]', 'opacity-100')
+    expect(panel).not.toHaveClass('hidden')
 
     await user.click(button)
 
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(panel).toHaveAttribute('aria-hidden', 'true')
-    expect(panel).toHaveClass('grid-rows-[0fr]', 'opacity-0')
+    expect(panel).toHaveClass('hidden')
   })
 
   test('switches project hover affordance based on expanded state', async () => {
@@ -4505,7 +4659,7 @@ describe('DesktopSidebar', () => {
 
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(panel).toHaveAttribute('aria-hidden', 'true')
-    expect(panel).toHaveClass('grid-rows-[0fr]', 'opacity-0')
+    expect(panel).toHaveClass('hidden')
   })
 
   test('auto-expands the opened standalone runtime project', () => {

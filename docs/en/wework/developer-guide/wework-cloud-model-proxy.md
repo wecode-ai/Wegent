@@ -59,6 +59,10 @@ Some Anthropic Messages-compatible services may return a stop reason and positiv
 
 This check activates only when no model output has been observed. Responses that already produced text, thinking content, or a tool call are not replayed, and valid connection-prewarm responses with zero `output_tokens` remain unaffected.
 
+### Claude Code Tool-Result Integrity
+
+Claude Code calls the Wework model router through the Anthropic Messages protocol. Before converting a request to OpenAI Responses or Chat Completions, the executor checks that every assistant `tool_use` has a later user `tool_result` with the same ID. Parallel tool results may be split across multiple user messages and arrive out of declaration order as each tool completes. When a matching result exists anywhere in the request history, the proxy preserves it and must not insert an early failure. Only when a tool process terminates before returning a result and the complete history has no matching result does the proxy insert an explicit failure so the history remains protocol-valid and the model can continue from the failure. Existing successful or failed tool results are never replaced or duplicated.
+
 ### Namespace Tool Compatibility
 
 Codex can group child tools under a `type: "namespace"` tool when it sends an OpenAI Responses request. OpenAI Chat Completions and Anthropic Messages have no equivalent namespace field, so the executor Codex compatibility proxy applies a reversible mapping at the protocol boundary:

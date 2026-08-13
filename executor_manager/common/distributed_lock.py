@@ -8,6 +8,7 @@ This module provides a simple Redis-based distributed lock for coordinating
 operations across multiple service replicas, such as GC tasks.
 """
 
+import uuid
 from typing import Optional
 
 import redis
@@ -19,6 +20,24 @@ logger = setup_logger(__name__)
 
 # Lock key prefix
 LOCK_KEY_PREFIX = "wegent-sandbox:lock:"
+
+_RENEW_OWNED_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('expire', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
+_RELEASE_OWNED_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
+
+class DistributedLockUnavailableError(RuntimeError):
+    """Raised when Redis cannot safely coordinate a distributed lock."""
 
 
 class DistributedLock:
@@ -86,6 +105,82 @@ class DistributedLock:
         except Exception as e:
             logger.error(f"[DistributedLock] Failed to release lock {lock_name}: {e}")
             return False
+
+    def acquire_owned(
+        self,
+        lock_name: str,
+        expire_seconds: int = 60,
+    ) -> Optional[str]:
+        """Acquire a lock whose ownership can be safely renewed and released.
+
+        Returns a unique owner token when acquired and ``None`` when another
+        process owns the lock. Redis failures are raised because callers using
+        this API require cross-replica exclusion and must not fail open.
+        """
+        client = self.redis_client
+        if client is None:
+            raise DistributedLockUnavailableError("Redis client is unavailable")
+
+        lock_key = f"{LOCK_KEY_PREFIX}{lock_name}"
+        owner_token = uuid.uuid4().hex
+        try:
+            acquired = client.set(
+                lock_key,
+                owner_token,
+                nx=True,
+                ex=expire_seconds,
+            )
+        except Exception as exc:
+            raise DistributedLockUnavailableError(
+                f"Failed to acquire lock {lock_name}: {exc}"
+            ) from exc
+        return owner_token if acquired is True else None
+
+    def renew_owned(
+        self,
+        lock_name: str,
+        owner_token: str,
+        expire_seconds: int = 60,
+    ) -> bool:
+        """Renew a lock only when ``owner_token`` still owns it."""
+        client = self.redis_client
+        if client is None:
+            raise DistributedLockUnavailableError("Redis client is unavailable")
+
+        lock_key = f"{LOCK_KEY_PREFIX}{lock_name}"
+        try:
+            result = client.eval(
+                _RENEW_OWNED_LOCK_SCRIPT,
+                1,
+                lock_key,
+                owner_token,
+                expire_seconds,
+            )
+        except Exception as exc:
+            raise DistributedLockUnavailableError(
+                f"Failed to renew lock {lock_name}: {exc}"
+            ) from exc
+        return bool(result)
+
+    def release_owned(self, lock_name: str, owner_token: str) -> bool:
+        """Release a lock only when ``owner_token`` still owns it."""
+        client = self.redis_client
+        if client is None:
+            raise DistributedLockUnavailableError("Redis client is unavailable")
+
+        lock_key = f"{LOCK_KEY_PREFIX}{lock_name}"
+        try:
+            result = client.eval(
+                _RELEASE_OWNED_LOCK_SCRIPT,
+                1,
+                lock_key,
+                owner_token,
+            )
+        except Exception as exc:
+            raise DistributedLockUnavailableError(
+                f"Failed to release lock {lock_name}: {exc}"
+            ) from exc
+        return bool(result)
 
 
 # Singleton instance

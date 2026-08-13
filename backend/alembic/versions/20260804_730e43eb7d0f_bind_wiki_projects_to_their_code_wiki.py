@@ -37,13 +37,27 @@ down_revision: Union[str, Sequence[str], None] = "bd9c871a93d2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# MySQL names the constraint after the column it was declared on.
-OLD_UNIQUE = "source_url"
+# Rollback produces the SQLAlchemy-style name. Upgrade discovers the existing name,
+# which can also be ``uniq_source_url`` on databases initialized from wiki_tables.sql.
+DOWNGRADE_UNIQUE = "source_url"
 NEW_UNIQUE = "uq_wiki_projects_source_url_kind_id"
+
+
+def _legacy_source_url_unique_name() -> str:
+    for constraint in sa.inspect(op.get_bind()).get_unique_constraints("wiki_projects"):
+        if constraint.get("column_names") == ["source_url"]:
+            name = constraint.get("name")
+            if name:
+                return str(name)
+    raise RuntimeError(
+        "wiki_projects has no source_url unique constraint to replace; "
+        "refusing a partial code-wiki migration"
+    )
 
 
 def upgrade() -> None:
     """Upgrade schema."""
+    legacy_unique = _legacy_source_url_unique_name()
     op.add_column(
         "wiki_projects",
         sa.Column(
@@ -61,7 +75,7 @@ def upgrade() -> None:
     # covered by both rather than by neither, so a concurrent insert cannot slip a
     # duplicate pair in through the gap.
     op.create_unique_constraint(NEW_UNIQUE, "wiki_projects", ["source_url", "kind_id"])
-    op.drop_constraint(OLD_UNIQUE, "wiki_projects", type_="unique")
+    op.drop_constraint(legacy_unique, "wiki_projects", type_="unique")
 
 
 def downgrade() -> None:
@@ -71,7 +85,7 @@ def downgrade() -> None:
     which is correct: silently discarding one of them would destroy a generated
     knowledge base. Delete the surplus wikis first if this has to be reversed.
     """
-    op.create_unique_constraint(OLD_UNIQUE, "wiki_projects", ["source_url"])
+    op.create_unique_constraint(DOWNGRADE_UNIQUE, "wiki_projects", ["source_url"])
     op.drop_constraint(NEW_UNIQUE, "wiki_projects", type_="unique")
     op.drop_index("ix_wiki_projects_kind_id", table_name="wiki_projects")
     op.drop_column("wiki_projects", "kind_id")

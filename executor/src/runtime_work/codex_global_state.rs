@@ -271,6 +271,16 @@ impl CodexGlobalProjectIndex {
         self.project_by_key_or_path(value)
     }
 
+    pub fn project_for_ui_id(
+        &self,
+        state_device_id: &str,
+        project_id: u64,
+    ) -> Option<&CodexGlobalProject> {
+        self.projects
+            .iter()
+            .find(|project| runtime_project_ui_id(state_device_id, &project.key) == project_id)
+    }
+
     fn project_by_key_or_path(&self, value: &str) -> Option<&CodexGlobalProject> {
         let normalized = normalize_path_or_raw(value);
         self.projects_by_key
@@ -278,6 +288,14 @@ impl CodexGlobalProjectIndex {
             .and_then(|index| self.projects.get(*index))
             .or_else(|| self.project_for_path(&normalized))
     }
+}
+
+fn runtime_project_ui_id(state_device_id: &str, project_key: &str) -> u64 {
+    let mut hash = 0_u32;
+    for code_unit in format!("{state_device_id}\0{project_key}").encode_utf16() {
+        hash = hash.wrapping_mul(31).wrapping_add(u32::from(code_unit));
+    }
+    u64::from(hash % 1_000_000_000) + 1
 }
 
 pub(crate) fn reorder_codex_global_projects(
@@ -818,6 +836,30 @@ fn apply_codex_global_state_ops(
                 }
             }
             OPLOG_KIND_UPSERT_REMOTE_PROJECTS => {
+                let synchronized_hosts = op
+                    .remote_projects
+                    .iter()
+                    .map(|project| project.host_id.as_str())
+                    .collect::<HashSet<_>>();
+                let synchronized_project_ids = op
+                    .remote_projects
+                    .iter()
+                    .map(|project| project.id.as_str())
+                    .collect::<HashSet<_>>();
+                let removed_projects = remote_project_items(payload.get(REMOTE_PROJECTS_KEY))
+                    .into_iter()
+                    .filter(|project| {
+                        synchronized_hosts.contains(project.host_id.as_str())
+                            && !synchronized_project_ids.contains(project.key.as_str())
+                    })
+                    .collect::<Vec<_>>();
+                for project in removed_projects {
+                    remove_codex_global_project_payload(
+                        payload,
+                        &project.key,
+                        &project.remote_path,
+                    );
+                }
                 for project in &op.remote_projects {
                     upsert_remote_project_payload(payload, project);
                     upsert_project_order(payload, &project.id);
@@ -1755,7 +1797,7 @@ mod tests {
     use super::{
         apply_codex_global_state_ops, codex_app_running_probe_args, index_from_payload,
         is_codex_gui_process_command, remove_codex_global_project_payload,
-        rename_codex_global_project_payload, CodexGlobalStateOplogRecord,
+        rename_codex_global_project_payload, runtime_project_ui_id, CodexGlobalStateOplogRecord,
         ACTIVE_REMOTE_PROJECT_ID_KEY, CODEX_GLOBAL_STATE_OPLOG_FILENAME,
         OPLOG_KIND_ACTIVATE_PROJECT, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
         OPLOG_KIND_PROJECT_APPEARANCE, OPLOG_KIND_REORDER_PROJECT, OPLOG_KIND_REORDER_THREAD,
@@ -1788,6 +1830,39 @@ mod tests {
         assert_eq!(
             CODEX_GLOBAL_STATE_OPLOG_FILENAME,
             ".codex-global-state.oplog.jsonl"
+        );
+    }
+
+    #[test]
+    fn runtime_project_ui_id_matches_the_wework_project_id() {
+        assert_eq!(
+            runtime_project_ui_id("local-device", "local-709d7906a4d8eb2000f25236e148ca82",),
+            573_677_101
+        );
+    }
+
+    #[test]
+    fn resolves_a_device_local_project_id_to_its_workspace() {
+        let index = index_from_payload(&payload(json!({
+            "local-projects": {
+                "entry": {
+                    "id": "local-709d7906a4d8eb2000f25236e148ca82",
+                    "name": "Wegent"
+                }
+            },
+            "project-writable-roots": {
+                "local-709d7906a4d8eb2000f25236e148ca82": [
+                    {"kind": "local", "path": "/Volumes/OuterHD/OuterIdeaProjects/Wegent"}
+                ]
+            }
+        })));
+
+        let project = index
+            .project_for_ui_id("local-device", 573_677_101)
+            .expect("device-local project id should resolve");
+        assert_eq!(
+            project.workspace_path,
+            "/Volumes/OuterHD/OuterIdeaProjects/Wegent"
         );
     }
 
@@ -2095,5 +2170,51 @@ mod tests {
             json!({"projectId": "removed"})
         );
         assert!(payload["local-projects"]["local"].is_object());
+    }
+
+    #[test]
+    fn remote_project_batch_removes_stale_projects_from_synchronized_hosts() {
+        let mut payload = payload(json!({
+            "remote-projects": [
+                {"id": "stale", "hostId": "host", "remotePath": "/stale"},
+                {"id": "retained", "hostId": "host", "remotePath": "/retained", "label": "Old"},
+                {"id": "other-host", "hostId": "other", "remotePath": "/other"}
+            ],
+            "project-order": ["stale", "retained", "other-host"],
+            "pinned-project-ids": ["stale", "retained"],
+            "project-appearances": {"stale": {"color": "red"}},
+            "sidebar-project-thread-orders": {"stale": {"threadIds": ["t1"]}},
+            "thread-project-assignments": {"t1": {"projectId": "stale"}}
+        }));
+        let operation = CodexGlobalStateOplogRecord {
+            kind: OPLOG_KIND_UPSERT_REMOTE_PROJECTS.to_owned(),
+            remote_projects: vec![CodexGlobalRemoteProject {
+                id: "retained".to_owned(),
+                host_id: "host".to_owned(),
+                remote_path: "/retained".to_owned(),
+                label: Some("Current".to_owned()),
+            }],
+            ..Default::default()
+        };
+
+        apply_codex_global_state_ops(&mut payload, &[operation]);
+
+        assert_eq!(
+            payload["remote-projects"],
+            json!([
+                {
+                    "id": "retained",
+                    "hostId": "host",
+                    "remotePath": "/retained",
+                    "label": "Current"
+                },
+                {"id": "other-host", "hostId": "other", "remotePath": "/other"}
+            ])
+        );
+        assert_eq!(payload["project-order"], json!(["retained", "other-host"]));
+        assert_eq!(payload["pinned-project-ids"], json!(["retained"]));
+        assert!(payload["project-appearances"]["stale"].is_null());
+        assert!(payload["sidebar-project-thread-orders"]["stale"].is_null());
+        assert!(payload["thread-project-assignments"]["t1"].is_null());
     }
 }

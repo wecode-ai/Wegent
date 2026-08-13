@@ -53,7 +53,12 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { AITableView } from '@/features/todo/AITableView'
-import type { ProjectWithTasks, RuntimeTaskAddress, User as UserProfile } from '@/types/api'
+import type {
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+  User as UserProfile,
+} from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import {
@@ -62,6 +67,7 @@ import {
   type BoardCardDisplaySettings,
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
+import { waitForDwsAuthentication } from './dwsAuth'
 import { ProjectAutomationView } from './ProjectAutomationView'
 import { projectSupportsRobotAutomation } from './projectSpaceSelection'
 import { CloudProjectsHome } from './CloudProjectsHome'
@@ -213,6 +219,7 @@ interface AvailableProjectSpaceApi {
 interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
+  runtimeWork?: RuntimeWorkListResponse | null
   services: WorkbenchServices
   activeProjectId?: string | null
   focusedItemId?: string | null
@@ -684,6 +691,7 @@ function ProjectDialog({
 export function CloudTodoWorkspace({
   user,
   localProjects,
+  runtimeWork,
   services,
   activeProjectId,
   focusedItemId,
@@ -850,6 +858,9 @@ export function CloudTodoWorkspace({
 
   const [loading, setLoading] = useState(true)
   const [boardError, setBoardError] = useState<string | null>(null)
+  const [dingtalkAuthPrompt, setDingtalkAuthPrompt] = useState(false)
+  const [dingtalkAuthBusy, setDingtalkAuthBusy] = useState(false)
+  const [boardRefreshNonce, setBoardRefreshNonce] = useState(0)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null)
@@ -888,12 +899,31 @@ export function CloudTodoWorkspace({
   // (renders the skeleton plus the error banner instead of an empty board).
   const applyBoardItems = useCallback(
     (projectId: string, fetchedItems: CloudLoopItem[], error: string | null) => {
+      console.info('[Wework project board] snapshot applied', {
+        projectId,
+        itemCount: fetchedItems.length,
+        outcome: error ? 'failed' : 'loaded',
+      })
       setItems(fetchedItems)
       setItemsProjectId(projectId)
       setBoardError(error)
     },
     []
   )
+  const connectDingTalkBoard = async () => {
+    if (!services.dwsApi || dingtalkAuthBusy) return
+    setDingtalkAuthBusy(true)
+    try {
+      await services.dwsApi.login()
+      await waitForDwsAuthentication(services.dwsApi)
+      setBoardRefreshNonce(value => value + 1)
+    } catch (cause) {
+      setDingtalkAuthPrompt(true)
+      setBoardError(cause instanceof Error ? cause.message : '连接钉钉失败')
+    } finally {
+      setDingtalkAuthBusy(false)
+    }
+  }
   const selectedProject = projects.find(project => project.id === selectedProjectId) ?? null
   const selectedProjectAutomationSupported = selectedProject
     ? projectSupportsRobotAutomation(selectedProject)
@@ -1184,36 +1214,12 @@ export function CloudTodoWorkspace({
     }
   }, [aitableApi, isAITableProject, selectedProject])
 
-  useEffect(() => {
-    if (!services.aitableApi) return
-    let active = true
-    for (const project of projects) {
-      if (project.task_provider === 'dingtalk_aitable') {
-        void services.aitableApi
-          .configureProject(project)
-          .then(async () => {
-            const api = projectSpaceApis.local
-            if (!api) return
-            const response = await api.listLoopItems(project.id)
-            if (!active) return
-            setProjectCounts(current => ({ ...current, [project.id]: response.items.length }))
-            setProjectItems(current => ({ ...current, [project.id]: response.items }))
-          })
-          .catch(() => {})
-      }
-    }
-    return () => {
-      active = false
-    }
-  }, [projectSpaceApis.local, projects, services.aitableApi])
   const canCreateBoardTask = selectedProject !== null
   // Only render board items that belong to the selected project. On a project
   // switch this flips to the skeleton in the same render, before the fetch.
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
-  const boardItemsLoading =
-    selectedProject !== null &&
-    (itemsProjectId !== selectedProjectId || (items.length === 0 && !boardError))
+  const boardItemsLoading = selectedProject !== null && itemsProjectId !== selectedProjectId
   const selectedItemApi = selectedItem ? apiForProjectId(selectedItem.cloud_project_id) : undefined
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
@@ -1383,8 +1389,11 @@ export function CloudTodoWorkspace({
         const projects = response.items.map(project => ({ ...project, location }))
         const details = await Promise.all(
           projects.map(async project => {
+            // DingTalk AI Table projects are only fetched when their board is
+            // opened: an unauthenticated dws must not error-spam on app open.
+            const skipBoardFetch = project.task_provider === 'dingtalk_aitable'
             const [loopItemsResult, membersResult] = await Promise.allSettled([
-              api.listLoopItems(project.id),
+              skipBoardFetch ? Promise.resolve({ items: [] }) : api.listLoopItems(project.id),
               api.listCloudProjectMembers(project.id),
             ])
             const loopItems =
@@ -1423,6 +1432,7 @@ export function CloudTodoWorkspace({
         .then(() => selectedProjectApi.listLoopItems(selectedProjectId))
         .then(response => {
           if (!active) return
+          setDingtalkAuthPrompt(false)
           const signature = boardSnapshotKey(response.items, null)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
@@ -1437,12 +1447,27 @@ export function CloudTodoWorkspace({
               : current
           )
         })
-        .catch(error => {
+        .catch(async error => {
           console.error('[Wework project board] issue refresh failed', {
             projectId: selectedProjectId,
             error,
           })
           if (!active) return
+          if (selectedProject?.task_provider === 'dingtalk_aitable' && services.dwsApi) {
+            try {
+              const status = await services.dwsApi.authStatus()
+              if (!status.authenticated || status.token_valid === false) {
+                if (!active) return
+                setDingtalkAuthPrompt(true)
+                applyBoardItems(selectedProjectId, [], null)
+                return
+              }
+            } catch {
+              // Fall through to the raw board error.
+            }
+          }
+          if (!active) return
+          setDingtalkAuthPrompt(false)
           const message = error instanceof Error ? error.message : '任务加载失败'
           const signature = boardSnapshotKey([], message)
           if (boardSnapshotSignatureRef.current === signature) return
@@ -1458,7 +1483,15 @@ export function CloudTodoWorkspace({
       active = false
       window.clearInterval(interval)
     }
-  }, [applyBoardItems, selectedProject, selectedProjectApi, selectedProjectId, services.aitableApi])
+  }, [
+    applyBoardItems,
+    boardRefreshNonce,
+    selectedProject,
+    selectedProjectApi,
+    selectedProjectId,
+    services.aitableApi,
+    services.dwsApi,
+  ])
   useEffect(() => {
     if (!focusedItemId) {
       focusedItemRequestRef.current = null
@@ -2154,10 +2187,12 @@ export function CloudTodoWorkspace({
                 <ProjectAutomationView
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
+                  projectAutomationApi={services.projectAutomationApi}
                   executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}
                   localProjects={localProjects}
+                  runtimeWork={runtimeWork}
                   project={selectedProject}
                   currentUserId={selectedProject.current_user_id}
                   canManageAgents={['Owner', 'Maintainer'].includes(
@@ -2342,11 +2377,26 @@ export function CloudTodoWorkspace({
                       </div>
                     )}
                   </nav>
-                  {boardError && (
+                  {isAITableProject && dingtalkAuthPrompt && !boardItemsLoading ? (
+                    <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
+                      <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
+                      <button
+                        type="button"
+                        data-testid="aitable-board-dws-login"
+                        disabled={dingtalkAuthBusy}
+                        onClick={() => void connectDingTalkBoard()}
+                        className="h-7 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition hover:bg-muted disabled:opacity-50"
+                      >
+                        {dingtalkAuthBusy
+                          ? t('todo.dingtalk_board_connecting')
+                          : t('todo.dingtalk_board_connect')}
+                      </button>
+                    </div>
+                  ) : boardError ? (
                     <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
                       {boardError}
                     </p>
-                  )}
+                  ) : null}
                   {boardItemsLoading ? (
                     <div className="min-h-0 flex-1 overflow-x-auto">
                       <CloudTodoBoardSkeleton />
@@ -2401,7 +2451,14 @@ export function CloudTodoWorkspace({
                               <section
                                 key={column.key}
                                 data-testid={`cloud-todo-column-${column.key}`}
-                                className="group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
+                                className={cn(
+                                  'group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5',
+                                  // While a drag is active, outline every column with a dashed
+                                  // border at its natural (content) height so each one reads as
+                                  // a potential drop target without any layout shift.
+                                  activeDragItemId !== null &&
+                                    'outline-dashed outline-1 -outline-offset-1 outline-border'
+                                )}
                               >
                                 <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
                                   <span className="flex min-w-0 items-center">

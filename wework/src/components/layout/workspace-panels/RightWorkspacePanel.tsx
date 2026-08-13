@@ -28,6 +28,7 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
+import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
@@ -118,6 +119,7 @@ interface RightWorkspaceReviewState {
 interface RightWorkspacePanelProps {
   showWorkbenchBackground?: boolean
   visible: boolean
+  renderTabsInAppTitlebar?: boolean
   expanded?: boolean
   allowTemporaryChat?: boolean
   activeView: RightWorkspacePanelView
@@ -146,9 +148,16 @@ interface RightWorkspacePanelProps {
     update: Partial<RightWorkspaceBrowserState>
   ) => void
   codeCommentCount?: number
+  codeCommentContexts?: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onFileDirtyChange?: (dirty: boolean) => void
   onFileSelectionChange?: (selection: FileWorkspacePanelSelection) => void
   onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
@@ -172,7 +181,14 @@ interface RightWorkspaceBrowserPanelSlotProps {
   active: boolean
   state: RightWorkspaceBrowserState
   codeCommentCount: number
+  codeCommentContexts: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   onAddCodeComment: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
     update: Partial<RightWorkspaceBrowserState>
@@ -184,7 +200,11 @@ function RightWorkspaceBrowserPanelSlot({
   active,
   state,
   codeCommentCount,
+  codeCommentContexts,
+  browserAnnotationCommand,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onBrowserStateChange,
 }: RightWorkspaceBrowserPanelSlotProps) {
   const handleDownloadActivityChange = useCallback(
@@ -208,9 +228,14 @@ function RightWorkspaceBrowserPanelSlot({
     <WorkspaceBrowserPanel
       active={active}
       label={state.label}
+      browserTabId={tab}
       openRequest={state.openRequest}
       codeCommentCount={codeCommentCount}
+      codeCommentContexts={codeCommentContexts}
+      browserAnnotationCommand={browserAnnotationCommand}
       onAddCodeComment={onAddCodeComment}
+      onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
+      onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
       onDownloadActivityChange={handleDownloadActivityChange}
       onFaviconChange={handleFaviconChange}
       onTitleChange={handleTitleChange}
@@ -222,6 +247,7 @@ function RightWorkspaceBrowserPanelSlot({
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
+  renderTabsInAppTitlebar = true,
   expanded = false,
   allowTemporaryChat = true,
   activeView,
@@ -247,9 +273,13 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   browserStates,
   onBrowserStateChange,
   codeCommentCount = 0,
+  codeCommentContexts = [],
+  browserAnnotationCommand,
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onFileDirtyChange,
   onFileSelectionChange,
   onSelectFileWorkspaceTarget,
@@ -273,7 +303,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const visibleTabs = canBrowseFiles ? availableTabs : availableTabs.filter(tab => tab !== 'files')
   const showTabs = visibleTabs.length > 0
   const platform = getPlatform()
-  const renderTabsInTitlebar = isTauriRuntime() && platform !== 'win' && visible && showTabs
+  const renderTabsInTitlebar =
+    renderTabsInAppTitlebar && isTauriRuntime() && platform !== 'win' && visible && showTabs
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
@@ -555,7 +586,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                 active={visible && activeView === tab}
                 state={browserState}
                 codeCommentCount={codeCommentCount}
+                codeCommentContexts={codeCommentContexts}
+                browserAnnotationCommand={browserAnnotationCommand}
                 onAddCodeComment={onAddCodeComment}
+                onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
+                onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
                 onBrowserStateChange={onBrowserStateChange}
               />
             </div>

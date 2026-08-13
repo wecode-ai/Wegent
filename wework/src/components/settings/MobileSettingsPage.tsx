@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ChevronRight,
   FolderGit2,
+  GitPullRequest,
   Info,
   MessageSquareText,
   Package,
@@ -27,6 +28,7 @@ import { AboutSettingsPage } from './AboutSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import { HarnessSettingsPage } from './HarnessSettingsPage'
+import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
@@ -59,10 +61,39 @@ export function MobileSettingsPage({
     | 'model-settings'
     | 'quick-phrases'
     | 'plugins'
+    | 'git-hosting'
     | 'harnesses'
     | 'worktrees'
     | 'archived-conversations'
   >('menu')
+
+  if (activePage === 'git-hosting') {
+    return (
+      <main
+        data-testid="mobile-git-hosting-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-git-hosting-settings-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">
+            {t('workbench.settings_nav_git_hosting', '代码托管')}
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <GitHostingSettingsPage />
+        </div>
+      </main>
+    )
+  }
 
   if (activePage === 'quick-phrases') {
     return (
@@ -498,6 +529,18 @@ export function MobileSettingsPage({
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
         ) : null}
+        <button
+          type="button"
+          data-testid="mobile-settings-git-hosting-button"
+          onClick={() => setActivePage('git-hosting')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <GitPullRequest className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_git_hosting', '代码托管')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
         <button
           type="button"
           data-testid="mobile-settings-worktrees-button"

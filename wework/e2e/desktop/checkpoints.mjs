@@ -3,9 +3,12 @@ export const DESKTOP_CHECKPOINTS = [
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
+  'project-automation',
   'model-routing',
   'permission-modes',
   'core-task-flow',
+  'runtime-task-queue',
+  'split-workbench',
   'window-lifecycle',
   'goal-lifecycle',
   'supervisor-lifecycle',
@@ -13,12 +16,14 @@ export const DESKTOP_CHECKPOINTS = [
   'conversation-state',
   'workspace-attachments',
   'rendering-extensions',
+  'change-request-status',
   'local-harness',
   'browser-multi-tabs',
   'embedded-browser',
 ]
 
 export const PLUGIN_SEGMENTS = [
+  'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',
   'sites-plugin-auto-install',

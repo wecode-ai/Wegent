@@ -108,7 +108,7 @@ fn decode_messages_request(body: &[u8]) -> Result<HarnessRequest, HttpError> {
         .unwrap_or("wework-model")
         .to_owned();
     let system = decode_content(object.get("system"), Role::User)?;
-    let messages = object
+    let mut messages = object
         .get("messages")
         .and_then(Value::as_array)
         .into_iter()
@@ -124,6 +124,7 @@ fn decode_messages_request(body: &[u8]) -> Result<HarnessRequest, HttpError> {
             })
         })
         .collect::<Result<Vec<_>, HttpError>>()?;
+    close_unresolved_tool_uses(&mut messages);
     let tools = object
         .get("tools")
         .and_then(Value::as_array)
@@ -154,6 +155,49 @@ fn decode_messages_request(body: &[u8]) -> Result<HarnessRequest, HttpError> {
         temperature: object.get("temperature").and_then(Value::as_f64),
         raw_messages_request: raw,
     })
+}
+
+fn close_unresolved_tool_uses(messages: &mut Vec<Message>) {
+    let resolved = messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult { tool_use_id, .. } => Some(tool_use_id.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut pending = Vec::new();
+    let mut normalized = Vec::with_capacity(messages.len());
+
+    for message in messages.drain(..) {
+        if message.role == Role::User && !pending.is_empty() {
+            normalized.push(Message {
+                role: Role::User,
+                content: pending.drain(..).map(missing_tool_result).collect(),
+            });
+        }
+
+        pending.extend(message.content.iter().filter_map(|block| match block {
+            ContentBlock::ToolUse { id, .. } if !resolved.contains(id) => Some(id.clone()),
+            _ => None,
+        }));
+        normalized.push(message);
+    }
+
+    if !pending.is_empty() {
+        normalized.push(Message {
+            role: Role::User,
+            content: pending.drain(..).map(missing_tool_result).collect(),
+        });
+    }
+    *messages = normalized;
+}
+
+fn missing_tool_result(tool_use_id: String) -> ContentBlock {
+    ContentBlock::ToolResult {
+        tool_use_id,
+        content: "Tool execution failed before producing a result.".to_owned(),
+    }
 }
 
 fn decode_content(value: Option<&Value>, role: Role) -> Result<Vec<ContentBlock>, HttpError> {
@@ -881,6 +925,116 @@ mod tests {
             messages["messages"][0]["content"][0]["cache_control"]["type"],
             "ephemeral"
         );
+    }
+
+    #[test]
+    fn closes_unresolved_tool_uses_for_responses_and_chat_adapters() {
+        let source = serde_json::to_vec(&json!({
+            "model": "claude-test",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "inspect the machine"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call-ok", "name": "shell", "input": {"command": "uptime"}},
+                    {"type": "tool_use", "id": "call-denied", "name": "shell", "input": {"command": "top -l 1 -n 0"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-ok", "content": "up 14 days"},
+                    {"type": "text", "text": "continue"}
+                ]}
+            ],
+            "tools": [{"name": "shell", "description": "Run shell", "input_schema": {"type": "object"}}]
+        }))
+        .unwrap();
+
+        let responses: Value = serde_json::from_slice(
+            &adapt_messages_request(&source, "openai-responses", Some("gpt-test")).unwrap(),
+        )
+        .unwrap();
+        let chat: Value = serde_json::from_slice(
+            &adapt_messages_request(&source, "openai-chat-completions", Some("chat-test")).unwrap(),
+        )
+        .unwrap();
+
+        let responses_result = responses["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| {
+                item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                    && item.get("call_id").and_then(Value::as_str) == Some("call-denied")
+            })
+            .expect("synthetic Responses tool result");
+        assert_eq!(
+            responses_result["output"],
+            "Tool execution failed before producing a result."
+        );
+
+        let chat_result = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| {
+                message.get("role").and_then(Value::as_str) == Some("tool")
+                    && message.get("tool_call_id").and_then(Value::as_str) == Some("call-denied")
+            })
+            .expect("synthetic chat tool result");
+        assert_eq!(
+            chat_result["content"],
+            "Tool execution failed before producing a result."
+        );
+    }
+
+    #[test]
+    fn preserves_split_parallel_tool_results_that_arrive_out_of_order() {
+        let source = serde_json::to_vec(&json!({
+            "model": "claude-test",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "inspect the repository"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call-00", "name": "shell", "input": {"command": "pwd"}}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call-01", "name": "shell", "input": {"command": "git status"}}
+                ]},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "call-02", "name": "shell", "input": {"command": "git log -1"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-00", "content": "workspace"}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-02", "content": "latest commit"}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call-01", "content": "clean"}
+                ]}
+            ],
+            "tools": [{"name": "shell", "description": "Run shell", "input_schema": {"type": "object"}}]
+        }))
+        .unwrap();
+
+        let responses: Value = serde_json::from_slice(
+            &adapt_messages_request(&source, "openai-responses", Some("gpt-test")).unwrap(),
+        )
+        .unwrap();
+        let input = responses["input"].as_array().unwrap();
+
+        for call_id in ["call-00", "call-01", "call-02"] {
+            let outputs = input
+                .iter()
+                .filter(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("function_call_output")
+                        && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+                })
+                .count();
+            assert_eq!(outputs, 1, "{call_id} should have exactly one output");
+        }
+        assert!(!input.iter().any(|item| {
+            item.get("output").and_then(Value::as_str)
+                == Some("Tool execution failed before producing a result.")
+        }));
     }
 
     #[tokio::test]

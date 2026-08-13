@@ -892,6 +892,58 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.model_config).toEqual({})
   })
 
+  test('keeps the backend model_config when the claim payload provides it', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      cloudProjectId: 'cloud-project-42',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'run the scan',
+      title: 'Scan',
+      modelId: 'wecode-kimi',
+      modelConfig: {
+        base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+        api_key: 'short-lived-token',
+        codex_catalog_model_id: 'wework-kimi-k2-7',
+        codex_responses_compat_proxy: true,
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        executionRequest: expect.objectContaining({
+          model_config: expect.objectContaining({
+            base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+            api_key: 'short-lived-token',
+            codex_catalog_model_id: 'wework-kimi-k2-7',
+          }),
+        }),
+      })
+    )
+  })
+
   test('rejects local runtime task creation without a workspace path', async () => {
     const request = vi.fn()
     const services = createLocalAppServices({
@@ -973,7 +1025,8 @@ describe('createLocalAppServices', () => {
     expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
   })
 
-  test('creates a git worktree from the current branch before creating a local runtime task', async () => {
+  test('defers git worktree creation to the local runtime scheduler', async () => {
+    const worktreePath = '/Users/me/.wework/workspace/worktrees/task-1/project'
     const request = vi
       .fn()
       .mockImplementation(async (method: string, data: Record<string, unknown>) => {
@@ -982,14 +1035,11 @@ describe('createLocalAppServices', () => {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
         }
-        if (method === 'runtime.worktrees.prepare') {
-          const path = `/Users/me/.wework/workspace/worktrees/${data.worktreeId}/project`
-          return { success: true, path, worktree: { path } }
-        }
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
             taskId: 'task-1',
+            workspacePath: worktreePath,
             runtime: 'codex',
             runtimeHandle: {
               modelSelection: {
@@ -1025,10 +1075,6 @@ describe('createLocalAppServices', () => {
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
-    const worktreePath = String(createPayload.workspacePath)
-    expect(worktreePath).toMatch(
-      /^\/Users\/me\/\.wework\/workspace\/worktrees\/runtime-\d+\/project$/
-    )
     expect(response?.workspacePath).toBe(worktreePath)
     expect(response?.runtimeHandle).toEqual({
       modelSelection: {
@@ -1042,28 +1088,24 @@ describe('createLocalAppServices', () => {
       args: ['/Users/me/project'],
       timeout_seconds: 15,
     })
-    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
-      deviceId: 'device-uuid',
-      sourcePath: '/Users/me/project',
-      worktreeId: expect.stringMatching(/^runtime-\d+$/),
-    })
+    expect(request).not.toHaveBeenCalledWith('runtime.worktrees.prepare', expect.anything())
     expect(createPayload).toEqual(
       expect.objectContaining({
         deviceId: 'device-uuid',
-        workspacePath: worktreePath,
+        workspacePath: '/Users/me/project',
         execution: {
           workspace: {
             source: 'git_worktree',
-            path: worktreePath,
+            path: '/Users/me/project',
           },
         },
         executionRequest: expect.objectContaining({
           workspace_source: 'git_worktree',
-          project_workspace_path: worktreePath,
+          project_workspace_path: '/Users/me/project',
           workspace: {
             project: {
               source: 'git_worktree',
-              path: worktreePath,
+              path: '/Users/me/project',
             },
           },
         }),
@@ -1072,6 +1114,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('passes an explicit worktree branch when creating a local runtime task', async () => {
+    const worktreePath = '/Users/me/.wework/workspace/worktrees/task-1/project'
     const request = vi
       .fn()
       .mockImplementation(async (method: string, data: Record<string, unknown>) => {
@@ -1080,14 +1123,11 @@ describe('createLocalAppServices', () => {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
         }
-        if (method === 'runtime.worktrees.prepare') {
-          const path = `/Users/me/.wework/workspace/worktrees/${data.worktreeId}/project`
-          return { success: true, path, worktree: { path } }
-        }
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
             taskId: 'task-1',
+            workspacePath: worktreePath,
             runtime: 'codex',
           }
         }
@@ -1118,19 +1158,14 @@ describe('createLocalAppServices', () => {
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
-    const worktreePath = String(createPayload.workspacePath)
-    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
-      deviceId: 'device-uuid',
-      sourcePath: '/Users/me/project',
-      worktreeId: expect.stringMatching(/^runtime-\d+$/),
-      ref: 'develop',
-    })
+    expect(request).not.toHaveBeenCalledWith('runtime.worktrees.prepare', expect.anything())
     expect(createPayload).toEqual(
       expect.objectContaining({
+        workspacePath: '/Users/me/project',
         execution: {
           workspace: {
             source: 'git_worktree',
-            path: worktreePath,
+            path: '/Users/me/project',
             branch: 'develop',
           },
         },
@@ -1138,7 +1173,7 @@ describe('createLocalAppServices', () => {
           workspace: {
             project: {
               source: 'git_worktree',
-              path: worktreePath,
+              path: '/Users/me/project',
               branch: 'develop',
             },
           },
@@ -2667,15 +2702,36 @@ describe('createLocalAppServices', () => {
       address: { deviceId: 'local-device', taskId: 'task-1' },
       mode: 'suggest',
       instructions: 'Keep scope focused',
-      modelId: 'gpt-5.6-luna',
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
       intervalSeconds: 60,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.set', {
       address: { deviceId: 'device-uuid', taskId: 'task-1' },
       mode: 'suggest',
       instructions: 'Keep scope focused',
-      modelId: 'gpt-5.6-luna',
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
       intervalSeconds: 60,
+    })
+
+    await services.runtimeWorkApi?.runRuntimeSupervisorNow({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.run_now', {
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
     })
   })
 

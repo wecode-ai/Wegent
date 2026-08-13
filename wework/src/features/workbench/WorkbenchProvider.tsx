@@ -8,14 +8,15 @@ import {
   useState,
 } from 'react'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
@@ -25,7 +26,10 @@ import {
 } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
-import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
+import {
+  installMainRuntimeWorkChangedListener,
+  notifyMainRuntimeWorkChanged,
+} from '@/tauri/runtimeWorkSync'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
@@ -38,9 +42,16 @@ import {
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
+import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
+import {
+  getPluginMarketplaceCache,
+  pluginMarketplaceCacheKey,
+  subscribePluginMarketplaceCache,
+} from '@/features/plugins/pluginMarketplaceCache'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
+  InstalledPlugin,
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -51,9 +62,11 @@ import type {
   RuntimeContextUsage,
   RuntimeWorkListResponse,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   UnifiedModel,
+  User,
   UserPreferences,
 } from '@/types/api'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
@@ -207,8 +220,23 @@ export function WorkbenchProvider({
   services,
   onStartupReadyChange,
   workspaceTabId,
+  syncRemoteProjects = true,
 }: WorkbenchProviderProps) {
+  const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  // Preferences can change while a turn is running. Runtime transports only
+  // need the account identity, so keep their service graph stable across those
+  // updates and avoid an event-subscription gap during terminal delivery.
+  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
+  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const runtimeServiceUser = useMemo<User>(
+    () => ({
+      id: workbenchIdentity.id,
+      user_name: workbenchIdentity.user_name,
+      email: workbenchIdentity.email,
+    }),
+    [workbenchIdentity.email, workbenchIdentity.id, workbenchIdentity.user_name]
+  )
   const resolvedServices = useMemo(
     () =>
       services ??
@@ -219,7 +247,7 @@ export function WorkbenchProvider({
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
-        user: cloudConnection.user ?? user,
+        user: runtimeServiceUser,
       }),
     [
       cloudConnection.apiBaseUrl,
@@ -228,9 +256,8 @@ export function WorkbenchProvider({
       cloudConnection.socketBaseUrl,
       cloudConnection.socketPath,
       cloudConnection.token,
-      cloudConnection.user,
+      runtimeServiceUser,
       services,
-      user,
     ]
   )
   const executorClient = useMemo(() => {
@@ -249,8 +276,6 @@ export function WorkbenchProvider({
   // no real cloud provider is mounted; never let that placeholder override the
   // authenticated user. With a real connection, the cloud identity is the one
   // used for cloud API calls, so it must drive workbench ownership checks.
-  const usesFallbackCloudConnection = cloudConnection.serviceKey?.startsWith('fallback:') === true
-  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   useEffect(() => {
     if (!workbenchIdentity) return
     if (state.user?.id !== workbenchIdentity.id) {
@@ -258,6 +283,8 @@ export function WorkbenchProvider({
     }
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
+  const remoteProjectSyncRevisionRef = useRef(0)
+  const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
@@ -350,16 +377,21 @@ export function WorkbenchProvider({
     Record<string, PluginPathComponent[]>
   >({})
   const [trialPluginNameByScope, setTrialPluginNameByScope] = useState<Record<string, string>>({})
+  const [trialPluginAppByScope, setTrialPluginAppByScope] = useState<
+    Record<string, LocalDeviceApp>
+  >({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const composerError = composerErrorByScope[projectChatScopeKey] ?? null
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
+  const trialPluginApp = trialPluginAppByScope[projectChatScopeKey]
   useEffect(() => {
     const showGuide = (event: Event) => {
       const detail = (
         event as CustomEvent<{
           pluginName?: unknown
           templates?: unknown
+          app?: unknown
         }>
       ).detail
       if (typeof detail?.pluginName !== 'string' || !Array.isArray(detail.templates)) return
@@ -379,32 +411,63 @@ export function WorkbenchProvider({
         ...current,
         [projectChatScopeKey]: templates.slice(0, 6),
       }))
-    }
-    window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
-    return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
-  }, [projectChatScopeKey])
-  const setDraftInput = useCallback(
-    (value: string) => {
-      setDraftInputByScope(current => {
-        if ((current[projectChatScopeKey] ?? '') === value) return current
-        return { ...current, [projectChatScopeKey]: value }
-      })
-      if (!value.trim()) {
-        setTrialTemplatesByScope(current => {
-          if (!current[projectChatScopeKey]) return current
-          const next = { ...current }
-          delete next[projectChatScopeKey]
-          return next
-        })
-        setTrialPluginNameByScope(current => {
+      if (
+        detail.app &&
+        typeof detail.app === 'object' &&
+        typeof (detail.app as LocalDeviceApp).id === 'string' &&
+        typeof (detail.app as LocalDeviceApp).name === 'string'
+      ) {
+        setTrialPluginAppByScope(current => ({
+          ...current,
+          [projectChatScopeKey]: detail.app as LocalDeviceApp,
+        }))
+      } else {
+        setTrialPluginAppByScope(current => {
           if (!current[projectChatScopeKey]) return current
           const next = { ...current }
           delete next[projectChatScopeKey]
           return next
         })
       }
+    }
+    window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
+    return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
+  }, [projectChatScopeKey])
+  const setDraftInputForScope = useCallback((scopeKey: string, value: string) => {
+    setDraftInputByScope(current => {
+      if ((current[scopeKey] ?? '') === value) return current
+      if (!value && current[scopeKey] === undefined) return current
+      const next = { ...current }
+      if (value) next[scopeKey] = value
+      else delete next[scopeKey]
+      return next
+    })
+    if (!value.trim()) {
+      setTrialTemplatesByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginNameByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginAppByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+    }
+  }, [])
+  const setDraftInput = useCallback(
+    (value: string) => {
+      setDraftInputForScope(projectChatScopeKey, value)
     },
-    [projectChatScopeKey]
+    [projectChatScopeKey, setDraftInputForScope]
   )
   const setComposerError = useCallback(
     (error: string | null) => {
@@ -437,6 +500,12 @@ export function WorkbenchProvider({
       delete next[projectChatScopeKey]
       return next
     })
+    setTrialPluginAppByScope(current => {
+      if (!current[projectChatScopeKey]) return current
+      const next = { ...current }
+      delete next[projectChatScopeKey]
+      return next
+    })
   }, [projectChatScopeKey, trialPluginName])
   const applyTrialTemplate = useCallback(
     (template: PluginPathComponent) => {
@@ -457,6 +526,16 @@ export function WorkbenchProvider({
           ...current,
           [scopeKey]: trial.templates.slice(0, 6),
         }))
+        const app = trial.app
+        if (app) setTrialPluginAppByScope(current => ({ ...current, [scopeKey]: app }))
+        else {
+          setTrialPluginAppByScope(current => {
+            if (!current[scopeKey]) return current
+            const next = { ...current }
+            delete next[scopeKey]
+            return next
+          })
+        }
         return
       }
       setTrialPluginNameByScope(current => {
@@ -466,6 +545,12 @@ export function WorkbenchProvider({
         return next
       })
       setTrialTemplatesByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialPluginAppByScope(current => {
         if (!current[scopeKey]) return current
         const next = { ...current }
         delete next[scopeKey]
@@ -581,14 +666,15 @@ export function WorkbenchProvider({
     state.standaloneDeviceId,
     user,
   ])
+  const stableConsumeQueuedPluginTrial = useStableEvent(consumeQueuedPluginTrial)
 
   useEffect(() => {
-    queueMicrotask(consumeQueuedPluginTrial)
-    window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+    queueMicrotask(stableConsumeQueuedPluginTrial)
+    window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     return () => {
-      window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+      window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     }
-  }, [consumeQueuedPluginTrial])
+  }, [stableConsumeQueuedPluginTrial])
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
     if (!socketClient) return undefined
@@ -761,11 +847,11 @@ export function WorkbenchProvider({
     cloudWorkStatus,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshRuntimeTask,
     refreshDevices,
     updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,
@@ -794,11 +880,33 @@ export function WorkbenchProvider({
     []
   )
 
+  const invalidateRemoteProjectSync = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.add(normalizeRuntimeWorkspacePath(workspacePath))
+    remoteProjectSyncRevisionRef.current += 1
+  }, [])
+
+  const clearRemoteProjectSyncRemoval = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.delete(normalizeRuntimeWorkspacePath(workspacePath))
+    remoteProjectSyncSignatureRef.current = ''
+  }, [])
+
   useEffect(() => {
+    if (!syncRemoteProjects) {
+      remoteProjectSyncRevisionRef.current += 1
+      remoteProjectSyncSignatureRef.current = ''
+      return
+    }
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
       localRuntimeStateDeviceId
-    ).sort((left, right) => left.id.localeCompare(right.id))
+    )
+      .filter(
+        project =>
+          !removedRemoteProjectPathsRef.current.has(
+            normalizeRuntimeWorkspacePath(project.remotePath)
+          )
+      )
+      .sort((left, right) => left.id.localeCompare(right.id))
     if (!localRuntimeStateDeviceId || projects.length === 0) {
       remoteProjectSyncSignatureRef.current = ''
       return
@@ -806,10 +914,14 @@ export function WorkbenchProvider({
     const signature = JSON.stringify({ deviceId: localRuntimeStateDeviceId, projects })
     if (remoteProjectSyncSignatureRef.current === signature) return
     remoteProjectSyncSignatureRef.current = signature
+    const revision = remoteProjectSyncRevisionRef.current
     void enqueueRemoteProjectStateMutation(() =>
-      executorClient.runtime
-        .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
-        .then(() => refreshWorkLists())
+      revision !== remoteProjectSyncRevisionRef.current ||
+      remoteProjectSyncSignatureRef.current !== signature
+        ? Promise.resolve()
+        : executorClient.runtime
+            .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+            .then(() => refreshWorkLists())
     ).catch(error => {
       if (remoteProjectSyncSignatureRef.current === signature) {
         remoteProjectSyncSignatureRef.current = ''
@@ -822,6 +934,7 @@ export function WorkbenchProvider({
     localRuntimeStateDeviceId,
     refreshWorkLists,
     state.runtimeWork,
+    syncRemoteProjects,
   ])
 
   useEffect(() => {
@@ -1067,9 +1180,7 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
-        response.roots.forEach(workspacePath =>
-          clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
-        )
+        response.roots.forEach(clearRemoteProjectSyncRemoval)
         rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
@@ -1092,6 +1203,7 @@ export function WorkbenchProvider({
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
       const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
+      clearRemoteProjectSyncRemoval(openedWorkspacePath)
       const openedDeviceId =
         resolveLocalWorkbenchDeviceId(
           devicesForResolution,
@@ -1100,10 +1212,6 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
-      clearRuntimeProjectRemoval({
-        deviceId: openedDeviceId,
-        workspacePath: openedWorkspacePath,
-      })
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
@@ -1115,7 +1223,7 @@ export function WorkbenchProvider({
       navigateTo('/')
     },
     [
-      clearRuntimeProjectRemoval,
+      clearRemoteProjectSyncRemoval,
       executorClient,
       refreshWorkLists,
       rememberExecutionDevice,
@@ -1413,7 +1521,8 @@ export function WorkbenchProvider({
     services: resolvedServices,
     refreshWorkLists,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
+    invalidateRemoteProjectSync,
+    clearRemoteProjectSyncRemoval,
     rememberExecutionDevice,
     enqueueRemoteProjectStateMutation,
   })
@@ -1663,10 +1772,7 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            // Runtime providers may replace the provisional subtask ID with their canonical
-            // turn ID while streaming. A terminal event is already scoped to one task, so it
-            // must settle that task even when the provider-facing ID changed.
-            lifecycleStore.turnSettled(address, null, outcome)
+            lifecycleStore.turnSettled(address, turnId, outcome)
             const running = lifecycleStore.getTask(address)?.derived.isRunning ?? false
             const status = running
               ? 'active'
@@ -1712,8 +1818,8 @@ export function WorkbenchProvider({
             lifecycleStore.goalStatusReceived(address, null)
             syncRuntimeTaskSnapshot(address)
           },
-          onRuntimeSupervisorUpdated: address => {
-            syncRuntimeTaskSnapshot(address)
+          onRuntimeSupervisorUpdated: (address, payload) => {
+            updateLocalRuntimeTaskSupervisor(address, payload.supervisor)
           },
           onRuntimeGoalContinuation: (address, payload) => {
             applyRuntimeConversationGoalContinuation(address, payload)
@@ -1735,6 +1841,7 @@ export function WorkbenchProvider({
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskExecution,
       updateLocalRuntimeTaskSnapshot,
+      updateLocalRuntimeTaskSupervisor,
       updateLocalRuntimeTaskTitle,
     ]
   )
@@ -1753,9 +1860,31 @@ export function WorkbenchProvider({
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableCancelRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
-    await executorClient.runtime.cancelRuntimeTask(address)
-    void refreshWorkLists()
+    const response = await executorClient.runtime.cancelRuntimeTask(address)
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.runtime_task_cancel_failed'))
+    }
+    await notifyMainRuntimeWorkChanged(address)
+    await refreshWorkLists()
   })
+  const stableForceStartRuntimeTask = useStableEvent(async (address: RuntimeTaskAddress) => {
+    const response = await executorClient.runtime.forceStartRuntimeTask(address)
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.runtime_task_force_start_failed'))
+    }
+    await notifyMainRuntimeWorkChanged(address)
+    await refreshWorkLists()
+  })
+  const stableReorderQueuedRuntimeTask = useStableEvent(
+    async (data: RuntimeTaskQueueReorderRequest) => {
+      const response = await executorClient.runtime.reorderQueuedRuntimeTask(data)
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.runtime_task_queue_reorder_failed'))
+      }
+      await notifyMainRuntimeWorkChanged(data)
+      await refreshWorkLists()
+    }
+  )
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -1855,7 +1984,7 @@ export function WorkbenchProvider({
         // here — it reconciles for ~10s and stalls turns on the shared app-server
         // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
-        let apps = await loadComposerPluginApps({
+        const composerPluginSources = {
           listCodexApps: () => localPluginApi.listApps(),
           readLocalInstalledPlugins: async () => {
             currentComposerDeviceId =
@@ -1881,11 +2010,30 @@ export function WorkbenchProvider({
               return []
             }
           },
+          readLocalInstalledPluginDetail: (plugin: InstalledPlugin) => {
+            const labels = plugin.metadata.labels
+            const id =
+              labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : null
+            return localPluginApi.readInstalledPluginForTrial(
+              typeof id === 'string' || typeof id === 'number' ? id : String(plugin.metadata.name)
+            )
+          },
           listCloudInstalledPlugins: () =>
             cloudPluginApi
               .listInstalledPlugins(currentComposerDeviceId ?? undefined)
               .then(response => response.items),
-        })
+        }
+
+        const marketplaceCache = getPluginMarketplaceCache(
+          pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
+        )
+        const marketplaceItems = marketplaceCache?.marketplaceItems ?? []
+
+        // Paint installed plugins before connector sync / relative-logo detail reads.
+        let apps = await loadComposerPluginApps(composerPluginSources, { marketplaceItems })
+        if (apps.length > 0) {
+          publishComposerApps(apps)
+        }
 
         if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
           try {
@@ -1924,9 +2072,36 @@ export function WorkbenchProvider({
               }))
             const existingIds = new Set(apps.map(app => app.id))
             apps = [...apps, ...connectorApps.filter(app => !existingIds.has(app.id))]
+            if (apps.length > 0) {
+              publishComposerApps(apps)
+            }
           } catch (error) {
             console.warn('[Wework] Failed to load Wegent connector apps.', error)
           }
+        }
+
+        // Best-effort package logo hydration after the picker is already usable.
+        if (loadGeneration === localAppsLoadGenerationRef.current) {
+          void loadComposerPluginApps(composerPluginSources, {
+            enrichRelativeLogos: true,
+            marketplaceItems,
+          })
+            .then(enriched => {
+              if (loadGeneration !== localAppsLoadGenerationRef.current || enriched.length === 0) {
+                return
+              }
+              const byId = new Map(apps.map(app => [app.id, app]))
+              for (const app of enriched) byId.set(app.id, app)
+              const merged = [...byId.values()]
+              publishComposerApps(merged)
+              localAppsCacheRef.current = {
+                expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+                apps: merged,
+              }
+            })
+            .catch(error => {
+              console.warn('[Wework] Failed to enrich composer plugin logos.', error)
+            })
         }
 
         const isCurrentGeneration = loadGeneration === localAppsLoadGenerationRef.current
@@ -2000,6 +2175,29 @@ export function WorkbenchProvider({
     }
   }, [listLocalApps])
 
+  // Plugin market UI resolves package logos into the catalog cache; overlay those
+  // onto composer apps when the cache arrives after the warm path.
+  useEffect(() => {
+    const cacheKey = pluginMarketplaceCacheKey(cloudConnection.apiBaseUrl, cloudConnection.token)
+    return subscribePluginMarketplaceCache(snapshot => {
+      if (!snapshot || snapshot.cacheKey !== cacheKey) return
+      const current = getComposerApps()
+      if (current.length === 0) return
+      const overlayed = overlayMarketplaceLogosOnComposerApps(current, snapshot.marketplaceItems)
+      if (overlayed === current) return
+      const changed = overlayed.some(
+        (app, index) =>
+          app.logoUrl !== current[index]?.logoUrl || app.logoUrlDark !== current[index]?.logoUrlDark
+      )
+      if (!changed) return
+      publishComposerApps(overlayed)
+      const cached = localAppsCacheRef.current
+      if (cached) {
+        localAppsCacheRef.current = { ...cached, apps: overlayed }
+      }
+    })
+  }, [cloudConnection.apiBaseUrl, cloudConnection.token])
+
   const workspaceFileApi = useMemo(
     () => ({
       listWorkspaceEntries: executorClient.files.listWorkspaceEntries,
@@ -2039,6 +2237,7 @@ export function WorkbenchProvider({
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
+      inputByScope: draftInputByScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -2049,6 +2248,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2066,6 +2266,7 @@ export function WorkbenchProvider({
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
+      setInputForScope: setDraftInputForScope,
       setComposerError,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
@@ -2087,9 +2288,11 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       draftInput,
+      draftInputByScope,
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2109,6 +2312,7 @@ export function WorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       setDraftInput,
+      setDraftInputForScope,
       setComposerError,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
@@ -2119,6 +2323,7 @@ export function WorkbenchProvider({
   const paneProjectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
+      inputByScope: draftInputByScope,
       models: conversationModels,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -2129,6 +2334,7 @@ export function WorkbenchProvider({
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2146,6 +2352,7 @@ export function WorkbenchProvider({
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
+      setInputForScope: setDraftInputForScope,
       setComposerError,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
@@ -2167,9 +2374,11 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
       draftInput,
+      draftInputByScope,
       composerError,
       trialTemplates,
       trialPluginName,
+      trialPluginApp,
       state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,
@@ -2188,6 +2397,7 @@ export function WorkbenchProvider({
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
       setDraftInput,
+      setDraftInputForScope,
       setComposerError,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
@@ -2198,6 +2408,7 @@ export function WorkbenchProvider({
 
   const value: WorkbenchContextValue = {
     services: resolvedServices,
+    workspaceTabId,
     state,
     isStartupReady,
     workspaceFileApi,
@@ -2220,6 +2431,8 @@ export function WorkbenchProvider({
     startNewProjectChat,
     openRuntimeTask: runtimeTasks.openRuntimeTask,
     cancelRuntimeTask: stableCancelRuntimeTask,
+    forceStartRuntimeTask: stableForceStartRuntimeTask,
+    reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2308,6 +2521,8 @@ export function WorkbenchProvider({
       startNewProjectChat: stableStartNewProjectChat,
       openRuntimeTask: stableOpenRuntimeTask,
       cancelRuntimeTask: stableCancelRuntimeTask,
+      forceStartRuntimeTask: stableForceStartRuntimeTask,
+      reorderQueuedRuntimeTask: stableReorderQueuedRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
@@ -2402,6 +2617,7 @@ export function WorkbenchProvider({
       stableCreateProjectRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
+      stableForceStartRuntimeTask,
       stableGetDeviceHomeDirectory,
       stableGetRuntimeGoal,
       stableGetImNotificationSettings,
@@ -2427,6 +2643,7 @@ export function WorkbenchProvider({
       stableRemoveProject,
       stableReorderRuntimeProjects,
       stableReorderRuntimeProjectTasks,
+      stableReorderQueuedRuntimeTask,
       stableRenameRuntimeTask,
       stableRetryFailedMessage,
       stableRevertTurnFileChanges,
@@ -2464,10 +2681,7 @@ export function WorkbenchProvider({
   return (
     <RuntimeTaskLifecycleProvider store={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
-        <WorkbenchPaneContext.Provider value={paneValue}>
-          <CloudModelCatalogSyncDialogHost />
-          {children}
-        </WorkbenchPaneContext.Provider>
+        <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>
     </RuntimeTaskLifecycleProvider>
   )

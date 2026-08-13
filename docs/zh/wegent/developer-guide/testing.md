@@ -227,6 +227,26 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## Wework 单元测试
+
+从仓库根目录运行全部 Wework 单元测试：
+
+```bash
+pnpm --dir wework test
+```
+
+调试单个测试文件时，将文件路径或文件名传给测试脚本。以下两种形式等价，都会只
+收集匹配的 Vitest 测试文件：
+
+```bash
+pnpm --dir wework test runtimePaneMessages.test.ts
+pnpm --dir wework test -- runtimePaneMessages.test.ts
+```
+
+测试脚本会兼容性地移除参数开头的一个独立 `--`，再把其余文件过滤条件和 Vitest
+选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
+预期，避免误跑全量测试。
+
 ## Wework 桌面云设备测试
 
 从仓库根目录运行云设备功能 E2E：
@@ -287,12 +307,17 @@ CI 稳定性依赖以下约束：
 保存新的副本：
 
 - Linux workspace `node_modules` 按 Node 版本和 `pnpm-lock.yaml` 建立一份共享缓存，
-  供 Tests、Lint、平台 E2E 和 Wework E2E 使用。
+  供 Tests、Lint 和平台 E2E 使用。
+- Wework 浏览器和桌面 E2E 使用发布到 GHCR 的依赖镜像。镜像标签由对应
+  Dockerfile 的内容哈希决定；工作流只在该标签不存在时构建并发布镜像，后续任务
+  直接在镜像容器中运行，不再逐任务安装 Node、pnpm、uv、Rust、Playwright 浏览器
+  或桌面系统包。本地调试命令不会构建这些 CI 镜像。
 - uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
   按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
-- Playwright browser、Next.js build cache、Claude Code CLI 和桌面 Cargo target
-  采用显式 restore/save；只有 `refs/heads/main` 可以 save。Claude Code CLI
-  通过仓库内的 `package-lock.json` 锁定完整依赖图和包完整性。
+- Playwright browser、Next.js build cache、本地 harness CLI 和桌面 Cargo target
+  采用显式 restore/save；只有 `refs/heads/main` 可以 save。OpenCode、Claude Code
+  和 Kimi Code 通过 `.github/claude-code-cli/package-lock.json` 共享一份锁定完整
+  依赖图和包完整性的 npm 安装。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
   输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的桌面
   `--build-only`，非 `main` 任务以只读模式访问共享 sccache。
@@ -300,8 +325,8 @@ CI 稳定性依赖以下约束：
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
-- Executor 和 Tauri 系统依赖安装前先检查 runner 已安装的软件包；APT 下载缓存只有
-  `main` 写入，PR 只恢复。
+- 非 Wework E2E 的 Executor 和 Tauri 系统依赖安装前先检查 runner 已安装的软件包；
+  APT 下载缓存只有 `main` 写入，PR 只恢复。
 
 `.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入
 `main` 后运行，并拒绝非 `main` 的手动预热。它只下载依赖或编译缓存，不重复执行

@@ -4,6 +4,10 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
+  processGroupHasLiveMembersFromLinuxStats: (
+    stats: string[],
+    processGroupId: number
+  ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
 }
 
@@ -60,6 +64,28 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('treats a Linux process group with only zombie members as exited', async () => {
+    const { processGroupHasLiveMembersFromLinuxStats } = await loadProcessLifecycle()
+    const stats = [
+      '321 (wework) Z 1 321 321 0 -1 0',
+      '442 (WebKit (Network)) X 1 321 321 0 -1 0',
+      '900 (unrelated) S 1 900 900 0 -1 0',
+    ]
+
+    expect(processGroupHasLiveMembersFromLinuxStats(stats, 321)).toBe(false)
+  })
+
+  test('keeps waiting while a Linux process group has a live member', async () => {
+    const { processGroupHasLiveMembersFromLinuxStats } = await loadProcessLifecycle()
+    const stats = [
+      '321 (wework) Z 1 321 321 0 -1 0',
+      '442 (WebKitNetworkProcess) S 1 321 321 0 -1 0',
+    ]
+
+    expect(processGroupHasLiveMembersFromLinuxStats(stats, 321)).toBe(true)
+    expect(processGroupHasLiveMembersFromLinuxStats(stats, 999)).toBeNull()
+  })
+
   test('does not wait for a process group that is no longer signalable', async () => {
     const { stopProcessGroup } = await loadProcessLifecycle()
     const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {

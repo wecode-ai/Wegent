@@ -68,6 +68,7 @@ function makeSnapshot(overrides?: {
           derived: {
             executionKnown: true,
             isRunning: overrides?.isRunning ?? false,
+            isQueued: overrides?.executionPhase === 'queued',
             isTurnActive: overrides?.isTurnActive ?? false,
             isThinking: false,
             isBusy: false,
@@ -80,6 +81,7 @@ function makeSnapshot(overrides?: {
       ],
     ]),
     runningTaskKeys: new Set(),
+    queuedTaskKeys: new Set(),
     unreadTaskKeys: new Set(),
   }
 }

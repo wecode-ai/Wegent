@@ -13,6 +13,7 @@ import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
+import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -148,20 +149,14 @@ export function useKnowledgeBaseDialogs({
         // passes a repository-access gate, and starts generating straight away.
         // Everything after that point is the same knowledge base as any other.
         if (kbType === 'code_wiki') {
-          const { codeWikiApi } = await import('@/apis/code-wiki')
           // The whole payload, not the repository fields plus whatever was
           // remembered: a code wiki is an ordinary knowledge base with a repository
           // attached, and hand-picking here is what dropped the summary settings and
           // left the retrieval config to be auto-resolved instead of taken from the
           // form. `data` already carries every field the dialog collected.
-          const wiki = await codeWikiApi.create({
-            ...data,
-            name: data.name || data.resolved_name || '',
-            description: data.description || data.resolved_description,
+          const wiki = await createCodeWiki({
             namespace,
-            source_type: data.source_type!,
-            source_url: data.source_url!,
-            execution_model_ref: data.execution_model_ref!,
+            data,
           })
           setShowCreateDialog(false)
           resetCreateDialogState()

@@ -2,6 +2,24 @@
 
 This directory implements the Wework desktop workbench: Tauri, Vite, React, TypeScript, and the local coding runtime. Follow the repository-wide rules in `../AGENTS.md` first.
 
+## Wework product model
+
+Wework is a desktop workbench for organizing work and running AI coding agents.
+
+Its main product areas are:
+
+- **Tasks**: standalone work items that can start and continue AI coding sessions.
+- **Project spaces**: business workspaces containing boards, project tasks, comments, agents, automation, and execution history.
+- **Local project spaces**: stored locally and executed by local executors.
+- **Cloud project spaces**: stored in the backend and accessible across devices; their AI work can run on either local or cloud executors.
+- **Code workspaces**: device-owned source directories used by executions. A project space and a code workspace are related but are not the same object.
+- **Executions**: individual AI runs started from tasks, project tasks, comments, or automation.
+- **Sessions**: persistent Codex conversations associated with executions and continued by follow-up comments.
+
+Do not treat task ownership, project-space storage, code-workspace location, executor location, and session lifecycle as the same dimension.
+
+Before changing a Wework flow, identify the affected product area and trace its source object, storage owner, workspace, executor, and session lifecycle. If the requested behavior does not make these boundaries clear, ask the user before implementation.
+
 ## UI and component rules
 
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.
@@ -27,12 +45,12 @@ pnpm --filter wework exec prettier --check <changed-files>
 pnpm --filter wework exec eslint <changed-files>
 ```
 
-- Pass Vitest file paths and filters directly after `test`. Never insert an
-  extra `--` (for example, do not run
-  `pnpm --filter wework test -- <test-file>`), because Vitest can ignore the
-  intended filter and collect the full suite. When running a focused test,
-  confirm the initial collection output matches the requested files and stop
-  the run immediately if it starts collecting unrelated tests.
+- Pass Vitest file paths and filters directly after `test`. The test runner
+  also removes one leading `--` for compatibility with generated commands, so
+  both `pnpm --filter wework test <test-file>` and
+  `pnpm --filter wework test -- <test-file>` remain focused. When running a
+  focused test, confirm the initial collection output matches the requested
+  files and stop the run immediately if it starts collecting unrelated tests.
 
 Direct debug Cargo builds create marked, unavailable stubs for ignored bundled
 sidecars when their real binaries have not been prepared. Do not prepare DWS

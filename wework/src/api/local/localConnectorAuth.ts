@@ -37,6 +37,18 @@ export interface LocalConnectorAuthTarget {
   pluginRoot?: string | null
 }
 
+/** Short TTL so send preflight does not re-probe an already-healthy connector. */
+const OK_HEALTH_TTL_MS = 120_000
+const okHealthCache = new Map<string, number>()
+
+function healthCacheKey(target: LocalConnectorAuthTarget): string {
+  return `${target.pluginKey.trim().toLowerCase()}::${target.connectorSlug.trim().toLowerCase()}`
+}
+
+export function clearLocalConnectorAuthHealthCache(): void {
+  okHealthCache.clear()
+}
+
 async function callLocalConnectorAuth(
   method: 'health' | 'start' | 'poll' | 'cancel' | 'logout',
   target: LocalConnectorAuthTarget,
@@ -52,7 +64,16 @@ async function callLocalConnectorAuth(
 }
 
 export function localConnectorAuthHealth(target: LocalConnectorAuthTarget) {
-  return callLocalConnectorAuth('health', target)
+  const key = healthCacheKey(target)
+  const cachedAt = okHealthCache.get(key)
+  if (cachedAt != null && Date.now() - cachedAt < OK_HEALTH_TTL_MS) {
+    return Promise.resolve({ status: 'ok' as const satisfies LocalConnectorAuthStatus })
+  }
+  return callLocalConnectorAuth('health', target).then(result => {
+    if (result.status === 'ok') okHealthCache.set(key, Date.now())
+    else okHealthCache.delete(key)
+    return result
+  })
 }
 
 export function localConnectorAuthStart(target: LocalConnectorAuthTarget) {
@@ -71,6 +92,7 @@ export function localConnectorAuthCancel(target: LocalConnectorAuthTarget, sessi
 }
 
 export function localConnectorAuthLogout(target: LocalConnectorAuthTarget) {
+  okHealthCache.delete(healthCacheKey(target))
   return callLocalConnectorAuth('logout', target)
 }
 

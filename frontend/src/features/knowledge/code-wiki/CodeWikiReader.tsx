@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, PanelLeft, RefreshCw } from 'lucide-react'
+import { ArrowLeft, PanelLeft, RefreshCw, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
@@ -39,6 +39,10 @@ import { WikiPageContent } from './WikiPageContent'
 interface CodeWikiReaderProps {
   /** The code wiki being read, as the knowledge page already resolved it. */
   wiki: KnowledgeBase
+  /** Whether the current caller may update this knowledge base's settings. */
+  canConfigure?: boolean
+  /** Opens the knowledge-base configuration dialog from the owning page. */
+  onConfigure?: () => void
 }
 
 /** Depth-first, so "the first page" means the first one the reader would see. */
@@ -156,7 +160,7 @@ export function emptyStateText(
   return { title: t('codeWiki.reader.empty'), hint: t('codeWiki.reader.emptyHint') }
 }
 
-export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
+export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: CodeWikiReaderProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -318,7 +322,7 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => router.push('/knowledge?type=code')}
+          onClick={() => router.push('/knowledge?type=document')}
           data-testid="code-wiki-back-to-list"
           className="h-11 sm:h-9"
         >
@@ -326,39 +330,55 @@ export function CodeWikiReader({ wiki }: CodeWikiReaderProps) {
           {projectName || wiki.name}
         </Button>
         <span className="flex-1" />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmingRegenerate(true)}
-          disabled={control.disabled}
-          title={control.hint || undefined}
-          data-testid="code-wiki-regenerate"
-          className="h-11 sm:h-9"
-        >
-          <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
-          {control.label}
-        </Button>
+        {canConfigure && onConfigure && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onConfigure}
+            aria-label={t('document.knowledgeBase.edit')}
+            data-testid="code-wiki-configure"
+            className="h-11 w-11 shrink-0"
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+        )}
+        {canConfigure && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmingRegenerate(true)}
+            disabled={control.disabled}
+            title={control.hint || undefined}
+            data-testid="code-wiki-regenerate"
+            className="h-11 sm:h-9"
+          >
+            <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
+            {control.label}
+          </Button>
+        )}
       </div>
 
-      <AlertDialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
-        <AlertDialogContent data-testid="code-wiki-regenerate-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('codeWiki.reader.regenerateConfirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('codeWiki.reader.regenerateConfirmBody')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRegenerate}
-              data-testid="code-wiki-regenerate-confirm-action"
-            >
-              {t('codeWiki.reader.regenerate')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {canConfigure && (
+        <AlertDialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
+          <AlertDialogContent data-testid="code-wiki-regenerate-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('codeWiki.reader.regenerateConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('codeWiki.reader.regenerateConfirmBody')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleRegenerate}
+                data-testid="code-wiki-regenerate-confirm-action"
+              >
+                {t('codeWiki.reader.regenerate')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
 
       <div className="flex min-h-0 flex-1">
         {/* The left column carries what is true of the wiki: when it last changed,

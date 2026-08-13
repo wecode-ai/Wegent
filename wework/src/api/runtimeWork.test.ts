@@ -177,6 +177,31 @@ describe('createRuntimeWorkApi', () => {
     })
   })
 
+  test('starts a supervisor review immediately', async () => {
+    const response = {
+      accepted: true,
+      taskId: 'codex-1',
+      supervisor: {
+        mode: 'auto' as const,
+        status: 'active' as const,
+        instructions: '',
+        suggestions: [],
+      },
+    }
+    const post = vi.fn().mockResolvedValue(response)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      address: {
+        deviceId: 'device-1',
+        taskId: 'codex-1',
+      },
+    }
+
+    await expect(api.runRuntimeSupervisorNow(request)).resolves.toEqual(response)
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/supervisor/run-now', request)
+  })
+
   test('opens a runtime workspace without creating a task', async () => {
     const post = vi.fn().mockResolvedValue({
       accepted: true,

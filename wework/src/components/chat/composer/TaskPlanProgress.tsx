@@ -21,7 +21,7 @@ export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | nu
   const allCompleted = plan.plan.every(step => step.status === 'completed')
 
   return (
-    <div className="relative z-20 mb-2 flex justify-center">
+    <div data-testid="runtime-plan-progress" className="relative z-0 mb-2 flex justify-center">
       <div className="group relative" tabIndex={0}>
         <div
           className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 w-max max-w-[min(31rem,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-border/70 bg-background px-3.5 py-2.5 opacity-0 shadow-[0_8px_22px_rgba(0,0,0,0.08)] transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100"

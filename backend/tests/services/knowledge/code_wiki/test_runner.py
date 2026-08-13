@@ -961,6 +961,21 @@ def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
     assert started.generation.user_id == test_user.id
 
 
+def test_an_inactive_wiki_owner_refuses_a_run_before_creating_a_task(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    test_user.is_active = False
+    test_db.flush()
+
+    with pytest.raises(CodeWikiRunError, match="no active owner"):
+        start_run(
+            test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+        )
+
+    assert tasks.created == []
+    assert test_db.query(WikiGeneration).count() == 0
+
+
 # --- going back to an earlier version ----------------------------------------
 
 
@@ -1001,9 +1016,7 @@ def test_an_earlier_version_can_be_published_again(
     finish_run(test_db, generation=thin, succeeded=True)
     assert published_generation_id(knowledge_base) == thin.id
 
-    republish_generation(
-        test_db, knowledge_base=knowledge_base, generation_id=good.id, user=test_user
-    )
+    republish_generation(test_db, knowledge_base=knowledge_base, generation_id=good.id)
 
     assert published_generation_id(knowledge_base) == good.id
 
@@ -1032,7 +1045,6 @@ def test_a_version_from_another_wiki_is_refused(
             test_db,
             knowledge_base=knowledge_base,
             generation_id=stranger.id,
-            user=test_user,
         )
 
 
@@ -1051,5 +1063,4 @@ def test_a_version_that_never_finished_is_refused(
             test_db,
             knowledge_base=knowledge_base,
             generation_id=started.generation.id,
-            user=test_user,
         )

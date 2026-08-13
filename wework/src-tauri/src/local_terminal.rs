@@ -16,7 +16,7 @@ const TERMINAL_OUTPUT_EVENT: &str = "local-terminal-output";
 const TERMINAL_EXIT_EVENT: &str = "local-terminal-exit";
 const DEFAULT_UTF8_LANG: &str = "en_US.UTF-8";
 const DEFAULT_UTF8_LC_CTYPE: &str = "UTF-8";
-const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(2);
+const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const OPEN_CODE_HARNESS_ID: &str = "opencode";
 const CLAUDE_CODE_HARNESS_ID: &str = "claude_code";
 const KIMI_CODE_HARNESS_ID: &str = "kimi_code";
@@ -38,6 +38,7 @@ struct LocalHarnessDefinition {
     version_args: &'static [&'static str],
     home_relative_paths: &'static [&'static str],
     prompt_mode: HarnessPromptMode,
+    initial_input_readiness_marker: Option<&'static str>,
     resume_args: &'static [&'static str],
 }
 
@@ -48,6 +49,7 @@ const LOCAL_HARNESSES: [LocalHarnessDefinition; 3] = [
         version_args: &["--version"],
         home_relative_paths: &[".opencode/bin/opencode"],
         prompt_mode: HarnessPromptMode::Flag("--prompt"),
+        initial_input_readiness_marker: None,
         resume_args: &["--continue"],
     },
     LocalHarnessDefinition {
@@ -60,6 +62,7 @@ const LOCAL_HARNESSES: [LocalHarnessDefinition; 3] = [
             ".claude/bin/claude",
         ],
         prompt_mode: HarnessPromptMode::Positional,
+        initial_input_readiness_marker: None,
         resume_args: &["--continue"],
     },
     LocalHarnessDefinition {
@@ -68,6 +71,7 @@ const LOCAL_HARNESSES: [LocalHarnessDefinition; 3] = [
         version_args: &["--version"],
         home_relative_paths: &[".local/bin/kimi", ".kimi-code/bin/kimi"],
         prompt_mode: HarnessPromptMode::TerminalInput,
+        initial_input_readiness_marker: Some("No session yet"),
         resume_args: &["--continue"],
     },
 ];
@@ -124,6 +128,7 @@ struct LocalTerminalSession {
     attach_sender: Option<mpsc::SyncSender<()>>,
     attached: bool,
     initial_input: Option<String>,
+    initial_input_readiness_marker: Option<String>,
     harness: Option<LocalHarnessSessionMetadata>,
     output_sequence: u64,
     scrollback: String,
@@ -1150,6 +1155,9 @@ pub fn start_local_harness(
         None,
         Some(session_id.clone()),
         initial_input,
+        definition
+            .initial_input_readiness_marker
+            .map(ToOwned::to_owned),
     );
     let started_session_id = result?;
     let persisted = LocalHarnessSessionDescriptor {
@@ -1211,6 +1219,7 @@ fn start_pty_shell(
         workspace_path,
         None,
         None,
+        None,
     )
 }
 
@@ -1227,6 +1236,7 @@ fn start_pty_process(
     workspace_path: Option<String>,
     session_id_override: Option<String>,
     initial_input: Option<String>,
+    initial_input_readiness_marker: Option<String>,
 ) -> Result<String, String> {
     let cwd = normalized_cwd(cwd)?;
     let diagnostic_cwd = cwd.clone();
@@ -1285,6 +1295,7 @@ fn start_pty_process(
         attach_sender: Some(attach_sender),
         attached: false,
         initial_input,
+        initial_input_readiness_marker,
         harness: harness.map(|metadata| LocalHarnessSessionMetadata {
             harness_id: metadata.harness_id,
             title: metadata.title,
@@ -1332,17 +1343,31 @@ fn start_pty_process(
                     if data.is_empty() {
                         continue;
                     }
-                    let sequence = match sessions.lock() {
+                    let (sequence, initial_input_error) = match sessions.lock() {
                         Ok(mut sessions) => {
                             let Some(session) = sessions.get_mut(&output_session_id) else {
                                 break;
                             };
                             session.output_sequence += 1;
                             append_bounded_scrollback(&mut session.scrollback, &data);
-                            session.output_sequence
+                            let initial_input_error = write_initial_input_after_output(
+                                &mut session.initial_input,
+                                session.initial_input_readiness_marker.as_deref(),
+                                &session.scrollback,
+                                session.writer.as_mut(),
+                            )
+                            .err();
+                            (session.output_sequence, initial_input_error)
                         }
                         Err(_) => break,
                     };
+                    if let Some(error) = initial_input_error {
+                        log::warn!(
+                            "Failed to write initial terminal input after first output: session_id={}, error={}",
+                            output_session_id,
+                            error
+                        );
+                    }
                     let _ = app.emit(
                         TERMINAL_OUTPUT_EVENT,
                         LocalTerminalOutput {
@@ -1429,17 +1454,6 @@ pub fn attach_local_terminal(
         ));
     };
 
-    if let Some(initial_input) = session.initial_input.as_deref() {
-        session
-            .writer
-            .write_all(initial_input.as_bytes())
-            .map_err(|error| format!("Failed to write initial terminal input: {error}"))?;
-        session
-            .writer
-            .flush()
-            .map_err(|error| format!("Failed to flush initial terminal input: {error}"))?;
-        session.initial_input = None;
-    }
     if attach_sender.send(()).is_err() {
         log::warn!(
             "Tauri local terminal attach failed: reason=attach_receiver_closed, host_pid={}, session_id={}, task_id={:?}, workspace_path={:?}",
@@ -1460,6 +1474,28 @@ pub fn attach_local_terminal(
         task_id,
         workspace_path
     );
+    Ok(())
+}
+
+fn write_initial_input_after_output(
+    initial_input: &mut Option<String>,
+    readiness_marker: Option<&str>,
+    output: &str,
+    writer: &mut dyn Write,
+) -> Result<(), String> {
+    let Some(value) = initial_input.as_deref() else {
+        return Ok(());
+    };
+    if readiness_marker.is_some_and(|marker| !output.contains(marker)) {
+        return Ok(());
+    }
+    writer
+        .write_all(value.as_bytes())
+        .map_err(|error| format!("Failed to write initial terminal input: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("Failed to flush initial terminal input: {error}"))?;
+    *initial_input = None;
     Ok(())
 }
 
@@ -1678,6 +1714,72 @@ mod tests {
             ),
             Some(format!("\u{1b}[200~{prompt}\u{1b}[201~\r"))
         );
+    }
+
+    #[test]
+    fn writes_terminal_input_only_after_output_is_observed() {
+        let mut initial_input = Some("inspect the project\r".to_string());
+        let mut writer = Vec::new();
+
+        write_initial_input_after_output(&mut initial_input, None, "terminal output", &mut writer)
+            .unwrap();
+
+        assert_eq!(writer, b"inspect the project\r");
+        assert_eq!(initial_input, None);
+    }
+
+    #[test]
+    fn waits_for_the_harness_readiness_marker_before_writing() {
+        let mut initial_input = Some("inspect the project\r".to_string());
+        let mut writer = Vec::new();
+
+        write_initial_input_after_output(
+            &mut initial_input,
+            Some("No session yet"),
+            "terminal capability handshake",
+            &mut writer,
+        )
+        .unwrap();
+
+        assert!(writer.is_empty());
+        assert_eq!(initial_input.as_deref(), Some("inspect the project\r"));
+
+        write_initial_input_after_output(
+            &mut initial_input,
+            Some("No session yet"),
+            "Welcome to Kimi Code! No session yet",
+            &mut writer,
+        )
+        .unwrap();
+
+        assert_eq!(writer, b"inspect the project\r");
+        assert_eq!(initial_input, None);
+    }
+
+    #[test]
+    fn keeps_terminal_input_pending_when_the_write_fails() {
+        struct FailingWriter;
+
+        impl Write for FailingWriter {
+            fn write(&mut self, _buffer: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("write failed"))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut initial_input = Some("inspect the project\r".to_string());
+
+        assert!(write_initial_input_after_output(
+            &mut initial_input,
+            None,
+            "terminal output",
+            &mut FailingWriter,
+        )
+        .is_err());
+        assert_eq!(initial_input.as_deref(), Some("inspect the project\r"));
     }
 
     #[test]

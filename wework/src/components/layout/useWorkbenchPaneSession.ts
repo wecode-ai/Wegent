@@ -22,6 +22,7 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
@@ -62,6 +63,11 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
+import {
+  hasBrowserAnnotationScope,
+  isBrowserAnnotationContext,
+} from '@/lib/browser-annotation-context'
 import {
   abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
@@ -152,7 +158,6 @@ const RUNTIME_TRANSCRIPT_PAGE_SIZE =
     ? configuredRuntimeTranscriptPageSize
     : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
-const noopSetInput = () => undefined
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -206,8 +211,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
-  const input = projectChat.input ?? ''
-  const scopedSetInput = projectChat.setInput ?? noopSetInput
+  const [browserAnnotationCommand, setBrowserAnnotationCommand] =
+    useState<BrowserAnnotationCommand | null>(null)
+  const browserAnnotationCommandSequenceRef = useRef(0)
+  const inputScopeKey = currentRuntimeTask
+    ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
+    : projectChat.scopeKey
+  const input = projectChat.inputByScope[inputScopeKey] ?? ''
+  const setInputForScope = projectChat.setInputForScope
+  const scopedSetInput = useCallback(
+    (value: string) => setInputForScope(inputScopeKey, value),
+    [inputScopeKey, setInputForScope]
+  )
   const [localError, setLocalError] = useState<string | null>(null)
   const error = projectChat.setComposerError ? (projectChat.composerError ?? null) : localError
   const setError = projectChat.setComposerError ?? setLocalError
@@ -223,6 +238,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       scopedSetInput(value)
     },
     [scopedSetInput]
+  )
+
+  const clearCodeCommentsAfterCommit = useCallback(
+    (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
+      setCodeCommentContexts([])
+      if (!contexts.some(isBrowserAnnotationContext)) return
+
+      browserAnnotationCommandSequenceRef.current += 1
+      setBrowserAnnotationCommand({
+        sequence: browserAnnotationCommandSequenceRef.current,
+        type: 'clear_all_and_exit',
+        reason,
+      })
+    },
+    []
   )
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
@@ -1337,7 +1367,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
       setQueuedMessages(messages =>
         messages.map(message =>
-          message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
+          message.id === queuedMessage.id
+            ? { ...message, status: 'sending', deliveryMode: 'message' }
+            : message
         )
       )
 
@@ -1351,11 +1383,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             },
           })
           if (sent) {
-            setQueuedMessages(messages =>
-              messages.map(message =>
-                message.id === queuedMessage.id ? { ...message, deliveryMode: 'message' } : message
-              )
-            )
             if (
               currentRuntimeTask &&
               lifecycleStore.getTask(currentRuntimeTask)?.turn.phase === 'streaming'
@@ -1606,20 +1633,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           if (currentRuntimeTask) {
             const draftGoal = createPendingRuntimeGoal(submittedInput)
             const initialGoal = runtimeGoalCreateInput(draftGoal)
-            const queuedMessage: RuntimePaneQueuedMessage = {
+            const baseMessage: RuntimePaneQueuedMessage = {
               id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
               content: submittedInput,
               status: 'queued',
               createdAt: new Date().toISOString(),
               attachments: persistAttachmentReferences(currentAttachments),
               runtimeGoalRequest: true,
-              initialGoal,
               additionalContext: options.additionalContext,
               ...getRuntimeModelFields(),
             }
 
             projectChat.resetAttachments()
-            if (paneStatus.isBusy) {
+            if (paneStatus.isBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
@@ -1634,10 +1660,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               setRuntimeConversationGoal(currentRuntimeTask, response.goal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
               setGoalDraftActive(false)
+              setQueuedMessages(messages => [...messages, baseMessage])
+              await sendQueuedMessageAsGuidance(baseMessage)
+              return true
+            }
+
+            const queuedMessage: RuntimePaneQueuedMessage = {
+              ...baseMessage,
+              initialGoal,
+            }
+            if (paneStatus.isBusy) {
+              setInput('')
+              setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
+              lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
+              setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
-              if (options.guideWhenBusy) {
-                await sendQueuedMessageAsGuidance(queuedMessage)
-              }
               return true
             }
 
@@ -1893,7 +1930,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               dispatchMessages({ type: 'reset', messages: [] })
             }
             projectChat.resetAttachments()
-            setCodeCommentContexts([])
+            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
             restoreInputAfterFailure(visibleSubmittedInput)
           }
@@ -1940,7 +1977,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           if (sent) {
             setInput('')
             projectChat.resetAttachments()
-            setCodeCommentContexts([])
+            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
@@ -2001,6 +2038,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       },
       [
         appendLocalUserMessage,
+        clearCodeCommentsAfterCommit,
         codeCommentContexts,
         compactRuntimePaneTask,
         currentRuntimeTask,
@@ -2030,9 +2068,42 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setCodeCommentContexts(current => [...current.filter(item => item.id !== context.id), context])
   }, [])
 
-  const clearCodeComments = useCallback(() => {
-    setCodeCommentContexts([])
+  const replaceBrowserCodeComments = useCallback(
+    (scope: BrowserAnnotationScope, contexts: CodeCommentContext[]) => {
+      setCodeCommentContexts(current => {
+        const replacementById = new Map(contexts.map(context => [context.id, context]))
+        const existingOrder = current
+          .filter(context => hasBrowserAnnotationScope(context, scope))
+          .map(context => context.id)
+        const orderedReplacement = [
+          ...existingOrder
+            .map(id => replacementById.get(id))
+            .filter((context): context is CodeCommentContext => Boolean(context)),
+          ...contexts.filter(context => !existingOrder.includes(context.id)),
+        ]
+        if (existingOrder.length === 0) return [...current, ...orderedReplacement]
+
+        let replacementInserted = false
+        return current.flatMap(context => {
+          if (!hasBrowserAnnotationScope(context, scope)) return [context]
+          if (replacementInserted) return []
+          replacementInserted = true
+          return orderedReplacement
+        })
+      })
+    },
+    []
+  )
+
+  const removeBrowserCodeComments = useCallback((scope: BrowserAnnotationScope) => {
+    setCodeCommentContexts(current =>
+      current.filter(context => !hasBrowserAnnotationScope(context, scope))
+    )
   }, [])
+
+  const clearCodeComments = useCallback(() => {
+    clearCodeCommentsAfterCommit('composer_clear', codeCommentContexts)
+  }, [clearCodeCommentsAfterCommit, codeCommentContexts])
 
   const cancelQueuedMessage = useCallback(
     (id: string) => {
@@ -2279,7 +2350,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return false
   }, [
     currentRuntime,
-    currentRuntimeTask,
     getRuntimeModelFields,
     goal,
     paneStatus.isBusy,
@@ -2424,6 +2494,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     queuedMessagesPaused,
     guidanceMessages,
     codeCommentContexts,
+    browserAnnotationCommand,
     input,
     setInput,
     error,
@@ -2455,6 +2526,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendRequestUserInputResponse,
     ignoreRequestUserInput,
     addCodeComment,
+    replaceBrowserCodeComments,
+    removeBrowserCodeComments,
     clearCodeComments,
     cancelQueuedMessage,
     resumeQueuedMessages,

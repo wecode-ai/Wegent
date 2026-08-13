@@ -219,10 +219,16 @@ import {
 } from './shared.mjs'
 
 class DesktopE2EServer {
-  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
+  constructor(
+    workspacePath,
+    cloudWorkspacePath = workspacePath,
+    desktopScenario = null,
+    { enableMarketplaceConnectorAppsStub = false } = {}
+  ) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
     this.desktopScenario = desktopScenario
+    this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
@@ -928,6 +934,67 @@ class DesktopE2EServer {
       return
     }
 
+    // Official/local marketplace plugins may infer on_install connectors from
+    // .app.json entries (e.g. openai-platform). ensureMarketplaceConnectors
+    // lists Wegent connector-apps before plugin/install; stub them as already
+    // connected so desktop E2E can exercise the real install path.
+    if (
+      this.enableMarketplaceConnectorAppsStub &&
+      request.method === 'GET' &&
+      url.pathname === '/api/connector-apps'
+    ) {
+      const connected = status => ({
+        status,
+        external_account_name: status === 'connected' ? 'desktop-e2e' : null,
+        granted_scopes: status === 'connected' ? ['e2e'] : [],
+        expires_at: null,
+      })
+      json(response, 200, [
+        {
+          id: 1,
+          slug: 'openai-platform',
+          name: 'OpenAI Platform',
+          description: 'Desktop E2E stub for OpenAI Developers app connectors',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: connected('connected'),
+        },
+        {
+          id: 2,
+          slug: 'openai-developers',
+          name: 'OpenAI Developers',
+          description: 'Desktop E2E stub matching inferred plugin-name connectors',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: connected('connected'),
+        },
+        {
+          id: 3,
+          slug: 'github',
+          name: 'GitHub',
+          description: 'Desktop E2E stub for cloud connector authorization flows',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: connected('connected'),
+        },
+      ])
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/users/me/wegent-runtime-token') {
+      assert.equal(
+        request.headers.authorization,
+        'Bearer wework-desktop-e2e-cloud-token',
+        'The runtime token request did not use the cloud authentication token'
+      )
+      json(response, 200, {
+        auth_token: 'wework-desktop-e2e-runtime-token',
+        token_type: 'bearer',
+        expires_in: 3600,
+      })
+      return
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/sites/app-types') {
       json(response, 200, {
         items: [
@@ -1154,6 +1221,62 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/model-runtime/responses' &&
+      this.scenario === 'supervisor'
+    ) {
+      const body = await readRequestBody(request)
+      const requestText = JSON.stringify(body)
+      assert.equal(
+        request.headers.authorization,
+        'Bearer wework-desktop-e2e-cloud-token',
+        'The supervisor model API request did not use the cloud authentication token'
+      )
+      assert.deepEqual(
+        body.model_ref,
+        {
+          name: CLOUD_PUBLIC_MODEL_NAME,
+          type: 'public',
+          namespace: 'default',
+          resource_user_id: 0,
+        },
+        'The supervisor model API request did not preserve the selected cloud model identity'
+      )
+      assert.equal(
+        body.metadata?.source,
+        'wework-supervisor',
+        'The supervisor model API request did not identify its source'
+      )
+      assert.ok(
+        requestText.includes('correction'),
+        'The supervisor evaluator request did not include its structured output schema'
+      )
+      assert.ok(
+        requestText.includes(SUPERVISOR_COMPLETION_TEXT),
+        'The supervisor evaluator did not receive the latest assistant progress'
+      )
+      assert.equal(
+        requestText.includes(SUPERVISOR_PROMPT),
+        false,
+        'The supervisor evaluator received the original user transcript instead of recent AI content'
+      )
+      this.recordScenarioRequest('supervisor', {
+        body,
+        headers: request.headers,
+        pathname: url.pathname,
+      })
+      json(response, 200, {
+        output_text: JSON.stringify({
+          correction: SUPERVISOR_CORRECTION,
+          rationale: 'The completed reply should restate the original constraint.',
+        }),
+        model: CLOUD_PUBLIC_MODEL_NAME,
+        created_at: '2026-08-12T00:00:00Z',
+      })
+      return
+    }
+
     if (request.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
       this.catalogRequests.push({
         authorization: request.headers.authorization ?? null,
@@ -1188,8 +1311,9 @@ class DesktopE2EServer {
       return
     }
 
+    const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
     const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses'
+      url.pathname === '/v1/responses' || url.pathname === '/responses' || cloudResponsesProxy
         ? 'responses'
         : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
           ? 'chat'
@@ -1197,7 +1321,28 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     if (request.method === 'POST' && modelProtocol) {
-      await this.handleModelResponse(request, response, modelProtocol)
+      if (cloudResponsesProxy) {
+        assert.equal(
+          request.headers['x-wegent-model-type'],
+          'public',
+          'The automation cloud model type was not forwarded to the Backend proxy'
+        )
+        assert.equal(
+          request.headers['x-wegent-model-namespace'],
+          'default',
+          'The automation cloud model namespace was not forwarded to the Backend proxy'
+        )
+        assert.equal(
+          request.headers['x-wegent-model-user-id'],
+          '0',
+          'The automation cloud model owner was not forwarded to the Backend proxy'
+        )
+      }
+      await this.handleModelResponse(request, response, modelProtocol, {
+        acceptedAuthorization: cloudResponsesProxy
+          ? 'Bearer wework-desktop-e2e-cloud-token'
+          : undefined,
+      })
       return
     }
 
@@ -1310,13 +1455,15 @@ class DesktopE2EServer {
     return false
   }
 
-  async handleModelResponse(request, response, protocol) {
+  async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
     const modelRequest = { authorization, body, scenario: this.scenario }
     this.modelRequests.push(modelRequest)
     const authenticated =
-      authorization === `Bearer ${MODEL_API_KEY}` || request.headers['x-api-key'] === MODEL_API_KEY
+      authorization === `Bearer ${MODEL_API_KEY}` ||
+      authorization === options.acceptedAuthorization ||
+      request.headers['x-api-key'] === MODEL_API_KEY
     if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
@@ -2683,7 +2830,8 @@ class DesktopE2EServer {
     if (this.scenario === 'supervisor') {
       this.recordScenarioRequest('supervisor', modelRequest)
       const requestText = JSON.stringify(body)
-      if (requestText.includes('Current visible progress snapshot (JSON):')) {
+      if (body.metadata?.source === 'wework-supervisor') {
+        assert.equal(body.stream, false, 'The supervisor evaluator request must not stream')
         assert.ok(
           requestText.includes('correction'),
           'The supervisor evaluator request did not include its structured output schema'
@@ -2697,34 +2845,63 @@ class DesktopE2EServer {
           false,
           'The supervisor evaluator received the original user transcript instead of recent AI content'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          assistantMessage(
-            JSON.stringify({
-              correction: SUPERVISOR_CORRECTION,
-              rationale: 'The completed reply should restate the original constraint.',
-            })
-          ),
-          responseCompleted(responseId),
-        ])
+        json(response, 200, {
+          id: responseId,
+          object: 'response',
+          status: 'completed',
+          model: body.model,
+          output: [
+            {
+              id: `supervisor-evaluation-${responseId}`,
+              type: 'message',
+              status: 'completed',
+              role: 'assistant',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    correction: SUPERVISOR_CORRECTION,
+                    rationale: 'The completed reply should restate the original constraint.',
+                  }),
+                  annotations: [],
+                },
+              ],
+            },
+          ],
+          usage: {
+            input_tokens: 0,
+            input_tokens_details: null,
+            output_tokens: 0,
+            output_tokens_details: null,
+            total_tokens: 0,
+          },
+        })
         return
       }
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
+        const stream = streamingTextEvents(responseId, SUPERVISOR_CORRECTION_COMPLETION_TEXT)
         response.writeHead(200, {
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
-        response.write(createSse([responseCreated(responseId)]))
+        response.write(createSse(stream.start))
         this.resolveSupervisorCorrectionStarted()
         await this.supervisorCorrectionRelease
-        response.end(
+        response.write(
           createSse([
-            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-            responseCompleted(responseId),
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: SUPERVISOR_CORRECTION_COMPLETION_TEXT,
+              offset: 0,
+            },
           ])
         )
+        response.end(createSse(stream.finish))
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')

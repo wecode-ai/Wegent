@@ -15,12 +15,15 @@
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { KnowledgeDocumentPageDesktop } from './KnowledgeDocumentPageDesktop'
 import { KnowledgeDocumentPageMobile } from './KnowledgeDocumentPageMobile'
-import type { KnowledgeView } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeView } from '@/types/knowledge'
+
+export type KnowledgeTopView = KnowledgeView | CodeWikiView
 
 export interface KnowledgeViewState {
   visible: boolean
-  currentView: KnowledgeView
-  onViewChange?: (view: KnowledgeView) => void
+  currentView: KnowledgeTopView
+  switcher?: 'document' | 'code-wiki'
+  onViewChange?: (view: KnowledgeTopView) => void
 }
 
 interface KnowledgeDocumentPageProps {

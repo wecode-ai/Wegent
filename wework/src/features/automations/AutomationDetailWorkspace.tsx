@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import {
   Check,
   ChevronDown,
@@ -15,7 +14,14 @@ import {
 } from 'lucide-react'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
+import {
+  MenuSelect,
+  PopupMenu,
+  TimeMenu,
+  WeekdayMenu,
+  type MenuOption,
+} from '@/components/common/MenuSelect'
+import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/SettingsGroup'
 import type {
   DeviceInfo,
   RuntimeProjectWork,
@@ -54,6 +60,7 @@ interface AutomationDetailWorkspaceProps {
   dirty: boolean
   running: boolean
   onChange: <K extends keyof AutomationDraft>(key: K, value: AutomationDraft[K]) => void
+  onModelChange: (model: UnifiedModel | null) => void
   onSourceChange: (source: AutomationSource) => void
   onClose: () => void
   onSave: () => void
@@ -78,6 +85,7 @@ export function AutomationDetailWorkspace({
   dirty,
   running,
   onChange,
+  onModelChange,
   onSourceChange,
   onClose,
   onSave,
@@ -90,11 +98,20 @@ export function AutomationDetailWorkspace({
   const taskOptions = buildAutomationTaskOptions(runtimeWork, new Set(localDeviceIds))
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
   const selectedModel = models.find(
-    model => (model.modelId ?? model.name) === draft.modelId && model.type === draft.modelType
+    model =>
+      model.type === draft.modelType &&
+      (model.name === draft.modelId || (model.modelId ?? model.name) === draft.modelId)
   )
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
     projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
+  const projectOptionLabel = (option: (typeof projectOptions)[number]) => {
+    if (option.workspaceKind !== 'worktree') return option.name
+    const worktreeLabel = t('workbench.project_workspace_kind_worktree', 'Worktree')
+    return option.workspaceLabel && option.workspaceLabel !== option.name
+      ? `${option.name} · ${worktreeLabel} · ${option.workspaceLabel}`
+      : `${option.name} · ${worktreeLabel}`
+  }
 
   return (
     <section
@@ -330,7 +347,7 @@ export function AutomationDetailWorkspace({
                     { value: '', label: t('workbench.none', '无') },
                     ...projectOptions.map(project => ({
                       value: project.key,
-                      label: project.name,
+                      label: projectOptionLabel(project),
                     })),
                   ]}
                 />
@@ -345,8 +362,13 @@ export function AutomationDetailWorkspace({
                   }
                   onChange={value => {
                     const [modelType, ...modelIdParts] = value.split(':')
-                    onChange('modelType', modelType)
-                    onChange('modelId', modelIdParts.join(':'))
+                    const modelId = modelIdParts.join(':')
+                    onModelChange(
+                      models.find(
+                        model =>
+                          model.type === modelType && (model.modelId ?? model.name) === modelId
+                      ) ?? null
+                    )
                   }}
                   options={[
                     { value: '', label: t('workbench.automatic', '自动') },
@@ -567,45 +589,6 @@ function FrequencySettings({
   )
 }
 
-function SectionTitle({ title, action }: { title: string; action?: ReactNode }) {
-  return (
-    <div className="mb-2 mt-7 flex items-center justify-between px-1 text-sm font-medium text-text-tertiary">
-      <h3>{title}</h3>
-      {action ? <span className="text-text-secondary">{action}</span> : null}
-    </div>
-  )
-}
-
-function SettingsGroup({ children }: { children: ReactNode }) {
-  return (
-    <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border px-4">
-      {children}
-    </div>
-  )
-}
-
-function SettingsRow({
-  label,
-  description,
-  children,
-}: {
-  label: string
-  description?: string
-  children: ReactNode
-}) {
-  return (
-    <div className="flex min-h-12 items-center justify-between gap-6 py-2">
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium">{label}</span>
-        {description ? (
-          <span className="mt-0.5 block text-xs leading-4 text-text-secondary">{description}</span>
-        ) : null}
-      </span>
-      <span className="flex min-w-0 flex-1 items-center justify-end">{children}</span>
-    </div>
-  )
-}
-
 function InlineSelect({
   dataTestId,
   value,
@@ -686,259 +669,6 @@ function AutomationTaskSelect({
         </div>
       )}
     </PopupMenu>
-  )
-}
-
-interface MenuOption {
-  value: string
-  label: string
-  disabled?: boolean
-}
-
-function MenuSelect({
-  testId,
-  value,
-  options,
-  onChange,
-  pill = false,
-  disabled = false,
-}: {
-  testId: string
-  value: string
-  options: MenuOption[]
-  onChange: (value: string) => void
-  pill?: boolean
-  disabled?: boolean
-}) {
-  const selected = options.find(option => option.value === value)
-  return (
-    <PopupMenu
-      testId={testId}
-      disabled={disabled}
-      trigger={
-        <span
-          className={cn(
-            'inline-flex h-8 max-w-64 items-center justify-end gap-1.5 rounded-full px-2 text-sm font-medium',
-            pill && 'bg-surface'
-          )}
-        >
-          <span className="truncate">{selected?.label ?? value}</span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-        </span>
-      }
-    >
-      {close =>
-        options.map(option => (
-          <button
-            key={option.value}
-            type="button"
-            data-testid={`${testId}-option-${option.value}`}
-            disabled={option.disabled}
-            onClick={() => {
-              if (option.disabled) return
-              onChange(option.value)
-              close()
-            }}
-            className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
-          </button>
-        ))
-      }
-    </PopupMenu>
-  )
-}
-
-function TimeMenu({
-  testId,
-  value,
-  onChange,
-}: {
-  testId: string
-  value: string
-  onChange: (value: string) => void
-}) {
-  const options = Array.from({ length: 96 }, (_, index) => {
-    const hour = Math.floor(index / 4)
-    const minute = (index % 4) * 15
-    const raw = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-    return { value: raw, label: `${hour}:${String(minute).padStart(2, '0')}` }
-  })
-  if (!options.some(option => option.value === value)) {
-    const [hour = '0', minute = '00'] = value.split(':')
-    options.push({ value, label: `${Number(hour)}:${minute}` })
-    options.sort((left, right) => left.value.localeCompare(right.value))
-  }
-  return <MenuSelect testId={testId} value={value} options={options} onChange={onChange} pill />
-}
-
-function WeekdayMenu({
-  testId,
-  value,
-  onChange,
-  single = false,
-}: {
-  testId: string
-  value: string[]
-  onChange: (value: string[]) => void
-  single?: boolean
-}) {
-  const { t } = useTranslation('common')
-  const days = [
-    { value: '1', label: t('workbench.automation_monday_short', '周一') },
-    { value: '2', label: t('workbench.automation_tuesday_short', '周二') },
-    { value: '3', label: t('workbench.automation_wednesday_short', '周三') },
-    { value: '4', label: t('workbench.automation_thursday_short', '周四') },
-    { value: '5', label: t('workbench.automation_friday_short', '周五') },
-    { value: '6', label: t('workbench.automation_saturday_short', '周六') },
-    { value: '0', label: t('workbench.automation_sunday_short', '周日') },
-  ]
-  const selectedLabels = days.filter(day => value.includes(day.value)).map(day => day.label)
-  const label =
-    selectedLabels.length <= 2
-      ? selectedLabels.join(t('workbench.automation_day_joiner', '和'))
-      : `${selectedLabels.slice(0, 3).join('、')}…`
-
-  return (
-    <PopupMenu
-      testId={testId}
-      trigger={
-        <span className="inline-flex h-8 max-w-64 items-center gap-1.5 rounded-full bg-surface px-2 text-sm font-medium">
-          <span className="truncate">
-            {label || t('workbench.automation_select_days', '选择日期')}
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
-        </span>
-      }
-      keepOpen={!single}
-    >
-      {close =>
-        days.map(day => {
-          const checked = value.includes(day.value)
-          return (
-            <button
-              key={day.value}
-              type="button"
-              data-testid={`${testId}-option-${day.value}`}
-              onClick={() => {
-                if (single) {
-                  onChange([day.value])
-                  close()
-                  return
-                }
-                const next = checked
-                  ? value.filter(current => current !== day.value)
-                  : [...value, day.value]
-                if (next.length > 0) onChange(next)
-              }}
-              className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
-            >
-              <span className="flex-1">{day.label}</span>
-              {checked ? <Check className="h-4 w-4" /> : null}
-            </button>
-          )
-        })
-      }
-    </PopupMenu>
-  )
-}
-
-function PopupMenu({
-  testId,
-  trigger,
-  children,
-  keepOpen = false,
-  disabled = false,
-  menuWidth,
-}: {
-  testId: string
-  trigger: ReactNode
-  children: (close: () => void) => ReactNode
-  keepOpen?: boolean
-  disabled?: boolean
-  menuWidth?: number
-}) {
-  const rootRef = useRef<HTMLSpanElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ top: number; right: number; width: number } | null>(
-    null
-  )
-  const close = useCallback(() => setOpen(false), [])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    const triggerRect = rootRef.current?.getBoundingClientRect()
-    if (!triggerRect) return
-    const width = Math.max(180, triggerRect.width, menuWidth ?? 0)
-    const belowTop = triggerRect.bottom + 6
-    const estimatedHeight = Math.min(360, menuRef.current?.scrollHeight ?? 320)
-    const top =
-      belowTop + estimatedHeight <= window.innerHeight - 8
-        ? belowTop
-        : Math.max(8, triggerRect.top - estimatedHeight - 6)
-    setPosition({
-      top,
-      right: Math.max(8, window.innerWidth - triggerRect.right),
-      width,
-    })
-  }, [menuWidth, open])
-
-  useEffect(() => {
-    if (!open) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [close, open])
-
-  return (
-    <span ref={rootRef} className="inline-flex">
-      <button
-        type="button"
-        data-testid={testId}
-        disabled={disabled}
-        onClick={() => setOpen(current => !current)}
-        className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        {trigger}
-      </button>
-      {open
-        ? createPortal(
-            <div
-              ref={menuRef}
-              data-testid={`${testId}-menu`}
-              data-embedded-browser-occlusion
-              style={{
-                top: position?.top ?? 0,
-                right: position?.right ?? 0,
-                width: position?.width ?? 180,
-                visibility: position ? 'visible' : 'hidden',
-              }}
-              onClick={() => {
-                if (!keepOpen) close()
-              }}
-              className="fixed z-[11000] max-h-[360px] overflow-y-auto rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-              role="menu"
-            >
-              {children(close)}
-            </div>,
-            document.body
-          )
-        : null}
-    </span>
   )
 }
 
