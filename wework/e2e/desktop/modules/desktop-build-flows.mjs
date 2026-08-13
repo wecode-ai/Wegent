@@ -107,12 +107,8 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
     const matchingProjectIds = []
     for (const projectMenuTestId of projectMenuTestIds) {
       const projectId = projectMenuTestId.slice('project-menu-'.length)
-      try {
-        const title = await control.command('getText', `[data-testid="project-title-${projectId}"]`)
-        if (title.trim() === expectedTitle) matchingProjectIds.push(projectId)
-      } catch {
-        // The transient project row can disappear between snapshot and lookup.
-      }
+      const title = await control.command('getText', `[data-testid="project-title-${projectId}"]`)
+      if (title.trim() === expectedTitle) matchingProjectIds.push(projectId)
     }
     if (matchingProjectIds.length === 1) {
       return { projectId: matchingProjectIds[0], snapshot }

@@ -208,6 +208,34 @@ impl WorktreeManager {
         git_ref: Option<&str>,
         permanent: bool,
     ) -> Result<ManagedWorktree, String> {
+        self.prepare_with_path(source_path, worktree_id, git_ref, permanent, None)
+    }
+
+    pub fn prepare_at(
+        &self,
+        source_path: &Path,
+        worktree_id: &str,
+        git_ref: Option<&str>,
+        permanent: bool,
+        planned_path: &Path,
+    ) -> Result<ManagedWorktree, String> {
+        self.prepare_with_path(
+            source_path,
+            worktree_id,
+            git_ref,
+            permanent,
+            Some(planned_path),
+        )
+    }
+
+    fn prepare_with_path(
+        &self,
+        source_path: &Path,
+        worktree_id: &str,
+        git_ref: Option<&str>,
+        permanent: bool,
+        planned_path: Option<&Path>,
+    ) -> Result<ManagedWorktree, String> {
         let _guard = self
             .mutation_lock
             .lock()
@@ -221,20 +249,34 @@ impl WorktreeManager {
             .unwrap_or("repository")
             .to_owned();
         let mut state = self.load();
-        let root = PathBuf::from(&state.settings.resolved_worktree_root);
+        let root = match planned_path {
+            Some(path) => path
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .ok_or_else(|| format!("Invalid planned worktree path {}", path.display()))?,
+            None => PathBuf::from(&state.settings.resolved_worktree_root),
+        };
         ensure_safe_root(&root)?;
         fs::create_dir_all(&root)
             .map_err(|error| format!("Failed to create {}: {error}", root.display()))?;
-        let path = root.join(worktree_id).join(&repository_name);
-        ensure_managed_path(&path, &state.known_roots)?;
+        let expected_path = root.join(worktree_id).join(&repository_name);
+        let path = planned_path.unwrap_or(&expected_path);
+        if path != expected_path {
+            return Err(format!(
+                "Planned worktree path {} does not match task {worktree_id}",
+                path.display()
+            ));
+        }
+        ensure_managed_path(path, &state.known_roots)?;
         if !path.exists() {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
             }
-            add_git_worktree(&source_path, &path, git_ref)?;
+            add_git_worktree(&source_path, path, git_ref)?;
         }
-        let key = normalized_path_key(&path);
+        let key = normalized_path_key(path);
         let now = now_ms();
         let mut record = state.records.remove(&key).unwrap_or_default();
         record.worktree_id = worktree_id.to_owned();
@@ -1037,6 +1079,44 @@ mod tests {
         assert_eq!(planned, managed_root.join("task-1/source"));
         assert!(!planned.exists());
         assert!(manager.list(&[]).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepare_at_keeps_the_path_planned_before_settings_change() {
+        let root = test_directory("wegent-worktree-stable-planned-path-test");
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        run_git(&source, &["init"]);
+        run_git(&source, &["config", "user.name", "Wegent Test"]);
+        run_git(&source, &["config", "user.email", "test@wegent.local"]);
+        fs::write(source.join("tracked.txt"), "base\n").unwrap();
+        run_git(&source, &["add", "."]);
+        run_git(&source, &["commit", "-m", "base"]);
+
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        let original_root = root.join("original");
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(original_root.display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+        let planned = manager.planned_path(&source, "task-1").unwrap();
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(root.join("updated").display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+
+        let record = manager
+            .prepare_at(&source, "task-1", None, false, &planned)
+            .unwrap();
+
+        assert_eq!(PathBuf::from(record.path), planned);
+        assert!(planned.exists());
+        let _ = manager.delete(&planned, false);
         let _ = fs::remove_dir_all(root);
     }
 

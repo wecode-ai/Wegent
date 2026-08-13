@@ -334,6 +334,10 @@ impl RuntimeWorkRpcHandler {
                 "deferred_worktree_source_path".to_owned(),
                 Value::String(source_workspace_path.clone()),
             );
+            request.extra.insert(
+                "deferred_worktree_path".to_owned(),
+                Value::String(planned_path.display().to_string()),
+            );
             if let Some(branch) = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
@@ -1238,6 +1242,17 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
+        if self.cancel_preparing_worktree_turn(&local_task_id) {
+            return Ok(match link {
+                Some(link) => task_action_success(&link),
+                None => json!({
+                    "success": true,
+                    "accepted": true,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }),
+            });
+        }
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -1297,17 +1312,21 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
+        self.reserve_worktree_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
             &[("local_task_id", local_task_id.clone())],
         );
-        let mut queued_turn = queued_turn;
-        if let Err(error) = self.prepare_deferred_worktree(&mut queued_turn).await {
-            self.finish_scheduled_turn().await;
-            return Err(error);
+        if queued_turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            self.prepare_and_start_reserved_turn(queued_turn).await?;
+        } else {
+            self.start_turn(queued_turn);
         }
-        self.start_turn(queued_turn);
         Ok(json!({
             "success": true,
             "accepted": true,
