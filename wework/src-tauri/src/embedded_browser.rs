@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Condvar, Mutex, Weak,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -113,6 +113,7 @@ pub struct EmbeddedBrowserState {
     preview_sources: Arc<Mutex<HashMap<String, String>>>,
     agent_control_paused: Arc<Mutex<HashMap<String, bool>>>,
     agent_approvals: Arc<Mutex<HashMap<String, EmbeddedBrowserApprovalState>>>,
+    agent_approval_changed: Arc<Condvar>,
     pending_open_requests: Arc<Mutex<HashMap<String, EmbeddedBrowserOpenRequest>>>,
     active_tabs: Arc<Mutex<HashMap<String, String>>>,
     agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
