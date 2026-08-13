@@ -348,17 +348,14 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
 }
 
 fn claude_permission_mode(request: &ExecutionRequest) -> &str {
-    request
+    match request
         .extra
         .get("claude_permission_mode")
         .and_then(Value::as_str)
-        .filter(|mode| {
-            matches!(
-                *mode,
-                "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions"
-            )
-        })
-        .unwrap_or("bypassPermissions")
+    {
+        Some(mode @ ("acceptEdits" | "plan" | "auto" | "bypassPermissions")) => mode,
+        Some("default") | Some(_) | None => "bypassPermissions",
+    }
 }
 
 pub(crate) fn prompt_text(prompt: &Value) -> String {
@@ -1228,6 +1225,27 @@ mod tests {
             .expect("permission mode flag");
 
         assert_eq!(command.args()[permission_index + 1], "plan");
+    }
+
+    #[test]
+    fn claude_command_uses_non_interactive_default_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("default".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
     }
 
     #[test]

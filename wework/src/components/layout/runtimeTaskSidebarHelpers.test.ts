@@ -60,6 +60,106 @@ describe('runtimeTaskSidebarHelpers', () => {
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
   })
 
+  test('sorts queued runtime tasks by their real execution position', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        {
+          taskId: 'queued-second',
+          workspacePath: '/workspace/repo',
+          title: 'Queued second',
+          runtime: 'codex',
+          running: false,
+          status: 'queued',
+          queuePosition: 2,
+          updatedAt: '2026-08-12T03:00:00.000Z',
+        },
+        {
+          taskId: 'queued-first',
+          workspacePath: '/workspace/repo',
+          title: 'Queued first',
+          runtime: 'codex',
+          running: false,
+          status: 'queued',
+          queuePosition: 1,
+          updatedAt: '2026-08-12T02:00:00.000Z',
+        },
+      ],
+    }
+
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'queued-first',
+      'queued-second',
+    ])
+  })
+
+  test('preserves recency slots while sorting each device queue independently', () => {
+    const workspaces: RuntimeDeviceWorkspace[] = [
+      {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/one',
+        available: true,
+        tasks: [
+          {
+            taskId: 'device-one-second',
+            workspacePath: '/workspace/one',
+            title: 'Device one second',
+            runtime: 'codex',
+            running: false,
+            status: 'queued',
+            queuePosition: 2,
+            updatedAt: '2026-08-12T05:00:00.000Z',
+          },
+          {
+            taskId: 'device-one-first',
+            workspacePath: '/workspace/one',
+            title: 'Device one first',
+            runtime: 'codex',
+            running: false,
+            status: 'queued',
+            queuePosition: 1,
+            updatedAt: '2026-08-12T02:00:00.000Z',
+          },
+        ],
+      },
+      {
+        deviceId: 'device-2',
+        workspacePath: '/workspace/two',
+        available: true,
+        tasks: [
+          {
+            taskId: 'device-two-running',
+            workspacePath: '/workspace/two',
+            title: 'Device two running',
+            runtime: 'codex',
+            running: true,
+            status: 'running',
+            updatedAt: '2026-08-12T04:00:00.000Z',
+          },
+          {
+            taskId: 'device-two-first',
+            workspacePath: '/workspace/two',
+            title: 'Device two first',
+            runtime: 'codex',
+            running: false,
+            status: 'queued',
+            queuePosition: 1,
+            updatedAt: '2026-08-12T03:00:00.000Z',
+          },
+        ],
+      },
+    ]
+
+    expect(getRuntimeSidebarTaskItems(workspaces).map(item => item.task.taskId)).toEqual([
+      'device-one-first',
+      'device-two-running',
+      'device-two-first',
+      'device-one-second',
+    ])
+  })
+
   test('keeps a resumed task in place while its latest turn is streaming', () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',

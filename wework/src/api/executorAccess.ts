@@ -15,6 +15,7 @@ import type {
   RuntimeSupervisorGetRequest,
   RuntimeSupervisorResolveRequest,
   RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
   RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
@@ -31,6 +32,8 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskQueueReorderResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
   RuntimeWorkspaceOpenRequest,
@@ -120,6 +123,9 @@ export interface ExecutorRuntimeClient {
   clearRuntimeSupervisor: (
     data: RuntimeSupervisorClearRequest
   ) => Promise<RuntimeSupervisorResponse>
+  runRuntimeSupervisorNow: (
+    data: RuntimeSupervisorRunNowRequest
+  ) => Promise<RuntimeSupervisorResponse>
   resolveRuntimeSupervisor: (
     data: RuntimeSupervisorResolveRequest
   ) => Promise<RuntimeSupervisorResponse>
@@ -154,6 +160,10 @@ export interface ExecutorRuntimeClient {
     typeof createRuntimeWorkApi
   >['deleteArchivedConversationsBulk']
   cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<RuntimeTaskCancelResponse>
+  forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<RuntimeTaskCancelResponse>
+  reorderQueuedRuntimeTask: (
+    data: RuntimeTaskQueueReorderRequest
+  ) => Promise<RuntimeTaskQueueReorderResponse>
   createRuntimeTask: (data: RuntimeTaskCreateRequest) => Promise<RuntimeTaskCreateResponse>
   forkRuntimeTask: (data: RuntimeTaskForkRequest) => Promise<RuntimeTaskForkResponse>
 }
