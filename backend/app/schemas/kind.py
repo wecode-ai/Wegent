@@ -1293,6 +1293,13 @@ class GitImportRequest(BaseModel):
     )
 
 
+class GitSkillUpdateRequest(BaseModel):
+    """Update an existing skill from a selected Git repository path."""
+
+    repo_url: str = Field(..., description="Git repository URL")
+    skill_path: str = Field(..., description="Path to the skill in the repository")
+
+
 class GitImportSuccessItem(BaseModel):
     """Successfully imported skill information"""
 

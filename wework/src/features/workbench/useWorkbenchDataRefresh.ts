@@ -178,11 +178,14 @@ function removeRuntimeProject(
       candidate.deviceId.trim() === normalizedDeviceId &&
       normalizeRuntimeWorkspacePath(candidate.workspacePath) === normalizedWorkspacePath
     )
-  const projects = runtimeWork.projects.filter(
-    project =>
-      runtimeProjectUiId(project.project) !== projectId &&
-      !project.deviceWorkspaces.some(matchesRemovedWorkspace)
-  )
+  const projects = runtimeWork.projects.filter(project => {
+    if (runtimeProjectUiId(project.project) === projectId) return false
+    if (!normalizedWorkspacePath) return true
+    return !project.deviceWorkspaces.some(
+      candidate =>
+        normalizeRuntimeWorkspacePath(candidate.workspacePath) === normalizedWorkspacePath
+    )
+  })
   const chats =
     normalizedDeviceId && normalizedWorkspacePath
       ? runtimeWork.chats.filter(chat => !matchesRemovedWorkspace(chat))
@@ -232,12 +235,6 @@ export function useWorkbenchDataRefresh({
   )
   const devicesRef = useRef(state.devices)
   const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
-  const removedRuntimeProjectsRef = useRef<
-    Array<{
-      projectId: number
-      workspace?: { deviceId: string; workspacePath: string }
-    }>
-  >([])
   useEffect(
     () => () => {
       cloudBackgroundRequestControllerRef.current?.abort()
@@ -283,7 +280,6 @@ export function useWorkbenchDataRefresh({
     }
     runtimeTaskTitleOverridesRef.current.clear()
     archivedRuntimeTaskAddressesRef.current = []
-    removedRuntimeProjectsRef.current = []
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
     updateCloudRuntimeState(
       hasCloudBackgroundApi
@@ -353,15 +349,6 @@ export function useWorkbenchDataRefresh({
       return removeRuntimeTasks(visibleRuntimeWork, archivedRuntimeTaskAddressesRef.current)
     },
     [hasCloudBackgroundApi]
-  )
-
-  const filterRemovedRuntimeProjects = useCallback(
-    (runtimeWork: RuntimeWorkListResponse): RuntimeWorkListResponse =>
-      removedRuntimeProjectsRef.current.reduce(
-        (current, removed) => removeRuntimeProject(current, removed.projectId, removed.workspace),
-        runtimeWork
-      ),
-    []
   )
 
   const refreshCloudBackgroundData = useCallback(
@@ -481,9 +468,7 @@ export function useWorkbenchDataRefresh({
           runtimeWorkResult?.status === 'fulfilled'
             ? {
                 status: 'fulfilled' as const,
-                value: applyRuntimeTaskTitleOverrides(
-                  filterRemovedRuntimeProjects(runtimeWorkResult.value)
-                ),
+                value: applyRuntimeTaskTitleOverrides(runtimeWorkResult.value),
               }
             : runtimeWorkResult
         if (filteredRuntimeWorkResult?.status === 'fulfilled') {
@@ -563,7 +548,6 @@ export function useWorkbenchDataRefresh({
     [
       applyRuntimeTaskTitleOverrides,
       dispatch,
-      filterRemovedRuntimeProjects,
       selectVisibleRuntimeWork,
       services.cloudBackgroundApi,
       releaseConfirmedArchivedRuntimeTasks,
@@ -624,10 +608,7 @@ export function useWorkbenchDataRefresh({
         if (cancelled) return
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled'
-            ? applyRuntimeTaskTitleOverrides(
-                filterRemovedRuntimeProjects(runtimeWorkResult.value),
-                true
-              )
+            ? applyRuntimeTaskTitleOverrides(runtimeWorkResult.value, true)
             : EMPTY_RUNTIME_WORK
         if (
           runtimeWorkResult.status === 'fulfilled' &&
@@ -671,7 +652,6 @@ export function useWorkbenchDataRefresh({
     applyRuntimeTaskTitleOverrides,
     dispatch,
     executorClient,
-    filterRemovedRuntimeProjects,
     refreshCloudBackgroundData,
     selectVisibleRuntimeWork,
     services.teamApi,
@@ -696,7 +676,7 @@ export function useWorkbenchDataRefresh({
         { useCacheFallback: false }
       )
       const filteredRuntimeWorkResult = runtimeWorkResult
-        ? applyRuntimeTaskTitleOverrides(filterRemovedRuntimeProjects(runtimeWorkResult), true)
+        ? applyRuntimeTaskTitleOverrides(runtimeWorkResult, true)
         : undefined
       if (filteredRuntimeWorkResult) {
         localRuntimeWorkRef.current = filteredRuntimeWorkResult
@@ -742,7 +722,6 @@ export function useWorkbenchDataRefresh({
       applyRuntimeTaskTitleOverrides,
       dispatch,
       executorClient,
-      filterRemovedRuntimeProjects,
       refreshCloudBackgroundData,
       hasCloudBackgroundApi,
       releaseConfirmedArchivedRuntimeTasks,
@@ -782,10 +761,9 @@ export function useWorkbenchDataRefresh({
             workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
           }
         : undefined
-      removedRuntimeProjectsRef.current = [
-        ...removedRuntimeProjectsRef.current.filter(removed => removed.projectId !== projectId),
-        { projectId, workspace: normalizedWorkspace },
-      ]
+      cloudBackgroundRequestControllerRef.current?.abort()
+      cloudBackgroundRequestControllerRef.current = null
+      workListRefreshRevisionRef.current += 1
       if (localRuntimeWorkRef.current) {
         localRuntimeWorkRef.current = removeRuntimeProject(
           localRuntimeWorkRef.current,
@@ -814,20 +792,6 @@ export function useWorkbenchDataRefresh({
       )
     },
     [updateCloudRuntimeState, user.id]
-  )
-
-  const clearRuntimeProjectRemoval = useCallback(
-    (workspace: { deviceId: string; workspacePath: string }) => {
-      const normalizedDeviceId = workspace.deviceId.trim()
-      const normalizedWorkspacePath = normalizeRuntimeWorkspacePath(workspace.workspacePath)
-      removedRuntimeProjectsRef.current = removedRuntimeProjectsRef.current.filter(
-        removed =>
-          !removed.workspace ||
-          removed.workspace.deviceId !== normalizedDeviceId ||
-          removed.workspace.workspacePath !== normalizedWorkspacePath
-      )
-    },
-    []
   )
 
   const refreshDevices = useCallback(
@@ -900,13 +864,13 @@ export function useWorkbenchDataRefresh({
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       const runtimeWork = applyRuntimeTaskTitleOverrides(
-        filterRemovedRuntimeProjects(await executorClient.runtime.listRuntimeWork()),
+        await executorClient.runtime.listRuntimeWork(),
         true
       )
       const task = findRuntimeTask(runtimeWork, address)
       return task ? { ...task, optimistic: false } : null
     },
-    [applyRuntimeTaskTitleOverrides, executorClient, filterRemovedRuntimeProjects]
+    [applyRuntimeTaskTitleOverrides, executorClient]
   )
 
   const updateLocalRuntimeTaskSnapshot = useCallback(
@@ -938,7 +902,6 @@ export function useWorkbenchDataRefresh({
     cloudWorkStatus,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshRuntimeTask,
     refreshDevices,
