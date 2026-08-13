@@ -1,5 +1,6 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import { getLatestThinkingContent, resolveStreamingThinkingContent } from '@wegent/chat-core'
+import { parseCodeCommentContexts } from '@/lib/code-comment-context'
 import type {
   ProcessingBlock,
   RuntimeConversationItem,
@@ -703,7 +704,18 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
     if (item.type === 'user_message') {
       const hadAssistant = assistantItems.length > 0
       flushAssistant(false, hadAssistant)
-      messages.push(item.message)
+      const parsedContexts = parseCodeCommentContexts(item.message.content)
+      messages.push(
+        parsedContexts
+          ? {
+              ...item.message,
+              content: parsedContexts.content,
+              codeComments: item.message.codeComments?.length
+                ? item.message.codeComments
+                : parsedContexts.codeComments,
+            }
+          : item.message
+      )
       followsGuidance = item.message.runtimeGuidance === true
       if (followsGuidance && turn.id !== null) {
         const block = projectedGuidanceBlock(item.message, turn.id)
