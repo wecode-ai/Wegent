@@ -5,7 +5,7 @@
 'use client'
 
 import { type ReactNode, useId, useMemo, useState } from 'react'
-import { ChevronDown, SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { ChevronDown, Lock, LockKeyholeOpen, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -42,6 +42,8 @@ import type { SimpleExecutorMode } from './simple-team-edit-utils'
 interface SimpleTeamEditFormProps {
   name: string
   setName: (value: string) => void
+  nameEditable?: boolean
+  onToggleNameEdit?: () => void
   displayName: string
   setDisplayName: (value: string) => void
   description: string
@@ -132,6 +134,8 @@ function SimpleSection({
 export default function SimpleTeamEditForm({
   name,
   setName,
+  nameEditable = true,
+  onToggleNameEdit,
   displayName,
   setDisplayName,
   description,
@@ -253,7 +257,35 @@ export default function SimpleTeamEditForm({
                 onChange={event => setName(event.target.value)}
                 placeholder={t('common:team.name_placeholder')}
                 className="bg-base"
+                disabled={!nameEditable}
+                data-testid="team-technical-name-input"
               />
+              {onToggleNameEdit && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-warning hover:bg-warning/10 hover:text-warning"
+                  onClick={onToggleNameEdit}
+                  aria-label={t(
+                    nameEditable
+                      ? 'common:teams.lock_technical_name'
+                      : 'common:teams.force_edit_name'
+                  )}
+                  title={t(
+                    nameEditable
+                      ? 'common:teams.lock_technical_name'
+                      : 'common:teams.force_edit_name'
+                  )}
+                  data-testid="enable-team-technical-name-edit"
+                >
+                  {nameEditable ? (
+                    <LockKeyholeOpen className="h-4 w-4" />
+                  ) : (
+                    <Lock className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
             </div>
           </SimpleConfigRow>
 
