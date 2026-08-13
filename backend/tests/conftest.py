@@ -103,6 +103,13 @@ class FakeIMSessionCache:
         self.expires[key] = expire
         return True
 
+    async def setnx(self, key: str, value: Any, expire: int) -> bool:
+        if key in self.values:
+            return False
+        self.values[key] = value
+        self.expires[key] = expire
+        return True
+
     async def delete(self, key: str) -> bool:
         existed = key in self.values
         self.values.pop(key, None)
@@ -117,6 +124,7 @@ class FakeIMSessionCache:
 def fake_im_session_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache:
     cache = FakeIMSessionCache()
     monkeypatch.setattr("app.services.im.session_service.cache_manager", cache)
+    monkeypatch.setattr("app.services.im.cloud_task_notifications.cache_manager", cache)
     return cache
 
 

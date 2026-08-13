@@ -16,6 +16,8 @@ from socketio.exceptions import ConnectionRefusedError
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.config import settings
+from app.models.delivery import CloudProject, LoopItem
+from app.models.user import User
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
@@ -33,6 +35,7 @@ from app.services.device.command_service import (
     local_device_command_service,
 )
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
+from app.services.im.cloud_task_notifications import cloud_task_notification_service
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.context import set_request_context, set_user_context
 
@@ -236,6 +239,9 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 message,
                 room=project_chat_room(request.project_id, request.task_id),
             )
+            notification = result.get("notification")
+            if notification is not None:
+                await cloud_task_notification_service.dispatch(notification)
         return {
             "ok": True,
             "created": result["created"],
@@ -432,10 +438,26 @@ def _send_project_chat_sync(
             user_name=user_name,
             request=request,
         )
-        return {
+        response = {
             "created": result.created,
             "message": result.message.model_dump(mode="json", by_alias=True),
         }
+        if result.created and request.task_id:
+            project = db.get(CloudProject, request.project_id)
+            item = db.get(LoopItem, request.task_id)
+            actor = db.get(User, user_id)
+            if project is not None and item is not None and actor is not None:
+                snapshot = cloud_task_notification_service.snapshot(
+                    db, project=project, values=item
+                )
+                response["notification"] = cloud_task_notification_service.event(
+                    event_id=f"task:{item.id}:comment:{result.message.message_id}",
+                    event_type="comment_added",
+                    actor=actor,
+                    after=snapshot,
+                    summary=request.content[:500],
+                )
+        return response
 
 
 def _fail_project_chat_agent_sync(

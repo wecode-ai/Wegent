@@ -6,6 +6,7 @@
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.security import get_current_user
-from app.models.delivery import Delivery
+from app.models.delivery import CloudProject, Delivery, LoopItem
 from app.models.user import User
 from app.schemas.delivery import (
     CloudTaskContextResponse,
@@ -48,6 +49,10 @@ from app.schemas.delivery import (
 )
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
+from app.services.im.cloud_task_notifications import (
+    CloudTaskSnapshot,
+    cloud_task_notification_service,
+)
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
@@ -56,6 +61,39 @@ from app.services.loop_items.provider_router import (
 )
 
 router = APIRouter()
+
+
+def _task_snapshot(
+    db: Session,
+    project: CloudProject,
+    values: LoopItem | dict[str, object],
+) -> CloudTaskSnapshot:
+    return cloud_task_notification_service.snapshot(
+        db,
+        project=project,
+        values=values,
+    )
+
+
+def _schedule_task_notification(
+    background_tasks: BackgroundTasks,
+    *,
+    event_id: str,
+    event_type: str,
+    current_user: User,
+    before: CloudTaskSnapshot | None = None,
+    after: CloudTaskSnapshot | None = None,
+    summary: str = "",
+) -> None:
+    event = cloud_task_notification_service.event(
+        event_id=event_id,
+        event_type=event_type,
+        actor=current_user,
+        before=before,
+        after=after,
+        summary=summary,
+    )
+    background_tasks.add_task(cloud_task_notification_service.dispatch, event)
 
 
 def _loop_item_response(
@@ -258,11 +296,20 @@ def list_loop_items(
 def create_loop_item(
     project_id: int,
     values: LoopItemCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
+    snapshot = _task_snapshot(db, project, created.values)
+    _schedule_task_notification(
+        background_tasks,
+        event_id=f"task:{snapshot.task_id}:created:{created.values.get('version', 1)}",
+        event_type="created",
+        current_user=current_user,
+        after=snapshot,
+    )
     return LoopItemResponse.model_validate(created.values)
 
 
@@ -310,20 +357,55 @@ def get_loop_item(
 def update_loop_item(
     item_id: str,
     values: LoopItemUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
     if external_loop_item_provider.is_external_item(db, item_id):
-        return LoopItemResponse.model_validate(
-            external_loop_item_provider.update(db, item_id, current_user.id, values)
+        before_values = external_loop_item_provider.get(db, item_id, current_user.id)
+        project = cloud_project_service.get(
+            db, int(before_values["cloud_project_id"]), current_user.id
         )
+        before = _task_snapshot(db, project, before_values)
+        updated_values = external_loop_item_provider.update(
+            db, item_id, current_user.id, values
+        )
+        after = _task_snapshot(db, project, updated_values)
+        summary = cloud_task_notification_service.change_summary(before, after)
+        if summary:
+            _schedule_task_notification(
+                background_tasks,
+                event_id=f"task:{item_id}:updated:{updated_values['version']}",
+                event_type="updated",
+                current_user=current_user,
+                before=before,
+                after=after,
+                summary=summary,
+            )
+        return LoopItemResponse.model_validate(updated_values)
+    item = loop_item_service.get(db, item_id, current_user.id)
+    project = cloud_project_service.get(db, int(item.cloud_project_id), current_user.id)
+    before = _task_snapshot(db, project, item)
     item = loop_item_service.update(db, item_id, current_user.id, values)
+    after = _task_snapshot(db, project, item)
+    summary = cloud_task_notification_service.change_summary(before, after)
+    if summary:
+        _schedule_task_notification(
+            background_tasks,
+            event_id=f"task:{item_id}:updated:{item.version}",
+            event_type="updated",
+            current_user=current_user,
+            before=before,
+            after=after,
+            summary=summary,
+        )
     return _loop_item_response(db, item, current_user)
 
 
 @router.delete("/loop-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_loop_item(
     item_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
@@ -332,7 +414,17 @@ def archive_loop_item(
             status.HTTP_409_CONFLICT,
             "External provider tasks cannot be archived from Wegent",
         )
-    loop_item_service.delete(db, item_id, current_user.id)
+    item = loop_item_service.get(db, item_id, current_user.id)
+    project = cloud_project_service.get(db, int(item.cloud_project_id), current_user.id)
+    before = _task_snapshot(db, project, item)
+    archived = loop_item_service.delete(db, item_id, current_user.id)
+    _schedule_task_notification(
+        background_tasks,
+        event_id=f"task:{item_id}:archived:{archived.version}",
+        event_type="archived",
+        current_user=current_user,
+        before=before,
+    )
 
 
 @router.post(
@@ -343,14 +435,27 @@ def archive_loop_item(
 def add_loop_item_comment(
     item_id: str,
     values: LoopItemCommentCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemCommentResponse:
-    return LoopItemCommentResponse.model_validate(
-        external_loop_item_provider.add_comment(
-            db, item_id, current_user.id, values.body
-        )
+    task_values = external_loop_item_provider.get(db, item_id, current_user.id)
+    project = cloud_project_service.get(
+        db, int(task_values["cloud_project_id"]), current_user.id
     )
+    snapshot = _task_snapshot(db, project, task_values)
+    comment = external_loop_item_provider.add_comment(
+        db, item_id, current_user.id, values.body
+    )
+    _schedule_task_notification(
+        background_tasks,
+        event_id=f"task:{item_id}:comment:{comment['id']}",
+        event_type="comment_added",
+        current_user=current_user,
+        after=snapshot,
+        summary=values.body[:500],
+    )
+    return LoopItemCommentResponse.model_validate(comment)
 
 
 @router.get(

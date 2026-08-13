@@ -143,6 +143,44 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_loop_item_notifications_cover_creation_and_key_changes(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = []
+
+    async def fake_dispatch(event):
+        events.append(event)
+        return {"sent": 1, "results": []}
+
+    monkeypatch.setattr(
+        "app.api.endpoints.deliveries.cloud_task_notification_service.dispatch",
+        fake_dispatch,
+    )
+
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Notify participants"},
+    ).json()
+    title_updated = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "title": "Renamed only"},
+    ).json()
+    status_updated = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": title_updated["version"], "status": "in_progress"},
+    ).json()
+
+    assert status_updated["status"] == "in_progress"
+    assert [event.event_type for event in events] == ["created", "updated"]
+    assert events[1].summary == "状态 inbox → in_progress"
+
+
 def test_external_loop_items_forward_assignee_filters(
     test_client: TestClient,
     test_token: str,
