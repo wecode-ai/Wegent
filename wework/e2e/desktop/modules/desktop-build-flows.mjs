@@ -104,14 +104,18 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     const projectMenuTestIds = snapshot.testIds.filter(testId => testId.startsWith('project-menu-'))
-    if (projectMenuTestIds.length === 1) {
-      const projectId = projectMenuTestIds[0].slice('project-menu-'.length)
+    const matchingProjectIds = []
+    for (const projectMenuTestId of projectMenuTestIds) {
+      const projectId = projectMenuTestId.slice('project-menu-'.length)
       try {
         const title = await control.command('getText', `[data-testid="project-title-${projectId}"]`)
-        if (title.trim() === expectedTitle) return { projectId, snapshot }
+        if (title.trim() === expectedTitle) matchingProjectIds.push(projectId)
       } catch {
         // The transient project row can disappear between snapshot and lookup.
       }
+    }
+    if (matchingProjectIds.length === 1) {
+      return { projectId: matchingProjectIds[0], snapshot }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -852,11 +856,9 @@ async function verifyCloudProjectFlow(
 
   await cloudEnvironment.aliasCloudDeviceToCurrentApp()
   await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
-  await waitForSnapshot(
+  await waitForSingleProjectByTitle(
     control,
-    snapshot =>
-      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
-      snapshot.text.includes('replacement-workspace'),
+    'replacement-workspace',
     'Creating a local project while cloud work was connected exposed duplicate projects',
     WORKBENCH_READY_TIMEOUT_MS
   )
