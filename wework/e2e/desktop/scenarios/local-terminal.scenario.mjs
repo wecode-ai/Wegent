@@ -305,7 +305,7 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   })
   await capturePage(control, 'local-harness-02-claude-settings.png')
   await control.command('select', '[data-testid="harness-permission-mode-claude_code"]', {
-    value: 'bypass',
+    value: 'auto',
   })
   await control.command('click', '[data-testid="harness-settings-toggle-kimi_code"]')
   const kimiSettingsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
