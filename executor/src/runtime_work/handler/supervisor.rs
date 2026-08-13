@@ -719,14 +719,20 @@ fn supervisor_needs_scheduled_check(link: &RuntimeTaskLink, active: bool, now: i
     };
     let interval_elapsed = now.saturating_sub(last_evaluated_at)
         >= i64::try_from(supervisor.interval_seconds).unwrap_or(i64::MAX) * 1_000;
+    if !active
+        && link
+            .completed_at
+            .is_some_and(|completed_at| completed_at > last_evaluated_at)
+    {
+        return true;
+    }
     if supervisor.last_content_hash.is_none() {
         return interval_elapsed;
     }
     if active && interval_elapsed {
         return true;
     }
-    link.completed_at
-        .is_some_and(|completed_at| completed_at > last_evaluated_at)
+    false
 }
 
 fn should_skip_unchanged_content(
@@ -947,6 +953,48 @@ mod tests {
 
         assert!(!supervisor_needs_scheduled_check(&link, true, 30_999));
         assert!(supervisor_needs_scheduled_check(&link, true, 31_000));
+    }
+
+    #[test]
+    fn failed_supervisor_evaluation_retries_when_the_active_turn_later_completes() {
+        let link = RuntimeTaskLink {
+            completed_at: Some(2_000),
+            supervisor: Some(RuntimeSupervisorState {
+                mode: "auto".to_owned(),
+                status: "error".to_owned(),
+                instructions: String::new(),
+                model_selection: None,
+                interval_seconds: 30,
+                last_evaluated_at: Some(1_000),
+                last_content_hash: None,
+                last_error: Some("transcript was not ready".to_owned()),
+                suggestions: Vec::new(),
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        assert!(supervisor_needs_scheduled_check(&link, false, 2_001));
+    }
+
+    #[test]
+    fn completed_timestamp_does_not_overlap_an_execution_that_is_still_active() {
+        let link = RuntimeTaskLink {
+            completed_at: Some(2_000),
+            supervisor: Some(RuntimeSupervisorState {
+                mode: "auto".to_owned(),
+                status: "error".to_owned(),
+                instructions: String::new(),
+                model_selection: None,
+                interval_seconds: 30,
+                last_evaluated_at: Some(1_000),
+                last_content_hash: None,
+                last_error: Some("transcript was not ready".to_owned()),
+                suggestions: Vec::new(),
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        assert!(!supervisor_needs_scheduled_check(&link, true, 2_001));
     }
 
     #[test]

@@ -623,6 +623,10 @@ struct AppPreferences {
     telemetry_enabled: bool,
     supervisor_principles: String,
     #[serde(default)]
+    supervisor_model_selection: Option<serde_json::Value>,
+    #[serde(default = "default_supervisor_interval_seconds")]
+    supervisor_interval_seconds: u32,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -793,6 +797,10 @@ fn default_context_compaction_threshold() -> u8 {
     85
 }
 
+fn default_supervisor_interval_seconds() -> u32 {
+    30
+}
+
 #[cfg(desktop)]
 fn default_language_preference() -> String {
     "zh-CN".to_string()
@@ -835,6 +843,8 @@ impl Default for AppPreferences {
             telemetry_consent_asked: false,
             telemetry_enabled: false,
             supervisor_principles: String::new(),
+            supervisor_model_selection: None,
+            supervisor_interval_seconds: default_supervisor_interval_seconds(),
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -894,6 +904,8 @@ struct AppPreferencesPatch {
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: Option<u32>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -1206,6 +1218,9 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
+    if !matches!(preferences.supervisor_interval_seconds, 10 | 30 | 60 | 300) {
+        preferences.supervisor_interval_seconds = default_supervisor_interval_seconds();
+    }
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -1512,6 +1527,12 @@ fn update_app_preferences(
     if let Some(value) = patch.supervisor_principles {
         preferences.supervisor_principles = value;
     }
+    if let Some(value) = patch.supervisor_model_selection {
+        preferences.supervisor_model_selection = Some(value);
+    }
+    if let Some(value) = patch.supervisor_interval_seconds {
+        preferences.supervisor_interval_seconds = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -1593,6 +1614,8 @@ struct AppPreferences {
     telemetry_consent_asked: bool,
     telemetry_enabled: bool,
     supervisor_principles: String,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: u32,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -1629,6 +1652,8 @@ struct AppPreferencesPatch {
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: Option<u32>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -1665,6 +1690,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         telemetry_consent_asked: false,
         telemetry_enabled: false,
         supervisor_principles: String::new(),
+        supervisor_model_selection: None,
+        supervisor_interval_seconds: default_supervisor_interval_seconds(),
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -1713,6 +1740,11 @@ fn update_app_preferences(
         telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
         telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),
         supervisor_principles: patch.supervisor_principles.unwrap_or_default(),
+        supervisor_model_selection: patch.supervisor_model_selection,
+        supervisor_interval_seconds: patch
+            .supervisor_interval_seconds
+            .filter(|value| matches!(value, 10 | 30 | 60 | 300))
+            .unwrap_or_else(default_supervisor_interval_seconds),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),
