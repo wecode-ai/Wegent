@@ -180,28 +180,38 @@ def get_team(
 def update_team(
     team_id: int,
     team_update: TeamUpdate,
+    force_identity_change: bool = Query(False),
+    confirm_name: str | None = Query(None),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Update Team information"""
     return team_kinds_service.update_with_user(
-        db=db, team_id=team_id, obj_in=team_update, user_id=current_user.id
+        db=db,
+        team_id=team_id,
+        obj_in=team_update,
+        user_id=current_user.id,
+        force_identity_change=force_identity_change,
+        confirm_name=confirm_name,
     )
 
 
 @router.delete("/{team_id}")
 def delete_team(
     team_id: int,
-    force: bool = Query(
-        False, description="Force delete even if team has running tasks"
-    ),
+    force: bool = Query(False, description="Confirm destructive deletion"),
+    confirm_name: str | None = Query(None),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     team_kinds_service.delete_with_user(
-        db=db, team_id=team_id, user_id=current_user.id, force=force
+        db=db,
+        team_id=team_id,
+        user_id=current_user.id,
+        force=force,
+        confirm_name=confirm_name,
     )
-    return {"message": "Team deactivated successfully"}
+    return {"message": "Team deleted successfully"}
 
 
 @router.get("/{team_id}/copy-preflight")
