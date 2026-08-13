@@ -24,6 +24,7 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessResponse,
     PluginAccessUpdateRequest,
+    PluginAutoUpdateBatchResponse,
     PluginCopyResponse,
     PluginDeviceSyncResponse,
     PluginMarketplaceCapabilities,
@@ -73,6 +74,21 @@ def list_installed_plugins(
     )
 
 
+@router.post(
+    "/installed/auto-update-batch",
+    response_model=PluginAutoUpdateBatchResponse,
+)
+def auto_update_installed_plugins(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginAutoUpdateBatchResponse:
+    """Advance one bounded batch of cloud marketplace plugin installations."""
+    return plugin_marketplace_service.auto_update_batch(
+        db,
+        user_id=current_user.id,
+    )
+
+
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
@@ -94,11 +110,11 @@ async def sync_installed_plugins_to_device(
         db,
         user_id=current_user.id,
         device_id=normalized_device_id,
-        reset_failed=True,
     )
     payload = device_capability_sync_service.build_desired_capabilities(
         db,
         user_id=current_user.id,
+        device_id=normalized_device_id,
     )
     db.close()
     result = await device_capability_sync_service.sync_device_payload(
@@ -525,7 +541,7 @@ async def update_installed_plugin(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
-    """Update an installed plugin's enabled state or display metadata."""
+    """Update an installed plugin's runtime state, metadata, or update policy."""
     if request.releaseId is not None:
         installed = plugin_marketplace_service.update_release(
             db,
@@ -546,6 +562,7 @@ async def update_installed_plugin(
             user_id=current_user.id,
             installed_kind_id=installed_id,
             desired_release_id=installed.spec.releaseId,
+            reset_failures=request.releaseId is not None,
         )
     await _sync_global_capabilities(
         db,
@@ -560,6 +577,7 @@ async def update_installed_plugin(
         user_id=current_user.id,
         device_id=device_id,
         installed_id=installed_id,
+        manual_retry=request.releaseId is not None,
     )
     return plugin_marketplace_service.enrich_installed_list(
         db,
@@ -622,6 +640,7 @@ async def _ensure_installed_plugin_on_device(
     device_id: str | None,
     installed_id: int,
     previous: DeviceCapabilitySyncResponse | None = None,
+    manual_retry: bool = False,
 ) -> DeviceCapabilitySyncResponse | None:
     """Retry a single-plugin merge when the global replace left the device short."""
     if not device_id:
@@ -635,6 +654,15 @@ async def _ensure_installed_plugin_on_device(
         .first()
     )
     if device_row and device_row.state == "installed":
+        return previous
+    if (
+        not manual_retry
+        and device_row
+        and plugin_device_installation_service.auto_update_blocked_release_id(
+            device_row,
+            desired_release_id=device_row.desired_release_id,
+        )
+    ):
         return previous
     try:
         merge_sync = (
