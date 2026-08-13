@@ -388,6 +388,7 @@ function mockSystemSkillsFetch(
   }> = {}
 ) {
   let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
+  let marketplaceLatestReleaseId = marketplaceUpdateAvailable ? 1002 : 1001
   let marketplaceUpdatePolicy = overrides.marketplaceUpdatePolicy ?? 'manual'
   const autoUpdateBatchSizes = [...(overrides.autoUpdateBatchSizes ?? [])]
   let autoUpdateBatchCalls = 0
@@ -644,7 +645,7 @@ function mockSystemSkillsFetch(
     },
     createdAt: null,
     updatedAt: null,
-    latestReleaseId: 1001,
+    latestReleaseId: marketplaceLatestReleaseId,
     currentDeviceInstallation: cloudMarketplacePluginInstalled
       ? {
           deviceId: 'current-device',
@@ -925,7 +926,7 @@ function mockSystemSkillsFetch(
             ? {
                 ...plugin,
                 version: '1.1.0',
-                latestReleaseId: 1002,
+                latestReleaseId: marketplaceLatestReleaseId,
                 updateAvailable: true,
               }
             : plugin
@@ -1030,6 +1031,7 @@ function mockSystemSkillsFetch(
 
   return {
     publishMarketplaceUpdate: () => {
+      marketplaceLatestReleaseId += 1
       marketplaceUpdateAvailable = true
     },
     getSyncDeviceCalls: () => syncDeviceCalls,
@@ -1790,6 +1792,34 @@ describe('PluginsWorkspace', () => {
       'data-notice-kind',
       'success'
     )
+  })
+
+  test('automatically retries when a newer release follows a failed release', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'auto',
+      autoUpdateBatchSizes: [1, 1],
+      deviceAutoSyncSucceeds: false,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+    await screen.findByText(/插件自动更新失败/)
+
+    marketplace.publishMarketplaceUpdate()
+    fireEvent.focus(window)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(2))
+    expect(marketplace.getSyncDeviceCalls()).toBe(2)
   })
 
   test('does not automatically update a marketplace plugin with manual policy', async () => {

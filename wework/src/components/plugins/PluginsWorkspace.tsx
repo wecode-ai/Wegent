@@ -3681,20 +3681,28 @@ export function PluginsWorkspace({
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
-    const hasAutoUpdateCandidate = pluginMarketplaceState.items.some(item => {
-      if (!marketplaceItemNeedsPluginAutoUpdate(item)) return false
-      if (item.installedPluginId === null || item.installedPluginId === undefined) return false
+    const autoUpdateCandidateReleaseKeys = pluginMarketplaceState.items.flatMap(item => {
+      if (!marketplaceItemNeedsPluginAutoUpdate(item)) return []
+      if (item.installedPluginId === null || item.installedPluginId === undefined) return []
       const installed = installedPlugins.find(
         plugin => String(plugin.id) === String(item.installedPluginId)
       )
-      return Boolean(
-        installed &&
-        isCloudManagedInstalledPlugin(installed.raw) &&
-        installed.raw.spec.updatePolicy === 'auto'
-      )
+      if (
+        !installed ||
+        !isCloudManagedInstalledPlugin(installed.raw) ||
+        installed.raw.spec.updatePolicy !== 'auto'
+      ) {
+        return []
+      }
+      const targetReleaseId =
+        item.latestReleaseId ?? item.currentDeviceInstallation?.desiredReleaseId
+      return targetReleaseId === null || targetReleaseId === undefined
+        ? []
+        : [`${item.installedPluginId}:${targetReleaseId}`]
     })
-    if (!hasAutoUpdateCandidate) return
-    const attemptKey = `${marketplaceCacheKeyValue}:${currentDeviceId}`
+    if (autoUpdateCandidateReleaseKeys.length === 0) return
+    const releaseKey = autoUpdateCandidateReleaseKeys.sort().join(',')
+    const attemptKey = `${marketplaceCacheKeyValue}:${currentDeviceId}:${releaseKey}`
     if (autoUpdateAttemptKeysRef.current.has(attemptKey)) return
 
     const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)

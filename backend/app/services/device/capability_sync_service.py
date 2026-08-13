@@ -444,6 +444,7 @@ class DeviceCapabilitySyncService:
         ]
         release_overrides = self._device_release_overrides(
             db,
+            user_id=user_id,
             device_id=device_id,
             installed_rows=rows,
         )
@@ -772,6 +773,7 @@ class DeviceCapabilitySyncService:
         self,
         db: Session,
         *,
+        user_id: int,
         device_id: str | None,
         installed_rows: list[Kind],
     ) -> dict[int, int]:
@@ -781,6 +783,7 @@ class DeviceCapabilitySyncService:
             row.installed_kind_id: row
             for row in db.query(PluginDeviceInstallation)
             .filter(
+                PluginDeviceInstallation.user_id == user_id,
                 PluginDeviceInstallation.installed_kind_id.in_(
                     [installed.id for installed in installed_rows]
                 ),

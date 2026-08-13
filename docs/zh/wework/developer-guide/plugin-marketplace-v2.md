@@ -151,7 +151,7 @@ sequenceDiagram
   API-->>UI: 成功或 502 明确失败
 ```
 
-新安装选择 `latest_release_id`。更新必须由用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的安装记录和物化入口，离线设备上线后补执行。正常卸载不直接清空 Codex 或 Claude `plugins/cache`，缓存目录只应由运行时复用或由独立垃圾回收删除未被安装记录引用的版本。
+新安装选择 `latest_release_id`。市场插件默认自动更新；只有 `updatePolicy=manual` 时才需要用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的安装记录和物化入口，离线设备上线后补执行。正常卸载不直接清空 Codex 或 Claude `plugins/cache`，缓存目录只应由运行时复用或由独立垃圾回收删除未被安装记录引用的版本。
 
 Wework 调用目录、安装、更新和卸载接口时携带本机 Executor 的稳定 `device_id`。目录中的“已安装”只在该设备 `state=installed` 且 `actual_release_id` 等于账号期望 Release 时成立；账号已有安装意图但当前设备为 `pending/failed` 时仍显示可安装和具体设备错误。一次操作只因当前设备失败而返回 `502`，其他设备失败记录在 `plugin_device_installations` 并等待重连补同步。设备 WebSocket 重连完成后会再次回写逐插件结果，清除已完成的卸载或旧失败状态。
 
