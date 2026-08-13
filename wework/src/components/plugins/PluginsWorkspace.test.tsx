@@ -1309,6 +1309,55 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
   })
 
+  test('keeps the current catalog stable while the user is still typing', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    const searchInput = screen.getByTestId('plugins-search-input')
+
+    fireEvent.change(searchInput, { target: { value: 'missing' } })
+
+    expect(searchInput).toHaveValue('missing')
+    expect(screen.getByText('Documents')).toBeInTheDocument()
+    expect(screen.queryByText('没有匹配的插件')).not.toBeInTheDocument()
+
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
+    expect(screen.queryByText('Documents')).not.toBeInTheDocument()
+  })
+
+  test('waits for IME composition to finish before searching', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    const searchInput = screen.getByTestId('plugins-search-input')
+
+    fireEvent.compositionStart(searchInput)
+    fireEvent.change(searchInput, { target: { value: '不存在' } })
+    await new Promise(resolve => window.setTimeout(resolve, 250))
+
+    expect(screen.getByText('Documents')).toBeInTheDocument()
+
+    fireEvent.compositionEnd(searchInput, { data: '不存在' })
+    expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
+  })
+
+  test('renders large search result sets in bounded batches', async () => {
+    mockSystemSkillsFetch({ marketplaceCount: 80 })
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('plugins-search-input'), {
+      target: { value: 'plugin' },
+    })
+
+    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(40))
+
+    await userEvent.click(screen.getByTestId('plugins-category-more-all'))
+
+    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(79))
+    expect(screen.queryByTestId('plugins-category-browse-dialog')).not.toBeInTheDocument()
+  })
+
   test('filters marketplace plugins by the prototype distribution tabs', async () => {
     render(<PluginsWorkspace />)
 

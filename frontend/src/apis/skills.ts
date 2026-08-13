@@ -1166,7 +1166,8 @@ export async function importGitRepoPublicSkills(
 export interface UpdateFromGitResponse {
   id: number
   name: string
-  message: string
+  version?: string
+  source?: SkillSource
 }
 
 /**
@@ -1191,6 +1192,31 @@ export async function updateSkillFromGit(skillId: number): Promise<UpdateFromGit
     } catch {
       throw new Error(error || 'Failed to update skill from Git')
     }
+  }
+
+  return response.json()
+}
+
+export async function updateSkillFromGitRepository(
+  skillId: number,
+  repoUrl: string,
+  skillPath: string
+): Promise<UpdateFromGitResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const response = await fetch(`${getApiUrl()}/v1/kinds/skills/git/update/${skillId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ repo_url: repoUrl, skill_path: skillPath }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to update skill from Git' }))
+    throw new Error(error.detail || 'Failed to update skill from Git')
   }
 
   return response.json()

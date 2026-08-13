@@ -43,6 +43,7 @@ from app.schemas.kind import (
     GitImportRequest,
     GitImportResponse,
     GitScanResponse,
+    GitSkillUpdateRequest,
     Skill,
     SkillList,
 )
@@ -705,6 +706,30 @@ def batch_update_skills_from_git(
         total_success=len(result.success),
         total_skipped=len(result.skipped),
         total_failed=len(result.failed),
+    )
+
+
+@router.post("/git/update/{skill_id}", response_model=Dict[str, Any])
+def update_skill_from_selected_git_source(
+    skill_id: int,
+    request: GitSkillUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update an existing skill from a selected repository path."""
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="update",
+    )
+    return git_skill_service.update_skill_from_repository(
+        skill_id=skill_id,
+        skill_owner_user_id=skill_kind.user_id,
+        auth_user_id=current_user.id,
+        repo_url=request.repo_url,
+        skill_path=request.skill_path,
+        db=db,
     )
 
 

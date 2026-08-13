@@ -9,6 +9,7 @@ import {
   isTextAttachment,
 } from '@/lib/attachments'
 import { AttachmentImagePreview } from '../AttachmentImagePreview'
+import { CodeCommentPreview } from '../CodeCommentPreview'
 
 interface AttachmentBadgesProps {
   attachments: Attachment[]
@@ -128,28 +129,41 @@ function TextAttachmentCard({
   )
 }
 
-function CodeCommentBadge({ count, onRemove }: { count: number; onRemove?: () => void }) {
+function CodeCommentBadge({
+  comments,
+  onRemove,
+}: {
+  comments: CodeCommentContext[]
+  onRemove?: () => void
+}) {
   const { t } = useTranslation('common')
+  const count = comments.length
 
   return (
-    <div
-      data-testid="code-comment-context-badge"
-      className="relative inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 pr-7 text-xs font-medium text-text-primary shadow-sm"
-    >
-      <MessageSquare className="h-3.5 w-3.5 text-text-secondary" />
-      <span>{t('workbench.code_comment_count', { count })}</span>
-      {onRemove && (
-        <button
-          type="button"
-          data-testid="remove-code-comment-context-button"
-          onClick={onRemove}
-          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-text-primary text-white shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          aria-label={t('workbench.remove_code_comments')}
-        >
-          <X className="h-2.5 w-2.5" />
-        </button>
-      )}
-    </div>
+    <CodeCommentPreview comments={comments} testId="code-comment-context-preview">
+      <div
+        data-testid="code-comment-context-badge"
+        tabIndex={0}
+        className="relative inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 pr-7 text-xs font-medium text-text-primary shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      >
+        <MessageSquare className="h-3.5 w-3.5 text-text-secondary" />
+        <span>{t('workbench.code_comment_count', { count })}</span>
+        {onRemove && (
+          <button
+            type="button"
+            data-testid="remove-code-comment-context-button"
+            onClick={event => {
+              event.stopPropagation()
+              onRemove()
+            }}
+            className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-text-primary text-white shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            aria-label={t('workbench.remove_code_comments')}
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        )}
+      </div>
+    </CodeCommentPreview>
   )
 }
 
@@ -179,7 +193,7 @@ export function AttachmentBadges({
   return (
     <div className="mb-3 flex flex-wrap gap-2" data-testid="attachment-badge-list">
       {codeCommentCount > 0 && (
-        <CodeCommentBadge count={codeCommentCount} onRemove={onClearCodeComments} />
+        <CodeCommentBadge comments={codeComments} onRemove={onClearCodeComments} />
       )}
       {visibleAttachments.map(attachment =>
         isImageAttachment(attachment) ? (
