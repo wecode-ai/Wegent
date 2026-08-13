@@ -165,6 +165,66 @@ async def test_resolve_rejects_required_skill_missing_from_task(mocker):
 
 
 @pytest.mark.asyncio
+async def test_resolve_merges_required_request_scoped_skill(mocker):
+    """A Backend-resolved request Skill may extend persistent task Skills."""
+    _mock_client(
+        mocker,
+        lambda request: httpx.Response(
+            200,
+            json={
+                "team_namespace": "team-a",
+                "skills": ["sandbox"],
+                "preload_skills": ["sandbox"],
+                "skill_refs": {"sandbox": {"skill_id": 1, "namespace": "default"}},
+                "preload_skill_refs": {
+                    "sandbox": {"skill_id": 1, "namespace": "default"}
+                },
+            },
+        ),
+    )
+    sandbox = _sandbox(
+        {
+            "auth_token": "task-jwt",
+            "required_skills": ["wegent-knowledge"],
+            "bot_config": json.dumps(
+                [
+                    {
+                        "team_namespace": "team-a",
+                        "skills": ["sandbox", "wegent-knowledge", "inactive"],
+                        "preload_skills": ["sandbox", "wegent-knowledge"],
+                        "skill_refs": {
+                            "wegent-knowledge": {
+                                "skill_id": 42,
+                                "namespace": "default",
+                                "is_public": True,
+                            },
+                            "inactive": {
+                                "skill_id": 43,
+                                "namespace": "default",
+                            },
+                        },
+                        "preload_skill_refs": {
+                            "wegent-knowledge": {
+                                "skill_id": 42,
+                                "namespace": "default",
+                                "is_public": True,
+                            }
+                        },
+                    }
+                ]
+            ),
+        }
+    )
+
+    resolved = await SandboxSkillSynchronizer().resolve(sandbox)
+
+    assert resolved.skills == ["sandbox", "wegent-knowledge"]
+    assert resolved.preload_skills == ["sandbox", "wegent-knowledge"]
+    assert resolved.skill_refs["wegent-knowledge"]["skill_id"] == 42
+    assert "inactive" not in resolved.skills
+
+
+@pytest.mark.asyncio
 async def test_resolve_requires_task_id_when_auth_token_is_present():
     """Task-scoped Skill resolution must never call a synthetic None task URL."""
     sandbox = _sandbox({"auth_token": "task-jwt"})
