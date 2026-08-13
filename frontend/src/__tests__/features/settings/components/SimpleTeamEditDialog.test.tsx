@@ -92,6 +92,15 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
         'common:teams.edit_title': 'Edit agent',
+        'common:teams.force_edit_name': 'Force edit',
+        'common:teams.force_identity_change': 'Confirm forced change',
+        'common:teams.identity_change_confirm_title': 'Confirm identity change',
+        'common:teams.identity_change_confirm_message': 'Existing references will stop working.',
+        'common:teams.identity_change_warning': 'Existing references will stop working.',
+        'common:teams.confirm_name_label': 'Enter the current technical name',
+        'common:teams.private_scope_confirm_title': 'Confirm private scope',
+        'common:teams.private_scope_confirm_message': 'Group members will lose access.',
+        'common:teams.confirm_private_scope': 'Make private',
         'team.bind_mode_required': 'Select at least one mode',
         'team_model.solo': 'Solo',
       })[key] || key,
@@ -685,6 +694,192 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('confirms before removing all team publication bindings', async () => {
+    const team = makeTeam()
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: true,
+      group_names: ['engineering'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-scope-team')).toHaveAttribute('aria-pressed', 'true')
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-personal'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Confirm private scope')).toBeInTheDocument()
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('confirm-team-private-scope'))
+
+    await waitFor(() => {
+      expect(mockedSyncAgentBindings).toHaveBeenCalledWith(team.id, {
+        group_names: [],
+      })
+    })
+  })
+
+  it('confirms before removing one of multiple team publication bindings', async () => {
+    const team = makeTeam()
+    const writableGroups = [
+      {
+        id: 7,
+        name: 'engineering',
+        display_name: 'Engineering',
+        my_role: 'Developer',
+      } as Group,
+      {
+        id: 8,
+        name: 'research',
+        display_name: 'Research',
+        my_role: 'Developer',
+      } as Group,
+    ]
+    mockedGetAgentBindings.mockResolvedValueOnce({
+      agent_id: team.id,
+      personal: true,
+      group_names: ['engineering', 'research'],
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+        writableGroups={writableGroups}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('capability-scope-group-research')).toBeChecked()
+    })
+    fireEvent.click(screen.getByTestId('capability-scope-group-research'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Confirm private scope')).toBeInTheDocument()
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('confirm-team-private-scope'))
+
+    await waitFor(() => {
+      expect(mockedSyncAgentBindings).toHaveBeenCalledWith(team.id, {
+        group_names: ['engineering'],
+      })
+    })
+  })
+
+  it('locks the technical name until forced and confirms a rename', async () => {
+    const team = makeTeam()
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    const nameInput = await screen.findByTestId('team-technical-name-input')
+    expect(nameInput).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('enable-team-technical-name-edit'))
+    fireEvent.change(nameInput, { target: { value: 'renamed-agent' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(mockedUpdateBot).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByTestId('team-identity-confirmation-input'), {
+      target: { value: team.name },
+    })
+    fireEvent.click(screen.getByTestId('confirm-team-identity-change'))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({ name: 'renamed-agent' }),
+        {
+          forceIdentityChange: true,
+          confirmName: team.name,
+        }
+      )
+    })
+  })
+
+  it('locks the technical name again after the edit dialog is reopened', async () => {
+    const team = makeTeam()
+    const props = {
+      onClose: jest.fn(),
+      teams: [team],
+      setTeams: jest.fn(),
+      editingTeamId: team.id,
+      bots: [makeBot()],
+      setBots: jest.fn(),
+      toast: jest.fn(),
+    }
+    const { rerender } = render(<TeamEditDialog {...props} open />)
+
+    fireEvent.click(await screen.findByTestId('enable-team-technical-name-edit'))
+    expect(screen.getByTestId('team-technical-name-input')).toBeEnabled()
+    expect(screen.getByTestId('team-identity-change-warning')).toBeInTheDocument()
+
+    rerender(<TeamEditDialog {...props} open={false} />)
+    rerender(<TeamEditDialog {...props} open />)
+
+    expect(await screen.findByTestId('team-technical-name-input')).toBeDisabled()
+    expect(screen.queryByTestId('team-identity-change-warning')).not.toBeInTheDocument()
+  })
+
+  it('toggles the technical name lock and discards an unconfirmed rename', async () => {
+    const team = makeTeam()
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    const nameInput = await screen.findByTestId('team-technical-name-input')
+    const lockButton = screen.getByTestId('enable-team-technical-name-edit')
+
+    fireEvent.click(lockButton)
+    fireEvent.change(nameInput, { target: { value: 'unconfirmed-name' } })
+    fireEvent.click(lockButton)
+
+    expect(nameInput).toBeDisabled()
+    expect(nameInput).toHaveValue(team.name)
+    expect(screen.queryByTestId('team-identity-change-warning')).not.toBeInTheDocument()
+  })
+
   it('distributes an existing personal agent to multiple teams', async () => {
     const team = makeTeam()
     const writableGroups = [
@@ -873,7 +1068,6 @@ describe('Simple TeamEditDialog', () => {
         expect.objectContaining({
           resource_type: 'agent',
           source_id: 1,
-          name: 'agent',
           example_conversations: [
             {
               title: 'Example task',
@@ -882,6 +1076,7 @@ describe('Simple TeamEditDialog', () => {
           ],
         })
       )
+      expect(mockedCreateListing.mock.calls[0][0]).not.toHaveProperty('name')
     })
   })
 
@@ -939,13 +1134,21 @@ describe('Simple TeamEditDialog', () => {
 
     fireEvent.click(await screen.findByTestId('capability-scope-personal'))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.change(screen.getByTestId('team-identity-confirmation-input'), {
+      target: { value: team.name },
+    })
+    fireEvent.click(screen.getByTestId('confirm-team-identity-change'))
 
     await waitFor(() => {
       expect(mockedUpdateTeam).toHaveBeenCalledWith(
         1,
         expect.objectContaining({
           namespace: 'default',
-        })
+        }),
+        {
+          forceIdentityChange: true,
+          confirmName: team.name,
+        }
       )
       expect(mockedSyncAgentBindings).toHaveBeenCalledWith(1, {
         group_names: [],
@@ -980,9 +1183,9 @@ describe('Simple TeamEditDialog', () => {
         expect.objectContaining({
           resource_type: 'agent',
           source_id: 1,
-          name: 'agent',
         })
       )
+      expect(mockedCreateListing.mock.calls[0][0]).not.toHaveProperty('name')
     })
   })
 

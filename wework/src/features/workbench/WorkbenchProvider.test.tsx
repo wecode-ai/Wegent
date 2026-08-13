@@ -6837,12 +6837,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a removed workspace under a different project identity', async () => {
+  test('does not restore a removed workspace under different project and device identities', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(staleRuntimeWork),
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(staleRuntimeWork)
+        .mockResolvedValue(createRuntimeWork({ projects: [], totalTasks: 0 })),
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -6882,11 +6885,24 @@ describe('WorkbenchProvider runtime tasks', () => {
         createRuntimeWork({
           projects: [
             {
-              project: { id: 99, key: 'stale-cloud-project', name: 'Resurrected' },
-              deviceWorkspaces: staleRuntimeWork.projects[0].deviceWorkspaces,
-              totalTasks: 3,
+              project: { id: 8, key: 'cloud-project', name: 'Restored Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 8,
+                  deviceId: 'cloud-device',
+                  deviceName: 'Cloud Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+              totalTasks: 0,
             },
           ],
+          totalTasks: 0,
         })
       )
     })
@@ -7060,10 +7076,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/srv/project-alpha',
       runtime: 'codex',
     })
-    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      projects: [],
-    })
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
   })
 
   test('does not treat a local-only empty remote view as an authoritative deletion', async () => {
@@ -10536,6 +10549,38 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
         subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+        'idle:idle'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '102',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+      'running:streaming'
+    )
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '102',
         deviceId: 'device-1',
         result: { value: 'done' },
       })

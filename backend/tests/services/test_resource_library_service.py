@@ -121,6 +121,27 @@ def test_system_marketplace_listing_uses_current_source_display_fields(
     assert listing.tags == ["technical_development"]
 
 
+def test_marketplace_listing_ignores_legacy_listing_name(test_db, test_user):
+    source = _create_skill(
+        test_db,
+        user_id=test_user.id,
+        name="current-source-name",
+        capability={
+            "listingName": "legacy-market-name",
+            "displayName": "Published Skill",
+            "publishStatus": "published",
+        },
+    )
+
+    listing = resource_library_service.to_listing(
+        test_db,
+        source,
+        user_id=test_user.id,
+    )
+
+    assert listing.name == "current-source-name"
+
+
 def _create_group_with_member(
     test_db,
     user: User,
@@ -301,7 +322,6 @@ def test_system_only_discovery_excludes_user_publications(test_db, test_user):
         request=ResourceLibraryCreateListingRequest(
             resource_type="agent",
             source_id=published_agent.id,
-            name=published_agent.name,
             display_name="Published Agent",
             tags=["technical_development"],
             version="1.0.0",
@@ -349,7 +369,6 @@ def test_agent_publisher_manages_example_conversation(test_db):
         request=ResourceLibraryCreateListingRequest(
             resource_type="agent",
             source_id=agent.id,
-            name=agent.name,
             display_name="Published Agent",
             tags=["technical_development"],
             version="1.0.0",
@@ -860,7 +879,6 @@ def test_list_published_only_returns_current_user_publications(
         request=ResourceLibraryCreateListingRequest(
             resource_type="skill",
             source_id=user_skill.id,
-            name=user_skill.name,
             display_name="User Published Skill",
             tags=["technical_development"],
         ),
@@ -871,7 +889,6 @@ def test_list_published_only_returns_current_user_publications(
         request=ResourceLibraryCreateListingRequest(
             resource_type="skill",
             source_id=admin_skill.id,
-            name=admin_skill.name,
             display_name="Admin Published Skill",
             tags=["technical_development"],
         ),
@@ -930,7 +947,6 @@ def test_update_skill_publication_distributes_to_selected_groups(test_db, test_u
         request=ResourceLibraryCreateListingRequest(
             resource_type="skill",
             source_id=source.id,
-            name=source.name,
             display_name="Team Targeted Published Skill",
             tags=["technical_development"],
         ),
@@ -1139,7 +1155,6 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
     request = ResourceLibraryCreateListingRequest(
         resource_type="skill",
         source_id=source.id,
-        name="published-skill",
         display_name="Published Skill",
         description="Published description",
         tags=["technical_development"],
@@ -1166,6 +1181,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
     assert listing.current_version.version == "1.1.0"
     assert listing.tags == ["technical_development"]
     assert listing.feature_tags == ["test"]
+    assert "listingName" not in source.json["spec"]["capability"]
     assert first_install.id == second_install.id
     assert first_install.installed_reference["skill_id"] == source.id
     publication = test_db.get(MarketplaceResource, source.id)
@@ -1239,7 +1255,6 @@ def test_published_model_install_is_a_live_reference(test_db, test_user, monkeyp
             resource_type="model",
             source_name=source.name,
             source_namespace=source.namespace,
-            name=source.name,
             display_name="Shared Model",
             version="1.0.0",
         ),
@@ -1324,7 +1339,6 @@ def test_model_publish_request_sets_personal_team_and_marketplace_scope(
             resource_type="model",
             source_name=source.name,
             source_namespace=source.namespace,
-            name=source.name,
             display_name="Scoped Model",
             status="archived",
             target_groups=[group_name],
@@ -1361,7 +1375,6 @@ def test_model_publish_request_sets_personal_team_and_marketplace_scope(
             resource_type="model",
             source_name=source.name,
             source_namespace=source.namespace,
-            name=source.name,
             display_name="Scoped Model",
             status="archived",
             target_groups=[],
@@ -1388,7 +1401,6 @@ def test_model_publish_request_sets_personal_team_and_marketplace_scope(
             resource_type="model",
             source_name=source.name,
             source_namespace=source.namespace,
-            name=source.name,
             display_name="Scoped Model",
             status="published",
             allow_personal_install=True,
@@ -1452,7 +1464,6 @@ def test_foundation_resource_references_follow_source_updates(
         request=ResourceLibraryCreateListingRequest(
             resource_type=resource_type,
             source_name=name,
-            name=name,
             display_name=name,
             version="1.0.0",
         ),
@@ -1833,7 +1844,6 @@ def test_developer_cannot_publish_group_capability(test_db, test_user):
             request=ResourceLibraryCreateListingRequest(
                 resource_type="skill",
                 source_id=source.id,
-                name=source.name,
                 display_name="Developer Group Skill",
             ),
             current_user=test_user,
