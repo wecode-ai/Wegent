@@ -169,6 +169,7 @@ class ProjectChatService:
             cloud_project_id=project_id,
             title=request.name,
             name=request.name,
+            description=request.description,
             created_by_user_id=user_id,
             updated_by_user_id=user_id,
             status="active",
@@ -211,6 +212,8 @@ class ProjectChatService:
         if request.name is not None:
             row.name = request.name
             row.title = request.name
+        if request.description is not None:
+            row.description = request.description
         metadata = dict(row.metadata_json or {})
         if request.model is not None:
             metadata["model"] = request.model
@@ -1416,6 +1419,7 @@ class ProjectChatService:
             id=row.id,
             project_id=row.cloud_project_id,
             name=row.title or row.name or "AI",
+            description=row.description or "",
             runtime="codex",
             model=config.get("model") if isinstance(config.get("model"), str) else None,
             system_prompt=(

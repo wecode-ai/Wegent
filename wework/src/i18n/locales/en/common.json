@@ -81,6 +81,7 @@
     "project_chat_agent_model": "Model",
     "project_chat_agent_model_placeholder": "Select a model",
     "project_chat_agent_prompt": "Execution prompt",
+    "project_chat_agent_description": "Robot profile: describe suitable project responsibilities and capabilities",
     "project_chat_agent_save": "Save robot configuration",
     "project_chat_new_agent": "New robot",
     "project_chat_agent_unavailable": "This robot is no longer in this project",

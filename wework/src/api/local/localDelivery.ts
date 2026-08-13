@@ -68,11 +68,11 @@ interface LocalProjectFileRecord {
   cloud_project_id: string
   path: string
   name: string
+  description: string
   kind: 'file' | 'folder' | string
   content_type: string | null
   size_bytes: number
   sha256: string | null
-  description: string
   created_by_user_id: number
   updated_by_user_id: number
   version: number
@@ -88,6 +88,7 @@ export interface LocalProjectChatAgent {
   id: string
   projectId: string
   name: string
+  description: string
   runtime: 'codex'
   model: string | null
   systemPrompt: string
@@ -285,6 +286,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   id: string
   project_id?: string
   name?: string
+  description?: string
   model?: string | null
   system_prompt?: string
   status?: string
@@ -304,6 +306,7 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     id: record.id,
     projectId: record.project_id ?? '',
     name: record.name ?? 'AI',
+    description: record.description ?? '',
     runtime: 'codex',
     model: record.model ?? null,
     systemPrompt: record.system_prompt ?? '',
@@ -333,6 +336,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       projectId: string,
       input: {
         name: string
+        description?: string
         runtime: 'codex'
         model?: string | null
         systemPrompt?: string
@@ -347,6 +351,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         project_id: projectId,
         agent: {
           name: input.name,
+          description: input.description ?? '',
           model: input.model ?? null,
           system_prompt: input.systemPrompt ?? '',
           visibility: input.visibility ?? 'creator_admin',
@@ -365,6 +370,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       input: {
         version: number
         name?: string
+        description?: string
         model?: string | null
         systemPrompt?: string
         status?: 'active' | 'archived'
@@ -381,6 +387,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         agent: {
           version: input.version,
           name: input.name,
+          description: input.description,
           model: input.model,
           system_prompt: input.systemPrompt,
           status: input.status,

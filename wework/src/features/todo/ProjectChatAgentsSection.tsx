@@ -39,6 +39,7 @@ export function ProjectChatAgentsSection({
   const [creatingChatAgent, setCreatingChatAgent] = useState(false)
   const [editingChatAgent, setEditingChatAgent] = useState<ProjectChatAgent | null>(null)
   const [agentName, setAgentName] = useState('')
+  const [agentDescription, setAgentDescription] = useState('')
   const [agentModel, setAgentModel] = useState('')
   const [agentSystemPrompt, setAgentSystemPrompt] = useState('')
   const [agentVisibility, setAgentVisibility] =
@@ -156,6 +157,7 @@ export function ProjectChatAgentsSection({
     setCreatingChatAgent(true)
     setEditingChatAgent(null)
     setAgentName(t('workbench.project_chat_new_agent'))
+    setAgentDescription('')
     setAgentModel('')
     setAgentSystemPrompt('')
     setAgentVisibility('creator_admin')
@@ -186,6 +188,7 @@ export function ProjectChatAgentsSection({
   function editChatAgent(agent: ProjectChatAgent) {
     setEditingChatAgent(agent)
     setAgentName(agent.name)
+    setAgentDescription(agent.description)
     setAgentModel(agent.model ?? '')
     setAgentSystemPrompt(agent.systemPrompt)
     setAgentVisibility(agent.visibility)
@@ -218,6 +221,7 @@ export function ProjectChatAgentsSection({
       if (creatingChatAgent) {
         const agent = await projectChatAgentApi.create(project.id, {
           name: agentName.trim(),
+          description: agentDescription.trim(),
           runtime: 'codex',
           model: agentModel.trim(),
           systemPrompt: agentSystemPrompt,
@@ -233,6 +237,7 @@ export function ProjectChatAgentsSection({
         const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
           version: editingChatAgent.version,
           name: agentName.trim(),
+          description: agentDescription.trim(),
           model: agentModel.trim(),
           systemPrompt: agentSystemPrompt,
           visibility: agentVisibility,
@@ -309,6 +314,11 @@ export function ProjectChatAgentsSection({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{agent.name}</span>
+                {agent.description ? (
+                  <span className="mt-0.5 block truncate text-xs text-text-muted">
+                    {agent.description}
+                  </span>
+                ) : null}
                 <span className="mt-0.5 block truncate text-xs text-text-muted">
                   {agent.runtime}
                   {agent.model ? ` · ${agent.model}` : ''}
@@ -382,6 +392,13 @@ export function ProjectChatAgentsSection({
               onChange={event => setAgentName(event.target.value)}
               placeholder={t('workbench.project_chat_agent_name')}
               className="w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary"
+            />
+            <textarea
+              data-testid="cloud-project-chat-agent-description"
+              value={agentDescription}
+              onChange={event => setAgentDescription(event.target.value)}
+              placeholder={t('workbench.project_chat_agent_description')}
+              className="mt-3 min-h-16 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
             />
             <textarea
               data-testid="cloud-project-chat-agent-system-prompt"

@@ -133,6 +133,13 @@ class ResourceMember(Base):
         server_default="Reporter",
         comment="Member role: Owner, Maintainer, Developer, Reporter",
     )
+    description = Column(
+        String(2000),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="Project-level responsibilities and capabilities",
+    )
 
     # Status
     status = Column(

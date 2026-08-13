@@ -27,6 +27,8 @@ from app.models.delivery import (
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate
@@ -549,11 +551,35 @@ class ProjectAutomationService:
             run.description = "Automation event has no task"
             db.commit()
             return
-        assignment = LoopItemAssign(
-            assignee_type="agent",
-            assignee_id=agent.id,
-            version=1,
+        self._assign_event_target(
+            db,
+            rule,
+            run,
+            LoopItemAssign(
+                assignee_type="agent",
+                assignee_id=agent.id,
+                version=1,
+            ),
+            device_id=device_id,
         )
+
+    def _assign_event_target(
+        self,
+        db: Session,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        assignment: LoopItemAssign,
+        *,
+        device_id: str = "",
+    ) -> None:
+        """Assign the event task through the canonical local/external service."""
+
+        if not run.task_id:
+            run.status = "failed"
+            run.description = "Automation event has no task"
+            db.commit()
+            return
+        automation_prompt = rule.description or ""
         item = db.get(LoopItem, run.task_id)
         if item is None and external_loop_item_provider.is_external_item(
             db, run.task_id
@@ -581,6 +607,12 @@ class ProjectAutomationService:
             run.description = "Automation event task is unavailable"
             db.commit()
             return
+        if assignment.assignee_type == "user":
+            run.status = "succeeded"
+            run.description = "Assignment verified"
+            run.version += 1
+            db.commit()
+            return
         execution = (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.loop_item_id == run.task_id)
@@ -592,14 +624,15 @@ class ProjectAutomationService:
             run.description = "Automation event execution was not created"
             db.commit()
             return
-        execution.execution_note = rule.description or ""
+        execution.execution_note = automation_prompt
+        db.add(execution)
         item_metadata = _metadata(updated)
         item_metadata["automation"] = {
             "rule_id": rule.id,
             "run_id": run.id,
             "trigger": "event",
             "event": _metadata(run).get("event"),
-            "prompt": rule.description or "",
+            "prompt": automation_prompt,
         }
         updated.metadata_json = item_metadata
         run.status = "running"
@@ -921,7 +954,9 @@ class ProjectAutomationProcessor:
             agent_id = rule.assignee_agent_id
             if metadata.get("assignment_mode") == "automatic":
                 try:
-                    agent_id = await self._select_agent(db, rule, event)
+                    assignee_type, agent_id = await self._select_assignee(
+                        db, rule, event
+                    )
                 except Exception as exc:
                     logger.exception(
                         "[ProjectAutomation] Automatic assignment failed rule=%s",
@@ -934,6 +969,23 @@ class ProjectAutomationProcessor:
                     run.status = "failed"
                     run.description = str(exc)[:2000]
                     db.commit()
+                    dispatched += 1
+                    continue
+                if assignee_type == "user":
+                    run = project_automation_service._create_run(
+                        db, rule, "event", utcnow(), None
+                    )
+                    run.task_id = event.subject_id
+                    project_automation_service._assign_event_target(
+                        db,
+                        rule,
+                        run,
+                        LoopItemAssign(
+                            assignee_type="user",
+                            assignee_id=agent_id,
+                            version=1,
+                        ),
+                    )
                     dispatched += 1
                     continue
             run = project_automation_service._create_run(
@@ -958,12 +1010,12 @@ class ProjectAutomationProcessor:
             dispatched += 1
         return dispatched
 
-    async def _select_agent(
+    async def _select_assignee(
         self,
         db: Session,
         rule: ProjectAutomationRule,
         event: ProjectAutomationEvent,
-    ) -> str:
+    ) -> tuple[str, str]:
         owner = db.get(User, rule.created_by_user_id)
         if owner is None:
             raise ValueError("Automation owner is unavailable")
@@ -977,17 +1029,47 @@ class ProjectAutomationProcessor:
             .order_by(ProjectChatAgent.created_at)
             .all()
         )
-        if not agents:
-            raise ValueError("No active project robots are available")
+        member_rows = (
+            db.query(ResourceMember, User)
+            .join(User, User.id == ResourceMember.user_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+                ResourceMember.resource_id == event.project_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                User.is_active == True,
+            )
+            .all()
+        )
+        project = db.get(LoopItem, event.project_id)
+        if project is not None and not any(
+            user.id == project.created_by_user_id for _, user in member_rows
+        ):
+            creator = db.get(User, project.created_by_user_id)
+            if creator is not None and creator.is_active:
+                member_rows.insert(0, (None, creator))
+        if not agents and not member_rows:
+            raise ValueError("No project assignees are available")
         model = self._selection_model(db, owner)
         candidates = [
             {
-                "agent_id": agent.id,
+                "assignee_type": "agent",
+                "assignee_id": agent.id,
                 "name": agent.title or agent.name or "AI",
-                "capability": str(bot_config(agent).get("system_prompt") or ""),
+                "description": agent.description or "",
+                "system_prompt": str(bot_config(agent).get("system_prompt") or ""),
             }
             for agent in agents
         ]
+        candidates.extend(
+            {
+                "assignee_type": "user",
+                "assignee_id": str(user.id),
+                "name": user.user_name,
+                "description": member.description if member is not None else "",
+            }
+            for member, user in member_rows
+        )
         response = await simple_chat_service.chat_completion(
             message=json.dumps(
                 {
@@ -999,15 +1081,20 @@ class ProjectAutomationProcessor:
             ),
             model_config=model,
             system_prompt=(
-                "Select exactly one project robot for the task. Base the decision "
-                "only on the task and candidate capabilities. Return JSON only: "
-                '{"agent_id":"<one candidate agent_id>"}.'
+                "Select exactly one assignee for the task. Base the decision only "
+                "on the task and candidate descriptions and capabilities. Return "
+                "JSON only: "
+                '{"assignee_type":"user|agent","assignee_id":"<candidate id>"}.'
             ),
         )
-        selected_id = self._selected_agent_id(response)
-        if selected_id not in {agent.id for agent in agents}:
-            raise ValueError("AI returned an invalid project robot")
-        return selected_id
+        selected = self._selected_assignee(response)
+        allowed = {
+            (candidate["assignee_type"], candidate["assignee_id"])
+            for candidate in candidates
+        }
+        if selected not in allowed:
+            raise ValueError("AI returned an assignee outside the candidate pool")
+        return selected
 
     @staticmethod
     def _selection_model(db: Session, owner: User) -> dict:
@@ -1030,7 +1117,7 @@ class ProjectAutomationProcessor:
         )
 
     @staticmethod
-    def _selected_agent_id(response: str) -> str:
+    def _selected_assignee(response: str) -> tuple[str, str]:
         text = response.strip()
         if text.startswith("```"):
             text = text.removeprefix("```json").removeprefix("```")
@@ -1039,10 +1126,15 @@ class ProjectAutomationProcessor:
             value = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError("AI returned invalid assignment JSON") from exc
-        agent_id = value.get("agent_id") if isinstance(value, dict) else None
-        if not isinstance(agent_id, str) or not agent_id:
-            raise ValueError("AI did not select a project robot")
-        return agent_id
+        assignee_type = value.get("assignee_type") if isinstance(value, dict) else None
+        assignee_id = value.get("assignee_id") if isinstance(value, dict) else None
+        if (
+            assignee_type not in {"user", "agent"}
+            or not isinstance(assignee_id, str)
+            or not assignee_id
+        ):
+            raise ValueError("AI did not select a valid project assignee")
+        return assignee_type, assignee_id
 
     @staticmethod
     def _matches(config: object, event: ProjectAutomationEvent) -> bool:

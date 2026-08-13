@@ -1141,18 +1141,22 @@ def test_task_created_event_assigns_matching_project_automation_robot(
         headers=_auth(test_token),
         json={
             "name": "Dispatcher",
+            "description": "Owns backend production incidents",
             "runtime": "codex",
             "executionEnvironment": "cloud",
             "executionDeviceId": "event-cloud-device",
         },
     ).json()
+    assert agent["description"] == "Owns backend production incidents"
 
-    async def select_agent(db: Session, rule: object, event: object) -> str:
-        return agent["id"]
+    async def select_assignee(
+        db: Session, rule: object, event: object
+    ) -> tuple[str, str]:
+        return "agent", agent["id"]
 
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor._select_agent",
-        select_agent,
+        "app.services.project_automations.project_automation_processor._select_assignee",
+        select_assignee,
     )
     created_rule = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/automations",
@@ -1189,6 +1193,7 @@ def test_task_created_event_assigns_matching_project_automation_robot(
     )
     assert task.status_code == 201
     assert task.json()["assignee_agent_id"] == agent["id"]
+    test_db.expire_all()
     execution = (
         test_db.query(LoopItemExecution)
         .filter(LoopItemExecution.loop_item_id == task.json()["id"])
@@ -1204,6 +1209,56 @@ def test_task_created_event_assigns_matching_project_automation_robot(
     assert len(runs.json()) == 1
     assert runs.json()[0]["trigger"] == "event"
     assert runs.json()[0]["taskId"] == task.json()["id"]
+
+
+def test_task_created_event_can_assign_project_member(
+    test_client: TestClient,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "humanassign", "name": "Human assignment"},
+    ).json()
+
+    async def select_assignee(
+        db: Session, rule: object, event: object
+    ) -> tuple[str, str]:
+        return "user", str(test_user.id)
+
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor._select_assignee",
+        select_assignee,
+    )
+    rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Assign new work",
+            "prompt": "Choose the best owner.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "assignmentMode": "automatic",
+        },
+    ).json()
+
+    task = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Plan the release", "status": "pending"},
+    )
+    assert task.status_code == 201
+    assert task.json()["assignee_user_id"] == test_user.id
+    assert task.json()["assignee_agent_id"] is None
+
+    runs = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
+        headers=_auth(test_token),
+    ).json()
+    assert runs[0]["status"] == "succeeded"
+    assert runs[0]["error"] == "Assignment verified"
 
 
 def test_project_automation_webhook_verifies_github_signature(
@@ -1601,16 +1656,29 @@ def test_cloud_project_owner_can_manage_members(
     added = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
-        json={"user_id": member_user.id, "role": "Developer"},
+        json={
+            "user_id": member_user.id,
+            "role": "Developer",
+            "description": "Owns frontend accessibility",
+        },
     )
     assert added.status_code == 201
+    assert added.json()["description"] == "Owns frontend accessibility"
     updated = test_client.patch(
         f"/api/v1/cloud-projects/{project['id']}/members/{member_user.id}",
         headers=_auth(test_token),
-        json={"role": "Reporter"},
+        json={"role": "Reporter", "description": "Triages customer reports"},
     )
     assert updated.status_code == 200
     assert updated.json()["role"] == "Reporter"
+    assert updated.json()["description"] == "Triages customer reports"
+    owner_updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/members/{test_user.id}",
+        headers=_auth(test_token),
+        json={"description": "Owns releases and architecture"},
+    )
+    assert owner_updated.status_code == 200
+    assert owner_updated.json()["description"] == "Owns releases and architecture"
     members = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),

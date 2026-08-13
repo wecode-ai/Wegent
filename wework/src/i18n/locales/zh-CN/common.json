@@ -82,6 +82,7 @@
     "project_chat_agent_model": "模型",
     "project_chat_agent_model_placeholder": "请选择模型",
     "project_chat_agent_prompt": "执行提示词",
+    "project_chat_agent_description": "机器人简介：说明适合承担的项目职责和能力",
     "project_chat_agent_save": "保存机器人配置",
     "project_chat_new_agent": "新机器人",
     "project_chat_agent_unavailable": "该机器人已不在此项目中",

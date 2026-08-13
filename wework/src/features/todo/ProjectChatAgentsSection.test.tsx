@@ -22,6 +22,7 @@ function agent(overrides: Partial<ProjectChatAgent> = {}): ProjectChatAgent {
     id: 'agent-1',
     projectId: project.id,
     name: 'Bug 修复机器人',
+    description: '',
     runtime: 'codex',
     model: null,
     systemPrompt: '',
@@ -92,6 +93,10 @@ describe('ProjectChatAgentsSection', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
     await userEvent.type(screen.getByTestId('cloud-project-chat-agent-name'), '新机器人')
+    await userEvent.type(
+      screen.getByTestId('cloud-project-chat-agent-description'),
+      '负责前端可访问性'
+    )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
     await userEvent.click(
       await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
@@ -110,7 +115,7 @@ describe('ProjectChatAgentsSection', () => {
     await waitFor(() =>
       expect(mock.create).toHaveBeenCalledWith(
         project.id,
-        expect.objectContaining({ model: MODEL_NAME })
+        expect.objectContaining({ model: MODEL_NAME, description: '负责前端可访问性' })
       )
     )
     expect(await screen.findByTestId('cloud-project-chat-agent-agent-created')).toHaveTextContent(

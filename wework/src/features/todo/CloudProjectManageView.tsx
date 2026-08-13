@@ -250,10 +250,15 @@ export function CloudProjectManageView({
 
   async function updateMember(
     member: CloudProjectMember,
-    role: Exclude<CloudProjectMember['role'], 'Owner'>
+    changes: { role?: CloudProjectMember['role']; description?: string }
   ) {
     try {
-      const updated = await api.updateCloudProjectMember(project.id, member.user_id, role)
+      const updated = await api.updateCloudProjectMember(
+        project.id,
+        member.user_id,
+        changes.role,
+        changes.description
+      )
       setMembers(current =>
         current.map(item => (item.user_id === updated.user_id ? updated : item))
       )
@@ -453,6 +458,23 @@ export function CloudProjectManageView({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{member.user_name}</span>
                     <span className="block truncate text-xs text-text-muted">{member.email}</span>
+                    <textarea
+                      data-testid={`cloud-project-member-description-${member.user_id}`}
+                      value={member.description}
+                      onChange={event => {
+                        const description = event.target.value
+                        setMembers(current =>
+                          current.map(item =>
+                            item.user_id === member.user_id ? { ...item, description } : item
+                          )
+                        )
+                      }}
+                      onBlur={event =>
+                        void updateMember(member, { description: event.currentTarget.value.trim() })
+                      }
+                      placeholder="填写此成员在项目中的职责和能力"
+                      className="mt-1 min-h-12 w-full resize-y rounded-lg border border-border bg-background px-2.5 py-2 text-xs leading-5 outline-none placeholder:text-text-tertiary focus:border-text-tertiary"
+                    />
                   </span>
                   {member.role === 'Owner' ? (
                     <span className="text-xs text-text-secondary">Owner</span>
@@ -462,10 +484,12 @@ export function CloudProjectManageView({
                         data-testid={`cloud-project-member-role-${member.user_id}`}
                         value={member.role}
                         onChange={event =>
-                          void updateMember(
-                            member,
-                            event.target.value as Exclude<CloudProjectMember['role'], 'Owner'>
-                          )
+                          void updateMember(member, {
+                            role: event.target.value as Exclude<
+                              CloudProjectMember['role'],
+                              'Owner'
+                            >,
+                          })
                         }
                         className="h-8 rounded-lg border border-border bg-background px-2 text-xs outline-none"
                       >

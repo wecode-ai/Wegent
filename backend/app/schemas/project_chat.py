@@ -24,6 +24,7 @@ class ProjectChatSchema(BaseModel):
 
 class ProjectChatAgentCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=2_000)
     runtime: Literal["codex"] = "codex"
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str = Field(default="", max_length=20_000)
@@ -37,6 +38,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
 class ProjectChatAgentUpdate(ProjectChatSchema):
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2_000)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default=None, max_length=20_000)
     status: Literal["active", "archived"] | None = None
@@ -51,6 +53,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     id: str
     project_id: str
     name: str
+    description: str
     runtime: Literal["codex"]
     model: str | None
     system_prompt: str

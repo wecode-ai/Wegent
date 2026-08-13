@@ -4,6 +4,7 @@ export interface ProjectChatAgent {
   id: string
   projectId: string
   name: string
+  description: string
   runtime: 'codex'
   model: string | null
   systemPrompt: string
@@ -24,6 +25,7 @@ export interface ProjectChatAgent {
 export type ProjectChatAgentInput = Pick<
   ProjectChatAgent,
   | 'name'
+  | 'description'
   | 'runtime'
   | 'model'
   | 'systemPrompt'
@@ -49,6 +51,7 @@ export function createProjectChatAgentApi(client: HttpClient) {
         Pick<
           ProjectChatAgent,
           | 'name'
+          | 'description'
           | 'model'
           | 'systemPrompt'
           | 'status'

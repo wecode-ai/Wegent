@@ -28,6 +28,7 @@ const agent = (model: string | null): ProjectChatAgent => ({
   id: 'agent-1',
   projectId: '11',
   name: 'Project AI',
+  description: '',
   runtime: 'codex',
   model,
   systemPrompt: '',

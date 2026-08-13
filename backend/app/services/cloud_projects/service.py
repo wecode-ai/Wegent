@@ -298,6 +298,7 @@ class CloudProjectService:
                 "user_name": member_user.user_name,
                 "email": member_user.email,
                 "role": member.role,
+                "description": member.description or "",
             }
             for member, member_user in rows
         ]
@@ -314,6 +315,7 @@ class CloudProjectService:
                         "user_name": creator.user_name,
                         "email": creator.email,
                         "role": BaseRole.Owner.value,
+                        "description": "",
                     },
                 )
         return members
@@ -351,6 +353,7 @@ class CloudProjectService:
         else:
             member.role = values.role.value
             member.status = MemberStatus.APPROVED.value
+        member.description = values.description
         db.commit()
         db.refresh(member)
         return {
@@ -359,6 +362,7 @@ class CloudProjectService:
             "user_name": target.user_name,
             "email": target.email,
             "role": member.role,
+            "description": member.description or "",
         }
 
     def update_member(
@@ -373,9 +377,34 @@ class CloudProjectService:
             db, cloud_project_id, user_id, BaseRole.Maintainer
         ).project
         if member_user_id == project.created_by_user_id:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Project owner is immutable")
-        member, target = self._get_member(db, cloud_project_id, member_user_id)
-        member.role = values.role.value
+            target = db.get(User, member_user_id)
+            if target is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+            member = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+                    ResourceMember.resource_id == cloud_project_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id == str(member_user_id),
+                )
+                .first()
+            )
+            if member is None:
+                member = ResourceMember.create(
+                    resource_type=ResourceType.CLOUD_PROJECT.value,
+                    resource_id=cloud_project_id,
+                    entity_id=str(member_user_id),
+                    role=BaseRole.Owner.value,
+                    status=MemberStatus.APPROVED.value,
+                )
+                db.add(member)
+        else:
+            member, target = self._get_member(db, cloud_project_id, member_user_id)
+            if values.role is not None:
+                member.role = values.role.value
+        if values.description is not None:
+            member.description = values.description
         db.commit()
         db.refresh(member)
         return {
@@ -384,6 +413,7 @@ class CloudProjectService:
             "user_name": target.user_name,
             "email": target.email,
             "role": member.role,
+            "description": member.description or "",
         }
 
     def remove_member(

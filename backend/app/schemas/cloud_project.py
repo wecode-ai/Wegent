@@ -235,6 +235,7 @@ class CloudProjectListResponse(BaseModel):
 class CloudProjectMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
     role: BaseRole = BaseRole.Developer
+    description: str = Field(default="", max_length=2_000)
 
     @field_validator("role")
     @classmethod
@@ -245,11 +246,12 @@ class CloudProjectMemberCreate(BaseModel):
 
 
 class CloudProjectMemberUpdate(BaseModel):
-    role: BaseRole
+    role: BaseRole | None = None
+    description: str | None = Field(default=None, max_length=2_000)
 
     @field_validator("role")
     @classmethod
-    def reject_owner(cls, value: BaseRole) -> BaseRole:
+    def reject_owner(cls, value: BaseRole | None) -> BaseRole | None:
         if value == BaseRole.Owner:
             raise ValueError("Owner cannot be assigned")
         return value
@@ -261,3 +263,4 @@ class CloudProjectMemberResponse(BaseModel):
     user_name: str
     email: str | None
     role: BaseRole
+    description: str
