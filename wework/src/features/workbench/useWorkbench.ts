@@ -1,8 +1,8 @@
-import { createContext, useContext } from 'react'
+import { useContext } from 'react'
 import type { WorkbenchContextValue, WorkbenchPaneContextValue } from './workbenchContextTypes'
+import { WorkbenchContext, WorkbenchPaneContext } from './workbenchContexts'
 
-export const WorkbenchContext = createContext<WorkbenchContextValue | null>(null)
-export const WorkbenchPaneContext = createContext<WorkbenchPaneContextValue | null>(null)
+export { WorkbenchContext, WorkbenchPaneContext } from './workbenchContexts'
 
 export function useWorkbench(): WorkbenchContextValue {
   const value = useContext(WorkbenchContext)

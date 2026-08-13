@@ -24,22 +24,14 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
-cloud_segments=(
-  workspace-tabs
-  priority-filter
-  telemetry-consent
-  automation-lifecycle
-  model-routing
+# Keep the longest checkpoints isolated and order multi-checkpoint shards by
+# descending observed CI duration so the parallel workers stay balanced.
+cloud_shards=(
   core-task-flow
+  model-routing
   window-lifecycle
-  goal-lifecycle
-  supervisor-lifecycle
-  resilience
-  conversation-state
-  workspace-attachments
-  rendering-extensions
-  browser-multi-tabs
-  embedded-browser
+  resilience,priority-filter,conversation-state,rendering-extensions,telemetry-consent,browser-multi-tabs
+  goal-lifecycle,automation-lifecycle,workspace-tabs,embedded-browser,workspace-attachments,supervisor-lifecycle
 )
 
 declare -A selected=()
@@ -243,6 +235,7 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \
+      docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
@@ -268,8 +261,6 @@ append_matrix_entry() {
     "$id" "$name" "$command" "$segment"
   if [[ "$command" == "e2e:desktop" ]]; then
     core_matrix_entries+=("$entry")
-  elif [[ "$command" == "e2e:desktop:cloud" ]]; then
-    cloud_segment_entries+=("$segment")
   else
     other_matrix_entries+=("$entry")
   fi
@@ -277,7 +268,6 @@ append_matrix_entry() {
 
 build_matrix() {
   core_matrix_entries=()
-  cloud_segment_entries=()
   cloud_matrix_entries=()
   other_matrix_entries=()
 
@@ -308,30 +298,15 @@ build_matrix() {
   fi
 
   if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
-    for segment in "${cloud_segments[@]}"; do
-      cloud_segment_entries+=("$segment")
-    done
-  fi
-
-  local shard
-  for shard in 0 1 2 3 4; do
-    local shard_segments=()
-    local index
-    for index in "${!cloud_segment_entries[@]}"; do
-      if ((index % 5 == shard)); then
-        shard_segments+=("${cloud_segment_entries[$index]}")
-      fi
-    done
-    if ((${#shard_segments[@]} > 0)); then
-      local segments_csv
+    local shard
+    for shard in "${!cloud_shards[@]}"; do
       local entry
-      segments_csv="$(IFS=,; printf '%s' "${shard_segments[*]}")"
       printf -v entry \
         '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
-        "$((shard + 1))" "$((shard + 1))" "$segments_csv"
+        "$((shard + 1))" "$((shard + 1))" "${cloud_shards[$shard]}"
       cloud_matrix_entries+=("$entry")
-    fi
-  done
+    done
+  fi
 }
 
 if [[ "${1:-}" == "--all" ]]; then

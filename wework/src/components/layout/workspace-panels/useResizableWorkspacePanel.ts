@@ -10,7 +10,7 @@ import {
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
-const RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH = 260
+export const RIGHT_SPLIT_PANEL_MIN_WIDTH = 260
 const BOTTOM_DEFAULT_HEIGHT = 320
 const BOTTOM_MIN_HEIGHT = 220
 const BOTTOM_MAX_HEIGHT = 560
@@ -22,7 +22,7 @@ function clamp(value: number, min: number, max: number) {
 function getRightSplitChatMaxWidth(containerWidth: number) {
   if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_MAX_WIDTH
 
-  return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH)
+  return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_MIN_WIDTH)
 }
 
 function getRightSplitChatDefaultWidth(containerWidth: number, defaultPanelWidth?: number) {
@@ -183,6 +183,7 @@ export function useResizableBottomPanel() {
     const applyHeight = () => {
       resizeFrameRef.current = null
       if (panelRef.current) {
+        panelRef.current.style.flexBasis = `${nextHeight}px`
         panelRef.current.style.height = `${nextHeight}px`
       }
     }
@@ -217,6 +218,7 @@ export function useResizableBottomPanel() {
     const finishResize = () => {
       cleanupResize()
       if (panelRef.current) {
+        panelRef.current.style.flexBasis = `${nextHeight}px`
         panelRef.current.style.height = `${nextHeight}px`
       }
       setHeight(nextHeight)

@@ -211,6 +211,45 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     expect(request).not.toHaveProperty('externalKnowledgeRefsReplace')
   })
 
+  it('sends DingTalk documents as structured provider-native selections', async () => {
+    const dingtalkContext: ContextItem = {
+      type: 'dingtalk_doc',
+      id: 'wikispace:doc-1',
+      name: '评审说明',
+      doc_url: 'https://alidocs.dingtalk.com/i/nodes/doc-1',
+      node_type: 'doc',
+      dingtalk_node_id: 'doc-1',
+      source: 'wikispace',
+      workspace_id: 'workspace-1',
+      workspace_name: '项目知识库',
+    }
+    const { result } = renderSendHook([dingtalkContext])
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    const request = mockContextSendMessage.mock.calls[0][0]
+    expect(request.contexts).toEqual([
+      {
+        type: 'external_knowledge',
+        data: {
+          provider: 'dingtalk',
+          mode: 'explicit',
+          id: 'workspace-1',
+          name: '项目知识库',
+          scope: 'wikispace',
+          target_type: 'document',
+          node_id: 'doc-1',
+          document_id: 'doc-1',
+          target_name: '评审说明',
+          resource_url: 'https://alidocs.dingtalk.com/i/nodes/doc-1',
+        },
+      },
+    ])
+    expect(request.message).toBe('find the spec')
+  })
+
   it('sends a strict current-KB scope with selected notebook documents', async () => {
     const { result } = renderSendHook([], {
       taskType: 'knowledge',

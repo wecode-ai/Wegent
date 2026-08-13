@@ -68,6 +68,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskQueueReorderRequest,
+    RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
@@ -107,7 +109,7 @@ RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
-RUNTIME_CANCEL_TIMEOUT_SECONDS = 30
+RUNTIME_CONTROL_TIMEOUT_SECONDS = 30
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
@@ -945,23 +947,83 @@ async def cancel_runtime_task(
 ) -> RuntimeTaskCancelResponse:
     """Cancel a running LocalTask through the owning local executor."""
 
+    normalized_address, result = await _call_runtime_task_control(
+        db=db,
+        user_id=user_id,
+        address=address,
+        method="runtime.tasks.cancel",
+    )
+    return _runtime_cancel_response(result, normalized_address)
+
+
+async def force_start_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    """Force one queued LocalTask to run through the owning executor."""
+
+    normalized_address, result = await _call_runtime_task_control(
+        db=db,
+        user_id=user_id,
+        address=address,
+        method="runtime.tasks.force_start",
+    )
+    return _runtime_cancel_response(result, normalized_address)
+
+
+async def reorder_runtime_task_queue(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskQueueReorderRequest,
+) -> RuntimeTaskQueueReorderResponse:
+    """Move one queued LocalTask to a new persisted execution position."""
+
+    normalized_address, result = await _call_runtime_task_control(
+        db=db,
+        user_id=user_id,
+        address=request,
+        method="runtime.tasks.queue.reorder",
+        payload_patch={"queuePosition": request.queue_position},
+    )
+    response = _runtime_cancel_response(result, normalized_address)
+    return RuntimeTaskQueueReorderResponse(
+        **response.model_dump(by_alias=True),
+        orderedTaskIds=[
+            str(task_id) for task_id in (result.get("orderedTaskIds") or [])
+        ],
+    )
+
+
+async def _call_runtime_task_control(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    method: str,
+    payload_patch: Optional[dict[str, Any]] = None,
+) -> tuple[RuntimeTaskAddress, dict[str, Any]]:
     normalized_address = _normalized_address(address)
     _ensure_owned_device(db, user_id, normalized_address.device_id)
     _touch_workspace_mapping(db, user_id, normalized_address)
+    payload = _runtime_task_address_payload(normalized_address)
+    payload.update(payload_patch or {})
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=normalized_address.device_id,
-            method="runtime.tasks.cancel",
-            payload=_runtime_task_address_payload(normalized_address),
-            timeout_seconds=RUNTIME_CANCEL_TIMEOUT_SECONDS,
+            method=method,
+            payload=payload,
+            timeout_seconds=RUNTIME_CONTROL_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    return _runtime_cancel_response(result, normalized_address)
+    return normalized_address, result
 
 
 async def list_archived_conversations(

@@ -33,6 +33,7 @@ import type {
   RuntimeSendRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
@@ -155,12 +156,15 @@ export interface RuntimePaneGuidanceResult {
 
 export interface WorkbenchContextValue {
   services: WorkbenchServices
+  workspaceTabId?: string
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
+    scopeKey: string
+    inputByScope: Readonly<Record<string, string>>
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
@@ -189,6 +193,7 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
@@ -223,6 +228,8 @@ export interface WorkbenchContextValue {
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
   cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (
