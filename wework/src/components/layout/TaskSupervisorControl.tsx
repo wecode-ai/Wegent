@@ -159,7 +159,7 @@ export function TaskSupervisorStatusButton({
             data-testid="task-supervisor-status-run-now-button"
             disabled={runningNow || supervisor.status === 'checking'}
             onClick={() => void runNow()}
-            className="shrink-0 rounded-md px-2 py-1 text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+            className="min-h-11 min-w-11 shrink-0 rounded-md px-2 py-1 text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
           >
             {runningNow && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
             {t('workbench.supervisor_run_now')}
@@ -187,10 +187,8 @@ function TaskSupervisorDialogContent({
   const { t } = useTranslation('common')
   const configuredModelSelection =
     supervisor?.modelSelection ?? initialConfig?.modelSelection ?? defaultModelSelection
-  const configuredModel = models.find(
-    model =>
-      model.name === configuredModelSelection?.modelName &&
-      (!configuredModelSelection.modelType || model.type === configuredModelSelection.modelType)
+  const configuredModel = models.find(model =>
+    modelMatchesSelection(model, configuredModelSelection)
   )
   const [mode, setMode] = useState<RuntimeSupervisorMode>(
     supervisor?.mode ?? initialConfig?.mode ?? 'auto'
@@ -198,11 +196,7 @@ function TaskSupervisorDialogContent({
   const [instructions, setInstructions] = useState(
     supervisor?.instructions ?? initialConfig?.instructions ?? defaultInstructions
   )
-  const [modelKey, setModelKey] = useState(
-    configuredModel
-      ? `${configuredModel.type}:${configuredModel.name}`
-      : modelSelectionKey(models[0])
-  )
+  const [modelKey, setModelKey] = useState(modelSelectionKey(configuredModel ?? models[0]))
   const [intervalSeconds, setIntervalSeconds] = useState(
     supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? defaultIntervalSeconds
   )
@@ -384,7 +378,7 @@ function TaskSupervisorDialogContent({
                 className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-primary"
               >
                 {models.map(model => (
-                  <option key={`${model.type}:${model.name}`} value={modelSelectionKey(model)}>
+                  <option key={modelSelectionKey(model)} value={modelSelectionKey(model)}>
                     {model.displayName || model.name}
                   </option>
                 ))}
@@ -462,7 +456,25 @@ function TaskSupervisorDialogContent({
 }
 
 function modelSelectionKey(model: UnifiedModel | undefined): string {
-  return model ? `${model.type}:${model.name}` : ''
+  if (!model) return ''
+  return [
+    model.type,
+    model.name,
+    model.namespace ?? '',
+    model.resourceUserId === undefined ? '' : String(model.resourceUserId),
+  ].join(':')
+}
+
+function modelMatchesSelection(
+  model: UnifiedModel,
+  selection: ModelSelectionConfig | null | undefined
+): boolean {
+  if (!selection || model.name !== selection.modelName) return false
+  if (selection.modelType && model.type !== selection.modelType) return false
+  const namespace = selection.options?.weworkCloudModelNamespace
+  if (namespace && model.namespace !== namespace) return false
+  const resourceUserId = selection.options?.weworkCloudModelResourceUserId
+  return !resourceUserId || String(model.resourceUserId) === resourceUserId
 }
 
 function formatCheckTime(timestamp: number): string {

@@ -72,7 +72,7 @@ Interrupting stops the current response but does not roll back completed file ed
 
 ## Use the personal supervisor
 
-Open the composer's **+** menu in a Codex task and select **Personal supervisor**. While the main AI is working, the executor periodically reads its recent progress in the background and evaluates goal drift, missed constraints, destructive actions, and obvious blocked loops with a lightweight read-only call. Supervision is a regular feature and does not require **Experimental features**. It does not fork the original task, and checks continue without keeping the task view open.
+Open the composer's **+** menu in a new Codex conversation or an existing Codex task and select **Personal supervisor**. While the main AI is working, the executor periodically reads its recent progress in the background and evaluates goal drift, missed constraints, destructive actions, and obvious blocked loops with a lightweight read-only call. Supervision is a regular feature and does not require **Experimental features**. It does not fork the original task, and checks continue without keeping the task view open.
 
 - **Suggest** shows a correction above the composer for you to approve or dismiss.
 - **Auto-correct** steers an active response when a clear deviation is found, or starts a normal follow-up just as if you had sent the instruction from the composer.

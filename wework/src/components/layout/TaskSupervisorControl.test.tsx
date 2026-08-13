@@ -92,7 +92,7 @@ describe('TaskSupervisorControl', () => {
     )
     expect(screen.getByTestId('task-supervisor-model')).toHaveTextContent('GPT 5.6 Luna')
     fireEvent.change(screen.getByTestId('task-supervisor-model'), {
-      target: { value: 'public:gpt-5.6-luna' },
+      target: { value: 'public:gpt-5.6-luna:default:0' },
     })
     fireEvent.change(screen.getByTestId('task-supervisor-frequency'), {
       target: { value: '60' },
@@ -145,7 +145,45 @@ describe('TaskSupervisorControl', () => {
       />
     )
 
-    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:saved-review-model')
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue(
+      'public:saved-review-model:default:0'
+    )
+  })
+
+  test('restores a saved model by its complete cloud identity', () => {
+    render(
+      <TaskSupervisorControl
+        supervisor={null}
+        open
+        defaultModelSelection={{
+          modelName: 'shared-name',
+          modelType: 'public',
+          options: {
+            weworkCloudModelNamespace: 'team-b',
+            weworkCloudModelResourceUserId: '22',
+          },
+        }}
+        onOpenChange={vi.fn()}
+        models={[
+          {
+            name: 'shared-name',
+            type: 'public',
+            namespace: 'team-a',
+            resourceUserId: 11,
+          },
+          {
+            name: 'shared-name',
+            type: 'public',
+            namespace: 'team-b',
+            resourceUserId: 22,
+          },
+        ]}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:shared-name:team-b:22')
   })
 
   test('defaults to the last selected supervisor interval', () => {
@@ -200,7 +238,7 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-instructions')).toHaveValue(
       'Review from the first turn'
     )
-    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:gpt-5.6-luna')
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:gpt-5.6-luna:default:0')
     expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('60')
     expect(screen.getByTestId('task-supervisor-disable-button')).toBeInTheDocument()
   })
@@ -237,7 +275,7 @@ describe('TaskSupervisorControl', () => {
       />
     )
 
-    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:review-model')
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:review-model:default:0')
   })
 
   test('renders configuration in an accessible dialog', () => {
