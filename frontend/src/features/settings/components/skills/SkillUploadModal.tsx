@@ -20,6 +20,7 @@ import {
   GitSkillInfo,
   GitImportResponse,
   addSkillToGroups,
+  updateSkillFromGitRepository,
 } from '@/apis/skills'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -83,6 +84,13 @@ interface SkillUploadModalProps {
   ) => void
 }
 
+function validateGitUrl(url: string): boolean {
+  if (!url.trim()) return false
+  // Supports credentials, custom ports, schemeless URLs, and nested repository paths.
+  const urlPattern = /^(https?:\/\/)?([\w.-]+(:[\w.-]+)?@)?[\w.-]+(:\d+)?\/[\w.-]+(\/[\w.-]+)+$/i
+  return urlPattern.test(url.trim())
+}
+
 // Helper to get skill name from either type
 function getSkillName(skill: Skill | UnifiedSkill | null | undefined): string {
   if (!skill) return ''
@@ -99,6 +107,17 @@ function getSkillId(skill: Skill | UnifiedSkill | null | undefined): number {
     return parseInt(skill.metadata.labels?.id || '0')
   }
   return skill.id || 0
+}
+
+function getSkillSource(skill: Skill | UnifiedSkill | null | undefined) {
+  if (!skill || 'metadata' in skill) return undefined
+  return skill.source
+}
+
+function getInitialUpdateTab(skill: Skill | UnifiedSkill | null | undefined): 'upload' | 'git' {
+  const sourceType = getSkillSource(skill)?.type
+  if (sourceType === 'git') return 'git'
+  return 'upload'
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
@@ -141,6 +160,7 @@ export default function SkillUploadModal({
   const [selectedOverwrites, setSelectedOverwrites] = useState<Set<string>>(new Set())
   const [importResult, setImportResult] = useState<GitImportResponse | null>(null)
   const [showResult, setShowResult] = useState(false)
+  const [updatingFromOriginalGit, setUpdatingFromOriginalGit] = useState(false)
 
   const isEditMode = !!skill
   const publishTarget: CapabilityPublishTarget =
@@ -161,6 +181,19 @@ export default function SkillUploadModal({
   useEffect(() => {
     if (!open) setMarketplaceTags([])
   }, [open])
+
+  useEffect(() => {
+    if (!open || !isEditMode) return
+
+    setSkillName(getSkillName(skill))
+    setSelectedFile(null)
+    setError(null)
+    setActiveTab(getInitialUpdateTab(skill))
+    setGitUrl(getSkillSource(skill)?.repo_url || '')
+    setScannedSkills([])
+    setSelectedSkillPaths(new Set())
+    setGitError(null)
+  }, [isEditMode, open, skill])
 
   const addSavedSkillsToGroups = async (skillIds: number[]): Promise<void> => {
     if (targetGroupNames.length === 0 || skillIds.length === 0) return
@@ -375,20 +408,6 @@ export default function SkillUploadModal({
   // Git Import Tab Logic
   // ============================================================================
 
-  const validateGitUrl = (url: string): boolean => {
-    if (!url.trim()) return false
-    // Basic URL validation - should contain at least host/owner/repo pattern
-    // Supports formats:
-    // - https://host/owner/repo
-    // - https://user:pass@host/owner/repo
-    // - https://token@host/owner/repo
-    // - http://host:port/owner/repo
-    // - host/owner/repo
-    // - Multi-level paths like /group/subgroup/repo
-    const urlPattern = /^(https?:\/\/)?([\w.-]+(:[\w.-]+)?@)?[\w.-]+(:\d+)?\/[\w.-]+(\/[\w.-]+)+/i
-    return urlPattern.test(url.trim())
-  }
-
   const handleScanRepository = async () => {
     if (!validateGitUrl(gitUrl)) {
       setGitError(t('skills.git_invalid_url'))
@@ -403,10 +422,20 @@ export default function SkillUploadModal({
     try {
       const scanFn = isPublic ? scanGitRepoPublicSkills : scanGitRepoSkills
       const result = await scanFn(gitUrl.trim())
-      setScannedSkills(result.skills)
+      const matchingSkills = isEditMode
+        ? result.skills.filter(item => item.name === skillName)
+        : result.skills
+      setScannedSkills(matchingSkills)
+      if (isEditMode && matchingSkills.length === 1) {
+        setSelectedSkillPaths(new Set([matchingSkills[0].path]))
+      }
 
-      if (result.skills.length === 0) {
-        setGitError(t('skills.git_no_skills_found'))
+      if (matchingSkills.length === 0) {
+        setGitError(
+          isEditMode
+            ? t('skills.git_current_skill_not_found', { skillName })
+            : t('skills.git_no_skills_found')
+        )
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : t('skills.git_download_failed')
@@ -429,6 +458,10 @@ export default function SkillUploadModal({
   }
 
   const handleToggleSkill = (path: string) => {
+    if (isEditMode) {
+      setSelectedSkillPaths(selectedSkillPaths.has(path) ? new Set() : new Set([path]))
+      return
+    }
     const newSelected = new Set(selectedSkillPaths)
     if (newSelected.has(path)) {
       newSelected.delete(path)
@@ -440,15 +473,15 @@ export default function SkillUploadModal({
 
   const handleImportSkills = async () => {
     if (selectedSkillPaths.size === 0) return
-    if (publishTarget === 'team' && targetGroupNames.length === 0) {
+    if (!isEditMode && publishTarget === 'team' && targetGroupNames.length === 0) {
       setGitError(t('resource-library:states.select_groups'))
       return
     }
-    if (publishTarget === 'marketplace' && marketplaceTags.length === 0) {
+    if (!isEditMode && publishTarget === 'marketplace' && marketplaceTags.length === 0) {
       setGitError(t('resource-library:marketplace_tags.required'))
       return
     }
-    if (publishTarget === 'marketplace' && selectedSkillPaths.size !== 1) {
+    if (!isEditMode && publishTarget === 'marketplace' && selectedSkillPaths.size !== 1) {
       setGitError(t('resource-library:marketplace_tags.single_skill_required'))
       return
     }
@@ -457,6 +490,13 @@ export default function SkillUploadModal({
     setGitError(null)
 
     try {
+      if (isEditMode && skill) {
+        const [skillPath] = Array.from(selectedSkillPaths)
+        await updateSkillFromGitRepository(getSkillId(skill), gitUrl.trim(), skillPath)
+        onClose(true, getSkillId(skill))
+        return
+      }
+
       const importFn = isPublic ? importGitRepoPublicSkills : importGitRepoSkills
       const request = {
         repo_url: gitUrl.trim(),
@@ -544,7 +584,7 @@ export default function SkillUploadModal({
   }
 
   const resetGitState = () => {
-    setGitUrl('')
+    setGitUrl(isEditMode ? getSkillSource(skill)?.repo_url || '' : '')
     setScannedSkills([])
     setSelectedSkillPaths(new Set())
     setGitError(null)
@@ -552,11 +592,27 @@ export default function SkillUploadModal({
     setShowResult(false)
   }
 
+  const handleUpdateFromOriginalGit = async (repoUrl: string, skillPath: string) => {
+    if (!skill || getSkillSource(skill)?.type !== 'git') return
+
+    setUpdatingFromOriginalGit(true)
+    setGitError(null)
+    try {
+      const skillId = getSkillId(skill)
+      await updateSkillFromGitRepository(skillId, repoUrl, skillPath)
+      onClose(true, skillId)
+    } catch (err) {
+      setGitError(err instanceof Error ? err.message : t('skills.failed_update_from_git'))
+    } finally {
+      setUpdatingFromOriginalGit(false)
+    }
+  }
+
   return (
     <>
       <Dialog open={open} onOpenChange={open => !open && handleClose()}>
         <DialogContent
-          className="sm:max-w-[600px] bg-surface max-h-[90vh] overflow-y-auto"
+          className="max-h-[90vh] w-[calc(100vw-2rem)] min-w-0 overflow-x-hidden overflow-y-auto bg-surface sm:w-full sm:max-w-[600px]"
           data-testid="skill-upload-dialog"
         >
           <DialogHeader>
@@ -570,58 +626,48 @@ export default function SkillUploadModal({
             </DialogDescription>
           </DialogHeader>
 
-          {isEditMode ? (
-            // Edit mode: only show upload form
-            <UploadForm
-              skillName={skillName}
-              setSkillName={setSkillName}
-              selectedFile={selectedFile}
-              uploading={uploading}
-              uploadProgress={uploadProgress}
-              error={error}
-              dragActive={dragActive}
-              isEditMode={isEditMode}
-              handleFileChange={handleFileChange}
-              handleDrag={handleDrag}
-              handleDrop={handleDrop}
-              handleSubmit={handleSubmit}
-              handleClose={handleClose}
-              t={t}
-            />
-          ) : (
-            // Create mode: show tabs
-            <Tabs value={activeTab} onValueChange={v => setActiveTab(v as 'upload' | 'git')}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="upload" className="flex items-center gap-2">
-                  <UploadIcon className="w-4 h-4" />
-                  {t('actions.upload')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="git"
-                  className="flex items-center gap-2"
-                  onClick={resetGitState}
-                >
-                  <GitBranch className="w-4 h-4" />
-                  {t('skills.git_import_tab')}
-                </TabsTrigger>
-              </TabsList>
+          <Tabs
+            value={activeTab}
+            onValueChange={v => setActiveTab(v as 'upload' | 'git')}
+            className="min-w-0 max-w-full overflow-hidden"
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger
+                value="upload"
+                className="flex items-center gap-2"
+                data-testid="skill-update-upload-tab"
+              >
+                <UploadIcon className="w-4 h-4" />
+                {t('actions.upload')}
+              </TabsTrigger>
+              <TabsTrigger
+                value="git"
+                className="flex items-center gap-2"
+                onClick={resetGitState}
+                data-testid="skill-update-git-tab"
+              >
+                <GitBranch className="w-4 h-4" />
+                {isEditMode ? t('skills.update_from_git') : t('skills.git_import_tab')}
+              </TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="upload" className="mt-4">
-                <UploadForm
-                  skillName={skillName}
-                  setSkillName={setSkillName}
-                  selectedFile={selectedFile}
-                  uploading={uploading}
-                  uploadProgress={uploadProgress}
-                  error={error}
-                  dragActive={dragActive}
-                  isEditMode={isEditMode}
-                  handleFileChange={handleFileChange}
-                  handleDrag={handleDrag}
-                  handleDrop={handleDrop}
-                  handleSubmit={handleSubmit}
-                  handleClose={handleClose}
-                  publishScope={
+            <TabsContent value="upload" className="mt-4">
+              <UploadForm
+                skillName={skillName}
+                setSkillName={setSkillName}
+                selectedFile={selectedFile}
+                uploading={uploading}
+                uploadProgress={uploadProgress}
+                error={error}
+                dragActive={dragActive}
+                isEditMode={isEditMode}
+                handleFileChange={handleFileChange}
+                handleDrag={handleDrag}
+                handleDrop={handleDrop}
+                handleSubmit={handleSubmit}
+                handleClose={handleClose}
+                publishScope={
+                  isEditMode ? undefined : (
                     <div className="space-y-4">
                       <CapabilityScopeSelector
                         value={publishTarget}
@@ -638,29 +684,42 @@ export default function SkillUploadModal({
                         />
                       )}
                     </div>
-                  }
+                  )
+                }
+                t={t}
+              />
+            </TabsContent>
+
+            <TabsContent value="git" className="mt-4">
+              {isEditMode && getSkillSource(skill)?.type === 'git' ? (
+                <OriginalGitUpdateForm
+                  repoUrl={getSkillSource(skill)?.repo_url || ''}
+                  skillPath={getSkillSource(skill)?.skill_path || ''}
+                  updating={updatingFromOriginalGit}
+                  error={gitError}
+                  onUpdate={handleUpdateFromOriginalGit}
+                  onClose={handleClose}
                   t={t}
                 />
-              </TabsContent>
-
-              <TabsContent value="git" className="mt-4">
-                {showResult && importResult ? (
-                  <ImportResultView result={importResult} onDone={handleResultDone} t={t} />
-                ) : (
-                  <GitImportForm
-                    gitUrl={gitUrl}
-                    setGitUrl={setGitUrl}
-                    scanning={scanning}
-                    scannedSkills={scannedSkills}
-                    selectedSkillPaths={selectedSkillPaths}
-                    importing={importing}
-                    gitError={gitError}
-                    handleScanRepository={handleScanRepository}
-                    handleSelectAll={handleSelectAll}
-                    handleToggleSkill={handleToggleSkill}
-                    handleImportSkills={handleImportSkills}
-                    handleClose={handleClose}
-                    publishScope={
+              ) : showResult && importResult ? (
+                <ImportResultView result={importResult} onDone={handleResultDone} t={t} />
+              ) : (
+                <GitImportForm
+                  gitUrl={gitUrl}
+                  setGitUrl={setGitUrl}
+                  scanning={scanning}
+                  scannedSkills={scannedSkills}
+                  selectedSkillPaths={selectedSkillPaths}
+                  importing={importing}
+                  gitError={gitError}
+                  handleScanRepository={handleScanRepository}
+                  handleSelectAll={handleSelectAll}
+                  handleToggleSkill={handleToggleSkill}
+                  handleImportSkills={handleImportSkills}
+                  handleClose={handleClose}
+                  isEditMode={isEditMode}
+                  publishScope={
+                    isEditMode ? undefined : (
                       <div className="space-y-4">
                         <CapabilityScopeSelector
                           value={publishTarget}
@@ -677,13 +736,13 @@ export default function SkillUploadModal({
                           />
                         )}
                       </div>
-                    }
-                    t={t}
-                  />
-                )}
-              </TabsContent>
-            </Tabs>
-          )}
+                    )
+                  }
+                  t={t}
+                />
+              )}
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
 
@@ -913,6 +972,7 @@ interface GitImportFormProps {
   handleToggleSkill: (path: string) => void
   handleImportSkills: () => void
   handleClose: () => void
+  isEditMode?: boolean
   publishScope?: ReactNode
   t: (key: string, options?: Record<string, unknown>) => string
 }
@@ -930,6 +990,7 @@ function GitImportForm({
   handleToggleSkill,
   handleImportSkills,
   handleClose,
+  isEditMode = false,
   publishScope,
   t,
 }: GitImportFormProps) {
@@ -989,11 +1050,13 @@ function GitImportForm({
             <span className="text-sm font-medium">
               {t('skills.git_skills_found', { count: scannedSkills.length })}
             </span>
-            <Button variant="ghost" size="sm" onClick={handleSelectAll}>
-              {selectedSkillPaths.size === scannedSkills.length
-                ? t('skills.git_deselect_all')
-                : t('skills.git_select_all')}
-            </Button>
+            {!isEditMode && (
+              <Button variant="ghost" size="sm" onClick={handleSelectAll}>
+                {selectedSkillPaths.size === scannedSkills.length
+                  ? t('skills.git_deselect_all')
+                  : t('skills.git_select_all')}
+              </Button>
+            )}
           </div>
 
           <div className="max-h-60 overflow-y-auto border rounded-lg">
@@ -1037,6 +1100,7 @@ function GitImportForm({
           variant="primary"
           onClick={handleImportSkills}
           disabled={isLoading || selectedSkillPaths.size === 0}
+          data-testid="git-import-submit"
         >
           {importing ? (
             <>
@@ -1044,8 +1108,80 @@ function GitImportForm({
               {t('actions.loading')}
             </>
           ) : (
-            t('skills.git_import_selected')
+            t(isEditMode ? 'skills.update_from_git' : 'skills.git_import_selected')
           )}
+        </Button>
+      </DialogFooter>
+    </div>
+  )
+}
+
+interface OriginalGitUpdateFormProps {
+  repoUrl: string
+  skillPath: string
+  updating: boolean
+  error: string | null
+  onUpdate: (repoUrl: string, skillPath: string) => void
+  onClose: () => void
+  t: (key: string, options?: Record<string, unknown>) => string
+}
+
+function OriginalGitUpdateForm({
+  repoUrl,
+  skillPath,
+  updating,
+  error,
+  onUpdate,
+  onClose,
+  t,
+}: OriginalGitUpdateFormProps) {
+  const [editedRepoUrl, setEditedRepoUrl] = useState(repoUrl)
+  const [editedSkillPath, setEditedSkillPath] = useState(skillPath)
+  const canUpdate = validateGitUrl(editedRepoUrl) && Boolean(editedSkillPath.trim())
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="skill-git-source-url">{t('skills.git_url_label')}</Label>
+        <Input
+          id="skill-git-source-url"
+          value={editedRepoUrl}
+          onChange={event => setEditedRepoUrl(event.target.value)}
+          placeholder={t('skills.git_url_placeholder')}
+          disabled={updating}
+          data-testid="skill-git-source-url"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="skill-git-source-path">{t('skills.git_skill_path_label')}</Label>
+        <Input
+          id="skill-git-source-path"
+          value={editedSkillPath}
+          onChange={event => setEditedSkillPath(event.target.value)}
+          placeholder={t('skills.git_skill_path_placeholder')}
+          disabled={updating}
+          data-testid="skill-git-source-path"
+        />
+        <p className="text-xs text-text-muted">{t('skills.git_source_edit_hint')}</p>
+      </div>
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose} disabled={updating}>
+          {t('actions.cancel')}
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() => onUpdate(editedRepoUrl.trim(), editedSkillPath.trim())}
+          disabled={updating || !canUpdate}
+          data-testid="update-skill-from-original-git"
+        >
+          {updating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {t('skills.update_from_git')}
         </Button>
       </DialogFooter>
     </div>

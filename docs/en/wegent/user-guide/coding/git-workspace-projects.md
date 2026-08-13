@@ -152,6 +152,8 @@ In the macOS desktop app, choosing “Using existing folder” for a local devic
 
 The project appears in the sidebar immediately after it is added and can also be removed from its project menu immediately, without waiting for the local Executor to finish subsequent synchronization. Removing a local-folder project only removes its Wework project entry; it does not delete the directory from disk.
 
+After removal succeeds, Wework invalidates cloud refreshes and remote-project synchronizations that started before the removal completed. This prevents stale requests from writing the deleted project back into the sidebar; later lists use the current project state returned by the Executor and cloud.
+
 When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
 
 - If an active project already matches that folder, Wegent selects and reuses it instead of creating a duplicate project.
