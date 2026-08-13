@@ -204,6 +204,20 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     'The multiline composer caret was clipped outside the visible editor'
   )
 
+  await control.command('press', COMPOSER, { key: 'Backspace' })
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    11,
+    'Backspace did not remove the trailing empty composer line'
+  )
+
+  await control.command('press', COMPOSER, { key: 'Meta+a' })
+  await control.command('press', COMPOSER, { key: 'Backspace' })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    '',
+    'Backspace did not clear the fully selected multiline composer'
+  )
   await control.command('fill', COMPOSER, { value: '' })
   assert.equal(
     Number(await control.command('getElementCount', `${COMPOSER} > p`)),

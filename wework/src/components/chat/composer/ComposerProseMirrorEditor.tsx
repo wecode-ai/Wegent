@@ -7,7 +7,13 @@ import {
   useState,
 } from 'react'
 import type { RefObject } from 'react'
-import { splitBlock } from 'prosemirror-commands'
+import {
+  chainCommands,
+  deleteSelection,
+  joinBackward,
+  joinForward,
+  splitBlock,
+} from 'prosemirror-commands'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
@@ -154,6 +160,8 @@ export const ComposerProseMirrorEditor = forwardRef<
             'Mod-z': undo,
             'Mod-y': redo,
             'Shift-Mod-z': redo,
+            Backspace: chainCommands(deleteSelection, joinBackward),
+            Delete: chainCommands(deleteSelection, joinForward),
             'Shift-Enter': (state, dispatch, view) => {
               const handled = splitBlock(
                 state,

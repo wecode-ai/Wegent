@@ -438,6 +438,43 @@ describe('ComposerProseMirrorEditor', () => {
     expect(setData).toHaveBeenCalledWith('text/plain', value)
   })
 
+  test.each(['Backspace', 'Delete'])('deletes a fully selected multiline document with %s', key => {
+    const { editorRef, onChange } = renderEditor('first line\n\nthird line')
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.focus()
+    expect(fireEvent.keyDown(editor, { key: 'a', code: 'KeyA', metaKey: true })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      selectionStart: 0,
+      selectionEnd: 'first line\n\nthird line'.length,
+    })
+
+    expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: '',
+      selectionOffset: 0,
+      selectionStart: 0,
+      selectionEnd: 0,
+    })
+    expect(onChange).toHaveBeenLastCalledWith('')
+  })
+
+  test.each(['Backspace', 'Delete'])('removes an empty line with %s', key => {
+    const value = 'first line\n\nthird line'
+    const { editorRef, onChange } = renderEditor(value)
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue(value, 'first line\n'.length)
+      editorRef.current?.focus()
+    })
+
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe('first line\n'.length)
+    expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
+    expect(editorRef.current?.getSnapshot().value).toBe('first line\nthird line')
+    expect(onChange).toHaveBeenLastCalledWith('first line\nthird line')
+  })
+
   test('moves right across the whole skill in one step', () => {
     const { editorRef } = renderEditor()
     const editor = screen.getByTestId('composer-editor')
