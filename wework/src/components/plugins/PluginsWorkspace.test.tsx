@@ -1792,6 +1792,30 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('does not automatically update a marketplace plugin with manual policy', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(await screen.findByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+  })
+
   test('lets users explicitly opt in to automatic marketplace plugin updates', async () => {
     mockSystemSkillsFetch({
       marketplaceInstalled: true,

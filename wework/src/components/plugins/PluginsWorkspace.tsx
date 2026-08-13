@@ -3681,7 +3681,19 @@ export function PluginsWorkspace({
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
-    if (!pluginMarketplaceState.items.some(marketplaceItemNeedsPluginAutoUpdate)) return
+    const hasAutoUpdateCandidate = pluginMarketplaceState.items.some(item => {
+      if (!marketplaceItemNeedsPluginAutoUpdate(item)) return false
+      if (item.installedPluginId === null || item.installedPluginId === undefined) return false
+      const installed = installedPlugins.find(
+        plugin => String(plugin.id) === String(item.installedPluginId)
+      )
+      return Boolean(
+        installed &&
+        isCloudManagedInstalledPlugin(installed.raw) &&
+        installed.raw.spec.updatePolicy === 'auto'
+      )
+    })
+    if (!hasAutoUpdateCandidate) return
     const attemptKey = `${marketplaceCacheKeyValue}:${currentDeviceId}`
     if (autoUpdateAttemptKeysRef.current.has(attemptKey)) return
 
@@ -3752,6 +3764,7 @@ export function PluginsWorkspace({
     cloudMarketplaceAvailable,
     cloudToken,
     currentDeviceId,
+    installedPlugins,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
     pluginApi,

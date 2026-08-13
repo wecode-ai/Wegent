@@ -1000,6 +1000,42 @@ def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_u
     assert opted_out.spec.updatePolicy == "manual"
 
 
+def test_non_marketplace_plugin_can_disable_but_not_enable_auto_updates(
+    test_db, test_user
+):
+    installed, _ = _device_install(test_db, test_user.id)
+    installed.json = {
+        **installed.json,
+        "spec": {
+            **installed.json["spec"],
+            "source": {
+                "type": "local",
+                "providerKey": "personal",
+                "pluginKey": "device-state",
+            },
+            "displayName": "Device State",
+        },
+    }
+    flag_modified(installed, "json")
+    test_db.commit()
+
+    opted_out = installed_plugin_service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        request=InstalledPluginUpdateRequest(updatePolicy="manual"),
+    )
+
+    assert opted_out.spec.updatePolicy == "manual"
+    with pytest.raises(HTTPException, match="Automatic updates require"):
+        installed_plugin_service.update_installed_plugin(
+            db=test_db,
+            user_id=test_user.id,
+            installed_id=installed.id,
+            request=InstalledPluginUpdateRequest(updatePolicy="auto"),
+        )
+
+
 @pytest.mark.parametrize(
     ("package_factory", "error"),
     [

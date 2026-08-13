@@ -37,7 +37,7 @@ def _set_cloud_update_policy(policy: str) -> None:
             kinds.c.namespace == "default",
             kinds.c.is_active.is_(True),
         )
-    )
+    ).fetchall()
     for row in rows:
         payload = row.json if isinstance(row.json, dict) else {}
         spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}

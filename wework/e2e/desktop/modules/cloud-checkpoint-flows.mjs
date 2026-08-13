@@ -266,11 +266,11 @@ async function verifyCloudCheckpoint({
     const completionDeadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
     let noticeKind = ''
     while (Date.now() < completionDeadline) {
-      noticeKind = await control.command(
-        'getAttribute',
-        '[data-testid="plugin-operation-notice"]',
-        { value: 'data-notice-kind' }
-      )
+      noticeKind = await control
+        .command('getAttribute', '[data-testid="plugin-operation-notice"]', {
+          value: 'data-notice-kind',
+        })
+        .catch(() => '')
       if (noticeKind === 'success') break
       await new Promise(resolve => setTimeout(resolve, 100))
     }

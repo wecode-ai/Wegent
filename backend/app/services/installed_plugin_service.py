@@ -118,8 +118,9 @@ class InstalledPluginService:
             spec["description"] = request.description
         if request.updatePolicy is not None:
             source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
-            if source.get("type") != "marketplace" or not isinstance(
-                spec.get("pluginId"), int
+            if request.updatePolicy == "auto" and (
+                source.get("type") != "marketplace"
+                or not isinstance(spec.get("pluginId"), int)
             ):
                 raise HTTPException(
                     status_code=400,
