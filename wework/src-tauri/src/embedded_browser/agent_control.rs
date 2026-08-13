@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::Emitter;
@@ -6,6 +8,8 @@ use super::{
     browser_label, current_unix_millis, EmbeddedBrowserBridgeRequest, EmbeddedBrowserState,
     EMBEDDED_BROWSER_AGENT_STATE_EVENT, EMBEDDED_BROWSER_NATIVE_SEQUENCE,
 };
+
+const AGENT_APPROVAL_RESOLUTION_GRACE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -156,21 +160,42 @@ pub(super) fn consume_approved_agent_risk(
     label: &str,
     signature: &str,
 ) -> Result<bool, String> {
-    let now = current_unix_millis();
+    let deadline = Instant::now() + AGENT_APPROVAL_RESOLUTION_GRACE;
     let mut approvals = state
         .agent_approvals
         .lock()
         .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?;
-    approvals.retain(|_, approval| approval.payload.expires_at_unix_ms > now);
-    let approval_id = approvals.iter().find_map(|(id, approval)| {
-        (approval.label == label && approval.signature == signature && approval.approved)
-            .then(|| id.clone())
-    });
-    if let Some(approval_id) = approval_id {
-        approvals.remove(&approval_id);
-        return Ok(true);
+
+    loop {
+        let now = current_unix_millis();
+        approvals.retain(|_, approval| approval.payload.expires_at_unix_ms > now);
+        let approved_id = approvals.iter().find_map(|(id, approval)| {
+            (approval.label == label && approval.signature == signature && approval.approved)
+                .then(|| id.clone())
+        });
+        if let Some(approval_id) = approved_id {
+            approvals.remove(&approval_id);
+            return Ok(true);
+        }
+        let pending = approvals.values().any(|approval| {
+            approval.label == label && approval.signature == signature && !approval.approved
+        });
+        if !pending {
+            return Ok(false);
+        }
+
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Ok(false);
+        };
+        let (next_approvals, wait_result) = state
+            .agent_approval_changed
+            .wait_timeout(approvals, remaining)
+            .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?;
+        approvals = next_approvals;
+        if wait_result.timed_out() {
+            return Ok(false);
+        }
     }
-    Ok(false)
 }
 
 pub(super) fn register_agent_approval(
@@ -273,6 +298,7 @@ pub(super) fn clear_label_agent_state(
         .lock()
         .map_err(|_| "Embedded browser approval state lock poisoned".to_string())?
         .retain(|_, approval| approval.label != label);
+    state.agent_approval_changed.notify_all();
     Ok(())
 }
 
@@ -333,6 +359,7 @@ pub(super) fn resolve_agent_approval(
         approval.approved = true;
         let payload = approval.payload.clone();
         drop(approvals);
+        state.agent_approval_changed.notify_all();
         emit_agent_state(
             &app,
             &label,
@@ -347,6 +374,7 @@ pub(super) fn resolve_agent_approval(
         let payload = approval.payload.clone();
         approvals.remove(&approval_id);
         drop(approvals);
+        state.agent_approval_changed.notify_all();
         emit_agent_state(
             &app,
             &label,
