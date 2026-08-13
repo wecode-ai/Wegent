@@ -12,7 +12,8 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import CustomHTTPException
-from app.models.knowledge import KnowledgeFolder
+from app.models.knowledge import ContentOrigin, KnowledgeFolder
+from app.services.knowledge.content_scope import assert_folder_accepts_content_origin
 
 # Knowledge base counts as level 1, so users can create at most 4 nested
 # folder levels below it: KB -> folder1 -> folder2 -> folder3 -> folder4.
@@ -149,6 +150,8 @@ def assert_document_can_be_placed_in_folder(
     db: Session,
     kind_id: int,
     folder_id: int,
+    *,
+    content_origin: ContentOrigin | str | None = None,
 ) -> Optional[KnowledgeFolder]:
     """Validate that a document can be placed in the target folder.
 
@@ -173,6 +176,9 @@ def assert_document_can_be_placed_in_folder(
     )
     if folder is None:
         raise ValueError(f"Folder {folder_id} not found in this knowledge base")
+
+    if content_origin is not None:
+        assert_folder_accepts_content_origin(folder, content_origin)
 
     validate_document_target_folder_depth(db, kind_id, folder.id)
     return folder

@@ -345,6 +345,7 @@ const UserList: React.FC = () => {
             {users.map(user => (
               <Card
                 key={user.id}
+                data-testid={`user-card-${user.id}`}
                 className={`p-4 bg-base hover:bg-hover transition-colors ${!user.is_active ? 'opacity-60' : ''}`}
               >
                 <div className="flex items-center justify-between min-w-0">
@@ -371,6 +372,7 @@ const UserList: React.FC = () => {
                     <Button
                       variant="ghost"
                       size="icon"
+                      data-testid={`edit-user-${user.id}`}
                       className="h-8 w-8"
                       onClick={() => openEditDialog(user)}
                       title={t('admin:users.edit_user')}
@@ -407,6 +409,7 @@ const UserList: React.FC = () => {
                     <Button
                       variant="ghost"
                       size="icon"
+                      data-testid={`delete-user-${user.id}`}
                       className="h-8 w-8 hover:text-error"
                       onClick={() => {
                         setSelectedUser(user)

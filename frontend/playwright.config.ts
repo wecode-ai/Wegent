@@ -1,6 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const EXECUTOR_REGRESSION_SPEC = /tasks\/agent-conversation-regression\.spec\.ts/
+const EXECUTOR_REGRESSION_SPEC =
+  /tasks\/(agent-conversation-regression|provider-native-claudecode)\.spec\.ts/
+const PROVIDER_NATIVE_CHAT_SPEC =
+  /tasks\/provider-native-(chat|dingtalk|state-and-contract)\.spec\.ts/
 
 /**
  * Playwright configuration for Wegent E2E testing
@@ -73,6 +76,7 @@ export default defineConfig({
       testIgnore: [
         /api\/.*\.spec\.ts/,
         EXECUTOR_REGRESSION_SPEC, // Run executor-heavy coverage in a dedicated CI job.
+        PROVIDER_NATIVE_CHAT_SPEC, // Shared provider configuration requires serial execution.
       ],
       use: {
         ...devices['Desktop Chrome'],
@@ -87,6 +91,15 @@ export default defineConfig({
       use: {
         // API tests don't need a browser
         baseURL: process.env.E2E_API_URL || 'http://localhost:8000',
+      },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'provider-native-chromium',
+      testMatch: PROVIDER_NATIVE_CHAT_SPEC,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
       },
       dependencies: ['setup'],
     },

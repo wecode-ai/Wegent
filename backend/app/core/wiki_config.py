@@ -35,14 +35,11 @@ class WikiSettings(BaseSettings):
         "en"  # Default language for wiki documentation generation (en/zh)
     )
 
-    # Write-back channel (env vars: WIKI_MAX_CONTENT_SIZE, WIKI_INTERNAL_API_TOKEN).
+    # Write-back channel (env var: WIKI_MAX_CONTENT_SIZE).
     # The agent reaches it through the wiki_submit skill, which builds the URL from
     # the task's own API domain -- so there is no configured address here to drift
     # out of step with where the backend actually is.
     MAX_CONTENT_SIZE: int = 10 * 1024 * 1024  # Maximum content size 10MB
-    INTERNAL_API_TOKEN: str = (
-        "weki"  # Internal authentication token for content write API
-    )
 
     class Config:
         env_file = ".env"

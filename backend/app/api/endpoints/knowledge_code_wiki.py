@@ -83,7 +83,6 @@ from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
     SourceRepository,
     assert_user_can_read_source,
-    assert_user_can_write_source,
 )
 from app.services.knowledge.orchestrator import knowledge_orchestrator
 from shared.telemetry.decorators import add_span_event, trace_sync
@@ -392,23 +391,19 @@ def _readable_code_wiki(db: Session, user: User, knowledge_base_id: int) -> Kind
 def _assert_caller_may_regenerate(
     db: Session, user: User, knowledge_base: Kind
 ) -> None:
-    """Refuse a caller who may read the wiki but not change its repository.
+    """Refuse a caller who may read the wiki but cannot manage it.
 
-    A knowledge base that is not a code wiki, or one with no repository recorded,
-    is left to ``start_run`` to reject: it already says which of the two it is, and
-    answering "you lack write access" for something with nothing to write to would
-    be a worse account of the refusal.
+    A knowledge base that is not a code wiki is left to ``start_run`` to reject, so
+    this permission message does not mask the more useful resource error.
     """
     spec = (knowledge_base.json or {}).get("spec", {})
     if spec.get("kbType") != KnowledgeBaseType.CODE_WIKI.value:
         return
-    source = SourceRepository.from_spec(spec.get("source"))
-    if source is None or not source.project_name:
-        return
-    try:
-        assert_user_can_write_source(db, user.id, source)
-    except SourceAccessDenied as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    if not KnowledgeService.can_manage_knowledge_base(db, knowledge_base.id, user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Knowledge Base manage permission is required to regenerate",
+        )
 
 
 @router.get("/{knowledge_base_id}/code-wiki/status", response_model=CodeWikiRunStatus)
@@ -492,9 +487,8 @@ def republish_code_wiki_version(
 ):
     """Make an earlier version the one readers see again.
 
-    **Write access to the repository**, the same as regenerating: this changes what
-    everybody reads, and is closer to changing the repository than to reading its
-    documentation.
+    Requires Knowledge Base manage permission, the same as regenerating. This changes
+    what everybody reads, so read access alone is insufficient.
 
     It restores content and structure, not identity. The pages that were deleted on
     the way here took their document ids with them, so anything that cited one is not
@@ -508,7 +502,6 @@ def republish_code_wiki_version(
             db,
             knowledge_base=knowledge_base,
             generation_id=generation_id,
-            user=current_user,
         )
     except CodeWikiRunError as e:
         raise HTTPException(
@@ -544,10 +537,9 @@ def start_code_wiki_run(
 ):
     """Regenerate a code wiki now, without waiting for its schedule.
 
-    **Write access to the repository is required**, not merely the ability to read
-    the wiki. A run rewrites every page, so it is closer to changing the repository
-    than to reading its documentation — and a wiki shared with a reader would
-    otherwise let them spend a generation on somebody else's knowledge base.
+    Requires Knowledge Base manage permission, not merely the ability to read the
+    wiki. A run rewrites every page, and must follow the same ACL as other mutations
+    of that knowledge resource.
 
     Answers 202 even when no run was needed. "The repository has not changed since the
     published version" is a successful outcome, not a failure, and the response says
