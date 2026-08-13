@@ -107,6 +107,6 @@ class ImageGenerationConfig(BaseModel):
     max_reference_images: Optional[int] = Field(
         1,
         ge=1,
-        le=10,
+        le=16,
         description="Maximum number of reference images that can be uploaded for image generation",
     )

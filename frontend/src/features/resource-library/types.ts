@@ -125,7 +125,6 @@ export interface ResourceLibraryCreateListingRequest {
   source_id?: number
   source_name?: string
   source_namespace?: string
-  name: string
   display_name: string
   description?: string | null
   icon?: string | null

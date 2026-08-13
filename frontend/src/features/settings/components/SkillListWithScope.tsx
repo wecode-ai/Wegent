@@ -753,7 +753,6 @@ export function SkillListWithScope({
           await resourceLibraryApi.createListing({
             resource_type: 'skill',
             source_id: skillId,
-            name: skill.metadata.name,
             display_name: skill.spec.displayName || skill.metadata.name,
             description: skill.spec.description || null,
             icon: null,

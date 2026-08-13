@@ -14,8 +14,18 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Switch } from '@/components/ui/switch'
-import { AlertCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Loader2 } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import { botApis } from '@/apis/bots'
@@ -78,6 +88,16 @@ import {
 import { MarketplaceTagSelector } from '@/features/resource-library/components/MarketplaceTagSelector'
 import { ExampleConversationsEditor } from '@/features/resource-library/components/ExampleConversationsEditor'
 import type { MarketplaceExampleConversation } from '@/features/resource-library/types'
+import type { TeamIdentityConfirmation } from '@/apis/team'
+import { TeamIdentityConfirmDialog } from './TeamIdentityConfirmDialog'
+
+function updateTeamWithIdentityConfirmation(
+  teamId: number,
+  teamData: Parameters<typeof updateTeam>[1],
+  confirmation?: TeamIdentityConfirmation
+) {
+  return confirmation ? updateTeam(teamId, teamData, confirmation) : updateTeam(teamId, teamData)
+}
 
 interface TeamEditDialogProps {
   open: boolean
@@ -166,6 +186,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   // Form state
   const [name, setName] = useState('')
+  const [technicalNameUnlocked, setTechnicalNameUnlocked] = useState(false)
+  const [identityConfirmVisible, setIdentityConfirmVisible] = useState(false)
+  const [identityConfirmation, setIdentityConfirmation] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [quickPhrases, setQuickPhrases] = useState<string[]>([])
@@ -184,7 +207,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [editingPublishTarget, setEditingPublishTarget] =
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
+  const [initialEditingGroupNames, setInitialEditingGroupNames] = useState<string[]>([])
   const [editingWasPublished, setEditingWasPublished] = useState(false)
+  const [scopeReductionConfirmVisible, setScopeReductionConfirmVisible] = useState(false)
+  const [scopeReductionConfirmed, setScopeReductionConfirmed] = useState(false)
   const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
   const [marketplaceExampleConversations, setMarketplaceExampleConversations] = useState<
     MarketplaceExampleConversation[]
@@ -217,6 +243,25 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
 
+  const handleTechnicalNameEditToggle = () => {
+    if (technicalNameUnlocked) {
+      setName(formTeam?.name || '')
+      setIdentityConfirmVisible(false)
+      setIdentityConfirmation('')
+    }
+    setTechnicalNameUnlocked(value => !value)
+  }
+
+  useEffect(() => {
+    if (open) return
+
+    setTechnicalNameUnlocked(false)
+    setIdentityConfirmVisible(false)
+    setIdentityConfirmation('')
+    setScopeReductionConfirmVisible(false)
+    setScopeReductionConfirmed(false)
+  }, [open])
+
   const handleAfterTeamSave = useCallback(
     async (team: Team) => {
       try {
@@ -238,7 +283,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               await resourceLibraryApi.createListing({
                 resource_type: 'agent',
                 source_id: team.id,
-                name: team.name,
                 display_name: team.displayName || team.name,
                 description: team.description || null,
                 icon: team.icon || null,
@@ -270,7 +314,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           await resourceLibraryApi.createListing({
             resource_type: 'agent',
             source_id: team.id,
-            name: team.name,
             display_name: team.displayName || team.name,
             description: team.description || null,
             icon: team.icon || null,
@@ -451,6 +494,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
     if (formTeam) {
       if (isNewFormSession) {
+        setTechnicalNameUnlocked(false)
+        setIdentityConfirmVisible(false)
+        setIdentityConfirmation('')
         const currentNamespace = formTeam.namespace || 'default'
         const isPublished = formTeam.publication_status === 'published'
         setEditingWasPublished(isPublished)
@@ -458,6 +504,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           isPublished ? 'marketplace' : currentNamespace === 'default' ? 'personal' : 'team'
         )
         setEditingGroupNames(currentNamespace === 'default' ? [] : [currentNamespace])
+        setInitialEditingGroupNames(currentNamespace === 'default' ? [] : [currentNamespace])
       }
       setName(formTeam.name)
       setDisplayName(formTeam.displayName || '')
@@ -512,6 +559,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequiresWorkspace(formTeam.requires_workspace ?? true)
     } else {
       if (isNewFormSession) {
+        setTechnicalNameUnlocked(true)
+        setIdentityConfirmVisible(false)
+        setIdentityConfirmation('')
         setCreatingPublishTarget(
           publishAfterCreate
             ? 'marketplace'
@@ -523,6 +573,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setEditingWasPublished(false)
       setEditingPublishTarget('personal')
       setEditingGroupNames([])
+      setInitialEditingGroupNames([])
       setMarketplaceTags([])
       setMarketplaceExampleConversations([])
       setName('')
@@ -553,7 +604,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setRequiresWorkspace(true)
     }
     setUnsavedPrompts({})
-  }, [bots, formTeam, open])
+  }, [bots, createTarget.scope, formTeam, open, publishAfterCreate, scope])
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) {
@@ -566,6 +617,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       .then(bindings => {
         if (active) {
           setEditingGroupNames(bindings.group_names)
+          setInitialEditingGroupNames(bindings.group_names)
           if (formTeam.publication_status !== 'published') {
             setEditingPublishTarget(bindings.group_names.length > 0 ? 'team' : 'personal')
           }
@@ -858,7 +910,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setTeams(prev => prev.map(t => (t.id === updatedTeam.id ? updatedTeam : t)))
   }
 
-  const handleSimpleSave = async () => {
+  const handleSimpleSave = async (confirmation?: TeamIdentityConfirmation) => {
     const selectedShell = resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName)
     if (!selectedShell) {
       toast({
@@ -951,7 +1003,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
       const savedTeam =
         editingTeam && editingTeamId && editingTeamId > 0
-          ? await updateTeam(editingTeamId, teamRequest)
+          ? await updateTeamWithIdentityConfirmation(editingTeamId, teamRequest, confirmation)
           : await createTeam(teamRequest)
       setTeams(prev => {
         const exists = prev.some(team => team.id === savedTeam.id)
@@ -974,7 +1026,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }
 
   // Save handler
-  const handleSave = async () => {
+  const handleSave = async ({
+    identityConfirmed = false,
+    publicationReductionConfirmed = false,
+  }: {
+    identityConfirmed?: boolean
+    publicationReductionConfirmed?: boolean
+  } = {}) => {
     if (!name.trim()) {
       toast({
         variant: 'destructive',
@@ -1013,8 +1071,40 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       return
     }
 
+    const nextGroupNames = editingPublishTarget === 'team' ? editingGroupNames : []
+    const removesTeamAccess =
+      isEditing && initialEditingGroupNames.some(groupName => !nextGroupNames.includes(groupName))
+    if (removesTeamAccess && !publicationReductionConfirmed && !scopeReductionConfirmed) {
+      setScopeReductionConfirmVisible(true)
+      return
+    }
+
+    const requestedNamespace =
+      isEditing && editingPublishTarget === 'personal'
+        ? 'default'
+        : scope === 'group' && groupName
+          ? groupName
+          : formTeam?.namespace || 'default'
+    const identityChanged =
+      Boolean(formTeam) &&
+      (name.trim() !== formTeam?.name || requestedNamespace !== (formTeam?.namespace || 'default'))
+
+    if (identityChanged && !identityConfirmed) {
+      setIdentityConfirmation('')
+      setIdentityConfirmVisible(true)
+      return
+    }
+
+    const confirmedIdentity: TeamIdentityConfirmation | undefined =
+      identityChanged && formTeam
+        ? {
+            forceIdentityChange: true,
+            confirmName: formTeam.name,
+          }
+        : undefined
+
     if (useSimpleEditor) {
-      await handleSimpleSave()
+      await handleSimpleSave(confirmedIdentity)
       return
     }
 
@@ -1054,23 +1144,27 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
           const savedTeam =
             editingTeam && editingTeamId && editingTeamId > 0
-              ? await updateTeam(editingTeamId, {
-                  name: name.trim(),
-                  displayName: displayNamePayload,
-                  description: description.trim() || undefined,
-                  workflow,
-                  bind_mode: bindMode,
-                  bots: botsData,
-                  quick_phrases: quickPhrasePayload,
-                  namespace:
-                    isEditing && editingPublishTarget === 'personal'
-                      ? 'default'
-                      : scope === 'group' && groupName
-                        ? groupName
-                        : undefined,
-                  icon: icon || undefined,
-                  requires_workspace: requiresWorkspace ?? undefined,
-                })
+              ? await updateTeamWithIdentityConfirmation(
+                  editingTeamId,
+                  {
+                    name: name.trim(),
+                    displayName: displayNamePayload,
+                    description: description.trim() || undefined,
+                    workflow,
+                    bind_mode: bindMode,
+                    bots: botsData,
+                    quick_phrases: quickPhrasePayload,
+                    namespace:
+                      isEditing && editingPublishTarget === 'personal'
+                        ? 'default'
+                        : scope === 'group' && groupName
+                          ? groupName
+                          : undefined,
+                    icon: icon || undefined,
+                    requires_workspace: requiresWorkspace ?? undefined,
+                  },
+                  confirmedIdentity
+                )
               : await createTeam({
                   name: name.trim(),
                   displayName: displayNamePayload,
@@ -1160,23 +1254,27 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     try {
       const savedTeam =
         editingTeam && editingTeamId && editingTeamId > 0
-          ? await updateTeam(editingTeamId, {
-              name: name.trim(),
-              displayName: displayNamePayload,
-              description: description.trim() || undefined,
-              workflow,
-              bind_mode: bindMode,
-              bots: botsData,
-              quick_phrases: quickPhrasePayload,
-              namespace:
-                isEditing && editingPublishTarget === 'personal'
-                  ? 'default'
-                  : scope === 'group' && groupName
-                    ? groupName
-                    : undefined,
-              icon: icon || undefined,
-              requires_workspace: requiresWorkspace ?? undefined,
-            })
+          ? await updateTeamWithIdentityConfirmation(
+              editingTeamId,
+              {
+                name: name.trim(),
+                displayName: displayNamePayload,
+                description: description.trim() || undefined,
+                workflow,
+                bind_mode: bindMode,
+                bots: botsData,
+                quick_phrases: quickPhrasePayload,
+                namespace:
+                  isEditing && editingPublishTarget === 'personal'
+                    ? 'default'
+                    : scope === 'group' && groupName
+                      ? groupName
+                      : undefined,
+                icon: icon || undefined,
+                requires_workspace: requiresWorkspace ?? undefined,
+              },
+              confirmedIdentity
+            )
           : await createTeam({
               name: name.trim(),
               displayName: displayNamePayload,
@@ -1219,6 +1317,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       new Set(selectedGroups || (selectedGroup ? [selectedGroup] : []))
     )
     if (isEditing) {
+      setScopeReductionConfirmed(false)
       setEditingPublishTarget(target)
       if (target === 'team') {
         setEditingGroupNames(
@@ -1305,65 +1404,77 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             )}
 
             {useSimpleEditor ? (
-              <SimpleTeamEditForm
-                name={name}
-                setName={setName}
-                displayName={displayName}
-                setDisplayName={setDisplayName}
-                description={description}
-                setDescription={setDescription}
-                quickPhrases={quickPhrases}
-                onQuickPhrasesChange={setQuickPhrases}
-                bindMode={bindMode}
-                setBindMode={setBindMode}
-                icon={icon}
-                setIcon={setIcon}
-                requiresWorkspace={requiresWorkspace}
-                setRequiresWorkspace={setRequiresWorkspace}
-                executorMode={simpleExecutorMode}
-                setExecutorMode={setSimpleExecutorMode}
-                shells={shells}
-                customShellName={simpleCustomShellName}
-                setCustomShellName={setSimpleCustomShellName}
-                executorHelperText={simpleExecutorHelperText}
-                disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
-                modelName={simpleModelName}
-                modelType={simpleModelType}
-                modelNamespace={simpleModelNamespace}
-                models={simpleModels}
-                loadingModels={simpleLoadingModels}
-                onModelChange={value => {
-                  setSimpleModelName(value.name)
-                  setSimpleModelType(value.type)
-                  setSimpleModelNamespace(value.namespace)
-                }}
-                selectedSkills={simpleSelectedSkills}
-                selectedSkillRefs={simpleSelectedSkillRefs}
-                preloadSkills={simplePreloadSkills}
-                onPreloadSkillsChange={setSimplePreloadSkills}
-                supportsPreloadSkills={simpleSupportsPreloadSkills}
-                availableSkills={simpleAvailableSkills}
-                allSkills={simpleAllSkills}
-                loadingSkills={simpleLoadingSkills}
-                onSkillsChange={(skills, refs) => {
-                  setSimpleSelectedSkills(skills)
-                  setSimpleSelectedSkillRefs(refs)
-                  setSimplePreloadSkills(prev =>
-                    prev.filter(skillName => skills.includes(skillName))
-                  )
-                }}
-                onReloadSkills={reloadSimpleSkills}
-                defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
-                onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
-                mcpConfig={simpleMcpConfig}
-                onMcpConfigChange={setSimpleMcpConfig}
-                mcpAgentType={simpleMcpAgentType}
-                prompt={simplePrompt}
-                onPromptChange={setSimplePrompt}
-                toast={toast}
-                scope={scope}
-                groupName={groupName}
-              />
+              <>
+                {isEditing && technicalNameUnlocked && (
+                  <div
+                    className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"
+                    data-testid="team-identity-change-warning"
+                  >
+                    {t('common:teams.identity_change_warning')}
+                  </div>
+                )}
+                <SimpleTeamEditForm
+                  name={name}
+                  setName={setName}
+                  nameEditable={!isEditing || technicalNameUnlocked}
+                  onToggleNameEdit={isEditing ? handleTechnicalNameEditToggle : undefined}
+                  displayName={displayName}
+                  setDisplayName={setDisplayName}
+                  description={description}
+                  setDescription={setDescription}
+                  quickPhrases={quickPhrases}
+                  onQuickPhrasesChange={setQuickPhrases}
+                  bindMode={bindMode}
+                  setBindMode={setBindMode}
+                  icon={icon}
+                  setIcon={setIcon}
+                  requiresWorkspace={requiresWorkspace}
+                  setRequiresWorkspace={setRequiresWorkspace}
+                  executorMode={simpleExecutorMode}
+                  setExecutorMode={setSimpleExecutorMode}
+                  shells={shells}
+                  customShellName={simpleCustomShellName}
+                  setCustomShellName={setSimpleCustomShellName}
+                  executorHelperText={simpleExecutorHelperText}
+                  disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
+                  modelName={simpleModelName}
+                  modelType={simpleModelType}
+                  modelNamespace={simpleModelNamespace}
+                  models={simpleModels}
+                  loadingModels={simpleLoadingModels}
+                  onModelChange={value => {
+                    setSimpleModelName(value.name)
+                    setSimpleModelType(value.type)
+                    setSimpleModelNamespace(value.namespace)
+                  }}
+                  selectedSkills={simpleSelectedSkills}
+                  selectedSkillRefs={simpleSelectedSkillRefs}
+                  preloadSkills={simplePreloadSkills}
+                  onPreloadSkillsChange={setSimplePreloadSkills}
+                  supportsPreloadSkills={simpleSupportsPreloadSkills}
+                  availableSkills={simpleAvailableSkills}
+                  allSkills={simpleAllSkills}
+                  loadingSkills={simpleLoadingSkills}
+                  onSkillsChange={(skills, refs) => {
+                    setSimpleSelectedSkills(skills)
+                    setSimpleSelectedSkillRefs(refs)
+                    setSimplePreloadSkills(prev =>
+                      prev.filter(skillName => skills.includes(skillName))
+                    )
+                  }}
+                  onReloadSkills={reloadSimpleSkills}
+                  defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
+                  onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                  mcpConfig={simpleMcpConfig}
+                  onMcpConfigChange={setSimpleMcpConfig}
+                  mcpAgentType={simpleMcpAgentType}
+                  prompt={simplePrompt}
+                  onPromptChange={setSimplePrompt}
+                  toast={toast}
+                  scope={scope}
+                  groupName={groupName}
+                />
+              </>
             ) : (
               <>
                 {isNonSoloTeam && (
@@ -1377,6 +1488,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 <TeamBasicInfoForm
                   name={name}
                   setName={setName}
+                  nameEditable={!isEditing || technicalNameUnlocked}
+                  onToggleNameEdit={isEditing ? handleTechnicalNameEditToggle : undefined}
                   displayName={displayName}
                   setDisplayName={setDisplayName}
                   description={description}
@@ -1390,6 +1503,14 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />
+                {isEditing && technicalNameUnlocked && (
+                  <div
+                    className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"
+                    data-testid="team-identity-change-warning"
+                  >
+                    {t('common:teams.identity_change_warning')}
+                  </div>
+                )}
 
                 {/* Mode Selection Section */}
                 <TeamModeSelector mode={mode} onModeChange={handleModeChange} />
@@ -1465,13 +1586,67 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <Button variant="outline" onClick={onClose}>
               {t('common:actions.cancel')}
             </Button>
-            <Button onClick={handleSave} disabled={saving} variant="primary">
+            <Button onClick={() => void handleSave()} disabled={saving} variant="primary">
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TeamIdentityConfirmDialog
+        open={identityConfirmVisible}
+        title={t('common:teams.identity_change_confirm_title')}
+        description={t('common:teams.identity_change_confirm_message')}
+        currentName={formTeam?.name || ''}
+        confirmation={identityConfirmation}
+        confirmationLabel={t('common:teams.confirm_name_label', {
+          name: formTeam?.name || '',
+        })}
+        cancelLabel={t('common:actions.cancel')}
+        confirmLabel={t('common:teams.force_identity_change')}
+        busy={saving}
+        destructive
+        onConfirmationChange={setIdentityConfirmation}
+        onOpenChange={setIdentityConfirmVisible}
+        onConfirm={() => {
+          setIdentityConfirmVisible(false)
+          void handleSave({
+            identityConfirmed: true,
+            publicationReductionConfirmed: scopeReductionConfirmed,
+          })
+        }}
+      />
+
+      <AlertDialog
+        open={scopeReductionConfirmVisible}
+        onOpenChange={setScopeReductionConfirmVisible}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('common:teams.private_scope_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription className="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-left text-warning">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="leading-relaxed">
+                {t('common:teams.private_scope_confirm_message')}
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              data-testid="confirm-team-private-scope"
+              onClick={() => {
+                setScopeReductionConfirmed(true)
+                void handleSave({ publicationReductionConfirmed: true })
+              }}
+            >
+              {t('common:teams.confirm_private_scope')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Bot edit drawer */}
       <TeamEditDrawer
