@@ -488,10 +488,17 @@ test.describe('Provider-native DingTalk and multi-provider access', () => {
     const { mcpCalls } = await collectEvidence(request, prompt)
     expect(mcpCalls).toHaveLength(3)
     expect(mcpCalls[0].name).toBe(INFO_TOOL)
-    const contentCall = mcpCalls.find(call => call.name === CONTENT_TOOL)
-    const aiTableCall = mcpCalls.find(call => call.name === 'get_ai_table_records')
-    expect(contentCall?.arguments).toEqual({ nodeId: 'doc-d1' })
-    expect(aiTableCall?.arguments).toEqual({ tableId: 'table-beta', rowId: 'row-1' })
+    const parallelCalls = mcpCalls.slice(1)
+    expect(parallelCalls.map(call => call.name).sort()).toEqual(
+      [CONTENT_TOOL, 'get_ai_table_records'].sort()
+    )
+    expect(parallelCalls.find(call => call.name === CONTENT_TOOL)?.arguments).toEqual({
+      nodeId: 'doc-d1',
+    })
+    expect(parallelCalls.find(call => call.name === 'get_ai_table_records')?.arguments).toEqual({
+      tableId: 'table-beta',
+      rowId: 'row-1',
+    })
     expect(extractTaskAnswer(task)).toBe(`${DINGTALK_MARKERS.d1} AI-TABLE-ROW-BETA-2026`)
     await configureDingTalkService(request, resources.token, 'ai_table', false)
   })
