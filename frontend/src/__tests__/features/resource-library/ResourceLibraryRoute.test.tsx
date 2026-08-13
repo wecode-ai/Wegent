@@ -83,10 +83,6 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
   DiscoverResources: () => <div data-testid="discover-resources">发现能力</div>,
 }))
 
-jest.mock('@/features/resource-library/components/PublishResourceDialog', () => ({
-  PublishResourceDialog: () => null,
-}))
-
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {

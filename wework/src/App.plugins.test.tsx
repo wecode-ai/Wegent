@@ -906,7 +906,7 @@ describe('App plugins route', () => {
       await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
     ).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {

@@ -105,7 +105,6 @@ class ResourceLibraryCreateListingRequest(BaseModel):
     source_id: int | None = None
     source_name: str | None = Field(default=None, min_length=1, max_length=100)
     source_namespace: str = Field(default="default", min_length=1, max_length=100)
-    name: str = Field(min_length=1, max_length=100)
     display_name: str = Field(min_length=1, max_length=100)
     description: str | None = None
     icon: str | None = None

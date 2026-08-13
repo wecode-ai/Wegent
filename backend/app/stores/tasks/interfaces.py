@@ -273,14 +273,6 @@ class TaskStore(Protocol):
         order_by_updated_at_desc: bool = False,
     ) -> list[TaskResource]: ...
 
-    def list_active_tasks_referencing_team(
-        self,
-        db: Session,
-        *,
-        team_name: str,
-        team_namespace: str,
-    ) -> list[TaskResource]: ...
-
     def list_recent_owner_only_tasks(
         self,
         db: Session,
