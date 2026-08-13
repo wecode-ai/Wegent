@@ -313,6 +313,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn start_queued_turn(&self, mut turn: SpawnTurnRequest) {
+        if !turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            self.start_turn(turn);
+            return;
+        }
         let handler = self.clone();
         tokio::spawn(async move {
             if let Err(error) = handler.prepare_deferred_worktree(&mut turn).await {
