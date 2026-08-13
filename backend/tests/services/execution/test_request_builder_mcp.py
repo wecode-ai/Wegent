@@ -545,13 +545,13 @@ class TestResolveRequestPreloadSkills:
         "_check_mcp_server_reachable",
         return_value=True,
     )
-    def test_selected_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
+    def test_inherited_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         request = ExecutionRequest(
             task_id=1273,
             subtask_id=1709,
             knowledge_base_ids=[1408],
-            is_user_selected_kb=True,
+            is_user_selected_kb=False,
             skill_names=["browser"],
             skill_configs=[{"name": "browser"}],
             preload_skills=["wegent-knowledge"],
@@ -566,30 +566,35 @@ class TestResolveRequestPreloadSkills:
         )
         bot = SimpleNamespace(name="chat-bot")
         team = SimpleNamespace(namespace="default")
+        captured = {}
 
-        builder._get_bot_skills = lambda **kwargs: (
-            [
-                {"name": "browser"},
-                {
-                    "name": "wegent-knowledge",
-                    "mcpServers": {
-                        "wegent-knowledge": {
-                            "type": "streamable-http",
-                            "url": "${{backend_url}}/mcp/knowledge/sse",
-                        }
+        def fake_get_bot_skills(**kwargs):
+            captured.update(kwargs)
+            return (
+                [
+                    {"name": "browser"},
+                    {
+                        "name": "wegent-knowledge",
+                        "mcpServers": {
+                            "wegent-knowledge": {
+                                "type": "streamable-http",
+                                "url": "${{backend_url}}/mcp/knowledge/sse",
+                            }
+                        },
                     },
+                ],
+                ["wegent-knowledge"],
+                ["wegent-knowledge"],
+                {
+                    "wegent-knowledge": {
+                        "skill_id": 99,
+                        "namespace": "default",
+                        "is_public": True,
+                    }
                 },
-            ],
-            ["wegent-knowledge"],
-            ["wegent-knowledge"],
-            {
-                "wegent-knowledge": {
-                    "skill_id": 99,
-                    "namespace": "default",
-                    "is_public": True,
-                }
-            },
-        )
+            )
+
+        builder._get_bot_skills = fake_get_bot_skills
 
         result = builder.resolve_request_preload_skills(
             request=request,
@@ -599,6 +604,13 @@ class TestResolveRequestPreloadSkills:
         )
 
         assert result.skill_names == ["browser", "wegent-knowledge"]
+        assert captured["user_preload_skills"] == [
+            {
+                "name": "wegent-knowledge",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
         assert result.skill_refs["wegent-knowledge"]["is_public"] is True
@@ -610,3 +622,45 @@ class TestResolveRequestPreloadSkills:
                 "url": "${{backend_url}}/mcp/knowledge/sse",
             }
         ]
+
+    def test_provider_runtime_skill_is_resolved_as_public(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        request = ExecutionRequest(
+            preload_skills=["dingtalk-docs"],
+            user_selected_skills=["dingtalk-docs"],
+            bot=[{"shell_type": "Chat", "skills": [], "mcp_servers": []}],
+        )
+        captured = {}
+
+        def fake_get_bot_skills(**kwargs):
+            captured.update(kwargs)
+            return (
+                [{"name": "dingtalk-docs"}],
+                ["dingtalk-docs"],
+                ["dingtalk-docs"],
+                {
+                    "dingtalk-docs": {
+                        "skill_id": 101,
+                        "namespace": "default",
+                        "is_public": True,
+                    }
+                },
+            )
+
+        builder._get_bot_skills = fake_get_bot_skills
+
+        result = builder.resolve_request_preload_skills(
+            request=request,
+            bot=SimpleNamespace(name="chat-bot"),
+            team=SimpleNamespace(namespace="default"),
+            user=SimpleNamespace(id=7, preferences="{}"),
+        )
+
+        assert captured["user_preload_skills"] == [
+            {
+                "name": "dingtalk-docs",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+        assert result.skill_names == ["dingtalk-docs"]

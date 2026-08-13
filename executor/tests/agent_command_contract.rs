@@ -884,6 +884,25 @@ fn claude_command_injects_kb_meta_prompt_for_chat_tasks() {
 }
 
 #[test]
+fn claude_command_injects_selected_knowledge_for_code_tasks() {
+    let request = ExecutionRequest {
+        prompt: json!("Implement the requested change."),
+        task_type: Some("code".to_owned()),
+        extra: serde_json::Map::from_iter([(
+            "selected_knowledge_prompt".to_owned(),
+            json!("<selected_knowledge_sources><source provider=\"dingtalk\" /></selected_knowledge_sources>"),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+    let prompt = &spec.args()[1];
+
+    assert!(prompt.starts_with("<selected_knowledge_sources>"));
+    assert!(prompt.ends_with("Implement the requested change."));
+}
+
+#[test]
 fn codex_command_starts_app_server_for_json_rpc_control() {
     let spec = build_codex_app_server_command("codex");
 

@@ -705,6 +705,9 @@ function BootstrapProbe() {
       <button type="button" onClick={() => void workbench.refreshDevices()}>
         Refresh devices
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        Refresh work lists
+      </button>
     </div>
   )
 }
@@ -1104,6 +1107,7 @@ function RuntimePaneSendProbe() {
     ) ?? []),
     ...(workbench.state.runtimeWork?.chats.flatMap(workspace => workspace.tasks) ?? []),
   ]
+  const runtimeATask = runtimeTasks.find(task => task.taskId === 'runtime-a')
 
   return (
     <div>
@@ -1122,6 +1126,9 @@ function RuntimePaneSendProbe() {
       </span>
       <span data-testid="runtime-local-task-titles">
         {runtimeTasks.map(task => task.title).join('|')}
+      </span>
+      <span data-testid="runtime-a-supervisor-last-evaluated">
+        {runtimeATask?.supervisor?.lastEvaluatedAt ?? 'none'}
       </span>
       <span data-testid="runtime-pane-standalone-chat-key">
         {workbench.state.standaloneChatKey}
@@ -2014,6 +2021,51 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('keeps the runtime event subscription across connected user preference updates', async () => {
+    setTauriRuntime()
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      runtimeMode: 'local-first',
+    }
+    const user = {
+      id: 1,
+      user_name: 'alice',
+      email: 'a@b.c',
+      preferences: { send_key: 'enter' as const },
+    }
+    const cloudConnectionValue = (connectedUser: User): CloudConnectionContextValue => ({
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'test-disconnected',
+      user: connectedUser,
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    })
+    const renderTree = (connectedUser: User) => (
+      <CloudConnectionContext.Provider value={cloudConnectionValue(connectedUser)}>
+        <WorkbenchProvider user={LOCAL_USER}>
+          <WorkbenchProbeSessionProvider>
+            <BootstrapProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </CloudConnectionContext.Provider>
+    )
+    const rendered = render(renderTree(user))
+
+    await waitFor(() => expect(localExecutorMocks.subscribeLocalExecutorEvents).toHaveBeenCalled())
+    const subscriptionCount = localExecutorMocks.subscribeLocalExecutorEvents.mock.calls.length
+
+    rendered.rerender(
+      renderTree({
+        ...user,
+        preferences: { send_key: 'cmd_enter' },
+      })
+    )
+
+    await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
+    expect(localExecutorMocks.subscribeLocalExecutorEvents).toHaveBeenCalledTimes(subscriptionCount)
+  })
+
   test('bootstraps projects and runtime work without DB task APIs', async () => {
     const services = createWorkbenchServices()
 
@@ -2025,6 +2077,35 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not let a stale bootstrap runtime request overwrite a manual refresh', async () => {
+    const bootstrapRuntimeWork = deferred<RuntimeWorkListResponse>()
+    const manualRuntimeWork = createRuntimeWork({
+      projects: [],
+      chats: [],
+      totalTasks: 4,
+    })
+    const listRuntimeWork = vi
+      .fn()
+      .mockImplementationOnce(() => bootstrapRuntimeWork.promise)
+      .mockResolvedValueOnce(manualRuntimeWork)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh work lists' }))
+    await waitFor(() => expect(screen.getByTestId('runtime-total')).toHaveTextContent('4'))
+
+    bootstrapRuntimeWork.resolve(createRuntimeWork({ projects: [], chats: [], totalTasks: 1 }))
+    await act(async () => {
+      await bootstrapRuntimeWork.promise
+    })
+
+    expect(screen.getByTestId('runtime-total')).toHaveTextContent('4')
   })
 
   test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {
@@ -2703,6 +2784,75 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-task-titles')).toHaveTextContent('New local task')
+    )
+  })
+
+  test('does not let an older work-list refresh erase a queued task status', async () => {
+    const staleRefresh = deferred<RuntimeWorkListResponse>()
+    const latestRefresh = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkWithStatus = (status: 'active' | 'queued', queuePosition?: number) =>
+      createRuntimeWork({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 22,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-queued',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Queued task',
+                    runtime: 'codex',
+                    running: false,
+                    status,
+                    queuePosition,
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+        ],
+        totalTasks: 1,
+      })
+    const queuedRuntimeWork = runtimeWorkWithStatus('queued', 1)
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(queuedRuntimeWork)
+      .mockImplementationOnce(() => staleRefresh.promise)
+      .mockImplementationOnce(() => latestRefresh.promise)
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({ listRuntimeWork }),
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await userEvent.click(screen.getByText('refresh work lists'))
+
+    await act(async () => {
+      latestRefresh.resolve(queuedRuntimeWork)
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
+    )
+
+    await act(async () => {
+      staleRefresh.resolve(runtimeWorkWithStatus('active'))
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('queued')
     )
   })
 
@@ -6654,7 +6804,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a removed runtime project from an in-flight cloud refresh', async () => {
+  test('does not restore a removed workspace under a different project identity', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
@@ -6665,7 +6815,17 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
       cloudBackgroundApi: {
         listTeams: vi.fn().mockResolvedValue([]),
-        listDevices: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Project Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+          },
+        ]),
         listRuntimeWork: vi.fn(() => cloudRuntimeWork.promise),
       },
     })
@@ -6685,7 +6845,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual([])
 
     await act(async () => {
-      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      cloudRuntimeWork.resolve(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 99, key: 'stale-cloud-project', name: 'Resurrected' },
+              deviceWorkspaces: staleRuntimeWork.projects[0].deviceWorkspaces,
+              totalTasks: 3,
+            },
+          ],
+        })
+      )
     })
 
     await waitFor(() =>
@@ -9450,6 +9620,62 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
     expect(listRuntimeWork).toHaveBeenCalledTimes(callsBeforeStart)
+  })
+
+  test('applies supervisor stream updates without an out-of-order runtime work refresh', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const listRuntimeWork = vi.fn().mockResolvedValue(createRuntimeWork())
+    const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeTopLevelStreamLifecycleProbe />
+        <RuntimePaneSendProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() => expect(streamHandlers.onRuntimeSupervisorUpdated).toBeDefined())
+    const callsBeforeUpdate = listRuntimeWork.mock.calls.length
+
+    act(() => {
+      streamHandlers.onRuntimeSupervisorUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'supervisor-state-1',
+        deviceId: 'device-1',
+        supervisor: {
+          mode: 'auto',
+          status: 'active',
+          instructions: 'Keep the task focused',
+          modelSelection: {
+            modelName: 'supervisor-model',
+            modelType: 'public',
+          },
+          intervalSeconds: 30,
+          lastEvaluatedAt: 1786557741000,
+          lastContentHash: 'latest',
+          lastError: null,
+          suggestions: [],
+        },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-a-supervisor-last-evaluated')).toHaveTextContent(
+        '1786557741000'
+      )
+    )
+    expect(listRuntimeWork).toHaveBeenCalledTimes(callsBeforeUpdate)
   })
 
   test('hides the runtime goal when the settled task reports the goal complete', async () => {

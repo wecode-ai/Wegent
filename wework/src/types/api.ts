@@ -376,6 +376,7 @@ export interface RuntimeTaskSummary {
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
@@ -384,6 +385,18 @@ export interface RuntimeTaskSummary {
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
+}
+
+export interface RuntimeSettings {
+  maxConcurrentTasks: number
+}
+
+export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
+  queuePosition: number
+}
+
+export interface RuntimeTaskQueueReorderResponse extends RuntimeTaskCancelResponse {
+  orderedTaskIds?: string[]
 }
 
 export type RuntimeSupervisorMode = 'suggest' | 'auto'
@@ -404,7 +417,7 @@ export interface RuntimeSupervisorState {
   mode: RuntimeSupervisorMode
   status: RuntimeSupervisorStatus
   instructions: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds?: number
   lastEvaluatedAt?: number | null
   lastError?: string | null
@@ -781,13 +794,17 @@ export interface RuntimeSupervisorSetRequest {
   address: RuntimeTaskAddress
   mode: RuntimeSupervisorMode
   instructions?: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds: number
 }
 
 export type RuntimeSupervisorCreateInput = Omit<RuntimeSupervisorSetRequest, 'address'>
 
 export interface RuntimeSupervisorClearRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeSupervisorRunNowRequest {
   address: RuntimeTaskAddress
 }
 
@@ -1219,6 +1236,8 @@ export interface RuntimeTaskCreateResponse {
   workspacePath: string
   runtime: RuntimeName
   runtimeHandle?: Record<string, unknown> | null
+  status?: 'queued' | 'running'
+  queuePosition?: number | null
   error?: string | null
 }
 

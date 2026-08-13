@@ -18,8 +18,9 @@ a public repository is one they can read in a browser but cannot pick from a lis
 wiki that could not be built for it would be more closed than the thing it documents.
 
 Anonymous requests to GitHub are limited to 60 an hour per address, so results are
-cached. The cache is keyed by whether a credential was used, because the same
-repository legitimately answers differently with and without one.
+cached. Anonymous public results are shared, while authenticated results are
+partitioned by caller: the same repository can legitimately answer differently
+for two users with different repository access.
 """
 
 import logging
@@ -89,7 +90,8 @@ def resolve_repository(
     git_info = get_user_git_info(user_id=user_id, domain=source.source_domain, db=db)
     token = (git_info or {}).get("token") or ""
 
-    cached = _cached(source, has_token=bool(token))
+    cache_user_id = user_id if token else None
+    cached = _cached(source, user_id=cache_user_id)
     if cached is not None:
         return cached
 
@@ -111,22 +113,23 @@ def resolve_repository(
         description=str(described.get("description") or ""),
         access="member" if token else "public",
     )
-    _remember(source, has_token=bool(token), resolved=resolved)
+    _remember(source, user_id=cache_user_id, resolved=resolved)
     return resolved
 
 
-def _cache_key(source: SourceRepository, *, has_token: bool) -> str:
+def _cache_key(source: SourceRepository, *, user_id: Optional[int]) -> str:
+    identity = f"user:{user_id}" if user_id is not None else "anon"
     return (
         f"code_wiki:resolve:{source.source_type}:{source.source_domain}:"
-        f"{source.project_name}:{'auth' if has_token else 'anon'}"
+        f"{source.project_name}:{identity}"
     )
 
 
 def _cached(
-    source: SourceRepository, *, has_token: bool
+    source: SourceRepository, *, user_id: Optional[int]
 ) -> Optional[ResolvedRepository]:
     try:
-        payload = _run(cache_manager.get(_cache_key(source, has_token=has_token)))
+        payload = _run(cache_manager.get(_cache_key(source, user_id=user_id)))
     except Exception as exc:  # pragma: no cover - cache is an optimisation
         logger.debug("[code_wiki] resolution cache read failed: %s", exc)
         return None
@@ -136,12 +139,15 @@ def _cached(
 
 
 def _remember(
-    source: SourceRepository, *, has_token: bool, resolved: ResolvedRepository
+    source: SourceRepository,
+    *,
+    user_id: Optional[int],
+    resolved: ResolvedRepository,
 ) -> None:
     try:
         _run(
             cache_manager.set(
-                _cache_key(source, has_token=has_token),
+                _cache_key(source, user_id=user_id),
                 resolved.__dict__,
                 expire=RESOLUTION_CACHE_SECONDS,
             )

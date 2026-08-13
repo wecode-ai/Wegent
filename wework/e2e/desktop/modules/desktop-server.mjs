@@ -947,6 +947,20 @@ class DesktopE2EServer {
       return
     }
 
+    if (request.method === 'POST' && url.pathname === '/api/users/me/wegent-runtime-token') {
+      assert.equal(
+        request.headers.authorization,
+        'Bearer wework-desktop-e2e-cloud-token',
+        'The runtime token request did not use the cloud authentication token'
+      )
+      json(response, 200, {
+        auth_token: 'wework-desktop-e2e-runtime-token',
+        token_type: 'bearer',
+        expires_in: 3600,
+      })
+      return
+    }
+
     if (request.method === 'GET' && url.pathname === '/api/sites/app-types') {
       json(response, 200, {
         items: [
@@ -1170,6 +1184,62 @@ class DesktopE2EServer {
         return
       }
       this.blockCloudRequest(request, response, url)
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/model-runtime/responses' &&
+      this.scenario === 'supervisor'
+    ) {
+      const body = await readRequestBody(request)
+      const requestText = JSON.stringify(body)
+      assert.equal(
+        request.headers.authorization,
+        'Bearer wework-desktop-e2e-cloud-token',
+        'The supervisor model API request did not use the cloud authentication token'
+      )
+      assert.deepEqual(
+        body.model_ref,
+        {
+          name: CLOUD_PUBLIC_MODEL_NAME,
+          type: 'public',
+          namespace: 'default',
+          resource_user_id: 0,
+        },
+        'The supervisor model API request did not preserve the selected cloud model identity'
+      )
+      assert.equal(
+        body.metadata?.source,
+        'wework-supervisor',
+        'The supervisor model API request did not identify its source'
+      )
+      assert.ok(
+        requestText.includes('correction'),
+        'The supervisor evaluator request did not include its structured output schema'
+      )
+      assert.ok(
+        requestText.includes(SUPERVISOR_COMPLETION_TEXT),
+        'The supervisor evaluator did not receive the latest assistant progress'
+      )
+      assert.equal(
+        requestText.includes(SUPERVISOR_PROMPT),
+        false,
+        'The supervisor evaluator received the original user transcript instead of recent AI content'
+      )
+      this.recordScenarioRequest('supervisor', {
+        body,
+        headers: request.headers,
+        pathname: url.pathname,
+      })
+      json(response, 200, {
+        output_text: JSON.stringify({
+          correction: SUPERVISOR_CORRECTION,
+          rationale: 'The completed reply should restate the original constraint.',
+        }),
+        model: CLOUD_PUBLIC_MODEL_NAME,
+        created_at: '2026-08-12T00:00:00Z',
+      })
       return
     }
 
@@ -2702,7 +2772,8 @@ class DesktopE2EServer {
     if (this.scenario === 'supervisor') {
       this.recordScenarioRequest('supervisor', modelRequest)
       const requestText = JSON.stringify(body)
-      if (requestText.includes('Current visible progress snapshot (JSON):')) {
+      if (body.metadata?.source === 'wework-supervisor') {
+        assert.equal(body.stream, false, 'The supervisor evaluator request must not stream')
         assert.ok(
           requestText.includes('correction'),
           'The supervisor evaluator request did not include its structured output schema'
@@ -2716,34 +2787,63 @@ class DesktopE2EServer {
           false,
           'The supervisor evaluator received the original user transcript instead of recent AI content'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          assistantMessage(
-            JSON.stringify({
-              correction: SUPERVISOR_CORRECTION,
-              rationale: 'The completed reply should restate the original constraint.',
-            })
-          ),
-          responseCompleted(responseId),
-        ])
+        json(response, 200, {
+          id: responseId,
+          object: 'response',
+          status: 'completed',
+          model: body.model,
+          output: [
+            {
+              id: `supervisor-evaluation-${responseId}`,
+              type: 'message',
+              status: 'completed',
+              role: 'assistant',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    correction: SUPERVISOR_CORRECTION,
+                    rationale: 'The completed reply should restate the original constraint.',
+                  }),
+                  annotations: [],
+                },
+              ],
+            },
+          ],
+          usage: {
+            input_tokens: 0,
+            input_tokens_details: null,
+            output_tokens: 0,
+            output_tokens_details: null,
+            total_tokens: 0,
+          },
+        })
         return
       }
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
+        const stream = streamingTextEvents(responseId, SUPERVISOR_CORRECTION_COMPLETION_TEXT)
         response.writeHead(200, {
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
-        response.write(createSse([responseCreated(responseId)]))
+        response.write(createSse(stream.start))
         this.resolveSupervisorCorrectionStarted()
         await this.supervisorCorrectionRelease
-        response.end(
+        response.write(
           createSse([
-            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-            responseCompleted(responseId),
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: SUPERVISOR_CORRECTION_COMPLETION_TEXT,
+              offset: 0,
+            },
           ])
         )
+        response.end(createSse(stream.finish))
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')

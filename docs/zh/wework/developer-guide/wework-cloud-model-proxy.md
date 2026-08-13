@@ -59,6 +59,10 @@ executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型
 
 只有完全没有观察到模型输出时才会触发这项检查。已经收到文本、思考内容或工具调用的响应不会被重放；用于连接预热且 `output_tokens` 为零的合法空响应也不受影响。
 
+### Claude Code 工具结果完整性
+
+Claude Code 使用 Anthropic Messages 协议调用 Wework 模型路由。转换到 OpenAI Responses 或 Chat Completions 前，executor 会检查每个 assistant `tool_use` 是否在后续 user 消息中具有同 ID 的 `tool_result`。如果工具进程在返回结果前异常结束，代理会补充一个明确的失败结果，使请求历史保持协议合法，并允许模型继续处理失败；已有的正常工具结果不会被覆盖或重复。
+
 ### Namespace 工具兼容
 
 Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"` 把多个子工具组织在同一个 namespace 下。OpenAI Chat Completions 和 Anthropic Messages 没有对应的 namespace 字段，因此 executor 的 Codex compat proxy 会在协议转换边界执行可逆映射：

@@ -1,6 +1,7 @@
 import type {
   DeviceWorkspaceResponse,
   DeviceInfo,
+  RuntimeSupervisorState,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -138,6 +139,11 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
       running: boolean
       status: string
+    }
+  | {
+      type: 'runtime_task_supervisor_updated'
+      address: RuntimeTaskAddress
+      supervisor: RuntimeSupervisorState | null
     }
   | {
       type: 'runtime_task_snapshot_updated'
@@ -327,6 +333,14 @@ function mergeRuntimeTasks(
     .map(task => {
       const nextTask = nextById.get(task.taskId)
       if (nextTask) {
+        if (
+          isFreshOptimisticRuntimeTask(task) &&
+          isActiveOptimisticRuntimeTask(task) &&
+          nextTask.running === false &&
+          nextTask.status !== 'queued'
+        ) {
+          return task
+        }
         return nextTask
       }
       if (
@@ -348,7 +362,11 @@ function mergeRuntimeTasks(
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating' || (task.optimistic === true && task.status === 'failed')
+  return task.status === 'creating' || task.optimistic === true
+}
+
+function isActiveOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
+  return task.status === 'creating' || task.status === 'queued' || task.status === 'running'
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -1207,6 +1225,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           running: action.running,
           status: action.status,
           optimistic: true,
+        }),
+      }
+    case 'runtime_task_supervisor_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
+          supervisor: action.supervisor,
         }),
       }
     case 'runtime_task_snapshot_updated':

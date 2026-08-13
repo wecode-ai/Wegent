@@ -6,14 +6,20 @@ inputs:
     description: Whether this job may save the shared workspace cache
     required: false
     default: "false"
+  setup-toolchain:
+    description: Whether to install pnpm and Node instead of using the job image
+    required: false
+    default: "true"
 
 runs:
   using: composite
   steps:
     - name: Set up pnpm
+      if: inputs.setup-toolchain == 'true'
       uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
     - name: Set up Node.js
+      if: inputs.setup-toolchain == 'true'
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: "24"
