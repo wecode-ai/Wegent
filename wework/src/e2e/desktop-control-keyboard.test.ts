@@ -7,6 +7,8 @@ describe('parseDesktopControlKey', () => {
     ['Meta+Minus', { key: '-', metaKey: true }],
     ['Meta+0', { key: '0', metaKey: true }],
     ['Control+Shift+M', { key: 'M', ctrlKey: true, shiftKey: true }],
+    ['Space', { key: ' ', code: 'Space' }],
+    ['Escape', { key: 'Escape', code: 'Escape' }],
   ])('parses %s', (value, expected) => {
     expect(parseDesktopControlKey(value)).toMatchObject(expected)
   })

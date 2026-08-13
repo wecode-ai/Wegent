@@ -131,9 +131,10 @@ def _enqueue_reindex(
         knowledge_base=knowledge_base,
         document=document,
         user=user,
-        # Summaries are a knowledge base level concern and would be recomputed once
-        # per page here; the publish path refreshes them separately.
-        trigger_summary=False,
+        # Generated pages are knowledge documents too. Let the existing index task
+        # enqueue their document summaries after a successful index; it still gates
+        # on the deployment and knowledge-base summary settings.
+        trigger_summary=True,
         replace_active=True,
         # Without this the state machine returns "already_indexed" for any document
         # whose last index succeeded -- which is every page that has ever been

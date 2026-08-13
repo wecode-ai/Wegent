@@ -11,8 +11,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PositiveInt, field_validator, model_validator
 
+from app.models.knowledge import ContentOrigin
 from app.schemas.base_role import BaseRole
 
 # Import shared types from kind.py to avoid duplication
@@ -972,6 +973,7 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    origin: ContentOrigin = ContentOrigin.USER
     folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
@@ -1153,6 +1155,7 @@ class KnowledgeFolderResponse(BaseModel):
     kind_id: int
     parent_id: int = Field(..., description="Parent folder ID (0 = root level)")
     name: str
+    origin: ContentOrigin = ContentOrigin.USER
     children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
     document_count: int = Field(
         default=0, description="Number of documents in this folder"
@@ -1564,18 +1567,35 @@ class KnowledgeBaseMigrateResponse(BaseModel):
 
 # ============== Document Transfer Schemas ==============
 
+MAX_TRANSFER_RESOURCE_COUNT = 200
+
 
 class TransferDocumentsRequest(BaseModel):
     """Schema for transferring documents/folders to another knowledge base."""
 
-    document_ids: list[int] = Field(
-        default_factory=list, description="List of document IDs to transfer"
-    )
-    folder_ids: list[int] = Field(
+    document_ids: list[PositiveInt] = Field(
         default_factory=list,
+        max_length=MAX_TRANSFER_RESOURCE_COUNT,
+        description="List of document IDs to transfer",
+    )
+    folder_ids: list[PositiveInt] = Field(
+        default_factory=list,
+        max_length=MAX_TRANSFER_RESOURCE_COUNT,
         description="List of folder IDs to transfer with their contents",
     )
-    target_kb_id: int = Field(..., description="Target knowledge base ID")
+    target_kb_id: PositiveInt = Field(..., description="Target knowledge base ID")
+
+    @model_validator(mode="after")
+    def validate_selection_size(self) -> "TransferDocumentsRequest":
+        """Require one bounded selection before expanding folder contents."""
+        selected_count = len(set(self.document_ids)) + len(set(self.folder_ids))
+        if selected_count == 0:
+            raise ValueError("At least one document or folder must be selected")
+        if selected_count > MAX_TRANSFER_RESOURCE_COUNT:
+            raise ValueError(
+                f"Transfer selection cannot exceed {MAX_TRANSFER_RESOURCE_COUNT} items"
+            )
+        return self
 
 
 class TransferDocumentsResponse(BaseModel):

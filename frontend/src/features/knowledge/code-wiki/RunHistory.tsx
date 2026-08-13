@@ -18,6 +18,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatRelativeTime } from '@/utils/dateTime'
@@ -99,12 +106,7 @@ function RunRow({
   // the pages it overwrites keep their document ids only for as long as they exist
   // -- links held elsewhere to the current pages do not survive being replaced.
   const [confirming, setConfirming] = useState(false)
-  // A reason is external text -- git's output, the agent's own message, a stack --
-  // and arrives at whatever length it happens to be. Clamped so one failed run
-  // cannot push the rest of the history out of a 320px popover, expandable because
-  // this panel is where someone goes precisely to read the whole thing.
-  const [reasonExpanded, setReasonExpanded] = useState(false)
-
+  const [showingFailure, setShowingFailure] = useState(false)
   const republish = async () => {
     setConfirming(false)
     setWorking(true)
@@ -151,8 +153,6 @@ function RunRow({
             <span className="font-sans not-italic">{t('codeWiki.history.commitUnreported')}</span>
           )}
         </div>
-        {/* The reason is the point of this panel, so it wraps rather than truncates:
-            a clone failure or a missing token is unreadable at one line. */}
         {/* The task's own outcome, when it disagrees with the version's. A run that
             concluded successfully leaves a published version behind even if its
             container then died — showing only one of the two made them look as
@@ -201,25 +201,39 @@ function RunRow({
           </AlertDialogContent>
         </AlertDialog>
         {reason && (
-          // A button because it does something. It was a <p> with a click handler,
-          // which reads the same but cannot be focused, so the only way to open a
-          // clamped reason was a mouse. Styled back down to look like the text it is.
-          <button
-            type="button"
-            aria-expanded={reasonExpanded}
-            className={`mt-0.5 block w-full cursor-pointer whitespace-pre-wrap break-words text-left text-[11px] text-amber-500 ${
-              reasonExpanded ? '' : 'line-clamp-3'
-            }`}
-            onClick={event => {
-              // Stops the click from reaching the row behind it.
-              event.stopPropagation()
-              setReasonExpanded(current => !current)
-            }}
-            title={reasonExpanded ? undefined : reason}
-            data-testid="code-wiki-run-error"
-          >
-            {reason}
-          </button>
+          <>
+            <p
+              className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-[11px] text-amber-500"
+              title={reason}
+              data-testid="code-wiki-run-error"
+            >
+              {reason}
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowingFailure(true)}
+              className="mt-1 inline-flex min-h-11 items-center text-[11px] text-text-secondary underline-offset-2 hover:text-primary hover:underline lg:min-h-0"
+              data-testid="code-wiki-run-error-details-trigger"
+            >
+              {t('codeWiki.history.viewFailure')}
+            </button>
+            <Dialog open={showingFailure} onOpenChange={setShowingFailure}>
+              <DialogContent
+                className="max-h-[80vh] overflow-auto"
+                data-testid="code-wiki-run-error-details"
+              >
+                <DialogHeader>
+                  <DialogTitle>{t('codeWiki.history.failureDetailsTitle')}</DialogTitle>
+                  <DialogDescription>
+                    {t('codeWiki.history.failureDetailsDescription')}
+                  </DialogDescription>
+                </DialogHeader>
+                <pre className="whitespace-pre-wrap break-words text-sm text-amber-500">
+                  {reason}
+                </pre>
+              </DialogContent>
+            </Dialog>
+          </>
         )}
       </div>
     </li>

@@ -633,13 +633,14 @@ code wiki 要能被 chat 引用,就不该在查询层被排除。
 
 **`wiki_config.py`**:迁入 code_wiki 配置区,保留 `WIKI_` 前缀以免破坏既有部署环境变量。
 
-> **实现修订(2026-08-07),删留与原文相反**:`INTERNAL_API_TOKEN` 和 `MAX_CONTENT_SIZE`
-> **守着新路径的写入端点,必须留**;`CONTENT_WRITE_*` 只被旧 `_build_generation_ext` 用
-> (新 skill 从任务自己的 API domain 拼 URL),故删。旧的生成配置(`ENABLED`、
+> **实现修订(2026-08-12),删留与原文相反**:`MAX_CONTENT_SIZE` 守着新路径的写入端点，
+> 必须保留；`CONTENT_WRITE_*` 与 `INTERNAL_API_TOKEN` 分别只被旧 `_build_generation_ext`
+> 与已删除的固定 token 通道使用，故删。新 skill 从任务自己的 API domain 拼 URL，并以用户
+> JWT 或 skill identity token 回写。旧的生成配置(`ENABLED`、
 > `DEFAULT_TEAM_NAME`、`DEFAULT_AGENT_TYPE`、`DEFAULT_USER_ID`、`MAX_CONCURRENT_GENERATIONS`、
 > `RESULT_POLL_*`、`DEFAULT_SECTION_TYPES`、`SUPPORTED_FORMATS`)随 legacy 路径一起删。
-> 最终留 5 项:`CODE_WIKI_ENABLED` / `CODE_WIKI_TEAM_NAME` / `DEFAULT_LANGUAGE` /
-> `MAX_CONTENT_SIZE` / `INTERNAL_API_TOKEN`。
+> 最终留 4 项:`CODE_WIKI_ENABLED` / `CODE_WIKI_TEAM_NAME` / `DEFAULT_LANGUAGE` /
+> `MAX_CONTENT_SIZE`。
 
 已核实为**零引用**的遗留项,随本次一并删除:`MAX_CONCURRENT_GENERATIONS`、`RESULT_POLL_INTERVAL_SECONDS`、`RESULT_POLL_BATCH_SIZE`、`DEFAULT_AGENT_TYPE`、`SUPPORTED_FORMATS`。
 其中 `MAX_CONCURRENT_GENERATIONS` 命名的**能力**是真实缺口(现状只有单 KB 互斥,无全局上限),但需重新实现而非「沿用」,归入订阅那一期。

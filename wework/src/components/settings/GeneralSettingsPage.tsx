@@ -52,6 +52,8 @@ interface SwitchRowProps {
 const GENERAL_ROW_CLASS_NAME = 'py-4'
 const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
 const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
+const DEFAULT_MAX_CONCURRENT_TASKS = 10
+const MAX_CONCURRENT_TASKS_LIMIT = 20
 const DEFAULT_WORKSPACE_TAB_OPTIONS: DefaultWorkspaceTab[] = ['task', 'board', 'agent']
 
 interface TrayDisplayOption {
@@ -66,6 +68,7 @@ export function GeneralSettingsPage() {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const workbench = useContext(WorkbenchContext)
+  const runtimeWorkApi = workbench?.services?.runtimeWorkApi
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
   const [cloudQuotaName, setCloudQuotaName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -73,14 +76,23 @@ export function GeneralSettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
 
   useEffect(() => {
     let cancelled = false
 
-    getAppPreferences()
-      .then(nextPreferences => {
+    const runtimeSettings = Promise.resolve()
+      .then(() => runtimeWorkApi?.getRuntimeSettings())
+      .catch(runtimeSettingsError => {
+        console.debug('[Wework] Runtime settings are unavailable', runtimeSettingsError)
+        return null
+      })
+
+    Promise.all([getAppPreferences(), runtimeSettings])
+      .then(([nextPreferences, runtimeSettings]) => {
         if (!cancelled) {
           setPreferences(nextPreferences)
+          setMaxConcurrentTasks(runtimeSettings?.maxConcurrentTasks ?? DEFAULT_MAX_CONCURRENT_TASKS)
           setError(null)
         }
       })
@@ -99,7 +111,7 @@ export function GeneralSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [runtimeWorkApi, t])
 
   useEffect(() => {
     if (!cloudConnection.isConnected) return
@@ -292,7 +304,7 @@ export function GeneralSettingsPage() {
     const useTaskModel = modelKey === FRIENDLY_TITLE_TASK_MODEL_VALUE
     const [modelType, ...nameParts] = modelKey.split(':')
     const modelName = nameParts.join(':')
-    const selectedModel = workbench?.projectChat.models.find(
+    const selectedModel = workbench?.projectChat?.models.find(
       model => `${model.type}:${model.name}` === `${modelType ?? ''}:${modelName}`
     )
     const execution = selectedModel ? selectedModelExecutionFields(selectedModel, {}) : null
@@ -325,8 +337,27 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const saveMaxConcurrentTasks = async (value: number) => {
+    const previousValue = maxConcurrentTasks
+    setMaxConcurrentTasks(value)
+    setSaving(true)
+    setError(null)
+    try {
+      const settings = await runtimeWorkApi?.updateRuntimeSettings({
+        maxConcurrentTasks: value,
+      })
+      setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
+    } catch (saveError) {
+      console.error('[Wework] Failed to update runtime concurrency settings', saveError)
+      setMaxConcurrentTasks(previousValue)
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
-  const friendlyTitleModels = workbench?.projectChat.models ?? []
+  const friendlyTitleModels = workbench?.projectChat?.models ?? []
   const friendlyTitleModelKey = friendlyTitleModel
     ? `${friendlyTitleModel.modelType ?? ''}:${friendlyTitleModel.modelName}`
     : FRIENDLY_TITLE_TASK_MODEL_VALUE
@@ -444,6 +475,32 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_runtime_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
+          <SettingsRow
+            label={t('workbench.general_settings_max_concurrent_tasks')}
+            description={t('workbench.general_settings_max_concurrent_tasks_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <select
+                data-testid="general-max-concurrent-tasks-select"
+                value={maxConcurrentTasks}
+                disabled={loading || saving}
+                aria-label={t('workbench.general_settings_max_concurrent_tasks')}
+                onChange={event => {
+                  void saveMaxConcurrentTasks(Number(event.target.value))
+                }}
+                className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary"
+              >
+                {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
+                  value => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  )
+                )}
+              </select>
+            }
+          />
           {renderSwitchRow({
             preferenceKey: 'closeToTrayEnabled',
             testId: 'general-close-to-tray-toggle',
@@ -481,7 +538,7 @@ export function GeneralSettingsPage() {
                 disabled={
                   loading ||
                   saving ||
-                  (!friendlyTitleModel?.modelName && !workbench?.projectChat.selectedModel)
+                  (!friendlyTitleModel?.modelName && !workbench?.projectChat?.selectedModel)
                 }
                 onCheckedChange={checked => {
                   void saveFriendlyTaskTitles(checked, friendlyTitleModelKey)

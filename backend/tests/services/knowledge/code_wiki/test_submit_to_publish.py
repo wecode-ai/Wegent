@@ -273,7 +273,13 @@ def test_a_legacy_generation_only_records_its_status(
 # --- what the agent is told when the run concludes ---------------------------
 
 
-def _conclude(test_db: Session, generation: WikiGeneration, **summary_fields) -> dict:
+def _conclude(
+    test_db: Session,
+    generation: WikiGeneration,
+    *,
+    sections: list[WikiContentSection] | None = None,
+    **summary_fields,
+) -> dict:
     """Conclude a run through the endpoint the agent actually calls.
 
     Through the endpoint rather than the service because the correction is assembled
@@ -284,13 +290,16 @@ def _conclude(test_db: Session, generation: WikiGeneration, **summary_fields) ->
     """
     from app.api.endpoints.wiki import save_wiki_generation_contents
 
+    caller = test_db.get(User, generation.user_id)
+    assert caller is not None
+
     return save_wiki_generation_contents(
         payload=WikiContentWriteRequest(
             generation_id=generation.id,
-            sections=[],
+            sections=sections or [],
             summary=WikiContentSummary(**summary_fields),
         ),
-        _=None,
+        caller=caller,
         wiki_db=test_db,
     )
 
@@ -323,6 +332,42 @@ def test_a_broken_diagram_is_reported_back_to_the_agent(
     assert response["published"] is True
     assert "index" in response["corrections"]
     assert "flowchat" in response["corrections"]
+    assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is True
+
+
+def test_a_successful_diagram_correction_closes_the_writer_window(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+):
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+    (
+        test_db.query(WikiContent)
+        .filter(WikiContent.generation_id == generation.id)
+        .update({WikiContent.content: BROKEN_DIAGRAM})
+    )
+    _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    response = _conclude(
+        test_db,
+        generation,
+        sections=[
+            WikiContentSection(
+                type="chapter",
+                title="index",
+                content="healthy diagram-free page",
+                path="index",
+            )
+        ],
+        status="COMPLETED",
+        head_commit=HEAD,
+    )
+
+    assert response["published"] is True
+    assert response["corrections"] == ""
+    assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is False
 
 
 def test_a_run_whose_diagrams_render_is_asked_for_nothing(

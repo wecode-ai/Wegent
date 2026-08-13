@@ -1062,6 +1062,7 @@ def _sync_external_contexts_to_task(
             "document_id": type_data.get("document_id"),
             "parent_id": type_data.get("parent_id"),
             "target_name": type_data.get("target_name"),
+            "resource_url": type_data.get("resource_url"),
         }
         refs.append({key: value for key, value in ref.items() if value is not None})
 
@@ -1370,6 +1371,7 @@ def _prepare_contexts_for_creation(
                         "document_id": external_data.get("document_id"),
                         "parent_id": external_data.get("parent_id"),
                         "target_name": external_data.get("target_name"),
+                        "resource_url": external_data.get("resource_url"),
                     },
                 )
                 external_knowledge_contexts_to_create.append(external_context)

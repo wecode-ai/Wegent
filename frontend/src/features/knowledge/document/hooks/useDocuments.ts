@@ -25,6 +25,7 @@ import {
   type ListDocumentsParams,
 } from '@/apis/knowledge'
 import type {
+  KnowledgeContentOrigin,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
   KnowledgeDocumentUpdate,
@@ -48,6 +49,7 @@ interface DocumentQuery {
   keyword?: string
   sortBy: ListDocumentsParams['sort_by']
   sortOrder: ListDocumentsParams['sort_order']
+  origin?: KnowledgeContentOrigin
 }
 
 function getDocumentSortValue(
@@ -111,6 +113,8 @@ function applyLocalQuery(
         return false
       }
 
+      if (query.origin && document.origin !== query.origin) return false
+
       return true
     })
     .sort((left, right) => compareDocuments(left, right, query.sortBy, query.sortOrder))
@@ -134,6 +138,7 @@ interface UseDocumentsOptions {
   keyword?: string
   sortBy?: ListDocumentsParams['sort_by']
   sortOrder?: ListDocumentsParams['sort_order']
+  origin?: KnowledgeContentOrigin
 }
 
 export function useDocuments(options: UseDocumentsOptions) {
@@ -150,6 +155,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     keyword,
     sortBy = 'createdAt',
     sortOrder = 'desc',
+    origin,
   } = options
   const { t } = useTranslation('knowledge')
 
@@ -176,6 +182,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const requestSeqRef = useRef(0)
   const localSnapshotRef = useRef<KnowledgeDocument[]>([])
   const localSnapshotKbIdRef = useRef<number | null>(null)
+  const localSnapshotOriginRef = useRef<KnowledgeContentOrigin | undefined>(undefined)
   const localSnapshotModeRef = useRef<LocalSnapshotMode>('unknown')
   const queryRef = useRef<DocumentQuery>({
     folderId,
@@ -184,6 +191,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     keyword: debouncedKeyword,
     sortBy,
     sortOrder,
+    origin,
   })
 
   // Keep refs in sync with state
@@ -213,8 +221,9 @@ export function useDocuments(options: UseDocumentsOptions) {
       keyword: debouncedKeyword,
       sortBy,
       sortOrder,
+      origin,
     }
-  }, [folderId, includeSubfolders, folderScopeIds, debouncedKeyword, sortBy, sortOrder])
+  }, [folderId, includeSubfolders, folderScopeIds, debouncedKeyword, sortBy, sortOrder, origin])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -227,46 +236,54 @@ export function useDocuments(options: UseDocumentsOptions) {
   const resetLocalSnapshot = useCallback(() => {
     localSnapshotRef.current = []
     localSnapshotKbIdRef.current = null
+    localSnapshotOriginRef.current = undefined
     localSnapshotModeRef.current = 'unknown'
   }, [])
 
-  const loadLocalSnapshot = useCallback(async (knowledgeBaseId: number, requestSeq: number) => {
-    const items: KnowledgeDocument[] = []
-    let offset = 0
+  const loadLocalSnapshot = useCallback(
+    async (knowledgeBaseId: number, requestSeq: number, origin?: KnowledgeContentOrigin) => {
+      const items: KnowledgeDocument[] = []
+      let offset = 0
 
-    while (offset < LOCAL_METADATA_LIMIT) {
-      const response = await listDocuments(knowledgeBaseId, {
-        limit: SERVER_REQUEST_LIMIT,
-        offset,
-      })
+      while (offset < LOCAL_METADATA_LIMIT) {
+        const response = await listDocuments(knowledgeBaseId, {
+          limit: SERVER_REQUEST_LIMIT,
+          offset,
+          origin,
+        })
 
-      if (requestSeq !== requestSeqRef.current) {
-        return null
+        if (requestSeq !== requestSeqRef.current) {
+          return null
+        }
+
+        if (response.total > LOCAL_METADATA_LIMIT) {
+          localSnapshotRef.current = []
+          localSnapshotKbIdRef.current = knowledgeBaseId
+          localSnapshotOriginRef.current = origin
+          localSnapshotModeRef.current = 'server'
+          return null
+        }
+
+        items.push(...response.items)
+        if (!response.has_more || response.items.length === 0 || items.length >= response.total) {
+          localSnapshotRef.current = items
+          localSnapshotKbIdRef.current = knowledgeBaseId
+          localSnapshotOriginRef.current = origin
+          localSnapshotModeRef.current = 'local'
+          return items
+        }
+
+        offset += response.items.length
       }
 
-      if (response.total > LOCAL_METADATA_LIMIT) {
-        localSnapshotRef.current = []
-        localSnapshotKbIdRef.current = knowledgeBaseId
-        localSnapshotModeRef.current = 'server'
-        return null
-      }
-
-      items.push(...response.items)
-      if (!response.has_more || response.items.length === 0 || items.length >= response.total) {
-        localSnapshotRef.current = items
-        localSnapshotKbIdRef.current = knowledgeBaseId
-        localSnapshotModeRef.current = 'local'
-        return items
-      }
-
-      offset += response.items.length
-    }
-
-    localSnapshotRef.current = []
-    localSnapshotKbIdRef.current = knowledgeBaseId
-    localSnapshotModeRef.current = 'server'
-    return null
-  }, [])
+      localSnapshotRef.current = []
+      localSnapshotKbIdRef.current = knowledgeBaseId
+      localSnapshotOriginRef.current = origin
+      localSnapshotModeRef.current = 'server'
+      return null
+    },
+    []
+  )
 
   const fetchServerPage = useCallback(
     async (
@@ -282,6 +299,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         keyword: trimmedKeyword || undefined,
         sort_by: query.sortBy,
         sort_order: query.sortOrder,
+        origin: query.origin,
       }
       const response = await listDocuments(knowledgeBaseId, {
         ...params,
@@ -331,13 +349,16 @@ export function useDocuments(options: UseDocumentsOptions) {
             nextDocuments = response.items
             nextTotalCount = response.total
           } else {
-            if (localSnapshotKbIdRef.current !== currentKbId) {
+            if (
+              localSnapshotKbIdRef.current !== currentKbId ||
+              localSnapshotOriginRef.current !== query.origin
+            ) {
               localSnapshotModeRef.current = 'unknown'
             }
 
             let snapshot = localSnapshotRef.current
             if (localSnapshotModeRef.current === 'unknown') {
-              snapshot = (await loadLocalSnapshot(currentKbId, requestSeq)) ?? []
+              snapshot = (await loadLocalSnapshot(currentKbId, requestSeq, query.origin)) ?? []
             }
 
             if (requestSeq !== requestSeqRef.current) {
@@ -375,6 +396,7 @@ export function useDocuments(options: UseDocumentsOptions) {
             keyword: query.keyword?.trim() || undefined,
             sort_by: query.sortBy,
             sort_order: query.sortOrder,
+            origin: query.origin,
           })
           nextDocuments = response.items
           nextTotalCount = response.total
@@ -611,6 +633,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     debouncedKeyword,
     sortBy,
     sortOrder,
+    origin,
     loadAll,
     fetchDocuments,
   ])

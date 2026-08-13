@@ -169,12 +169,15 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
       className={cn(
         'relative flex shrink-0 flex-col overflow-hidden ease-out',
         showWorkbenchBackground ? 'bg-background/20' : 'bg-background',
-        resizing ? 'transition-none' : 'transition-[height,opacity,transform] duration-300',
+        resizing ? 'transition-none' : 'transition-[height] duration-300',
         open
-          ? 'pointer-events-auto translate-y-0 border-t border-border opacity-100'
-          : 'pointer-events-none translate-y-3 border-t border-transparent opacity-0'
+          ? 'pointer-events-auto border-t border-border'
+          : 'pointer-events-none border-t border-transparent'
       )}
-      style={{ height: open ? height : 0 }}
+      style={{
+        flexBasis: open ? height : 0,
+        height: open ? height : 0,
+      }}
       aria-hidden={!open}
     >
       {renderContent && (

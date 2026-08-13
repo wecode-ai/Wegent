@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event'
 
 import { KnowledgeDocumentPageMobile } from '@/features/knowledge/document/components/KnowledgeDocumentPageMobile'
 import type { KnowledgeBase } from '@/types/knowledge'
+import { codeWikiApi } from '@/apis/code-wiki'
 
 interface MockKnowledgeTree {
   treeNodes: unknown[]
@@ -48,6 +49,18 @@ jest.mock('@/hooks/useTranslation', () => ({
 jest.mock('next/navigation', () => ({
   useRouter: () => mockRouter,
   useSearchParams: () => new URLSearchParams(),
+}))
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: { id: 99 } }),
+}))
+
+jest.mock('@/features/knowledge/document/hooks/useNamespaceRoleMap', () => ({
+  useNamespaceRoleMap: () => new Map(),
+}))
+
+jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () => ({
+  useKnowledgePermissions: () => ({ myPermission: null, fetchMyPermission: jest.fn() }),
 }))
 
 const baseKb: KnowledgeBase = {
@@ -106,8 +119,10 @@ jest.mock('@/features/knowledge/document/hooks/useKnowledgeTree', () => ({
 jest.mock('@/features/knowledge/document/components/KnowledgeTree', () => ({
   KnowledgeTree: ({
     onSelectKb,
+    onCreateKb,
   }: {
     onSelectKb: (kb: Pick<KnowledgeBase, 'id' | 'name' | 'namespace'>) => void
+    onCreateKb: (scope: 'personal', kbType: 'code_wiki') => void
   }) => (
     <div data-testid="mock-knowledge-tree">
       <button
@@ -117,12 +132,76 @@ jest.mock('@/features/knowledge/document/components/KnowledgeTree', () => ({
       >
         Select KB
       </button>
+      <button
+        type="button"
+        data-testid="create-code-wiki"
+        onClick={() => onCreateKb('personal', 'code_wiki')}
+      >
+        Create Code Wiki
+      </button>
     </div>
   ),
 }))
 
 jest.mock('@/features/knowledge/document/components/CreateKnowledgeBaseDialog', () => ({
-  CreateKnowledgeBaseDialog: () => null,
+  CreateKnowledgeBaseDialog: ({
+    open,
+    onSubmit,
+  }: {
+    open: boolean
+    onSubmit: (data: Record<string, unknown>) => Promise<void>
+  }) =>
+    open ? (
+      <button
+        type="button"
+        data-testid="submit-code-wiki"
+        onClick={() =>
+          void onSubmit({
+            name: '',
+            description: undefined,
+            kb_type: 'code_wiki',
+            source_type: 'github',
+            source_url: 'https://github.com/wecode-ai/Wegent.git',
+            language: 'zh',
+            resolved_name: 'Wegent',
+            resolved_description: 'Agent platform',
+            execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+          })
+        }
+      >
+        Submit Code Wiki
+      </button>
+    ) : null,
+}))
+
+jest.mock('@/features/knowledge/code-wiki/CodeWikiReader', () => ({
+  CodeWikiReader: ({
+    wiki,
+    canConfigure,
+    onConfigure,
+  }: {
+    wiki: Pick<KnowledgeBase, 'name'>
+    canConfigure?: boolean
+    onConfigure?: () => void
+  }) => (
+    <div data-testid="mock-code-wiki-reader">
+      {wiki.name}
+      {canConfigure && (
+        <button type="button" data-testid="open-code-wiki-config" onClick={onConfigure}>
+          Configure
+        </button>
+      )}
+    </div>
+  ),
+}))
+
+jest.mock('@/features/knowledge/document/components/EditKnowledgeBaseDialog', () => ({
+  EditKnowledgeBaseDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="mock-edit-knowledge-base-dialog" /> : null,
+}))
+
+jest.mock('@/apis/code-wiki', () => ({
+  codeWikiApi: { create: jest.fn() },
 }))
 
 import { getKnowledgeBase } from '@/apis/knowledge'
@@ -138,18 +217,17 @@ jest.mock('@/apis/knowledge', () => {
 })
 
 const mockGetKnowledgeBase = jest.mocked(getKnowledgeBase)
+const mockCreateCodeWiki = jest.mocked(codeWikiApi.create)
 
 jest.mock('@/apis/user', () => ({
   userApis: {
-    getDefaultTeams: jest
-      .fn()
-      .mockResolvedValue({ knowledge: { name: 'test', namespace: 'default' } }),
+    getDefaultTeams: jest.fn(() => new Promise(() => {})),
   },
 }))
 
 jest.mock('@/features/tasks/service/teamService', () => ({
   teamService: {
-    getTeams: jest.fn().mockResolvedValue({ items: [] }),
+    getTeams: jest.fn(() => new Promise(() => {})),
   },
 }))
 
@@ -195,6 +273,17 @@ function resetMockTree() {
   mockTree.refreshGroup = jest.fn()
   mockGetKnowledgeBase.mockReset()
   mockGetKnowledgeBase.mockResolvedValue(baseKb)
+  mockCreateCodeWiki.mockReset()
+  mockCreateCodeWiki.mockResolvedValue({
+    id: 8,
+    name: 'Wegent',
+    project_name: 'wecode-ai/Wegent',
+    source_url: 'https://github.com/wecode-ai/Wegent.git',
+    last_published_commit: '',
+    document_count: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  })
 }
 
 describe('KnowledgeDocumentPageMobile detail view switch', () => {
@@ -269,5 +358,64 @@ describe('KnowledgeDocumentPageMobile detail view switch', () => {
     await userEvent.click(backButton)
 
     expect(mockPush).toHaveBeenCalledWith('/knowledge?type=document')
+  })
+
+  it('6) code wiki deep-link uses the reader and exposes its top-level view switcher', async () => {
+    const codeWiki = { ...baseKb, id: 7, name: 'Wegent', kb_type: 'code_wiki' as const }
+    const onKnowledgeViewStateChange = jest.fn()
+    mockTree.personalData = { created_by_me: [codeWiki], shared_with_me: [] }
+    mockGetKnowledgeBase.mockResolvedValue(codeWiki)
+
+    render(
+      <KnowledgeDocumentPageMobile
+        initialKbNamespace="default"
+        initialKbName="Wegent"
+        onKnowledgeViewStateChange={onKnowledgeViewStateChange}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-code-wiki-reader')).toHaveTextContent('Wegent')
+    })
+    expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-detail-back-button')).not.toBeInTheDocument()
+    expect(onKnowledgeViewStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        visible: true,
+        switcher: 'code-wiki',
+        currentView: 'wiki',
+      })
+    )
+  })
+
+  it('7) mobile code wiki creation uses the dedicated coordinator and API', async () => {
+    render(<KnowledgeDocumentPageMobile />)
+
+    await userEvent.click(screen.getByTestId('create-code-wiki'))
+    await userEvent.click(screen.getByTestId('submit-code-wiki'))
+
+    await waitFor(() => {
+      expect(mockCreateCodeWiki).toHaveBeenCalledWith(
+        expect.objectContaining({
+          namespace: 'default',
+          source_type: 'github',
+          source_url: 'https://github.com/wecode-ai/Wegent.git',
+          execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+        })
+      )
+    })
+    expect(mockPush).toHaveBeenCalledWith('/knowledge/default/Wegent')
+  })
+
+  it('8) code wiki owners can reach the existing KB configuration dialog', async () => {
+    const codeWiki = { ...baseKb, id: 7, name: 'Wegent', kb_type: 'code_wiki' as const }
+    mockTree.personalData = { created_by_me: [codeWiki], shared_with_me: [] }
+    mockGetKnowledgeBase.mockResolvedValue(codeWiki)
+
+    render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Wegent" />)
+
+    await userEvent.click(await screen.findByTestId('open-code-wiki-config'))
+
+    expect(screen.getByTestId('mock-edit-knowledge-base-dialog')).toBeInTheDocument()
   })
 })

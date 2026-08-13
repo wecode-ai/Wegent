@@ -16,6 +16,7 @@ import {
   batchMoveDocuments,
 } from '@/apis/knowledge'
 import type {
+  KnowledgeContentOrigin,
   KnowledgeFolder,
   KnowledgeFolderCreate,
   KnowledgeFolderUpdate,
@@ -26,10 +27,11 @@ import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 interface UseFoldersOptions {
   knowledgeBaseId: number | null
+  origin?: KnowledgeContentOrigin
 }
 
 export function useFolders(options: UseFoldersOptions) {
-  const { knowledgeBaseId } = options
+  const { knowledgeBaseId, origin } = options
   const { t } = useTranslation('knowledge')
 
   const [folders, setFolders] = useState<KnowledgeFolder[]>([])
@@ -45,14 +47,14 @@ export function useFolders(options: UseFoldersOptions) {
     setLoading(true)
     setError(null)
     try {
-      const data = await getFolderTree(knowledgeBaseId)
+      const data = await getFolderTree(knowledgeBaseId, origin)
       setFolders(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch folders')
     } finally {
       setLoading(false)
     }
-  }, [knowledgeBaseId])
+  }, [knowledgeBaseId, origin])
 
   const create = useCallback(
     async (data: KnowledgeFolderCreate): Promise<KnowledgeFolder | null> => {

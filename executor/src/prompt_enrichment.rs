@@ -6,6 +6,18 @@ use serde_json::Value;
 
 use crate::attachments::append_text_to_vision_prompt;
 
+pub fn inject_selected_knowledge_prompt(prompt: &Value, context: &str) -> Value {
+    let context = context.trim();
+    if context.is_empty() {
+        return prompt.clone();
+    }
+    match prompt {
+        Value::String(text) => Value::String(format!("{context}\n\n{text}")),
+        Value::Array(_) => append_text_to_vision_prompt(prompt, context, true),
+        _ => prompt.clone(),
+    }
+}
+
 pub fn inject_kb_meta_prompt(
     prompt: &Value,
     kb_meta_prompt: &str,
