@@ -51,6 +51,8 @@ vi.mock('@tanstack/react-virtual', () => ({
           index,
           key: options.getItemKey(index),
           start: index * 120,
+          size: 100,
+          end: index * 120 + 100,
         })),
       measureElement: measureElementMock,
       resizeItem: resizeItemMock,
@@ -196,6 +198,49 @@ describe('MessageList Tauri virtualization', () => {
         anchorTo: 'end',
       })
     )
+  })
+
+  test('remeasures mounted rows after guidance changes the message sequence', () => {
+    const messages = buildMessages(3, 'guidance-layout')
+    const guidanceMessage = {
+      ...buildMessages(1, 'mid-turn-guidance')[0],
+      id: 'guidance-message',
+      runtimeGuidance: true,
+    }
+    const props = {
+      messages: [messages[0], guidanceMessage, messages[2]],
+      scrollElementRef: { current: createScrollElement(200) },
+    }
+    const view = render(<MessageList {...props} />)
+    const guidanceRow = screen.getByText('mid-turn-guidance message 0').closest('[data-index]')
+    expect(guidanceRow).not.toBeNull()
+    vi.spyOn(guidanceRow!, 'getBoundingClientRect').mockReturnValue({
+      bottom: 180,
+      height: 180,
+      left: 0,
+      right: 800,
+      top: 0,
+      width: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    resizeItemMock.mockClear()
+
+    const assistantContinuation = {
+      ...buildMessages(1, 'assistant-continuation')[0],
+      id: 'assistant-continuation',
+      role: 'assistant' as const,
+      status: 'streaming' as const,
+    }
+    view.rerender(
+      <MessageList
+        {...props}
+        messages={[messages[0], assistantContinuation, guidanceMessage, messages[2]]}
+      />
+    )
+
+    expect(resizeItemMock).toHaveBeenCalledWith(2, 180)
   })
 
   test('deduplicates a streaming message that is also a forced navigation target', () => {
