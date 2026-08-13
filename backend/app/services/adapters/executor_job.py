@@ -153,15 +153,20 @@ class JobService(BaseService[Kind, None, None]):
                 continue
 
             try:
-                archive_task = self._get_archive_task(
+                archive_tasks = self._get_archive_tasks(
                     task_map=task_map,
                     subtasks=group_subtasks,
                 )
-                if archive_task and not await self._archive_workspace(
-                    task=archive_task,
-                    executor_name=name,
-                    executor_namespace=namespace,
-                ):
+                archive_failed = False
+                for archive_task in archive_tasks:
+                    if not await self._archive_workspace(
+                        task=archive_task,
+                        executor_name=name,
+                        executor_namespace=namespace,
+                    ):
+                        archive_failed = True
+                        break
+                if archive_failed:
                     result["skipped"].append(
                         {
                             "task_id": task_id,
@@ -471,19 +476,28 @@ class JobService(BaseService[Kind, None, None]):
             return None
         return max(datetimes)
 
-    def _get_archive_task(
+    def _get_archive_tasks(
         self,
         *,
         task_map: Dict[int, TaskResource],
         subtasks: List[Subtask],
-    ) -> TaskResource | None:
-        """Return the task that needs archive before releasing the session."""
+    ) -> List[TaskResource]:
+        """Return the unique tasks that need archive before releasing the session.
+
+        An executor group can contain subtasks from multiple tasks sharing one
+        executor, so every task workspace must be archived before deletion.
+        """
+        tasks: List[TaskResource] = []
+        seen_task_ids: set[int] = set()
         for subtask in subtasks:
+            if subtask.task_id in seen_task_ids:
+                continue
+            seen_task_ids.add(subtask.task_id)
             task = task_map.get(subtask.task_id)
             if not task:
                 continue
-            return task
-        return None
+            tasks.append(task)
+        return tasks
 
     def _detach_loaded_instance(self, db: AsyncSession, instance: object) -> None:
         """Detach an already-loaded ORM instance before rollback expires it."""

@@ -277,7 +277,9 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
             "executor-1", "default"
         )
 
-    async def test_chat_task_archives_before_cleanup(self, job_service, mock_db):
+    async def test_chat_task_archives_before_cleanup(
+        self, job_service: JobService, mock_db: Mock
+    ) -> None:
         """Test non-code tasks also trigger archive before deleting the executor."""
         mock_subtask = self._create_mock_subtask(1, 100)
         mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
