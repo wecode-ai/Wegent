@@ -4,6 +4,7 @@ import type {
   InstalledPluginUpdateRequest,
   PluginAccessResponse,
   PluginAccessUpdateRequest,
+  PluginAutoUpdateBatchResponse,
   PluginCopyResponse,
   PluginDeviceSyncResponse,
   PluginMarketplaceInstallResponse,
@@ -45,6 +46,9 @@ export function createPluginApi(client: HttpClient) {
     },
     syncInstalledPluginsToDevice(deviceId: string): Promise<PluginDeviceSyncResponse> {
       return client.post(`/plugins/installed/sync-device${deviceQuery(deviceId)}`)
+    },
+    autoUpdateInstalledPlugins(): Promise<PluginAutoUpdateBatchResponse> {
+      return client.post('/plugins/installed/auto-update-batch')
     },
     updateInstalledPlugin(
       id: string | number,
