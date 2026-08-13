@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { terminalOutputToText } from '@/lib/terminal-text'
+import { navigateTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
@@ -107,6 +108,31 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
+    if (isChatGPTModel) {
+      return (
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 py-1 text-sm text-text-muted"
+          data-testid="runtime-reconnecting-chatgpt-status"
+          role="status"
+        >
+          <span>
+            {t(
+              'tool_activity.chatgpt_network_unavailable',
+              '当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？'
+            )}
+          </span>
+          <button
+            type="button"
+            data-testid="runtime-reconnecting-open-proxy-settings"
+            onClick={() => navigateTo('/settings/personal/proxy')}
+            className="font-medium text-blue-600 hover:underline dark:text-blue-300"
+          >
+            {t('tool_activity.open_proxy_settings', '设置代理')}
+          </button>
+        </div>
+      )
+    }
     return (
       <div
         className="min-w-0 truncate py-1 text-sm text-text-muted"
