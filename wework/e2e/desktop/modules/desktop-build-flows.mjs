@@ -508,6 +508,38 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
+async function verifyFailedCloudConnectionCanDisconnect(control) {
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="logout-menu-button"]')
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '连接云端',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('fill', '[data-testid="cloud-backend-url-input"]', {
+    value: 'http://127.0.0.1:1',
+  })
+  await control.command('click', '[data-testid="cloud-authorization-submit-button"]')
+  await control.command('waitFor', '[data-testid="cloud-connection-error"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="cloud-disconnect-button"]', {
+    text: '断开连接',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-disconnect-button"]')
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '连接云端',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('cloud-connection-dialog'),
+    'Disconnecting a failed cloud connection did not clear the sidebar error state'
+  )
+}
+
 async function verifyCloudProjectFlow(
   control,
   cloudEnvironment,
@@ -873,6 +905,7 @@ async function verifyCloudProjectFlow(
     'Restarting Wework restored the removed project identity'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
+  await verifyFailedCloudConnectionCanDisconnect(control)
 }
 
 async function verifyRetryFailureRestoration(control, composerSelector) {

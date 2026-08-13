@@ -59,6 +59,7 @@ export function CloudConnectionDialog({
   if (!open) return null
 
   const isConnected = cloud.isConnected
+  const canDisconnect = cloud.status === 'error' || cloud.status === 'expired'
   const host = displayHost(cloud.backendUrl)
   const cloudError =
     cloud.error === 'Cloud login has expired'
@@ -260,29 +261,50 @@ export function CloudConnectionDialog({
               </div>
             )}
 
-            <form data-testid="cloud-authorization-form" onSubmit={handleAuthorizationSubmit}>
-              <button
-                type="submit"
-                data-testid="cloud-authorization-submit-button"
-                disabled={submitting}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            <div className="flex items-center justify-end gap-2">
+              {canDisconnect && (
+                <button
+                  type="button"
+                  data-testid="cloud-disconnect-button"
+                  disabled={submitting}
+                  onClick={() => {
+                    cloud.disconnect()
+                    onClose()
+                  }}
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <LogOut className="h-4 w-4" />
+                  {t('workbench.cloud_connection_disconnect', '断开连接')}
+                </button>
+              )}
+              <form
+                data-testid="cloud-authorization-form"
+                onSubmit={handleAuthorizationSubmit}
+                className={canDisconnect ? 'flex-1' : 'w-full'}
               >
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {t(
-                      'workbench.cloud_connection_waiting_authorization',
-                      '请在弹出窗口中完成 Wework 授权'
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <Cloud className="h-4 w-4" />
-                    {t('workbench.cloud_connection_authorize', '连接')}
-                  </>
-                )}
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  data-testid="cloud-authorization-submit-button"
+                  disabled={submitting}
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t(
+                        'workbench.cloud_connection_waiting_authorization',
+                        '请在弹出窗口中完成 Wework 授权'
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="h-4 w-4" />
+                      {t('workbench.cloud_connection_authorize', '连接')}
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
           </div>
         )}
       </div>
