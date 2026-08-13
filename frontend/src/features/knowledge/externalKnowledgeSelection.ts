@@ -5,7 +5,7 @@
 import type { ExternalKnowledgeRef } from '@/types/context'
 
 export function getExternalKnowledgeScopeKey(ref: ExternalKnowledgeRef): string {
-  return `${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
+  return `${ref.provider}:${ref.mode}:${ref.id}`
 }
 
 export function isSameExternalKnowledgeScope(

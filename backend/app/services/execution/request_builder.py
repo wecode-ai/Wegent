@@ -27,6 +27,7 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
+from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
     list_mcp_providers,
@@ -52,6 +53,12 @@ SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
 WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 SYSTEM_RESOURCE_USER_ID = 0
+
+
+def _normalize_provider_keyword_text(value: str) -> str:
+    """Normalize provider keyword text for stable substring matching."""
+
+    return "".join(value.casefold().split())
 
 
 def _first_present_project_id(*values: Any) -> Optional[int]:
@@ -542,11 +549,11 @@ class TaskRequestBuilder:
                 "is_public": skill_ref.get("is_public", False),
             }
 
-            if (
-                skill_name == SELECTED_KB_PRELOAD_SKILL
-                and request.knowledge_base_ids
-                and request.is_user_selected_kb
-            ):
+            if get_mcp_service_by_skill_name(skill_name):
+                explicit_ref["namespace"] = "default"
+                explicit_ref["is_public"] = True
+
+            if skill_name == SELECTED_KB_PRELOAD_SKILL and request.knowledge_base_ids:
                 explicit_ref["namespace"] = "default"
                 explicit_ref["is_public"] = True
 
@@ -1604,21 +1611,25 @@ class TaskRequestBuilder:
         )
         if runtime_service:
             provider, service = runtime_service
-            configured_server = None
-            if user:
-                configured_server = user_mcp_service.get_enabled_mcp_server(
-                    getattr(user, "preferences", None),
-                    provider["provider_id"],
-                    service["service_id"],
-                )
+            if provider["configuration_mode"] == "user":
+                configured_server = None
+                if user:
+                    configured_server = user_mcp_service.get_enabled_mcp_server(
+                        getattr(user, "preferences", None),
+                        provider["provider_id"],
+                        service["service_id"],
+                    )
 
-            if not configured_server:
-                skill_data.pop("mcpServers", None)
-                skill_data["prompt"] = self._build_unconfigured_provider_skill_prompt(
-                    skill_data.get("prompt"),
-                    provider_id=provider["provider_id"],
-                    service=service,
-                )
+                if not configured_server:
+                    skill_data.pop("mcpServers", None)
+                    skill_data["prompt"] = (
+                        self._build_unconfigured_provider_skill_prompt(
+                            skill_data.get("prompt"),
+                            provider_id=provider["provider_id"],
+                            provider_display_name=provider["display_name"],
+                            service=service,
+                        )
+                    )
 
         if skill_crd.spec.tools:
             skill_data["tools"] = [
@@ -1645,6 +1656,7 @@ class TaskRequestBuilder:
         existing_prompt: str | None,
         *,
         provider_id: str,
+        provider_display_name: str,
         service: dict[str, Any],
     ) -> str:
         """Build a guidance-only prompt when a provider skill is not configured."""
@@ -1660,17 +1672,17 @@ class TaskRequestBuilder:
 The current session does not have a usable {display_name} MCP configured.
 
 Required behavior:
-- Do not pretend to access DingTalk data or local files for this request.
+- Do not pretend to access {provider_display_name} data or local files for this request.
 - Tell the user that {display_name} MCP is not available in the current session.
 - Ask the user to click [打开{display_name} MCP 配置弹窗]({modal_link}) to finish configuration.
-- Keep the guidance brief. If the user asks how to get the URL, tell them to get it from the DingTalk MCP page for this service.
+- Keep the guidance brief. If the user asks how to get the URL, direct them to the provider MCP page for this service.
 
 Response template:
-当前会话还没有可用的{display_name} MCP，所以我现在不能直接访问这个钉钉能力。
+当前会话还没有可用的{display_name} MCP，所以我现在不能直接访问{provider_display_name}能力。
 
 请先点击 [打开{display_name} MCP 配置弹窗]({modal_link}) 完成配置。
 
-配置完成后，再让我继续处理你的钉钉请求。
+配置完成后，再让我继续处理你的{provider_display_name}请求。
 """.strip()
 
         if existing_prompt:
@@ -2157,7 +2169,9 @@ Response template:
     ) -> list:
         """Preload provider runtime skills or config guidance skills when relevant."""
         merged_preload_skills = list(preload_skills)
-        prompt_text = self._extract_prompt_text(message).strip().lower()
+        prompt_text = _normalize_provider_keyword_text(
+            self._extract_prompt_text(message)
+        )
         if not prompt_text:
             return merged_preload_skills
 
@@ -2169,14 +2183,17 @@ Response template:
 
         for provider in list_mcp_providers():
             keywords = provider.get("message_keywords") or ()
-            if not keywords or not any(keyword in prompt_text for keyword in keywords):
+            if not keywords or not any(
+                _normalize_provider_keyword_text(keyword) in prompt_text
+                for keyword in keywords
+            ):
                 continue
 
             matched_services = [
                 service
                 for service in provider.get("services", {}).values()
                 if any(
-                    keyword in prompt_text
+                    _normalize_provider_keyword_text(keyword) in prompt_text
                     for keyword in (service.get("message_keywords") or ())
                 )
             ]
@@ -2331,36 +2348,13 @@ Response template:
             List of MCP server dicts in list format:
             [{"name": "skillName_serverName", "type": "...", "url": "...", ...}]
         """
-        if not skill_configs:
-            return []
-
-        result: list[dict] = []
-        for skill_config in skill_configs:
-            skill_name = skill_config.get("name", "unknown")
-            mcp_servers = skill_config.get("mcpServers")
-            if not mcp_servers or not isinstance(mcp_servers, dict):
-                continue
-
-            for server_name, server_config in mcp_servers.items():
-                if not isinstance(server_config, dict):
-                    continue
-                resolved_name = (
-                    server_name
-                    if skill_name == server_name
-                    else f"{skill_name}_{server_name}"
-                )
-                entry = {
-                    "name": resolved_name,
-                    **server_config,
-                }
-                result.append(entry)
-                logger.info(
-                    "[SKILL-MCP] Extracted: %s -> type=%s, url=%s",
-                    entry["name"],
-                    server_config.get("type", "?"),
-                    server_config.get("url", "?"),
-                )
-
+        result = extract_skill_mcp_servers(skill_configs)
+        for entry in result:
+            logger.info(
+                "[SKILL-MCP] Extracted: %s -> type=%s",
+                entry["name"],
+                entry.get("type", "?"),
+            )
         return result
 
     @staticmethod
