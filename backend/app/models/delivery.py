@@ -87,9 +87,9 @@ class LoopNode(Base):
     due_at = Column(DateTime, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     current_delivery_id = Column(String(64), nullable=True)
-    local_project_id = Column(
-        Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
-    )
+    # Device-local executor workspace id passed through to the runtime; not a
+    # reference into the web `projects` table, so no FK.
+    local_project_id = Column(Integer, nullable=True)
     device_id = Column(String(100), nullable=True)
     is_default = Column(Boolean, nullable=True)
     task_user_id = Column(Integer, nullable=True)
