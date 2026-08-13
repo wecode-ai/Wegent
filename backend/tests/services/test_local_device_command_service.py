@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -166,6 +167,75 @@ def test_turn_file_changes_commands_are_registered():
     assert revert is not None
     assert review.post_processor == "json"
     assert revert.post_processor == "json"
+
+
+def test_git_hosting_cli_status_commands_are_registered() -> None:
+    from app.services.device.command_registry import resolve_local_device_command
+
+    github = resolve_local_device_command("git_github_cli_status", {})
+    gitlab = resolve_local_device_command("git_gitlab_cli_status", {})
+
+    assert github is not None
+    assert gitlab is not None
+    assert "python3 -c" in github.command
+    assert github.command.endswith(" gh")
+    assert github.post_processor == "json"
+    assert gitlab.command.endswith(" glab")
+    assert gitlab.post_processor == "json"
+
+
+def test_git_hosting_cli_status_reports_missing_tool(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "gh",
+        "installed": False,
+        "authenticated": False,
+        "executablePath": None,
+        "version": None,
+        "detectionError": None,
+    }
+
+
+def test_git_hosting_cli_status_reports_timeout(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "gh"
+    executable.write_text("#!/bin/sh\nexec /bin/sleep 1\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            GIT_HOSTING_CLI_STATUS_SCRIPT,
+            "gh",
+            "0.01",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "gh",
+        "installed": True,
+        "authenticated": False,
+        "executablePath": str(executable),
+        "version": None,
+        "detectionError": "timeout",
+    }
 
 
 @pytest.mark.parametrize(
@@ -432,6 +502,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_remote_url_definition = resolve_local_device_command(
         "git_remote_url", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_github_pull_requests_definition = resolve_local_device_command(
+        "git_github_pull_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_gitlab_merge_requests_definition = resolve_local_device_command(
+        "git_gitlab_merge_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_add_all_definition = resolve_local_device_command(
         "git_add_all", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -541,6 +617,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_remote_url_definition is not None
     assert git_remote_url_definition.command == "git remote get-url origin"
     assert git_remote_url_definition.post_processor is None
+    assert git_github_pull_requests_definition is not None
+    assert "gh pr list --state all" in git_github_pull_requests_definition.command
+    assert git_github_pull_requests_definition.post_processor == "json"
+    assert git_gitlab_merge_requests_definition is not None
+    assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
+    assert git_gitlab_merge_requests_definition.post_processor == "json"
     assert git_add_all_definition is not None
     assert git_add_all_definition.command == "git add --all"
     assert git_add_all_definition.post_processor is None

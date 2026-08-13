@@ -39,6 +39,7 @@ const mergedDefaultPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
+  changeRequestStatusEnabled: true,
   quickPhrases: [
     {
       id: 'default-summary-progress',
