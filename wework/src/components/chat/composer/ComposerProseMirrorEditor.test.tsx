@@ -182,6 +182,19 @@ describe('ComposerProseMirrorEditor', () => {
     expect(serializeComposerDocument(doc)).toBe('first line\n\nthird line')
   })
 
+  test('keeps offset zero before an empty leading paragraph separator', () => {
+    const { editorRef } = renderEditor('')
+
+    act(() => editorRef.current?.setValue('\ntext', 0))
+
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: '\ntext',
+      selectionOffset: 0,
+      selectionStart: 0,
+      selectionEnd: 0,
+    })
+  })
+
   test('inserts pasted text exactly once through the ProseMirror paste pipeline', () => {
     const { editorRef, onChange } = renderEditor('existing ')
     const editor = screen.getByTestId('composer-editor')

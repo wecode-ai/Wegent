@@ -570,6 +570,11 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
   doc.descendants((node, nodeStart) => {
     if (resolved) return false
     if (node.type === composerSchema.nodes.paragraph) {
+      if (normalizedTarget === serializedOffset) {
+        position = nodeStart + 1
+        resolved = true
+        return false
+      }
       if (nodeStart > 0) {
         serializedOffset += 1
         if (normalizedTarget <= serializedOffset) {

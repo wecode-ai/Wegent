@@ -672,7 +672,7 @@ button:disabled {
     width: 1px;
     height: 1em;
     margin-right: -1px;
-    background: currentColor;
+    background: currentcolor;
     vertical-align: text-bottom;
     pointer-events: none;
     animation: local-skill-caret-blink 1s step-end infinite;
