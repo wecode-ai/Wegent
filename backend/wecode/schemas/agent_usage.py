@@ -37,8 +37,19 @@ class AgentUsageRow(BaseModel):
     completed_ai_rounds: int | None = None
 
 
+class AgentUsageDailyRow(BaseModel):
+    date: date
+    agent_name: str
+    agent_namespace: str
+    pv: int
+    uv: int
+    ai_rounds: int | None = None
+    completed_ai_rounds: int | None = None
+
+
 class AgentUsageResponse(BaseModel):
     rows: list[AgentUsageRow]
+    daily_rows: list[AgentUsageDailyRow]
     pv: int
     uv: int
     ai_rounds: int | None = None
