@@ -67,8 +67,10 @@ describe('GitHostingSettingsPage', () => {
   test('detects both CLIs and saves the PR/MR status switch', async () => {
     render(<GitHostingSettingsPage />)
 
-    expect(await screen.findByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
-    expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('未安装')
+    await waitFor(() => {
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
+      expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('未安装')
+    })
 
     await userEvent.click(screen.getByTestId('change-request-status-switch'))
     expect(updateAppPreferences).toHaveBeenCalledWith({ changeRequestStatusEnabled: false })
