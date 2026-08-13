@@ -91,6 +91,7 @@ def _format_forwarded_headers_for_log(headers) -> str:
 
 def _get_mcp_lifespan_servers():
     from app.mcp_server.server import (
+        get_custom_mcp_lifespan_servers,
         image_mcp_server,
         interactive_form_question_mcp_server,
         knowledge_mcp_server,
@@ -115,6 +116,7 @@ def _get_mcp_lifespan_servers():
         from app.mcp_server.server import external_knowledge_mcp_server
 
         servers.append(("External knowledge", external_knowledge_mcp_server))
+    servers.extend(get_custom_mcp_lifespan_servers())
     return tuple(servers)
 
 

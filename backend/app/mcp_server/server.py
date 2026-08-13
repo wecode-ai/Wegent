@@ -95,6 +95,7 @@ class CustomMcpAppSpec:
     name: str
     mount_path: str
     transport_path: str
+    server: FastMCP
     build_app: Callable[[str], Starlette]
 
 
@@ -104,6 +105,11 @@ _custom_mcp_app_specs: dict[str, CustomMcpAppSpec] = {}
 def register_custom_mcp_app(spec: CustomMcpAppSpec) -> None:
     """Register or replace a deployment-specific MCP app before startup."""
     _custom_mcp_app_specs[spec.name] = spec
+
+
+def get_custom_mcp_lifespan_servers() -> tuple[tuple[str, FastMCP], ...]:
+    """Return custom MCP servers that must run with the main application."""
+    return tuple((spec.name, spec.server) for spec in _custom_mcp_app_specs.values())
 
 
 @dataclass(frozen=True)
