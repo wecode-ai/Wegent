@@ -27,6 +27,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.gitlab_mr import MRIntegration, MRRecord
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
@@ -74,6 +75,8 @@ from app.schemas.namespace import GroupRole
 
 __all__ = [
     "DingtalkSyncedNode",
+    "MRIntegration",
+    "MRRecord",
     "CloudProject",
     "CloudProjectFile",
     "LoopItemTaskBinding",

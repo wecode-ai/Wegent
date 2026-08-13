@@ -368,6 +368,7 @@ function ProjectDialog({
   const [visibility, setVisibility] = useState<'private' | 'public'>('private')
   const [repositoryAddress, setRepositoryAddress] = useState('')
   const [token, setToken] = useState('')
+  const [mrEnabled, setMrEnabled] = useState(false)
   const [aitableUrl, setAitableUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -408,6 +409,13 @@ function ProjectDialog({
         provider_config: providerConfig,
         ...(location === 'cloud' ? { visibility } : {}),
       })
+      if (mrEnabled && taskProvider === 'gitlab') {
+        try {
+          await selectedApi.enableGitLabMrIntegration(project.id)
+        } catch {
+          track('operation_failed', { operation: 'project_space_action' })
+        }
+      }
       track('feature_action_completed', { domain: 'project_space', action: 'create' })
       onCreated(project, location)
     } catch (cause) {
@@ -612,6 +620,18 @@ function ProjectDialog({
                   : '令牌会加密保存在当前设备，不会写入项目文件。'}
               </span>
             </label>
+            {taskProvider === 'gitlab' && (
+              <label className="flex cursor-pointer items-start gap-2 text-sm text-text-primary">
+                <input
+                  type="checkbox"
+                  data-testid="cloud-project-gitlab-mr-checkbox"
+                  checked={mrEnabled}
+                  onChange={event => setMrEnabled(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-black"
+                />
+                <span>接入该仓库的 MR（评审意见或 CI 失败自动在看板建修复任务）</span>
+              </label>
+            )}
           </section>
         )}
 

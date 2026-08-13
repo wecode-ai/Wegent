@@ -2534,6 +2534,18 @@
     "start_follow_up": "Start a new task"
   },
   "todo": {
+    "mr_integration_section_title": "GitLab MR Integration",
+    "mr_integration_section_desc": "MR review comments or CI failures create fix-task cards on the board automatically.",
+    "mr_integration_enable": "Enable MR integration",
+    "mr_integration_disable": "Disable MR integration",
+    "mr_integration_enabled": "Enabled",
+    "mr_integration_disabled": "Not enabled",
+    "mr_integration_hook_missing": "Webhook missing; will be restored automatically",
+    "mr_integration_error": "Integration error:",
+    "mr_integration_webhook_url": "Webhook URL",
+    "mr_integration_copy_url": "Copy",
+    "mr_integration_url_copied": "Copied",
+    "mr_integration_loading": "Loading…",
     "navigation": "Tasks",
     "create_action": "New task",
     "overview": "Overview",

@@ -1,5 +1,5 @@
 import { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useCallback, useState } from 'react'
 import type { AITableApi } from '@/api/aitable'
 import type { DwsApi, DwsAuthStatus } from '@/api/dws'
 import type {
@@ -7,6 +7,7 @@ import type {
   CloudProject,
   CloudProjectMember,
   CloudUserSearchItem,
+  GitLabMrIntegration,
 } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -94,6 +95,12 @@ export function CloudProjectManageView({
   const [providerBusy, setProviderBusy] = useState(false)
   const [providerSaved, setProviderSaved] = useState(false)
 
+  const { t } = useTranslation()
+  const [mrStatus, setMrStatus] = useState<GitLabMrIntegration | null>(null)
+  const [mrBusy, setMrBusy] = useState(false)
+  const [mrError, setMrError] = useState<string | null>(null)
+  const [mrUrlCopied, setMrUrlCopied] = useState(false)
+
   const isAITable = project.task_provider === 'dingtalk_aitable'
   const [aitableUrl, setAITableUrl] = useState(() => configText(project, 'source_url'))
   const [dwsStatus, setDwsStatus] = useState<DwsAuthStatus | null>(null)
@@ -121,6 +128,63 @@ export function CloudProjectManageView({
       .configureProject(project)
       .catch(cause => setError(cause instanceof Error ? cause.message : '加载字段失败'))
   }, [aitableApi, isAITable, project])
+
+  const refreshMrStatus = useCallback(async () => {
+    if (externalProvider !== 'gitlab') return
+    try {
+      setMrStatus(await api.getGitLabMrIntegration(project.id))
+      setMrError(null)
+    } catch (cause) {
+      setMrError(cause instanceof Error ? cause.message : t('todo.mr_integration_error'))
+    }
+  }, [api, externalProvider, project.id, t])
+
+  useEffect(() => {
+    if (externalProvider !== 'gitlab') return
+    let active = true
+    void api
+      .getGitLabMrIntegration(project.id)
+      .then(status => {
+        if (!active) return
+        setMrStatus(status)
+        setMrError(null)
+      })
+      .catch(cause => {
+        if (!active) return
+        setMrError(cause instanceof Error ? cause.message : t('todo.mr_integration_error'))
+      })
+    return () => {
+      active = false
+    }
+  }, [api, externalProvider, project.id, t])
+
+  const toggleMrIntegration = async (): Promise<void> => {
+    if (mrBusy || !mrStatus) return
+    setMrBusy(true)
+    try {
+      if (mrStatus.enabled) {
+        await api.disableGitLabMrIntegration(project.id)
+      } else {
+        await api.enableGitLabMrIntegration(project.id)
+      }
+      await refreshMrStatus()
+    } catch (cause) {
+      setMrError(cause instanceof Error ? cause.message : t('todo.mr_integration_error'))
+    } finally {
+      setMrBusy(false)
+    }
+  }
+
+  const copyWebhookUrl = async (): Promise<void> => {
+    if (!mrStatus?.webhook_url) return
+    try {
+      await navigator.clipboard.writeText(mrStatus.webhook_url)
+      setMrUrlCopied(true)
+      window.setTimeout(() => setMrUrlCopied(false), 2000)
+    } catch {
+      setMrError(t('todo.mr_integration_error'))
+    }
+  }
 
   useEffect(() => {
     if (!isAITable || !dwsApi) return
@@ -756,6 +820,60 @@ export function CloudProjectManageView({
             {!project.provider_config.credential_configured && (
               <p className="mt-2 text-xs text-text-muted">需要配置令牌</p>
             )}
+          </section>
+        )}
+
+        {externalProvider === 'gitlab' && (
+          <section className="border-t border-border py-6">
+            <h2 className="text-heading-md font-semibold">
+              {t('todo.mr_integration_section_title')}
+            </h2>
+            <p className="mt-1 text-sm text-text-muted">{t('todo.mr_integration_section_desc')}</p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                data-testid="gitlab-mr-integration-toggle"
+                disabled={mrBusy || mrStatus === null}
+                onClick={() => void toggleMrIntegration()}
+                className="h-9 rounded-lg bg-black px-3.5 text-sm text-white disabled:opacity-60"
+              >
+                {mrStatus?.enabled
+                  ? t('todo.mr_integration_disable')
+                  : t('todo.mr_integration_enable')}
+              </button>
+              <span data-testid="gitlab-mr-integration-status" className="text-sm text-text-muted">
+                {mrStatus === null
+                  ? t('todo.mr_integration_loading')
+                  : mrStatus.enabled
+                    ? mrStatus.status === 'hook_missing'
+                      ? t('todo.mr_integration_hook_missing')
+                      : t('todo.mr_integration_enabled')
+                    : t('todo.mr_integration_disabled')}
+              </span>
+            </div>
+            {mrStatus?.enabled && mrStatus.webhook_url && (
+              <div className="mt-3 flex items-center gap-2">
+                <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted px-3">
+                  <input
+                    readOnly
+                    value={mrStatus.webhook_url}
+                    className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                    aria-label={t('todo.mr_integration_webhook_url')}
+                  />
+                </label>
+                <button
+                  type="button"
+                  data-testid="gitlab-mr-webhook-url-copy"
+                  onClick={() => void copyWebhookUrl()}
+                  className="h-9 rounded-lg border border-border px-3 text-sm"
+                >
+                  {mrUrlCopied
+                    ? t('todo.mr_integration_url_copied')
+                    : t('todo.mr_integration_copy_url')}
+                </button>
+              </div>
+            )}
+            {mrError && <p className="mt-2 text-xs text-destructive">{mrError}</p>}
           </section>
         )}
 

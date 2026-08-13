@@ -233,6 +233,18 @@ export interface CloudProject {
   updated_at: string
 }
 
+export interface GitLabMrIntegration {
+  enabled: boolean
+  repository: string | null
+  domain: string | null
+  webhook_url: string | null
+  hook_installed: boolean
+  hook_id: number
+  status: string
+  last_error: string
+  last_reconcile_at: string | null
+}
+
 export interface CloudTaskContext {
   id: string
   cloud_project_id: CloudProjectId
@@ -414,6 +426,15 @@ export function createDeliveryApi(client: HttpClient) {
     },
     archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
+    },
+    getGitLabMrIntegration(projectId: CloudProjectIdInput): Promise<GitLabMrIntegration> {
+      return client.get(`/v1/cloud-projects/${projectId}/gitlab/mr-integration`)
+    },
+    enableGitLabMrIntegration(projectId: CloudProjectIdInput): Promise<GitLabMrIntegration> {
+      return client.post(`/v1/cloud-projects/${projectId}/gitlab/mr-integration`)
+    },
+    disableGitLabMrIntegration(projectId: CloudProjectIdInput): Promise<void> {
+      return client.delete(`/v1/cloud-projects/${projectId}/gitlab/mr-integration`)
     },
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')

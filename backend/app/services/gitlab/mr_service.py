@@ -1,0 +1,811 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""GitLab MR -> board fix-task state machine.
+
+Every (integration, MR iid) has one :class:`MRRecord`; rounds are keyed by the
+MR head SHA and accumulate in ``rounds_json``. The machine waits on a single
+axis (CI): a round finalizes when its pipeline reaches a terminal state, then a
+card is created or updated only when there is actionable feedback (a failed
+pipeline or review comments). The Celery reconcile task settles rounds that
+never receive a pipeline terminal event (no-CI repos or lost webhooks).
+"""
+
+import logging
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
+from app.models.cloud_project import CloudProject
+from app.models.delivery import LoopItem, ProjectChatAgent
+from app.models.gitlab_mr import EPOCH_TIME, MRIntegration, MRRecord
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
+from app.models.user import User
+from app.services.gitlab.client import ProjectScopedGitlabClient
+from app.services.gitlab.mr_templates import (
+    mr_snapshot,
+    render_card_description,
+    resolve_status_id,
+    trace_tail,
+)
+
+logger = logging.getLogger(__name__)
+
+TERMINAL_STATUSES = {"success", "failed", "canceled", "skipped", "error"}
+FAILED_STATUSES = {"failed", "canceled", "error"}
+ROUNDS_STORED_LIMIT = 5
+RECONCILE_EVALUATING_AGE_SECONDS = 600
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class MrService:
+    @staticmethod
+    def _client(project: CloudProject) -> ProjectScopedGitlabClient:
+        return ProjectScopedGitlabClient(project)
+
+    @staticmethod
+    def _api_path(client: ProjectScopedGitlabClient, suffix: str) -> str:
+        return f"/projects/{quote(client.repository, safe='')}{suffix}"
+
+    @staticmethod
+    def _norm_domain(domain: str) -> str:
+        domain = domain.strip().rstrip("/").lower()
+        if "://" in domain:
+            domain = domain.split("://", 1)[1]
+        return domain.rstrip("/")
+
+    # ------------------------------------------------------------------ state
+
+    def _round_template(self, round_number: int, sha: str) -> dict[str, object]:
+        return {
+            "sha": sha,
+            "round_number": round_number,
+            "pipeline_status": "pending",
+            "pipeline_id": 0,
+            "failed_jobs": [],
+            "notes": [],
+            "at": _utcnow().isoformat(),
+        }
+
+    def _cap_rounds(self, record: MRRecord) -> None:
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        if len(rounds) > ROUNDS_STORED_LIMIT:
+            record.rounds_json = rounds[-ROUNDS_STORED_LIMIT:]
+
+    @staticmethod
+    def has_incomplete_round(record: MRRecord) -> bool:
+        """Whether the latest round's GitLab fetch (jobs/trace/notes) failed."""
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        return bool(rounds) and bool(rounds[-1].get("fetch_error"))
+
+    def _snapshot_from_attrs(
+        self, attrs: dict[str, object], head_sha: str
+    ) -> dict[str, object]:
+        return {
+            "iid": int(attrs.get("iid") or 0),
+            "title": str(attrs.get("title") or ""),
+            "web_url": str(attrs.get("url") or ""),
+            "source_branch": str(attrs.get("source_branch") or ""),
+            "target_branch": str(attrs.get("target_branch") or ""),
+            "author_id": int(attrs.get("author_id") or 0),
+            "author_username": str(attrs.get("author_username") or ""),
+            "head_sha": head_sha,
+            "description": str(attrs.get("description") or ""),
+        }
+
+    def _create_record(
+        self, integration: MRIntegration, mr_iid: int, attrs: dict[str, object]
+    ) -> MRRecord:
+        last_commit = (
+            attrs.get("last_commit")
+            if isinstance(attrs.get("last_commit"), dict)
+            else {}
+        )
+        head_sha = str(last_commit.get("id") or "") or str(attrs.get("sha") or "")
+        mr_state = str(attrs.get("state") or "")
+        snapshot = self._snapshot_from_attrs(attrs, head_sha)
+        snapshot["repository"] = integration.repository
+        snapshot["domain"] = integration.domain
+        return MRRecord(
+            integration_id=integration.id,
+            mr_iid=mr_iid,
+            project_key=integration.project_key,
+            source_branch=str(attrs.get("source_branch") or ""),
+            target_branch=str(attrs.get("target_branch") or ""),
+            author_id=int(attrs.get("author_id") or 0),
+            mr_title=str(attrs.get("title") or ""),
+            state="closed" if mr_state in {"merged", "closed"} else "evaluating",
+            head_sha=head_sha,
+            round_number=1,
+            pipeline_status="pending",
+            pipeline_id=0,
+            snapshot_json=snapshot,
+            rounds_json=[self._round_template(1, head_sha)],
+            version=1,
+        )
+
+    def _get_or_bootstrap_record(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        mr_iid: int,
+    ) -> MRRecord | None:
+        """Return the record for an MR, bootstrapping it from GitLab when the
+        MR open/update webhook was lost. Returns ``None`` when the MR is gone."""
+        record = (
+            db.query(MRRecord)
+            .filter(
+                MRRecord.integration_id == integration.id,
+                MRRecord.mr_iid == mr_iid,
+            )
+            .with_for_update()
+            .first()
+        )
+        if record is not None:
+            return record
+        client = self._client(project)
+        data = client.request(
+            "GET",
+            self._api_path(client, f"/merge_requests/{mr_iid}"),
+            not_found_ok=True,
+        )
+        if not isinstance(data, dict):
+            return None
+        attrs: dict[str, object] = {
+            "iid": mr_iid,
+            "title": data.get("title") or "",
+            "state": data.get("state") or "",
+            "source_branch": data.get("source_branch") or "",
+            "target_branch": data.get("target_branch") or "",
+            "author_id": (data.get("author") or {}).get("id") or 0,
+            "author_username": (data.get("author") or {}).get("username") or "",
+            "url": data.get("web_url") or "",
+            "sha": data.get("sha") or "",
+            "description": data.get("description") or "",
+        }
+        record = self._create_record(integration, mr_iid, attrs)
+        db.add(record)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            return (
+                db.query(MRRecord)
+                .filter(
+                    MRRecord.integration_id == integration.id,
+                    MRRecord.mr_iid == mr_iid,
+                )
+                .first()
+            )
+        return record
+
+    def _update_snapshot(
+        self,
+        record: MRRecord,
+        attrs: dict[str, object],
+        integration: MRIntegration,
+    ) -> None:
+        last_commit = (
+            attrs.get("last_commit")
+            if isinstance(attrs.get("last_commit"), dict)
+            else {}
+        )
+        head_sha = str(last_commit.get("id") or "") or str(attrs.get("sha") or "")
+        record.mr_title = str(attrs.get("title") or record.mr_title or "")
+        record.source_branch = str(
+            attrs.get("source_branch") or record.source_branch or ""
+        )
+        record.target_branch = str(
+            attrs.get("target_branch") or record.target_branch or ""
+        )
+        snapshot = self._snapshot_from_attrs(attrs, head_sha or record.head_sha)
+        snapshot["repository"] = integration.repository
+        snapshot["domain"] = integration.domain
+        record.snapshot_json = snapshot
+
+    # ------------------------------------------------------------- handlers
+
+    def bootstrap_mr(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        mr_iid: int,
+    ) -> MRRecord | None:
+        """Ensure a record exists for an MR, fetching it from GitLab when the
+        MR open/update webhook was lost. Public wrapper used by reconcile."""
+        return self._get_or_bootstrap_record(db, integration, project, mr_iid)
+
+    def handle_merge_request_event(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        payload: dict[str, object],
+    ) -> None:
+        attrs = payload.get("object_attributes") or {}
+        if not isinstance(attrs, dict):
+            return
+        mr_iid = int(attrs.get("iid") or 0)
+        if mr_iid <= 0:
+            return
+        record = self._get_or_bootstrap_record(db, integration, project, mr_iid)
+        if record is None:
+            return
+        self._update_snapshot(record, attrs, integration)
+        mr_state = str(attrs.get("state") or "")
+        if mr_state in {"merged", "closed"}:
+            self.close_record(db, integration, project, record)
+            return
+        if mr_state == "reopened" and record.state == "closed":
+            record.state = "evaluating"
+            record.closed_at = EPOCH_TIME
+            self._move_card(db, project, record, "in_progress")
+            db.flush()
+            return
+        last_commit = (
+            attrs.get("last_commit")
+            if isinstance(attrs.get("last_commit"), dict)
+            else {}
+        )
+        head_sha = str(last_commit.get("id") or "") or str(attrs.get("sha") or "")
+        if head_sha and head_sha != record.head_sha:
+            record.round_number += 1
+            record.head_sha = head_sha
+            record.pipeline_status = "pending"
+            record.pipeline_id = 0
+            record.state = "evaluating"
+            rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+            rounds.append(self._round_template(record.round_number, head_sha))
+            record.rounds_json = rounds
+            flag_modified(record, "rounds_json")
+            self._cap_rounds(record)
+            # A new head means a fix was pushed; wait for CI/review to confirm.
+            self._move_card(db, project, record, "in_review")
+        self._refresh_card(db, project, record)
+        db.flush()
+
+    def handle_pipeline_event(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        payload: dict[str, object],
+    ) -> None:
+        attrs = payload.get("object_attributes") or {}
+        if not isinstance(attrs, dict):
+            return
+        sha = str(attrs.get("sha") or "")
+        status = str(attrs.get("status") or "")
+        pipeline_id = int(attrs.get("id") or 0)
+        if not sha or status not in TERMINAL_STATUSES:
+            return
+        records = (
+            db.query(MRRecord)
+            .filter(
+                MRRecord.integration_id == integration.id,
+                MRRecord.head_sha == sha,
+                MRRecord.state == "evaluating",
+            )
+            .with_for_update()
+            .order_by(MRRecord.updated_at.desc())
+            .all()
+        )
+        if not records:
+            return
+        ref = str(attrs.get("ref") or "")
+        if ref.startswith("refs/heads/"):
+            ref = ref[len("refs/heads/") :]
+        candidates = [r for r in records if not ref or r.source_branch == ref]
+        if not candidates:
+            candidates = records
+        self.finalize_round(
+            db,
+            integration,
+            project,
+            candidates[0],
+            terminal_status=status,
+            pipeline_id=pipeline_id,
+        )
+
+    def handle_note_event(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        payload: dict[str, object],
+    ) -> None:
+        attrs = payload.get("object_attributes") or {}
+        if not isinstance(attrs, dict):
+            return
+        if str(attrs.get("noteable_type") or "") != "MergeRequest":
+            return
+        if bool(attrs.get("system")):
+            return
+        body = str(attrs.get("note") or "").strip()
+        if not body:
+            return
+        mr_obj = payload.get("merge_request") or {}
+        if not isinstance(mr_obj, dict):
+            return
+        mr_iid = int(mr_obj.get("iid") or 0)
+        if mr_iid <= 0:
+            return
+        record = self._get_or_bootstrap_record(db, integration, project, mr_iid)
+        if record is None or record.state == "closed":
+            return
+        if record.state == "evaluating":
+            # The round's finalize fetches the full notes list from GitLab and
+            # will capture this note there; ignore it here to stay idempotent.
+            return
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        if not rounds:
+            rounds = [self._round_template(record.round_number, record.head_sha)]
+            record.rounds_json = rounds
+        current = rounds[-1]
+        note_id = int(attrs.get("id") or 0)
+        existing = {
+            int(n.get("id") or 0)
+            for n in (current.get("notes") or [])
+            if isinstance(n, dict)
+        }
+        if note_id and note_id in existing:
+            return
+        note_list = current.get("notes")
+        if not isinstance(note_list, list):
+            note_list = []
+            current["notes"] = note_list
+        note_list.append(
+            {
+                "id": note_id,
+                "author": str((attrs.get("author") or {}).get("username") or ""),
+                "note": body,
+                "web_url": str(attrs.get("url") or ""),
+                "created_at": str(attrs.get("created_at") or ""),
+            }
+        )
+        flag_modified(record, "rounds_json")
+        self.create_or_update_card(db, integration, project, record)
+        self._maybe_retrigger(db, integration, project, record)
+
+    def finalize_round(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        record: MRRecord,
+        *,
+        terminal_status: str,
+        pipeline_id: int,
+    ) -> None:
+        client = self._client(project)
+        failed_jobs: list[dict[str, object]] = []
+        fetch_error = False
+        if pipeline_id and terminal_status in FAILED_STATUSES:
+            try:
+                jobs = client.request(
+                    "GET",
+                    self._api_path(client, f"/pipelines/{pipeline_id}/jobs"),
+                    params={"status": "failed"},
+                    not_found_ok=True,
+                )
+                if isinstance(jobs, list):
+                    for job in jobs:
+                        if not isinstance(job, dict):
+                            continue
+                        job_id = int(job.get("id") or 0)
+                        trace_summary = ""
+                        if job_id:
+                            trace = client.text(
+                                "GET",
+                                self._api_path(client, f"/jobs/{job_id}/trace"),
+                                not_found_ok=True,
+                            )
+                            trace_summary = trace_tail(trace or "")
+                        failed_jobs.append(
+                            {
+                                "id": job_id,
+                                "name": str(job.get("name") or ""),
+                                "stage": str(job.get("stage") or ""),
+                                "web_url": str(job.get("web_url") or ""),
+                                "trace_tail": trace_summary,
+                                "started_at": str(
+                                    job.get("started_at") or job.get("created_at") or ""
+                                ),
+                            }
+                        )
+            except Exception:
+                logger.warning(
+                    "Failed to fetch failed jobs for pipeline %s (integration %s)",
+                    pipeline_id,
+                    integration.id,
+                    exc_info=True,
+                )
+                fetch_error = True
+        notes: list[dict[str, object]] = []
+        try:
+            notes_data = client.request(
+                "GET",
+                self._api_path(client, f"/merge_requests/{record.mr_iid}/notes"),
+                not_found_ok=True,
+            )
+            if isinstance(notes_data, list):
+                for note in notes_data:
+                    if not isinstance(note, dict) or bool(note.get("system")):
+                        continue
+                    body = str(note.get("body") or "").strip()
+                    if not body:
+                        continue
+                    notes.append(
+                        {
+                            "id": int(note.get("id") or 0),
+                            "author": str(
+                                (note.get("author") or {}).get("username") or ""
+                            ),
+                            "note": body,
+                            "web_url": str(note.get("web_url") or ""),
+                            "created_at": str(note.get("created_at") or ""),
+                        }
+                    )
+        except Exception:
+            logger.warning(
+                "Failed to fetch notes for MR %s (integration %s)",
+                record.mr_iid,
+                integration.id,
+                exc_info=True,
+            )
+            fetch_error = True
+
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        if not rounds or rounds[-1].get("round_number") != record.round_number:
+            rounds.append(self._round_template(record.round_number, record.head_sha))
+            record.rounds_json = rounds
+        current = rounds[-1]
+        current["pipeline_status"] = terminal_status
+        current["pipeline_id"] = pipeline_id
+        current["failed_jobs"] = failed_jobs
+        current["notes"] = notes
+        current["fetch_error"] = fetch_error
+        current["at"] = _utcnow().isoformat()
+        # JSON columns do not track in-place nested mutations; mark the column
+        # modified so the terminal pipeline data and notes survive the commit.
+        flag_modified(record, "rounds_json")
+        self._cap_rounds(record)
+
+        # Only comments new to the current round keep the card actionable;
+        # comments from earlier rounds are assumed addressed by the fix.
+        previous_note_ids = {
+            int(n.get("id") or 0)
+            for item in rounds[:-1]
+            for n in (item.get("notes") or [])
+            if isinstance(n, dict)
+        }
+        new_notes = [
+            note for note in notes if int(note.get("id") or 0) not in previous_note_ids
+        ]
+        record.pipeline_status = terminal_status
+        record.pipeline_id = pipeline_id
+        actionable = terminal_status in FAILED_STATUSES or bool(new_notes)
+        record.state = "actionable" if actionable else "clean"
+        if actionable:
+            self.create_or_update_card(db, integration, project, record)
+            self._maybe_retrigger(db, integration, project, record)
+        else:
+            # A clean outcome (CI passed, no new comments) still refreshes the
+            # card description so an in-review card reflects the green result.
+            self._refresh_card(db, project, record)
+        db.flush()
+
+    # ----------------------------------------------------------------- cards
+
+    def create_or_update_card(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        project = (
+            db.query(CloudProject)
+            .filter(CloudProject.id == integration.cloud_project_id)
+            .with_for_update()
+            .one()
+        )
+        binding_id = f"gitlab:mr:{integration.repository}:{record.mr_iid}"
+        card = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.source_task_binding_id == binding_id,
+                LoopItem.cloud_project_id == str(project.id),
+                LoopItem.deleted_at.is_(None),
+            )
+            .first()
+        )
+        title = f"MR !{record.mr_iid} · {record.mr_title or ''}"
+        snapshot = mr_snapshot(record)
+        description = render_card_description(record)
+        assignee = self._resolve_assignee_user_id(
+            db, project, integration, record.author_id
+        )
+        if card is None:
+            sequence = project.next_item_number
+            project.next_item_number += 1
+            card = LoopItem(
+                id=f"{project.project_key}-{sequence}",
+                cloud_project_id=str(project.id),
+                sequence_number=sequence,
+                title=title,
+                description=description,
+                # A fresh fix card lands in the inbox like any board task: it is
+                # not being worked yet, and the executor's auto-start only picks
+                # up inbox/pending cards.
+                status=resolve_status_id(project, "inbox"),
+                priority="none",
+                source="gitlab",
+                source_task_binding_id=binding_id,
+                source_task_snapshot=snapshot,
+                assignee_user_id=assignee,
+                assignee_agent_id="",
+                created_by_user_id=integration.created_by_user_id or 0,
+                metadata_json={"tags": ["mr-fix"]},
+                version=1,
+            )
+            db.add(card)
+            db.flush()
+            record.current_loop_item_id = card.id
+        else:
+            card.title = title
+            card.description = description
+            # Keep an unassigned inbox card in the inbox; only an already-started
+            # card (in review) goes back to in progress on new feedback.
+            if card.status != resolve_status_id(project, "inbox"):
+                card.status = resolve_status_id(project, "in_progress")
+            card.source_task_snapshot = snapshot
+            card.assignee_user_id = assignee
+            card.version += 1
+        record.state = "actionable"
+        db.flush()
+
+    def _maybe_retrigger(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        """Auto-start a fresh run for the assigned robot when a round settles
+        actionable (CI failed or new comments). A run reads the card at dispatch,
+        so each round starts with the latest instruction. Capped by the project's
+        ai_automation.max_retry_count; never starts a second run while one is
+        already active."""
+        if not record.current_loop_item_id:
+            return
+        card = db.get(LoopItem, record.current_loop_item_id)
+        if card is None or card.deleted_at is not None or not card.assignee_agent_id:
+            return
+        metadata = (
+            project.metadata_json if isinstance(project.metadata_json, dict) else {}
+        )
+        ai_automation = metadata.get("ai_automation")
+        ai_automation = ai_automation if isinstance(ai_automation, dict) else {}
+        try:
+            max_retries = int(ai_automation.get("max_retry_count") or 3)
+        except (TypeError, ValueError):
+            max_retries = 3
+        if record.auto_retrigger_count >= max_retries:
+            return
+        from app.models.loop_item_execution import LoopItemExecution
+
+        active = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == card.id,
+                LoopItemExecution.status.in_(
+                    {"pending_approval", "queued", "claimed", "running"}
+                ),
+            )
+            .first()
+        )
+        if active is not None:
+            return
+        from app.services.loop_item_executions.service import (
+            loop_item_execution_service,
+        )
+        from app.services.project_chat.service import bot_config
+
+        agent = db.get(ProjectChatAgent, card.assignee_agent_id)
+        if agent is None or agent.status != "active":
+            return
+        config = bot_config(agent)
+        loop_item_execution_service.create_for_assignment(
+            db,
+            loop_item_id=card.id,
+            cloud_project_id=str(project.id),
+            agent=agent,
+            assigner_user_id=(
+                integration.created_by_user_id or project.created_by_user_id or 0
+            ),
+            environment=str(config.get("execution_environment") or "local"),
+            execution_device_id=(
+                config.get("execution_device_id")
+                if isinstance(config.get("execution_device_id"), str)
+                else None
+            ),
+            priority=card.priority,
+        )
+        record.auto_retrigger_count += 1
+        db.flush()
+
+    def close_record(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        if record.state == "closed":
+            return
+        record.state = "closed"
+        record.closed_at = _utcnow()
+        record.version += 1
+        if record.current_loop_item_id:
+            card = db.get(LoopItem, record.current_loop_item_id)
+            if card is not None and card.deleted_at is None:
+                card.status = resolve_status_id(project, "completed")
+                card.completed_at = _utcnow()
+                card.version += 1
+                # Re-render so the task instruction reflects the closed state.
+                self._refresh_card(db, project, record)
+        db.flush()
+
+    def settle_by_reconcile(
+        self,
+        db: Session,
+        integration: MRIntegration,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        """Close MRs that merged/closed without an event, and finalize rounds
+        that never received a pipeline terminal event (no-CI repos or lost
+        webhooks)."""
+        if record.state == "closed":
+            return
+        client = self._client(project)
+        mr = client.request(
+            "GET",
+            self._api_path(client, f"/merge_requests/{record.mr_iid}"),
+            not_found_ok=True,
+        )
+        if not isinstance(mr, dict):
+            return
+        if str(mr.get("state") or "") in {"merged", "closed"}:
+            self.close_record(db, integration, project, record)
+            return
+        if record.state != "evaluating":
+            return
+        pipelines = client.request(
+            "GET",
+            self._api_path(client, "/pipelines"),
+            params={"sha": record.head_sha, "per_page": 1},
+            not_found_ok=True,
+        )
+        if not isinstance(pipelines, list) or not pipelines:
+            # No pipeline exists for this head: settle as CI-passed so any notes
+            # still surface a card through finalize.
+            self.finalize_round(
+                db,
+                integration,
+                project,
+                record,
+                terminal_status="success",
+                pipeline_id=0,
+            )
+            return
+        latest = pipelines[0]
+        if not isinstance(latest, dict):
+            return
+        status = str(latest.get("status") or "")
+        if status in TERMINAL_STATUSES:
+            self.finalize_round(
+                db,
+                integration,
+                project,
+                record,
+                terminal_status=status,
+                pipeline_id=int(latest.get("id") or 0),
+            )
+
+    # ------------------------------------------------------------- helpers
+
+    def _move_card(
+        self,
+        db: Session,
+        project: CloudProject,
+        record: MRRecord,
+        logical: str,
+    ) -> None:
+        if not record.current_loop_item_id:
+            return
+        card = db.get(LoopItem, record.current_loop_item_id)
+        if card is None or card.deleted_at is not None:
+            return
+        card.status = resolve_status_id(project, logical)
+        card.version += 1
+        db.flush()
+
+    def _refresh_card(
+        self,
+        db: Session,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        if not record.current_loop_item_id:
+            return
+        card = db.get(LoopItem, record.current_loop_item_id)
+        if card is None or card.deleted_at is not None:
+            return
+        card.title = f"MR !{record.mr_iid} · {record.mr_title or ''}"
+        card.description = render_card_description(record)
+        card.source_task_snapshot = mr_snapshot(record)
+        card.version += 1
+        db.flush()
+
+    def _resolve_assignee_user_id(
+        self,
+        db: Session,
+        project: CloudProject,
+        integration: MRIntegration,
+        author_id: int,
+    ) -> int | None:
+        fallback = integration.created_by_user_id or None
+        if not author_id:
+            return fallback
+        for user_id in self._project_member_ids(db, project):
+            user = db.get(User, user_id)
+            if user is None or not user.git_info:
+                continue
+            for info in user.git_info:
+                if not isinstance(info, dict):
+                    continue
+                if (
+                    info.get("type") == "gitlab"
+                    and self._norm_domain(str(info.get("git_domain") or ""))
+                    == self._norm_domain(integration.domain)
+                    and str(info.get("git_id") or "") == str(author_id)
+                ):
+                    return user.id
+        return fallback
+
+    @staticmethod
+    def _project_member_ids(db: Session, project: CloudProject) -> list[int]:
+        member_ids: list[int] = []
+        if project.created_by_user_id:
+            member_ids.append(project.created_by_user_id)
+        rows = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.CLOUD_PROJECT.value,
+                ResourceMember.resource_id == project.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        for row in rows:
+            try:
+                member_ids.append(int(row.entity_id))
+            except (TypeError, ValueError):
+                continue
+        return member_ids
+
+
+mr_service = MrService()

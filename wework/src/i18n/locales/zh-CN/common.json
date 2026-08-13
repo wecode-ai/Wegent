@@ -2531,6 +2531,18 @@
     "start_follow_up": "开启新任务"
   },
   "todo": {
+    "mr_integration_section_title": "GitLab MR 接入",
+    "mr_integration_section_desc": "MR 评审意见或 CI 失败会自动在看板生成修复任务。",
+    "mr_integration_enable": "接入 MR",
+    "mr_integration_disable": "关闭接入",
+    "mr_integration_enabled": "已接入",
+    "mr_integration_disabled": "未接入",
+    "mr_integration_hook_missing": "Webhook 缺失，将自动恢复",
+    "mr_integration_error": "接入异常：",
+    "mr_integration_webhook_url": "Webhook URL",
+    "mr_integration_copy_url": "复制",
+    "mr_integration_url_copied": "已复制",
+    "mr_integration_loading": "加载中…",
     "navigation": "任务",
     "create_action": "新建任务",
     "overview": "总览",

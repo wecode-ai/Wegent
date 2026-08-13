@@ -47,6 +47,7 @@ celery_app = Celery(
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",
         "app.tasks.video_tasks",
+        "app.tasks.gitlab_mr_tasks",
     ],
 )
 
@@ -99,6 +100,10 @@ celery_app.conf.update(
         "sync-plugin-upstreams": {
             "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",
             "schedule": 6 * 60 * 60,
+        },
+        "reconcile-gitlab-mr-integrations": {
+            "task": "app.tasks.gitlab_mr_tasks.reconcile_gitlab_mr_integrations",
+            "schedule": float(settings.GITLAB_MR_RECONCILE_INTERVAL_SECONDS),
         },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)

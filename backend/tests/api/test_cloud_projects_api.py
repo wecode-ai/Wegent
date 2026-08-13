@@ -237,7 +237,7 @@ def test_cloud_project_ai_automation_is_shared_through_project_metadata(
     ).json()
     assert created["ai_automation"] == {
         "auto_retry_on_failure": False,
-        "max_retry_count": 1,
+        "max_retry_count": 3,
     }
 
     updated = test_client.patch(

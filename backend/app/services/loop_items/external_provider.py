@@ -14,11 +14,9 @@ from datetime import datetime, timezone
 from typing import Any, BinaryIO
 from urllib.parse import quote
 
-import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.provider_credentials import decrypt_provider_token
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
 from app.models.loop_item_execution import LoopItemExecution
@@ -33,6 +31,11 @@ from app.services.cloud_projects.access import (
     require_cloud_project_role,
 )
 from app.services.delivery.storage import delivery_storage
+from app.services.gitlab.client import (
+    request_project_api,
+    resolve_provider_config,
+    resolve_repository,
+)
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
@@ -56,7 +59,16 @@ LEGACY_WEGENT_ATTACHMENT_PATTERN = re.compile(
 
 class ExternalLoopItemProvider:
     def is_external_item(self, db: Session, item_id: str) -> bool:
-        return self._find_project(db, item_id) is not None
+        if self._find_project(db, item_id) is None:
+            return False
+        item = db.get(LoopItem, item_id)
+        if item is not None and str(item.source_task_binding_id or "").startswith(
+            "gitlab:mr:"
+        ):
+            # MR fix-task cards share the <project_key>-<number> id shape but are
+            # internal board cards, not mirrored GitLab issues.
+            return False
+        return True
 
     def list(
         self,
@@ -78,7 +90,49 @@ class ExternalLoopItemProvider:
             issues = [
                 issue for issue in issues if assignee_label in self._labels(issue)
             ]
-        return [self._response(db, project, issue, access, user_id) for issue in issues]
+        responses = [
+            self._response(db, project, issue, access, user_id) for issue in issues
+        ]
+        if project.task_provider == "gitlab":
+            responses.extend(
+                self._list_local_cards(
+                    db, project, access, user_id, assignee_type, assignee_id
+                )
+            )
+        return responses
+
+    def _list_local_cards(
+        self,
+        db: Session,
+        project: CloudProject,
+        access: CloudProjectAccess,
+        user_id: int,
+        assignee_type: str | None,
+        assignee_id: str | None,
+    ) -> list[dict[str, object]]:
+        """Merge locally-created GitLab MR fix-task cards into the board list.
+
+        The external provider lists issues from the GitLab API; MR fix-task
+        cards are local LoopItem rows (``source='gitlab'``), so they need to be
+        appended here to appear on the board alongside issues.
+        """
+        from app.services.loop_items.service import loop_item_service
+
+        query = db.query(LoopItem).filter(
+            LoopItem.cloud_project_id == str(project.id),
+            LoopItem.source == "gitlab",
+            LoopItem.deleted_at.is_(None),
+        )
+        if assignee_type == "user" and assignee_id:
+            try:
+                query = query.filter(LoopItem.assignee_user_id == int(assignee_id))
+            except (TypeError, ValueError):
+                pass
+        items = query.order_by(LoopItem.sequence_number.asc()).all()
+        return [
+            loop_item_service.response_values(db, item, user_id, access=access)
+            for item in items
+        ]
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
@@ -1185,20 +1239,7 @@ class ExternalLoopItemProvider:
             raise HTTPException(status.HTTP_409_CONFLICT, "Project is not external")
 
     def _config(self, project: CloudProject) -> tuple[dict[str, object], str]:
-        metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
-        )
-        config = metadata.get("provider_config")
-        config = config if isinstance(config, dict) else {}
-        try:
-            token = decrypt_provider_token(project.task_provider, config)
-        except ValueError as exc:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-        if not token:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Provider credential is not configured"
-            )
-        return config, token
+        return resolve_provider_config(project)
 
     def _request(
         self,
@@ -1210,60 +1251,17 @@ class ExternalLoopItemProvider:
         params: dict[str, object] | None = None,
         files: dict[str, object] | None = None,
     ) -> Any:
-        config, token = self._config(project)
-        domain = str(
-            config.get("domain")
-            or ("github.com" if project.task_provider == "github" else "gitlab.com")
+        return request_project_api(
+            project,
+            method,
+            path,
+            json=json,
+            params=params,
+            files=files,
         )
-        api_base = str(
-            config.get("api_base")
-            or (
-                "https://api.github.com"
-                if project.task_provider == "github"
-                else f"https://{domain}/api/v4"
-            )
-        ).rstrip("/")
-        headers = (
-            {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            }
-            if project.task_provider == "github"
-            else {"PRIVATE-TOKEN": token}
-        )
-        try:
-            response = httpx.request(
-                method,
-                f"{api_base}{path}",
-                headers=headers,
-                json=json,
-                params=params,
-                files=files,
-                timeout=30,
-            )
-            response.raise_for_status()
-            return response.json() if response.content else {}
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == status.HTTP_404_NOT_FOUND:
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "TODO not found"
-                ) from exc
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, f"Provider request failed: {exc}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, f"Provider request failed: {exc}"
-            ) from exc
 
     def _repository(self, project: CloudProject) -> str:
-        config, _ = self._config(project)
-        repository = str(config.get("repository") or "").strip().strip("/")
-        if not repository:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Provider repository is required"
-            )
-        return repository
+        return resolve_repository(project)
 
     def _list_issues(self, project: CloudProject) -> list[dict[str, Any]]:
         repository = self._repository(project)

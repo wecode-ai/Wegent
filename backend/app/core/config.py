@@ -422,6 +422,9 @@ class Settings(BaseSettings):
     ROBOT_CLOUD_DEVICE_SLOTS: int = 2
     ROBOT_LOCAL_DEVICE_SLOTS: int = 2
 
+    # GitLab MR integration reconcile sweep
+    GITLAB_MR_RECONCILE_INTERVAL_SECONDS: int = 300
+
     # Knowledge indexing protection configuration
     KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30

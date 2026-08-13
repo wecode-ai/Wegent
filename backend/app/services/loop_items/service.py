@@ -81,6 +81,7 @@ class LoopItemService:
         required_role: BaseRole = BaseRole.Reporter,
         *,
         allow_public_visitor: bool = False,
+        item_id: str | None = None,
     ) -> CloudProjectAccess:
         access = require_cloud_project_role(
             db, cloud_project_id, user_id, BaseRole.RestrictedAnalyst
@@ -93,7 +94,7 @@ class LoopItemService:
         elif not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         project = access.project
-        if project.task_provider != "local":
+        if project.task_provider != "local" and not self._is_mr_card(db, item_id):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 (
@@ -102,6 +103,15 @@ class LoopItemService:
                 ),
             )
         return access
+
+    @staticmethod
+    def _is_mr_card(db: Session, item_id: str | None) -> bool:
+        if not item_id:
+            return False
+        item = db.get(LoopItem, item_id)
+        return item is not None and str(item.source_task_binding_id or "").startswith(
+            "gitlab:mr:"
+        )
 
     @staticmethod
     def _item_permissions(
@@ -1059,7 +1069,7 @@ class LoopItemService:
         """
 
         self._require_internal_task_project(
-            db, project_id, user_id, BaseRole.Maintainer
+            db, project_id, user_id, BaseRole.Maintainer, item_id=item_id
         )
         item = self.get(db, item_id, user_id)
         if item.cloud_project_id != str(project_id):

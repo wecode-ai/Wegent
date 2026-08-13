@@ -135,7 +135,7 @@ class CloudProjectBoardConfig(BaseModel):
 
 class CloudProjectAiAutomation(BaseModel):
     auto_retry_on_failure: bool = False
-    max_retry_count: int = Field(default=1, ge=1, le=10)
+    max_retry_count: int = Field(default=3, ge=1, le=10)
 
 
 class CloudProjectUpdate(BaseModel):

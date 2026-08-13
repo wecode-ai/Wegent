@@ -1080,7 +1080,11 @@ class LoopItemExecutionService:
         )
 
         project = db.get(CloudProject, execution.cloud_project_id)
-        if project is not None and project.task_provider in {"github", "gitlab"}:
+        if (
+            project is not None
+            and project.task_provider in {"github", "gitlab"}
+            and external_loop_item_provider.is_external_item(db, execution.loop_item_id)
+        ):
             view = external_loop_item_provider.task_view(
                 db, execution.loop_item_id, user_id
             )
