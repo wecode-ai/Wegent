@@ -153,7 +153,7 @@ class JobService(BaseService[Kind, None, None]):
                 continue
 
             try:
-                archive_task = self._get_code_archive_task(
+                archive_task = self._get_archive_task(
                     task_map=task_map,
                     subtasks=group_subtasks,
                 )
@@ -471,20 +471,18 @@ class JobService(BaseService[Kind, None, None]):
             return None
         return max(datetimes)
 
-    def _get_code_archive_task(
+    def _get_archive_task(
         self,
         *,
         task_map: Dict[int, TaskResource],
         subtasks: List[Subtask],
     ) -> TaskResource | None:
-        """Return the code task that needs archive before releasing the session."""
+        """Return the task that needs archive before releasing the session."""
         for subtask in subtasks:
             task = task_map.get(subtask.task_id)
             if not task:
                 continue
-            task_crd = Task.model_validate(task.json)
-            if self._get_task_type(task_crd) == "code":
-                return task
+            return task
         return None
 
     def _detach_loaded_instance(self, db: AsyncSession, instance: object) -> None:
@@ -854,7 +852,6 @@ class JobService(BaseService[Kind, None, None]):
 
         task_updated_at = task.updated_at
         task_crd = Task.model_validate(task.json)
-        task_type = self._get_task_type(task_crd)
         self._detach_loaded_instance(db, task)
         await self._release_cleanup_read_transaction(db)
 
@@ -879,7 +876,7 @@ class JobService(BaseService[Kind, None, None]):
                 )
                 continue
 
-            if task_type == "code" and not await self._archive_workspace(
+            if not await self._archive_workspace(
                 task=task,
                 executor_name=name,
                 executor_namespace=namespace,

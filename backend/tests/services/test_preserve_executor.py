@@ -151,6 +151,14 @@ class CleanupExecutorTestHelpers:
                     ],
                 )
             )
+            stack.enter_context(
+                patch.object(
+                    job_service,
+                    "_archive_workspace",
+                    new_callable=AsyncMock,
+                    return_value=True,
+                )
+            )
             yield
 
 
@@ -244,6 +252,35 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         mock_subtask = self._create_mock_subtask(1, 100)
         mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
         mock_task.json["metadata"]["labels"]["taskType"] = "code"
+        mock_subtask.updated_at = datetime.now() - timedelta(hours=72)
+
+        with (
+            self._patch_cleanup_scan(job_service, [mock_subtask], {100: mock_task}),
+            patch.object(
+                job_service, "_archive_workspace", new_callable=AsyncMock
+            ) as archive_mock,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
+
+            await job_service.cleanup_stale_executors(mock_db)
+
+        archive_mock.assert_called_once()
+        mock_executor_service.delete_executor_task_async.assert_called_once_with(
+            "executor-1", "default"
+        )
+
+    async def test_chat_task_archives_before_cleanup(self, job_service, mock_db):
+        """Test non-code tasks also trigger archive before deleting the executor."""
+        mock_subtask = self._create_mock_subtask(1, 100)
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
         mock_subtask.updated_at = datetime.now() - timedelta(hours=72)
 
         with (
@@ -533,6 +570,12 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
         with (
             patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
             patch(
@@ -610,6 +653,12 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         subtask_id = subtask.id
 
         with (
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
@@ -987,6 +1036,12 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
                 return_value=[mock_subtask],
             ),
             patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
             patch(
@@ -1206,6 +1261,12 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
                 return_value=[subtask_a, subtask_b],
             ),
             patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
             patch(
@@ -1302,6 +1363,12 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
                 "_get_cleanup_subtasks_for_task",
                 new_callable=AsyncMock,
                 return_value=[subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
