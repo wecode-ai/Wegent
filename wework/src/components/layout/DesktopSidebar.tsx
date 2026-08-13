@@ -122,6 +122,7 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
+import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import {
@@ -2786,6 +2787,16 @@ function ProjectItem({
                     `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
                   }
                   getLabel={({ task }) => task.title}
+                  getExternalDragData={({ workspace, task }) => ({
+                    paneKey: getWorkbenchPaneKey({
+                      currentRuntimeTask: {
+                        deviceId: workspace.deviceId,
+                        taskId: task.taskId,
+                      },
+                      currentProject: null,
+                    }),
+                    title: task.title,
+                  })}
                   canDrag={({ task }) =>
                     Boolean(
                       getRuntimeTaskThreadId(task) &&
@@ -3921,6 +3932,16 @@ export function DesktopSidebar({
                           `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
                         }
                         getLabel={({ task }) => task.title}
+                        getExternalDragData={({ workspace, task }) => ({
+                          paneKey: getWorkbenchPaneKey({
+                            currentRuntimeTask: {
+                              deviceId: workspace.deviceId,
+                              taskId: task.taskId,
+                            },
+                            currentProject: null,
+                          }),
+                          title: task.title,
+                        })}
                         canDrag={({ task }) =>
                           Boolean(getRuntimeTaskThreadId(task) && onSetRuntimeTaskPinned)
                         }
@@ -4309,6 +4330,16 @@ export function DesktopSidebar({
                             `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
                           }
                           getLabel={({ task }) => task.title}
+                          getExternalDragData={({ workspace, task }) => ({
+                            paneKey: getWorkbenchPaneKey({
+                              currentRuntimeTask: {
+                                deviceId: workspace.deviceId,
+                                taskId: task.taskId,
+                              },
+                              currentProject: null,
+                            }),
+                            title: task.title,
+                          })}
                           canDrag={({ task }) =>
                             Boolean(getRuntimeTaskThreadId(task) && onReorderRuntimeProjectTasks)
                           }

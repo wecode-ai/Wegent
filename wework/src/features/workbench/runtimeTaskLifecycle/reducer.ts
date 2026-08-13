@@ -11,12 +11,21 @@ export function reduceRuntimeTaskLifecycle(
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
       const queuedStatus = isQueuedTaskStatus(event.task.status)
+      const snapshotConfirmsActiveTurn =
+        snapshotRunning === true &&
+        (isRunningTaskStatus(event.task.threadStatus) || isRunningTaskStatus(event.task.turnStatus))
+      const settledLocalHarness =
+        snapshotRunning === false &&
+        state.turnPhase !== 'streaming' &&
+        isLocalHarnessRuntime(event.task.runtime)
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
         !queuedStatus &&
-        (!terminalStatus || hasIdentifiedActiveTurn)
+        (!terminalStatus || hasIdentifiedActiveTurn) &&
+        !snapshotConfirmsActiveTurn &&
+        !settledLocalHarness
       if (shouldIgnoreStaleSnapshot) return state
 
       const executionPhase = queuedStatus
@@ -194,6 +203,15 @@ function isTerminalTaskStatus(status: string | null | undefined): boolean {
       normalized
     )
   )
+}
+
+function isRunningTaskStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
+}
+
+function isLocalHarnessRuntime(runtime: string | null | undefined): boolean {
+  return runtime === 'opencode' || runtime === 'claude_code' || runtime === 'kimi_code'
 }
 
 function mergeAddress(

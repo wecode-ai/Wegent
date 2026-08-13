@@ -8,6 +8,7 @@ export const DESKTOP_CHECKPOINTS = [
   'permission-modes',
   'core-task-flow',
   'runtime-task-queue',
+  'split-workbench',
   'window-lifecycle',
   'goal-lifecycle',
   'supervisor-lifecycle',

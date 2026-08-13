@@ -128,6 +128,8 @@ const workbenchValue: WorkbenchContextValue = {
   projectWorktreeBranch: null,
   setProjectWorktreeBranch: vi.fn(),
   projectChat: {
+    scopeKey: 'blank:0',
+    inputByScope: { 'blank:0': '' },
     models: [],
     skills: [],
     selectedModel: null,
@@ -140,6 +142,8 @@ const workbenchValue: WorkbenchContextValue = {
     isAttachmentReadyToSend: true,
     setSelectedModel: vi.fn(),
     setSelectedModelOption: vi.fn(),
+    setInput: vi.fn(),
+    setInputForScope: vi.fn(),
     setSelectedSkills: vi.fn(),
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn(),

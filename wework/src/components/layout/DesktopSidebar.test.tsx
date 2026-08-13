@@ -2125,6 +2125,13 @@ describe('DesktopSidebar', () => {
     expect(onOpenRuntimeTask).toHaveBeenCalledTimes(2)
     expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
 
+    firstSortable.focus()
+    fireEvent.keyDown(firstSortable, { key: ' ', code: 'Space' })
+    expect(firstSortable).toHaveAttribute('data-dragging', 'true')
+    await waitForSidebarPointerSensorCleanup()
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
+    await waitFor(() => expect(firstSortable).not.toHaveAttribute('data-dragging'))
+
     for (const [pointerId, target] of [firstTitleSpace, firstTrailing, firstActions].entries()) {
       fireEvent.pointerDown(target, {
         button: 0,
@@ -2236,9 +2243,10 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-time-chat-time')).toHaveTextContent('2m')
   })
 
-  test('renames a runtime conversation from double click dialog', async () => {
+  test('renames a runtime conversation from its context menu without space starting drag', async () => {
     const user = userEvent.setup()
     const onOpenRuntimeTask = vi.fn()
+    const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
     const onRenameRuntimeTask = vi.fn().mockResolvedValue(undefined)
 
     renderSidebar({
@@ -2258,7 +2266,7 @@ describe('DesktopSidebar', () => {
                 taskId: 'codex-rename',
                 workspacePath: '/workspace/chats/chat-rename',
                 workspaceKind: 'chat',
-                title: '对齐需求核心点',
+                title: '对齐 需求 核心点',
                 runtime: 'codex',
               },
             ],
@@ -2267,18 +2275,34 @@ describe('DesktopSidebar', () => {
         totalTasks: 1,
       },
       onOpenRuntimeTask,
+      onReorderRuntimeProjectTasks,
       onRenameRuntimeTask,
     })
 
-    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-rename'))
+    const taskRow = screen.getByTestId('runtime-local-task-row-codex-rename')
+    const sortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:codex-rename"]'
+    ) as HTMLElement
+
+    fireEvent.contextMenu(taskRow, {
+      clientX: 20,
+      clientY: 10,
+    })
+    await user.click(screen.getByTestId('runtime-local-task-menu-rename-codex-rename'))
 
     expect(screen.getByTestId('rename-runtime-local-task-input-codex-rename')).toHaveValue(
-      '对齐需求核心点'
+      '对齐 需求 核心点'
     )
     expect(screen.getByText('保持简短且易于识别')).toBeInTheDocument()
+    expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
 
-    await user.clear(screen.getByTestId('rename-runtime-local-task-input-codex-rename'))
-    await user.type(screen.getByTestId('rename-runtime-local-task-input-codex-rename'), '对齐方案')
+    const renameInput = screen.getByTestId('rename-runtime-local-task-input-codex-rename')
+    await user.type(renameInput, ' ')
+    expect(sortable).not.toHaveAttribute('data-dragging')
+    expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
+
+    await user.clear(renameInput)
+    await user.type(renameInput, '对齐方案')
     await user.click(screen.getByTestId('confirm-rename-runtime-local-task-codex-rename'))
 
     await waitFor(() => {

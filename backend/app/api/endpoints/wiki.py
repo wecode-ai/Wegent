@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -12,13 +11,16 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.wiki_config import wiki_settings
 from app.db.session import get_wiki_db
+from app.models.kind import Kind
 from app.models.user import User
-from app.models.wiki import WikiGeneration
+from app.models.wiki import WikiGeneration, WikiGenerationStatus
+from app.schemas.knowledge import KnowledgeBaseType
 from app.schemas.wiki import WikiContentWriteRequest, WikiPageRead
+from app.services.knowledge.code_wiki.generation import FailureCode, failure_code
 from app.services.knowledge.code_wiki.prompts import build_diagram_correction
+from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
+from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.wiki_service import wiki_service
-
-logger = logging.getLogger(__name__)
 
 internal_router = APIRouter()
 
@@ -26,17 +28,8 @@ internal_router = APIRouter()
 def _verify_internal_token(
     authorization: str = Header(default=""),
     db: Session = Depends(get_db),
-) -> None:
-    """
-    Verify authorization token for internal content writer.
-
-    Supports two authentication methods:
-    1. Internal API token (legacy): Fixed token from wiki_settings.INTERNAL_API_TOKEN
-    2. User JWT token (recommended): Standard JWT token from task execution context
-
-    The user JWT token is automatically available in the executor container via
-    TASK_INFO environment variable, making it the preferred method for wiki_submit skill.
-    """
+) -> User:
+    """Resolve an internal writer credential to its active user."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -44,35 +37,21 @@ def _verify_internal_token(
         )
     token = authorization[7:].strip()
 
-    # First, try internal API token (legacy method)
-    if token == wiki_settings.INTERNAL_API_TOKEN:
-        logger.debug("Wiki content write authenticated via internal API token")
-        return
+    # A user JWT is available to the executor through TASK_INFO. Invalid JWTs
+    # return ``None`` so the skill-identity path can still authenticate; database
+    # and programming failures propagate rather than being reported as 403.
+    user = security.get_current_user_from_token(token, db)
+    if user and user.is_active:
+        return user
 
-    # Second, try user JWT token (recommended method)
-    try:
-        # Verify JWT token and get user
-        user = security.get_current_user_from_token(token, db)
-        if user and user.is_active:
-            logger.debug(
-                f"Wiki content write authenticated via JWT token for user {user.id}"
-            )
-            return
-    except Exception as e:
-        logger.debug(f"JWT token verification failed: {e}")
-        pass
+    # A skill identity token is the credential held by wiki_submit itself.
+    user = _user_from_skill_identity(token, db)
+    if user is not None:
+        return user
 
-    # Third, a skill identity token. This is what a skill running inside an executor
-    # actually holds: the task token it is also given carries no `sub`, so the user
-    # lookup above rejects it. Without this the write API is reachable only with the
-    # fixed operator token, which no executor is issued.
-    if _user_from_skill_identity(token, db) is not None:
-        return
-
-    # If neither method works, reject the request
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Invalid authorization token. Use either internal API token or valid user JWT token.",
+        detail="Invalid authorization token",
     )
 
 
@@ -96,25 +75,14 @@ def _user_from_skill_identity(token: str, db: Session) -> Optional[User]:
 def _internal_caller(
     authorization: str = Header(default=""),
     db: Session = Depends(get_db),
-) -> Optional[User]:
-    """Authenticate an internal caller and say which user it is, if any.
-
-    ``None`` means the fixed internal token was used, which is a trusted operator
-    rather than a person and is not scoped to one generation.
-    """
-    _verify_internal_token(authorization=authorization, db=db)
-    token = authorization[7:].strip()
-    if token == wiki_settings.INTERNAL_API_TOKEN:
-        return None
-    try:
-        return security.get_current_user_from_token(token, db)
-    except Exception:  # pragma: no cover - _verify_internal_token already accepted it
-        return _user_from_skill_identity(token, db)
+) -> User:
+    """Authenticate an internal caller as an active user."""
+    return _verify_internal_token(authorization=authorization, db=db)
 
 
 def _assert_caller_owns_generation(
-    wiki_db: Session, caller: Optional[User], generation_id: int
-) -> None:
+    wiki_db: Session, caller: User | None, generation_id: int
+) -> WikiGeneration:
     """Refuse a caller asking about a generation that is not theirs.
 
     Authenticating a JWT says who is asking, not what they may ask about. Without
@@ -123,10 +91,16 @@ def _assert_caller_owns_generation(
     wiki whose repository they may have no access to at all.
     """
     if caller is None:
-        return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="An active user identity is required",
+        )
 
     generation = (
-        wiki_db.query(WikiGeneration).filter(WikiGeneration.id == generation_id).first()
+        wiki_db.query(WikiGeneration)
+        .filter(WikiGeneration.id == generation_id)
+        .with_for_update()
+        .first()
     )
     if generation is None:
         raise HTTPException(status_code=404, detail="Generation not found")
@@ -135,12 +109,59 @@ def _assert_caller_owns_generation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This generation belongs to another account",
         )
+    return generation
+
+
+def _assert_caller_may_write_generation(
+    wiki_db: Session, caller: User | None, generation_id: int
+) -> None:
+    """Require the executing user and an explicitly correctable Code Wiki run."""
+    generation = _assert_caller_owns_generation(wiki_db, caller, generation_id)
+    if not generation.kind_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Generation does not belong to an active Code Wiki",
+        )
+
+    knowledge_base = wiki_db.get(Kind, generation.kind_id)
+    spec = (knowledge_base.json or {}).get("spec", {}) if knowledge_base else {}
+    if (
+        knowledge_base is None
+        or not knowledge_base.is_active
+        or knowledge_base.kind != "KnowledgeBase"
+        or spec.get("kbType") != KnowledgeBaseType.CODE_WIKI.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Generation does not belong to an active Code Wiki",
+        )
+
+    if generation.status == WikiGenerationStatus.RUNNING:
+        return
+    if (
+        generation.status == WikiGenerationStatus.FAILED
+        and failure_code(generation) == FailureCode.PUBLISH_REFUSED
+    ):
+        return
+
+    publish_gate = (generation.ext or {}).get(PUBLISH_GATE_EXT_KEY, {}) or {}
+    if (
+        generation.status == WikiGenerationStatus.COMPLETED
+        and published_generation_id(knowledge_base) == generation.id
+        and publish_gate.get("correctionPending") is True
+    ):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Generation is not in a writable state",
+    )
 
 
 @internal_router.post("/generations/contents")
 def save_wiki_generation_contents(
     payload: WikiContentWriteRequest,
-    _: None = Depends(_verify_internal_token),
+    caller: User = Depends(_internal_caller),
     wiki_db: Session = Depends(get_wiki_db),
 ):
     """Write wiki generation contents and update status (internal use).
@@ -156,6 +177,7 @@ def save_wiki_generation_contents(
     party that cannot fix a diagram. Returned here it reaches the agent while it can
     still rewrite the page and finish again.
     """
+    _assert_caller_may_write_generation(wiki_db, caller, payload.generation_id)
     outcome = wiki_service.save_generation_contents(
         wiki_db=wiki_db,
         payload=payload,
@@ -173,7 +195,7 @@ def save_wiki_generation_contents(
 def read_wiki_generation_page(
     generation_id: int,
     path: str = Query(..., min_length=1, description="Stable page path to read"),
-    caller: Optional[User] = Depends(_internal_caller),
+    caller: User = Depends(_internal_caller),
     wiki_db: Session = Depends(get_wiki_db),
 ):
     """Read one page of the version the agent is writing into (internal use).

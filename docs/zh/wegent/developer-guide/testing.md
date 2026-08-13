@@ -294,9 +294,10 @@ CI 稳定性依赖以下约束：
   或桌面系统包。本地调试命令不会构建这些 CI 镜像。
 - uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
   按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
-- Playwright browser、Next.js build cache、Claude Code CLI 和桌面 Cargo target
-  采用显式 restore/save；只有 `refs/heads/main` 可以 save。Claude Code CLI
-  通过仓库内的 `package-lock.json` 锁定完整依赖图和包完整性。
+- Playwright browser、Next.js build cache、本地 harness CLI 和桌面 Cargo target
+  采用显式 restore/save；只有 `refs/heads/main` 可以 save。OpenCode、Claude Code
+  和 Kimi Code 通过 `.github/claude-code-cli/package-lock.json` 共享一份锁定完整
+  依赖图和包完整性的 npm 安装。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
   输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的桌面
   `--build-only`，非 `main` 任务以只读模式访问共享 sccache。

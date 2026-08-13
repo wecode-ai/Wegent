@@ -45,7 +45,7 @@ describe('TaskSupervisorControl', () => {
     )
 
     expect(screen.queryByTestId('task-supervisor-mode-observe')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('task-supervisor-mode-auto'))
+    expect(screen.getByTestId('task-supervisor-mode-auto')).toHaveClass('bg-text-primary')
     fireEvent.change(screen.getByTestId('task-supervisor-instructions'), {
       target: { value: 'Stop destructive operations' },
     })
@@ -82,12 +82,15 @@ describe('TaskSupervisorControl', () => {
             displayName: 'GPT 5.6 Luna',
             namespace: 'default',
             resourceUserId: 0,
+            compatibilityDisabled: true,
+            compatibilityDisabledReason: 'runtime_family_mismatch',
           },
         ]}
         onSet={onSet}
         onClear={vi.fn()}
       />
     )
+    expect(screen.getByTestId('task-supervisor-model')).toHaveTextContent('GPT 5.6 Luna')
     fireEvent.change(screen.getByTestId('task-supervisor-model'), {
       target: { value: 'public:gpt-5.6-luna' },
     })
@@ -98,7 +101,7 @@ describe('TaskSupervisorControl', () => {
 
     await waitFor(() =>
       expect(onSet).toHaveBeenCalledWith(
-        'suggest',
+        'auto',
         '',
         {
           modelName: 'gpt-5.6-luna',
@@ -155,6 +158,41 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-disable-button')).toBeInTheDocument()
   })
 
+  test('keeps an incompatible cloud model selected when supervision reopens', () => {
+    render(
+      <TaskSupervisorControl
+        open
+        supervisor={{
+          ...supervisor,
+          modelSelection: {
+            modelName: 'review-model',
+            modelType: 'public',
+            options: {
+              weworkCloudModelNamespace: 'default',
+              weworkCloudModelResourceUserId: '0',
+            },
+          },
+        }}
+        models={[
+          {
+            name: 'review-model',
+            type: 'public',
+            displayName: 'Review Model',
+            namespace: 'default',
+            resourceUserId: 0,
+            compatibilityDisabled: true,
+            compatibilityDisabledReason: 'runtime_family_mismatch',
+          },
+        ]}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:review-model')
+  })
+
   test('renders configuration in an accessible dialog', () => {
     render(
       <TaskSupervisorControl
@@ -201,6 +239,47 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
       'workbench.supervisor_aligned'
     )
+  })
+
+  test('shows the next scheduled check and can run immediately', async () => {
+    const onRunNow = vi.fn().mockResolvedValue(supervisor)
+
+    render(
+      <TaskSupervisorControl
+        open
+        supervisor={{
+          ...supervisor,
+          intervalSeconds: 30,
+          lastEvaluatedAt: Date.now(),
+        }}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+        onRunNow={onRunNow}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-next-check')).toHaveTextContent(
+      'workbench.supervisor_next_check'
+    )
+    fireEvent.click(screen.getByTestId('task-supervisor-run-now-button'))
+
+    await waitFor(() => expect(onRunNow).toHaveBeenCalledTimes(1))
+  })
+
+  test('disables immediate review while a check is running', () => {
+    render(
+      <TaskSupervisorControl
+        open
+        supervisor={{ ...supervisor, status: 'checking' }}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+        onRunNow={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-run-now-button')).toBeDisabled()
   })
 
   test('renders pending suggestions and resolves explicit actions', async () => {

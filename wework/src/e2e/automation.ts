@@ -629,7 +629,13 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+let activeDesktopControlDrag: {
+  sourceText: string
+  target: HTMLElement
+} | null = null
+
+async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
+  if (activeDesktopControlDrag) throw new Error('A desktop control drag is already active')
   const element = findDesktopControlElements(command.selector)[0]
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   if (!command.target) throw new Error('Drag requires a target selector')
@@ -644,7 +650,45 @@ async function dragDesktopControlElement(command: DesktopControlCommand): Promis
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
-  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+  activeDesktopControlDrag = {
+    sourceText: element.textContent?.trim() ?? '',
+    target,
+  }
+  return activeDesktopControlDrag.sourceText
+}
+
+async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
+  const activeDrag = activeDesktopControlDrag
+  if (!activeDrag) throw new Error('No desktop control drag is active')
+  const target = command.target ? findDesktopControlElements(command.target)[0] : activeDrag.target
+  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
+  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  try {
+    dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+    dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
+    await waitForDesktopControlTick()
+    dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+    return activeDrag.sourceText
+  } finally {
+    activeDesktopControlDrag = null
+  }
+}
+
+async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+  await startDesktopControlDrag(command)
+  return endDesktopControlDrag(command)
+}
+
+function contextMenuDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      ...desktopControlEventOptions(element),
+      button: 2,
+      buttons: 0,
+    })
+  )
   return element.textContent?.trim() ?? ''
 }
 
@@ -979,6 +1023,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'contextMenu':
+      return contextMenuDesktopControlElement(command.selector)
+    case 'dragStart':
+      return startDesktopControlDrag(command)
+    case 'dragEnd':
+      return endDesktopControlDrag(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
     case 'dropPaths':
@@ -1376,6 +1426,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
         )
       }
+      await waitForDesktopControlTick()
       return element.textContent?.trim() ?? ''
     }
     case 'select': {

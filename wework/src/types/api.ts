@@ -804,6 +804,10 @@ export interface RuntimeSupervisorClearRequest {
   address: RuntimeTaskAddress
 }
 
+export interface RuntimeSupervisorRunNowRequest {
+  address: RuntimeTaskAddress
+}
+
 export interface RuntimeSupervisorResolveRequest {
   address: RuntimeTaskAddress
   suggestionId: string

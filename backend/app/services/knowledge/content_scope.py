@@ -42,6 +42,38 @@ CODE_TARGET_SOURCE_TYPE = DocumentSourceType.CODE.value
 # return them even if a caller bypasses these scopes.
 NO_FOLDER = -1
 
+GENERATED_CONTENT_READ_ONLY_MESSAGE = "Generated Code Wiki content is read-only"
+CONTENT_ORIGIN_MISMATCH_MESSAGE = (
+    "Documents and folders must remain within the same content origin"
+)
+
+
+def is_generated_content(origin: ContentOrigin | str) -> bool:
+    """Return whether an origin belongs to the generation projection."""
+    value = origin.value if isinstance(origin, ContentOrigin) else origin
+    return value == ContentOrigin.GENERATED.value
+
+
+def assert_user_content_is_mutable(origin: ContentOrigin | str) -> None:
+    """Reject ordinary writes to content owned by the generation projection."""
+    if is_generated_content(origin):
+        raise ValueError(GENERATED_CONTENT_READ_ONLY_MESSAGE)
+
+
+def assert_folder_accepts_content_origin(
+    folder: KnowledgeFolder,
+    content_origin: ContentOrigin | str,
+) -> None:
+    """Ensure a document or child folder stays in its owning content tree."""
+    folder_origin = folder.origin or ContentOrigin.USER.value
+    origin = (
+        content_origin.value
+        if isinstance(content_origin, ContentOrigin)
+        else content_origin
+    )
+    if folder_origin != origin:
+        raise ValueError(CONTENT_ORIGIN_MISMATCH_MESSAGE)
+
 
 def wiki_pages(query: Query) -> Query:
     """Restrict a ``KnowledgeDocument`` query to browsable wiki pages.

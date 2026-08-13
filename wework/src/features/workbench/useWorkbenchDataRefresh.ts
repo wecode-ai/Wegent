@@ -5,6 +5,8 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import type {
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeDeviceWorkspace,
+  RuntimeSupervisorState,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
@@ -165,20 +167,25 @@ function removeRuntimeProject(
   projectId: number,
   workspace?: { deviceId: string; workspacePath: string }
 ): RuntimeWorkListResponse {
-  const projects = runtimeWork.projects.filter(
-    project => runtimeProjectUiId(project.project) !== projectId
-  )
   const normalizedDeviceId = workspace?.deviceId.trim()
   const normalizedWorkspacePath = workspace
     ? normalizeRuntimeWorkspacePath(workspace.workspacePath)
     : null
+  const matchesRemovedWorkspace = (candidate: RuntimeDeviceWorkspace) =>
+    Boolean(
+      normalizedDeviceId &&
+      normalizedWorkspacePath &&
+      candidate.deviceId.trim() === normalizedDeviceId &&
+      normalizeRuntimeWorkspacePath(candidate.workspacePath) === normalizedWorkspacePath
+    )
+  const projects = runtimeWork.projects.filter(
+    project =>
+      runtimeProjectUiId(project.project) !== projectId &&
+      !project.deviceWorkspaces.some(matchesRemovedWorkspace)
+  )
   const chats =
     normalizedDeviceId && normalizedWorkspacePath
-      ? runtimeWork.chats.filter(
-          chat =>
-            chat.deviceId.trim() !== normalizedDeviceId ||
-            normalizeRuntimeWorkspacePath(chat.workspacePath) !== normalizedWorkspacePath
-        )
+      ? runtimeWork.chats.filter(chat => !matchesRemovedWorkspace(chat))
       : runtimeWork.chats
   const totalTasks =
     projects.reduce(
@@ -876,6 +883,20 @@ export function useWorkbenchDataRefresh({
     []
   )
 
+  const updateLocalRuntimeTaskSupervisor = useCallback(
+    (address: RuntimeTaskAddress, supervisor: RuntimeSupervisorState | null) => {
+      localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
+        supervisor,
+      })
+      dispatch({
+        type: 'runtime_task_supervisor_updated',
+        address,
+        supervisor,
+      })
+    },
+    [dispatch]
+  )
+
   const refreshRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       const runtimeWork = applyRuntimeTaskTitleOverrides(
@@ -922,6 +943,7 @@ export function useWorkbenchDataRefresh({
     refreshRuntimeTask,
     refreshDevices,
     updateLocalRuntimeTaskExecution,
+    updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
     getRemoteDeviceStartupCommand,

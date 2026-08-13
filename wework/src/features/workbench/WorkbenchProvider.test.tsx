@@ -1107,6 +1107,7 @@ function RuntimePaneSendProbe() {
     ) ?? []),
     ...(workbench.state.runtimeWork?.chats.flatMap(workspace => workspace.tasks) ?? []),
   ]
+  const runtimeATask = runtimeTasks.find(task => task.taskId === 'runtime-a')
 
   return (
     <div>
@@ -1125,6 +1126,9 @@ function RuntimePaneSendProbe() {
       </span>
       <span data-testid="runtime-local-task-titles">
         {runtimeTasks.map(task => task.title).join('|')}
+      </span>
+      <span data-testid="runtime-a-supervisor-last-evaluated">
+        {runtimeATask?.supervisor?.lastEvaluatedAt ?? 'none'}
       </span>
       <span data-testid="runtime-pane-standalone-chat-key">
         {workbench.state.standaloneChatKey}
@@ -6800,7 +6804,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a removed runtime project from an in-flight cloud refresh', async () => {
+  test('does not restore a removed workspace under a different project identity', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
@@ -6811,7 +6815,17 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
       cloudBackgroundApi: {
         listTeams: vi.fn().mockResolvedValue([]),
-        listDevices: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Project Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+          },
+        ]),
         listRuntimeWork: vi.fn(() => cloudRuntimeWork.promise),
       },
     })
@@ -6831,7 +6845,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual([])
 
     await act(async () => {
-      cloudRuntimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      cloudRuntimeWork.resolve(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 99, key: 'stale-cloud-project', name: 'Resurrected' },
+              deviceWorkspaces: staleRuntimeWork.projects[0].deviceWorkspaces,
+              totalTasks: 3,
+            },
+          ],
+        })
+      )
     })
 
     await waitFor(() =>
@@ -9596,6 +9620,62 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
     expect(listRuntimeWork).toHaveBeenCalledTimes(callsBeforeStart)
+  })
+
+  test('applies supervisor stream updates without an out-of-order runtime work refresh', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const listRuntimeWork = vi.fn().mockResolvedValue(createRuntimeWork())
+    const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeTopLevelStreamLifecycleProbe />
+        <RuntimePaneSendProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() => expect(streamHandlers.onRuntimeSupervisorUpdated).toBeDefined())
+    const callsBeforeUpdate = listRuntimeWork.mock.calls.length
+
+    act(() => {
+      streamHandlers.onRuntimeSupervisorUpdated?.({
+        taskId: 'runtime-a',
+        subtaskId: 'supervisor-state-1',
+        deviceId: 'device-1',
+        supervisor: {
+          mode: 'auto',
+          status: 'active',
+          instructions: 'Keep the task focused',
+          modelSelection: {
+            modelName: 'supervisor-model',
+            modelType: 'public',
+          },
+          intervalSeconds: 30,
+          lastEvaluatedAt: 1786557741000,
+          lastContentHash: 'latest',
+          lastError: null,
+          suggestions: [],
+        },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-a-supervisor-last-evaluated')).toHaveTextContent(
+        '1786557741000'
+      )
+    )
+    expect(listRuntimeWork).toHaveBeenCalledTimes(callsBeforeUpdate)
   })
 
   test('hides the runtime goal when the settled task reports the goal complete', async () => {

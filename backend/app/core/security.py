@@ -360,10 +360,11 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
 
 def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
     """
-    Get current user from JWT token without raising exceptions.
+    Get current user from a JWT token, returning ``None`` only when it is invalid.
 
-    This function is useful for optional authentication scenarios where
-    you want to check if a token is valid without failing the request.
+    This function is useful for optional authentication scenarios. Database and
+    other unexpected failures propagate so callers do not mistake a server failure
+    for an invalid credential.
 
     Args:
         token: JWT token string
@@ -424,7 +425,7 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
                 span.set_attribute(
                     SpanAttributes.AUTH_FAILURE_REASON, f"error:{str(e)[:100]}"
                 )
-            return None
+            raise
 
 
 def get_api_key_from_header(

@@ -124,6 +124,7 @@ class GitLabProvider(RepositoryProvider):
         Raises:
             requests.exceptions.RequestException: If both authentication methods fail
         """
+        kwargs.setdefault("timeout", settings.REPOSITORY_READ_TIMEOUT_SECONDS)
         # Try Bearer token first (for OAuth tokens)
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
@@ -170,6 +171,7 @@ class GitLabProvider(RepositoryProvider):
         Raises:
             requests.exceptions.RequestException: If both authentication methods fail
         """
+        kwargs.setdefault("timeout", settings.REPOSITORY_READ_TIMEOUT_SECONDS)
         # Try Bearer token first (for OAuth tokens)
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 

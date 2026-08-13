@@ -308,10 +308,10 @@ runs may restore the default-branch cache, but they do not save another copy:
 - uv caches downloads and build results only, not project `.venv` directories.
   Python 3.10, 3.11, and 3.12 each have one shared cache whose key includes the
   dependency lockfiles, and CI pruning runs before save.
-- Playwright browsers, the Next.js build cache, the Claude Code CLI, and desktop
+- Playwright browsers, the Next.js build cache, local harness CLIs, and desktop
   Cargo targets use explicit restore/save steps; only `refs/heads/main` saves.
-  The Claude Code CLI uses a repository `package-lock.json` to pin the complete
-  dependency graph and package integrity.
+  OpenCode, Claude Code, and Kimi Code share the integrity-locked npm install
+  defined by `.github/claude-code-cli/package-lock.json`.
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
   macOS memory gate use sccache. The `main` warmup runs the same desktop
   `--build-only` flow on `macos-14`; non-`main` jobs access the shared compiler

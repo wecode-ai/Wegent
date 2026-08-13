@@ -137,6 +137,7 @@ merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
+pnpm --filter wework e2e:desktop -- --segment local-harness
 pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
@@ -148,6 +149,12 @@ pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 sidecar 和本地模型协议矩阵。两者都建立自身最小 fixture，因此不会拉长
 `core-task-flow` 的任务创建、追问和后台计划关键路径。无参数运行完整桌面流程时，
 这些场景仍会执行，不会因为分段而减少覆盖。
+
+`local-harness` 使用 `.github/claude-code-cli/package-lock.json` 固定的真实
+OpenCode、Claude Code 和 Kimi Code CLI，不允许用只记录参数的 shell fixture
+代替。场景必须断言每个 CLI 通过 Wework 本地模型代理发出的真实请求。Kimi Code
+以交互 TUI 启动，首条 prompt 只能在 PTY 输出出现其就绪标记后注入；终端能力握手
+期间提前写入会丢失输入。
 
 插件桌面套件也复用同一套分段参数，但保持独立的 Codex Home 初始化环境。插件
 segment 依次为 `plugin-lifecycle`、`skill-mention-rendering` 和
