@@ -116,6 +116,53 @@ describe('TaskSupervisorControl', () => {
     )
   })
 
+  test('defaults to the last selected supervisor model', () => {
+    render(
+      <TaskSupervisorControl
+        supervisor={null}
+        open
+        defaultModelSelection={{
+          modelName: 'saved-review-model',
+          modelType: 'public',
+        }}
+        onOpenChange={vi.fn()}
+        models={[
+          {
+            name: 'first-model',
+            type: 'public',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+          {
+            name: 'saved-review-model',
+            type: 'public',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+        ]}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:saved-review-model')
+  })
+
+  test('defaults to the last selected supervisor interval', () => {
+    render(
+      <TaskSupervisorControl
+        supervisor={null}
+        open
+        defaultIntervalSeconds={300}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('300')
+  })
+
   test('reopens supervision configured before the task starts', () => {
     render(
       <TaskSupervisorControl
@@ -239,6 +286,27 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
       'workbench.supervisor_aligned'
     )
+  })
+
+  test('shows the next scheduled check and runs supervision from the status row', async () => {
+    const onRunNow = vi.fn().mockResolvedValue(supervisor)
+    render(
+      <TaskSupervisorStatusButton
+        supervisor={{
+          ...supervisor,
+          lastEvaluatedAt: Date.now(),
+          intervalSeconds: 30,
+        }}
+        onClick={vi.fn()}
+        onRunNow={onRunNow}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent(
+      'workbench.supervisor_next_check'
+    )
+    fireEvent.click(screen.getByTestId('task-supervisor-status-run-now-button'))
+    await waitFor(() => expect(onRunNow).toHaveBeenCalledOnce())
   })
 
   test('shows the next scheduled check and can run immediately', async () => {

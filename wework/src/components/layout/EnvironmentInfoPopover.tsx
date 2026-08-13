@@ -61,6 +61,7 @@ interface EnvironmentInfoPopoverProps {
   onManageTodo?: () => void
   supervisor?: RuntimeSupervisorState | null
   onConfigureSupervisor?: () => void
+  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
 }
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
@@ -95,6 +96,7 @@ export function EnvironmentInfoPopover({
   onManageTodo,
   supervisor,
   onConfigureSupervisor,
+  onRunSupervisorNow,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
@@ -543,6 +545,7 @@ export function EnvironmentInfoPopover({
                   <TaskSupervisorStatusButton
                     supervisor={supervisor}
                     onClick={onConfigureSupervisor}
+                    onRunNow={onRunSupervisorNow}
                   />
                 </section>
               )}

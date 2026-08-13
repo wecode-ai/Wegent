@@ -32,6 +32,8 @@ export interface AppPreferences {
   telemetryConsentAsked: boolean
   telemetryEnabled: boolean
   supervisorPrinciples: string
+  supervisorModelSelection: ModelSelectionConfig | null
+  supervisorIntervalSeconds: number
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
@@ -104,6 +106,8 @@ export interface AppPreferencesPatch {
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
   supervisorPrinciples?: string
+  supervisorModelSelection?: ModelSelectionConfig | null
+  supervisorIntervalSeconds?: number
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
@@ -157,6 +161,8 @@ export const defaultAppPreferences: AppPreferences = {
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   supervisorPrinciples: '',
+  supervisorModelSelection: null,
+  supervisorIntervalSeconds: 30,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -257,6 +263,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.supervisorPrinciples === 'string'
         ? record.supervisorPrinciples
         : defaultAppPreferences.supervisorPrinciples,
+    supervisorModelSelection: normalizeModelSelection(record.supervisorModelSelection),
+    supervisorIntervalSeconds: [10, 30, 60, 300].includes(record.supervisorIntervalSeconds ?? 0)
+      ? (record.supervisorIntervalSeconds as number)
+      : defaultAppPreferences.supervisorIntervalSeconds,
     taskCompletionNotificationsEnabled:
       typeof record.taskCompletionNotificationsEnabled === 'boolean'
         ? record.taskCompletionNotificationsEnabled
@@ -320,6 +330,33 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
     localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
+  }
+}
+
+function normalizeModelSelection(value: unknown): ModelSelectionConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Partial<ModelSelectionConfig>
+  const modelName = typeof record.modelName === 'string' ? record.modelName.trim() : ''
+  if (!modelName) return null
+  const modelType =
+    record.modelType === 'public' ||
+    record.modelType === 'user' ||
+    record.modelType === 'group' ||
+    record.modelType === 'runtime'
+      ? record.modelType
+      : null
+  const options =
+    record.options && typeof record.options === 'object' && !Array.isArray(record.options)
+      ? Object.fromEntries(
+          Object.entries(record.options).flatMap(([key, option]) =>
+            typeof option === 'string' ? [[key, option]] : []
+          )
+        )
+      : undefined
+  return {
+    modelName,
+    modelType,
+    ...(options ? { options } : {}),
   }
 }
 

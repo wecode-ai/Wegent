@@ -999,7 +999,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeTaskSupportsSupervisor =
     runtimeTaskSummary?.runtime?.toLowerCase() === 'codex'
   const supervisorFeatureAvailable = Boolean(
-    experimentalFeaturesEnabled &&
     services?.runtimeWorkApi &&
     (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
@@ -1118,9 +1117,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       if (!currentRuntimeTask) {
         setPendingSupervisorConfig(config)
+        await updateAppPreferences({
+          ...(modelSelection ? { supervisorModelSelection: modelSelection } : {}),
+          supervisorIntervalSeconds: intervalSeconds,
+        })
         return null
       }
-      return setSupervisorForAddress(currentRuntimeTask, config)
+      const nextSupervisor = await setSupervisorForAddress(currentRuntimeTask, config)
+      await updateAppPreferences({
+        ...(modelSelection ? { supervisorModelSelection: modelSelection } : {}),
+        supervisorIntervalSeconds: intervalSeconds,
+      })
+      return nextSupervisor
     },
     [currentRuntimeTask, setPendingSupervisorConfig, setSupervisorForAddress]
   )
@@ -3236,6 +3244,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onConfigureSupervisor={
         supervisorFeatureAvailable && supervisor ? openSupervisorDialog : undefined
       }
+      onRunSupervisorNow={
+        supervisorFeatureAvailable && supervisor ? runTaskSupervisorNow : undefined
+      }
       rightPanelOpen={rightPanelOpen}
       rightPanelExpanded={rightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
@@ -3763,7 +3774,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 />
                               ) : (
                                 <>
-                                  {experimentalFeaturesEnabled && supervisor && (
+                                  {supervisor && (
                                     <SupervisorSuggestionCards
                                       suggestions={supervisor.suggestions}
                                       onAccept={suggestion =>
@@ -4305,6 +4316,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           open={supervisorDialogOpen}
           supervisor={supervisor}
           initialConfig={pendingSupervisorConfig}
+          defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
+          defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
           models={supervisorModels}
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}

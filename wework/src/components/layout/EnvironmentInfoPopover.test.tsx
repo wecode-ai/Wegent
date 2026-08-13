@@ -115,6 +115,7 @@ describe('EnvironmentInfoPopover', () => {
     document.body.appendChild(popoverContainer)
     portalContainers.push(popoverContainer)
     const onConfigureSupervisor = vi.fn()
+    const onRunSupervisorNow = vi.fn().mockResolvedValue(null)
 
     render(
       <EnvironmentInfoPopover
@@ -126,16 +127,24 @@ describe('EnvironmentInfoPopover', () => {
           mode: 'suggest',
           status: 'active',
           instructions: 'Keep the task focused',
+          intervalSeconds: 30,
+          lastEvaluatedAt: Date.now(),
           suggestions: [],
         }}
         onConfigureSupervisor={onConfigureSupervisor}
+        onRunSupervisorNow={onRunSupervisorNow}
       />
     )
 
     expect(screen.getByTestId('environment-supervisor-section')).toHaveTextContent('监督')
-    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent('监督已开启')
+    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
+      '已检查，无需纠正'
+    )
     await userEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
     expect(onConfigureSupervisor).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent('下次巡检')
+    await userEvent.click(screen.getByTestId('task-supervisor-status-run-now-button'))
+    expect(onRunSupervisorNow).toHaveBeenCalledOnce()
   })
 
   test('shows every workspace root for a multi-folder project', () => {
