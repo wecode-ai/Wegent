@@ -253,7 +253,11 @@ impl RuntimeWorkRpcHandler {
             }
         }
         drop(_operation);
-        if let Some(turn) = turn_to_start {
+        if let Some(mut turn) = turn_to_start {
+            if let Err(error) = self.prepare_deferred_worktree(&mut turn).await {
+                self.finish_scheduled_turn().await;
+                return Err(error);
+            }
             self.start_turn(turn);
         } else {
             log_executor_event(
@@ -262,6 +266,78 @@ impl RuntimeWorkRpcHandler {
             );
         }
         Ok(())
+    }
+
+    pub(super) async fn prepare_deferred_worktree(
+        &self,
+        turn: &mut SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        let Some(source_path) = turn
+            .request
+            .extra
+            .remove("deferred_worktree_source_path")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        else {
+            return Ok(());
+        };
+        let git_ref = turn
+            .request
+            .extra
+            .remove("deferred_worktree_ref")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned));
+        let worktrees = self.worktrees.clone();
+        let worktree_id = turn.local_task_id.clone();
+        let record = tokio::task::spawn_blocking(move || {
+            worktrees.prepare(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                false,
+            )
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_prepare_failed",
+                format!("Worktree preparation task failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        turn.request.project_workspace_path = Some(record.path.clone());
+        self.store.update_task(&turn.local_task_id, |link| {
+            link.workspace_path = record.path.clone();
+            link.updated_at = now_ms();
+        });
+        self.schedule_worktree_prune();
+        Ok(())
+    }
+
+    fn start_queued_turn(&self, mut turn: SpawnTurnRequest) {
+        let handler = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = handler.prepare_deferred_worktree(&mut turn).await {
+                let local_task_id = turn.local_task_id.clone();
+                handler.persist_failed_assistant_message(
+                    &local_task_id,
+                    &turn.request,
+                    &error.message,
+                );
+                handler.store.update_task(&local_task_id, |link| {
+                    link.running = false;
+                    link.thread_status = "failed".to_owned();
+                    link.turn_status = Some("failed".to_owned());
+                    link.updated_at = now_ms();
+                    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                        runtime_handle.remove("queuePosition");
+                        runtime_handle
+                            .insert("lastError".to_owned(), Value::String(error.message.clone()));
+                    }
+                });
+                handler.finish_scheduled_turn().await;
+                return;
+            }
+            handler.start_turn(turn);
+        });
     }
 
     pub(super) fn start_turn(&self, mut turn: SpawnTurnRequest) {
@@ -597,7 +673,7 @@ impl RuntimeWorkRpcHandler {
         }
         drop(_operation);
         for turn in turns {
-            self.start_turn(turn);
+            self.start_queued_turn(turn);
         }
     }
 
@@ -630,7 +706,7 @@ impl RuntimeWorkRpcHandler {
         }
         drop(_operation);
         for turn in turns {
-            self.start_turn(turn);
+            self.start_queued_turn(turn);
         }
     }
 
@@ -661,7 +737,7 @@ impl RuntimeWorkRpcHandler {
         }
         drop(_operation);
         for turn in turns {
-            self.start_turn(turn);
+            self.start_queued_turn(turn);
         }
     }
 

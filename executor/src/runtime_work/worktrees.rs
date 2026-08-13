@@ -147,6 +147,22 @@ impl WorktreeManager {
         self.load().settings
     }
 
+    pub fn planned_path(&self, source_path: &Path, worktree_id: &str) -> Result<PathBuf, String> {
+        validate_worktree_id(worktree_id)?;
+        let source_path = canonical_existing_dir(source_path)?;
+        let repository_name = source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("repository");
+        let state = self.load();
+        let root = PathBuf::from(&state.settings.resolved_worktree_root);
+        ensure_safe_root(&root)?;
+        let path = root.join(worktree_id).join(repository_name);
+        ensure_managed_path(&path, &state.known_roots)?;
+        Ok(path)
+    }
+
     pub fn is_managed_path(&self, path: &Path) -> bool {
         ensure_managed_path(path, &self.load().known_roots).is_ok()
     }
@@ -993,6 +1009,35 @@ mod tests {
                 "{path} is a concrete deletion target"
             );
         }
+    }
+
+    #[test]
+    fn planned_path_does_not_create_the_worktree() {
+        let root = test_directory("wegent-worktree-planned-path-test");
+        let source = root.join("source");
+        let managed_root = root.join("managed");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&managed_root).unwrap();
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        manager
+            .save(&WorktreeState {
+                version: STATE_VERSION,
+                settings: WorktreeSettings {
+                    worktree_root: managed_root.display().to_string(),
+                    resolved_worktree_root: managed_root.display().to_string(),
+                    ..WorktreeSettings::default()
+                },
+                known_roots: vec![managed_root.display().to_string()],
+                records: HashMap::new(),
+            })
+            .unwrap();
+
+        let planned = manager.planned_path(&source, "task-1").unwrap();
+
+        assert_eq!(planned, managed_root.join("task-1/source"));
+        assert!(!planned.exists());
+        assert!(manager.list(&[]).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]

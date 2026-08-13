@@ -291,7 +291,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let payload_has_workspace_path = payload_workspace_path.is_some();
-        let workspace_path = payload_workspace_path
+        let source_workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
                 id_field(&payload, "local_project_id")
@@ -325,7 +325,33 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        if request.project_workspace_path.is_none() {
+        let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
+            let planned_path = self
+                .worktrees
+                .planned_path(Path::new(&source_workspace_path), &local_task_id)
+                .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+            request.extra.insert(
+                "deferred_worktree_source_path".to_owned(),
+                Value::String(source_workspace_path.clone()),
+            );
+            if let Some(branch) = payload
+                .get("execution")
+                .and_then(|execution| execution.get("workspace"))
+                .and_then(|workspace| workspace.get("branch"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|branch| !branch.is_empty())
+            {
+                request.extra.insert(
+                    "deferred_worktree_ref".to_owned(),
+                    Value::String(branch.to_owned()),
+                );
+            }
+            planned_path.display().to_string()
+        } else {
+            source_workspace_path
+        };
+        if request.project_workspace_path.as_deref() != Some(workspace_path.as_str()) {
             request.project_workspace_path = Some(workspace_path.clone());
         }
         self.apply_project_workspace_roots(&mut request);
@@ -402,8 +428,10 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request)
-                .await?;
+            if let Err(error) = self.spawn_claude_turn(local_task_id.clone(), request).await {
+                self.store.delete_task(&local_task_id);
+                return Err(error);
+            }
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
             let mut side_source = side_source_thread(&payload);
@@ -412,18 +440,23 @@ impl RuntimeWorkRpcHandler {
                     source.thread_path = self.thread_path_for_id(&source.thread_id).await;
                 }
             }
-            self.spawn_turn(SpawnTurnRequest {
-                local_task_id: local_task_id.clone(),
-                runtime: "codex".to_owned(),
-                request,
-                direct_thread_id: None,
-                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-                fork_thread_path: side_source.and_then(|source| source.thread_path),
-                resume_thread_id: None,
-                initial_thread_name: Some(title.clone()),
-                initial_thread_goal,
-            })
-            .await?;
+            if let Err(error) = self
+                .spawn_turn(SpawnTurnRequest {
+                    local_task_id: local_task_id.clone(),
+                    runtime: "codex".to_owned(),
+                    request,
+                    direct_thread_id: None,
+                    fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
+                    fork_thread_path: side_source.and_then(|source| source.thread_path),
+                    resume_thread_id: None,
+                    initial_thread_name: Some(title.clone()),
+                    initial_thread_goal,
+                })
+                .await
+            {
+                self.store.delete_task(&local_task_id);
+                return Err(error);
+            }
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -1269,6 +1302,11 @@ impl RuntimeWorkRpcHandler {
             "runtime work queued turn force started",
             &[("local_task_id", local_task_id.clone())],
         );
+        let mut queued_turn = queued_turn;
+        if let Err(error) = self.prepare_deferred_worktree(&mut queued_turn).await {
+            self.finish_scheduled_turn().await;
+            return Err(error);
+        }
         self.start_turn(queued_turn);
         Ok(json!({
             "success": true,
