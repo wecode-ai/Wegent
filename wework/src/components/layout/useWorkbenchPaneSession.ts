@@ -63,7 +63,10 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
-import { hasBrowserAnnotationScope } from '@/lib/browser-annotation-context'
+import {
+  hasBrowserAnnotationScope,
+  isBrowserAnnotationContext,
+} from '@/lib/browser-annotation-context'
 import {
   abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
@@ -230,15 +233,20 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [scopedSetInput]
   )
 
-  const clearCodeCommentsAfterCommit = useCallback((reason: BrowserAnnotationCommand['reason']) => {
-    setCodeCommentContexts([])
-    browserAnnotationCommandSequenceRef.current += 1
-    setBrowserAnnotationCommand({
-      sequence: browserAnnotationCommandSequenceRef.current,
-      type: 'clear_all_and_exit',
-      reason,
-    })
-  }, [])
+  const clearCodeCommentsAfterCommit = useCallback(
+    (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
+      setCodeCommentContexts([])
+      if (!contexts.some(isBrowserAnnotationContext)) return
+
+      browserAnnotationCommandSequenceRef.current += 1
+      setBrowserAnnotationCommand({
+        sequence: browserAnnotationCommandSequenceRef.current,
+        type: 'clear_all_and_exit',
+        reason,
+      })
+    },
+    []
+  )
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
@@ -1908,7 +1916,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               dispatchMessages({ type: 'reset', messages: [] })
             }
             projectChat.resetAttachments()
-            clearCodeCommentsAfterCommit('send_success')
+            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
             restoreInputAfterFailure(visibleSubmittedInput)
           }
@@ -1955,7 +1963,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           if (sent) {
             setInput('')
             projectChat.resetAttachments()
-            clearCodeCommentsAfterCommit('send_success')
+            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
@@ -2080,8 +2088,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [])
 
   const clearCodeComments = useCallback(() => {
-    clearCodeCommentsAfterCommit('composer_clear')
-  }, [clearCodeCommentsAfterCommit])
+    clearCodeCommentsAfterCommit('composer_clear', codeCommentContexts)
+  }, [clearCodeCommentsAfterCommit, codeCommentContexts])
 
   const cancelQueuedMessage = useCallback(
     (id: string) => {
