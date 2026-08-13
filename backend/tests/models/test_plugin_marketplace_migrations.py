@@ -51,11 +51,24 @@ def test_plugin_auto_update_migration_upgrades_and_downgrades_cloud_installs(
         sa.Column("json", sa.JSON),
     )
     metadata.create_all(engine)
-    cloud = {
+    cloud_manual = {
         "spec": {
             "source": {"type": "marketplace"},
             "pluginId": 12,
             "updatePolicy": "manual",
+        }
+    }
+    cloud_auto = {
+        "spec": {
+            "source": {"type": "marketplace"},
+            "pluginId": 13,
+            "updatePolicy": "auto",
+        }
+    }
+    cloud_without_policy = {
+        "spec": {
+            "source": {"type": "marketplace"},
+            "pluginId": 14,
         }
     }
     upload = {
@@ -73,10 +86,24 @@ def test_plugin_auto_update_migration_upgrades_and_downgrades_cloud_installs(
                     "kind": "InstalledPlugin",
                     "namespace": "default",
                     "is_active": True,
-                    "json": cloud,
+                    "json": cloud_manual,
                 },
                 {
                     "id": 2,
+                    "kind": "InstalledPlugin",
+                    "namespace": "default",
+                    "is_active": True,
+                    "json": cloud_auto,
+                },
+                {
+                    "id": 3,
+                    "kind": "InstalledPlugin",
+                    "namespace": "default",
+                    "is_active": True,
+                    "json": cloud_without_policy,
+                },
+                {
+                    "id": 4,
                     "kind": "InstalledPlugin",
                     "namespace": "default",
                     "is_active": True,
@@ -89,8 +116,43 @@ def test_plugin_auto_update_migration_upgrades_and_downgrades_cloud_installs(
         migration.upgrade()
         upgraded = dict(connection.execute(sa.select(kinds.c.id, kinds.c.json)).all())
         assert upgraded[1]["spec"]["updatePolicy"] == "auto"
-        assert upgraded[2]["spec"]["updatePolicy"] == "manual"
+        assert upgraded[2]["spec"]["updatePolicy"] == "auto"
+        assert upgraded[3]["spec"]["updatePolicy"] == "auto"
+        assert upgraded[4]["spec"]["updatePolicy"] == "manual"
 
         migration.downgrade()
         downgraded = dict(connection.execute(sa.select(kinds.c.id, kinds.c.json)).all())
         assert downgraded[1]["spec"]["updatePolicy"] == "manual"
+        assert downgraded[2]["spec"]["updatePolicy"] == "manual"
+        assert downgraded[3]["spec"]["updatePolicy"] == "manual"
+
+
+def test_plugin_failure_count_migration_resets_historical_sync_totals(
+    monkeypatch,
+) -> None:
+    migration = _load_migration(
+        "20260813_b7c6d5e4f3a2_reset_plugin_device_failure_counts.py"
+    )
+    assert migration.down_revision == "8a4c1f2d9e70"
+    engine = sa.create_engine("sqlite://")
+    metadata = sa.MetaData()
+    installations = sa.Table(
+        "plugin_device_installations",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("attempt_count", sa.Integer, nullable=False),
+    )
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            installations.insert(),
+            [{"id": 1, "attempt_count": 9}, {"id": 2, "attempt_count": 1}],
+        )
+        monkeypatch.setattr(migration.op, "get_bind", lambda: connection)
+
+        migration.upgrade()
+
+        counts = connection.execute(
+            sa.select(installations.c.attempt_count).order_by(installations.c.id)
+        ).scalars()
+        assert list(counts) == [0, 0]

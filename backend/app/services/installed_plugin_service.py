@@ -116,6 +116,16 @@ class InstalledPluginService:
             spec["displayName"] = request.displayName
         if request.description is not None:
             spec["description"] = request.description
+        if request.updatePolicy is not None:
+            source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
+            if source.get("type") != "marketplace" or not isinstance(
+                spec.get("pluginId"), int
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Automatic updates require a marketplace plugin",
+                )
+            spec["updatePolicy"] = request.updatePolicy
         row.json["spec"] = spec
         flag_modified(row, "json")
         db.commit()

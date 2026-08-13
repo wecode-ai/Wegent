@@ -16,10 +16,33 @@ interface PluginAutoUpdateDependencies {
   onProgress?: (progress: PluginAutoUpdateProgress) => void
 }
 
-export function marketplaceItemNeedsPluginAutoUpdate(
-  item: Pick<PluginMarketplaceItem, 'updateAvailable' | 'currentDeviceInstallation'>
-): boolean {
+export const PLUGIN_AUTO_UPDATE_FAILURE_LIMIT = 3
+
+type PluginUpdateState = Pick<
+  PluginMarketplaceItem,
+  'updateAvailable' | 'currentDeviceInstallation'
+>
+
+export function marketplaceItemCanRetryPluginUpdate(item: PluginUpdateState): boolean {
   if (item.updateAvailable) return true
+  return hasFailedReleaseGap(item)
+}
+
+export function marketplaceItemNeedsPluginAutoUpdate(item: PluginUpdateState): boolean {
+  if (marketplaceItemHasPausedPluginAutoUpdate(item)) return false
+  return marketplaceItemCanRetryPluginUpdate(item)
+}
+
+export function marketplaceItemHasPausedPluginAutoUpdate(item: PluginUpdateState): boolean {
+  const installation = item.currentDeviceInstallation
+  return Boolean(
+    hasFailedReleaseGap(item) &&
+    installation &&
+    installation.attemptCount >= PLUGIN_AUTO_UPDATE_FAILURE_LIMIT
+  )
+}
+
+function hasFailedReleaseGap(item: PluginUpdateState): boolean {
   const installation = item.currentDeviceInstallation
   return Boolean(
     installation?.state === 'failed' &&
@@ -38,6 +61,9 @@ export async function runPluginAutoUpdate({
   while (true) {
     const batch = await updateBatch()
     if (batch.updatedCount === 0) {
+      if (batch.remainingCount > 0) {
+        throw new Error('Plugin auto-update made no progress')
+      }
       if (totalUpdated > 0 || !syncWhenNoUpdates) return totalUpdated
       await syncDeviceOrThrow(syncDevice)
       return totalUpdated

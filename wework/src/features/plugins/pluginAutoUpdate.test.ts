@@ -1,6 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { PluginAutoUpdateBatchResponse, PluginDeviceSyncResponse } from '@/types/api'
-import { marketplaceItemNeedsPluginAutoUpdate, runPluginAutoUpdate } from './pluginAutoUpdate'
+import {
+  marketplaceItemCanRetryPluginUpdate,
+  marketplaceItemHasPausedPluginAutoUpdate,
+  marketplaceItemNeedsPluginAutoUpdate,
+  runPluginAutoUpdate,
+} from './pluginAutoUpdate'
 
 function batch(updatedCount: number, remainingCount: number): PluginAutoUpdateBatchResponse {
   return {
@@ -75,6 +80,16 @@ describe('runPluginAutoUpdate', () => {
     ).resolves.toBe(0)
     expect(syncDevice).toHaveBeenCalledTimes(1)
   })
+
+  test('fails instead of silently finishing when a batch makes no progress', async () => {
+    const updateBatch = vi.fn(async () => batch(0, 1))
+    const syncDevice = vi.fn(async () => sync(true))
+
+    await expect(runPluginAutoUpdate({ updateBatch, syncDevice })).rejects.toThrow(
+      'Plugin auto-update made no progress'
+    )
+    expect(syncDevice).not.toHaveBeenCalled()
+  })
 })
 
 describe('marketplaceItemNeedsPluginAutoUpdate', () => {
@@ -114,5 +129,26 @@ describe('marketplaceItemNeedsPluginAutoUpdate', () => {
         },
       })
     ).toBe(false)
+  })
+
+  test('pauses automatic retries after three failures but keeps manual retry available', () => {
+    const item = {
+      updateAvailable: true,
+      currentDeviceInstallation: {
+        deviceId: 'device-1',
+        desiredReleaseId: 20,
+        actualReleaseId: 10,
+        state: 'failed' as const,
+        errorCode: 'PLUGIN_SYNC_FAILED',
+        errorMessage: 'sync failed',
+        attemptCount: 3,
+        lastSyncAt: null,
+        updatedAt: '2026-08-12T00:00:00Z',
+      },
+    }
+
+    expect(marketplaceItemNeedsPluginAutoUpdate(item)).toBe(false)
+    expect(marketplaceItemHasPausedPluginAutoUpdate(item)).toBe(true)
+    expect(marketplaceItemCanRetryPluginUpdate(item)).toBe(true)
   })
 })

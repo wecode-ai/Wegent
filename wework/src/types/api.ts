@@ -2232,6 +2232,7 @@ export interface InstalledPluginUpdateRequest {
   displayName?: string
   description?: string
   releaseId?: number
+  updatePolicy?: 'manual' | 'auto'
 }
 
 export interface PluginSubmissionInitRequest {

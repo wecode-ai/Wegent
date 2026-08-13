@@ -29,6 +29,11 @@ interface PluginDetailViewProps {
   backLabel?: string
   onToggle: () => void
   onComponentToggle: (componentKey: string, enabled: boolean) => void
+  autoUpdateEnabled?: boolean
+  autoUpdateSaving?: boolean
+  autoUpdatePaused?: boolean
+  autoUpdateFailureCount?: number
+  onAutoUpdateChange?: (enabled: boolean) => void
   onUninstall: () => void
   primaryActionLabel?: string
   showUninstall?: boolean
@@ -424,6 +429,11 @@ export function PluginDetailView({
   backLabel,
   onToggle,
   onComponentToggle,
+  autoUpdateEnabled = false,
+  autoUpdateSaving = false,
+  autoUpdatePaused = false,
+  autoUpdateFailureCount = 0,
+  onAutoUpdateChange,
   onUninstall,
   primaryActionLabel,
   showUninstall = true,
@@ -547,6 +557,58 @@ export function PluginDetailView({
             {manageAccessLabel || t('workbench.plugins_manage_access', '管理权限')}
           </button>
         )}
+      </div>
+    </section>
+  )
+  const autoUpdateSection = isInstalled && onAutoUpdateChange && (
+    <section className="mt-7 space-y-3" data-testid="plugin-detail-update-policy">
+      <h2 className="text-base font-medium leading-5 text-text-primary">
+        {t('workbench.plugin_detail_updates', '更新设置')}
+      </h2>
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-border/30 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium leading-5 text-text-primary">
+            {t('workbench.plugin_detail_auto_update', '自动更新')}
+          </p>
+          <p className="text-xs leading-4 text-text-muted">
+            {t(
+              'workbench.plugin_detail_auto_update_hint',
+              '启用后，将自动下载并安装通过安全扫描的新版本。'
+            )}
+          </p>
+          {autoUpdatePaused && (
+            <p
+              className="mt-1 text-xs leading-4 text-warning"
+              data-testid={`plugin-auto-update-paused-${plugin.id}`}
+            >
+              {t(
+                'workbench.plugin_detail_auto_update_paused',
+                '自动更新已暂停：连续失败 {{count}} 次。请手动更新后恢复自动重试。',
+                { count: autoUpdateFailureCount }
+              )}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={autoUpdateEnabled}
+          aria-label={t('workbench.plugin_detail_auto_update', '自动更新')}
+          disabled={autoUpdateSaving}
+          data-testid={`plugin-auto-update-toggle-${plugin.id}`}
+          className={[
+            'relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-not-allowed disabled:opacity-40',
+            autoUpdateEnabled ? 'bg-text-primary' : 'bg-border',
+          ].join(' ')}
+          onClick={() => onAutoUpdateChange(!autoUpdateEnabled)}
+        >
+          <span
+            className={[
+              'absolute left-1 top-1 h-4 w-4 rounded-full bg-background shadow-sm transition-transform',
+              autoUpdateEnabled ? 'translate-x-4' : 'translate-x-0',
+            ].join(' ')}
+          />
+        </button>
       </div>
     </section>
   )
@@ -837,6 +899,8 @@ export function PluginDetailView({
         {guideTemplateSection}
 
         {accessScopeSection}
+
+        {autoUpdateSection}
 
         {connectorItems.length > 0 && (
           <section className="mt-7 space-y-3">

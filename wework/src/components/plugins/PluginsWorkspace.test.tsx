@@ -383,10 +383,12 @@ function mockSystemSkillsFetch(
     marketplaceDisplayName: string
     deviceAutoSyncSucceeds: boolean
     marketplaceUpdateAvailable: boolean
+    marketplaceUpdatePolicy: 'manual' | 'auto'
     autoUpdateBatchSizes: number[]
   }> = {}
 ) {
   let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
+  let marketplaceUpdatePolicy = overrides.marketplaceUpdatePolicy ?? 'manual'
   const autoUpdateBatchSizes = [...(overrides.autoUpdateBatchSizes ?? [])]
   let autoUpdateBatchCalls = 0
   let cloudMarketplacePluginInstalled = Boolean(overrides.marketplaceInstalled)
@@ -717,6 +719,7 @@ function mockSystemSkillsFetch(
         visibility: marketplaceRow.visibility,
         pluginId: 101,
         releaseId: 1001,
+        updatePolicy: marketplaceUpdatePolicy,
         componentStates: {},
         components: marketplaceRow.components,
         interface: {
@@ -959,6 +962,17 @@ function mockSystemSkillsFetch(
             })
           }, 10)
         })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'PUT') {
+        const body = init.body ? JSON.parse(String(init.body)) : {}
+        if (body.updatePolicy === 'manual' || body.updatePolicy === 'auto') {
+          marketplaceUpdatePolicy = body.updatePolicy
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(buildInstalledMarketplacePlugin()),
+          })
+        }
       }
       if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'DELETE') {
         cloudMarketplacePluginInstalled = false
@@ -1761,6 +1775,7 @@ describe('PluginsWorkspace', () => {
       marketplaceInstalled: true,
       marketplaceDeviceState: 'installed',
       marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'auto',
       autoUpdateBatchSizes: [5, 1],
       deviceAutoSyncSucceeds: true,
     })
@@ -1774,6 +1789,30 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
       'data-notice-kind',
       'success'
+    )
+  })
+
+  test('lets users explicitly opt in to automatic marketplace plugin updates', async () => {
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdatePolicy: 'manual',
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'))
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ updatePolicy: 'auto' }),
+      })
     )
   })
 

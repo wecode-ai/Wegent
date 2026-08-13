@@ -72,6 +72,8 @@ import {
   withOptimisticDevicePending,
 } from '@/features/plugins/pluginDeviceAutoSync'
 import {
+  marketplaceItemCanRetryPluginUpdate,
+  marketplaceItemHasPausedPluginAutoUpdate,
   marketplaceItemNeedsPluginAutoUpdate,
   runPluginAutoUpdate,
 } from '@/features/plugins/pluginAutoUpdate'
@@ -1302,6 +1304,9 @@ export function PluginsWorkspace({
   const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
     () => new Set()
   )
+  const [updatingPluginPolicyIds, setUpdatingPluginPolicyIds] = useState<Set<string | number>>(
+    () => new Set()
+  )
   const [pluginOperationNotice, setPluginOperationNotice] =
     useState<PluginOperationNoticeState | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingMarketplaceInstall | null>(null)
@@ -1923,6 +1928,56 @@ export function PluginsWorkspace({
       })
   }
 
+  const changePluginAutoUpdatePolicy = (plugin: InstalledPluginItem, enabled: boolean) => {
+    if (!isCloudManagedInstalledPlugin(plugin.raw)) return
+    const updatePolicy = enabled ? 'auto' : 'manual'
+    const pluginId = plugin.id
+    setUpdatingPluginPolicyIds(previous => new Set(previous).add(pluginId))
+    setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+    setInstalledPlugins(previous =>
+      previous.map(item =>
+        String(item.id) === String(pluginId)
+          ? {
+              ...item,
+              raw: {
+                ...item.raw,
+                spec: { ...item.raw.spec, updatePolicy },
+              },
+            }
+          : item
+      )
+    )
+
+    pluginApi
+      .updateInstalledPlugin(pluginId, { updatePolicy }, currentDeviceId)
+      .then(updated => {
+        const nextItem = toInstalledPluginItem(updated)
+        setInstalledPlugins(previous =>
+          previous.map(item => (String(item.id) === String(pluginId) ? nextItem : item))
+        )
+      })
+      .catch(error => {
+        const errorMessage = getErrorMessage(error, 'Unknown error')
+        setInstalledPlugins(previous =>
+          previous.map(item => (String(item.id) === String(pluginId) ? plugin : item))
+        )
+        setPluginMarketplaceState(previous => ({
+          ...previous,
+          error: t('workbench.plugins_update_policy_failed', {
+            error: errorMessage,
+            defaultValue: `无法保存插件更新设置：${errorMessage}`,
+          }),
+        }))
+      })
+      .finally(() => {
+        setUpdatingPluginPolicyIds(previous => {
+          const next = new Set(previous)
+          next.delete(pluginId)
+          return next
+        })
+      })
+  }
+
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     const clearMarketplaceInstall = (
@@ -2307,7 +2362,7 @@ export function PluginsWorkspace({
               plugin => String(plugin.id) === String(item.installedPluginId)
             ) ?? null)
       if (
-        marketplaceItemNeedsPluginAutoUpdate(item) &&
+        marketplaceItemCanRetryPluginUpdate(item) &&
         item.latestReleaseId &&
         item.installedPluginId
       ) {
@@ -3662,6 +3717,10 @@ export function PluginsWorkspace({
               count: updatedCount,
             }),
           })
+        } else {
+          setPluginOperationNotice(current =>
+            current?.id === `plugin-auto-update-${deviceId}` ? null : current
+          )
         }
         markPluginDeviceAutoSyncAttempted(deviceId)
         markPluginDeviceAutoSyncSettled(deviceId)
@@ -4328,6 +4387,14 @@ export function PluginsWorkspace({
       typeof selectedPlugin.raw.spec.sourcePayload?.submissionReviewNote === 'string'
         ? selectedPlugin.raw.spec.sourcePayload.submissionReviewNote
         : null
+    const selectedDeviceInstallation = currentDeviceInstallation(
+      selectedPlugin.raw,
+      currentDeviceId
+    )
+    const selectedAutoUpdatePaused = marketplaceItemHasPausedPluginAutoUpdate({
+      updateAvailable: selectedPlugin.updateAvailable,
+      currentDeviceInstallation: selectedDeviceInstallation,
+    })
     const headerBusy = isUploadingPlugin || submissionStatus === 'pending'
     const openOwnerShare = () => void openCreatedPluginAccess(selectedPlugin)
     const openOwnerPublish = () =>
@@ -4395,6 +4462,17 @@ export function PluginsWorkspace({
           onComponentToggle={(componentKey, enabled) =>
             togglePluginComponent(selectedPlugin.id, componentKey, enabled)
           }
+          autoUpdateEnabled={selectedPlugin.raw.spec.updatePolicy === 'auto'}
+          autoUpdateSaving={updatingPluginPolicyIds.has(selectedPlugin.id)}
+          autoUpdatePaused={
+            selectedPlugin.raw.spec.updatePolicy === 'auto' && selectedAutoUpdatePaused
+          }
+          autoUpdateFailureCount={selectedDeviceInstallation?.attemptCount ?? 0}
+          onAutoUpdateChange={
+            isCloudManagedInstalledPlugin(selectedPlugin.raw)
+              ? enabled => changePluginAutoUpdatePolicy(selectedPlugin, enabled)
+              : undefined
+          }
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
           onManageConnector={slug => void managePluginConnector(slug, selectedPlugin)}
           connectorAuthBySlug={localConnectorAuthBySlug}
@@ -4447,9 +4525,10 @@ export function PluginsWorkspace({
       uninstallingPluginIds.has(detailUninstallId)
     const isActionPending = isInstalling || isUninstalling || isDeviceSyncing
     const canUpdate =
-      marketplaceItemNeedsPluginAutoUpdate(selectedMarketplacePlugin) &&
+      marketplaceItemCanRetryPluginUpdate(selectedMarketplacePlugin) &&
       selectedMarketplacePlugin.installed &&
       selectedMarketplacePlugin.installedPluginId
+    const autoUpdatePaused = marketplaceItemHasPausedPluginAutoUpdate(selectedMarketplacePlugin)
     const showDetailActionMenu =
       isInstalled ||
       (selectedMarketplacePlugin.installedPluginId !== null &&
@@ -4606,6 +4685,21 @@ export function PluginsWorkspace({
               togglePluginComponent(installedDetail.id, componentKey, enabled)
             }
           }}
+          autoUpdateEnabled={installedDetail?.raw.spec.updatePolicy === 'auto'}
+          autoUpdateSaving={
+            installedDetail ? updatingPluginPolicyIds.has(installedDetail.id) : false
+          }
+          autoUpdatePaused={
+            Boolean(installedDetail?.raw.spec.updatePolicy === 'auto') && autoUpdatePaused
+          }
+          autoUpdateFailureCount={
+            selectedMarketplacePlugin.currentDeviceInstallation?.attemptCount ?? 0
+          }
+          onAutoUpdateChange={
+            installedDetail && isCloudManagedInstalledPlugin(installedDetail.raw)
+              ? enabled => changePluginAutoUpdatePolicy(installedDetail, enabled)
+              : undefined
+          }
           onUninstall={() => {
             const marketplaceId =
               typeof selectedMarketplacePlugin.manifest?.marketplaceId === 'string'

@@ -538,23 +538,24 @@ class PluginMarketplaceService:
         user_id: int,
         installed_rows: list[Kind],
     ) -> list[tuple[Kind, Plugin, PluginRelease]]:
+        eligible_rows = self._auto_update_eligible_rows(installed_rows)
+        if not eligible_rows:
+            return []
+        plugins_by_id, releases_by_id = self._load_auto_update_catalog(
+            db, eligible_rows
+        )
+        plugin_ids = list(plugins_by_id)
+        grants_by_plugin_id = self._load_grants_by_plugin_ids(db, plugin_ids)
+        access_context = self._load_user_plugin_access_context(
+            db,
+            user_id=user_id,
+            grants_by_plugin_id=grants_by_plugin_id,
+        )
+
         candidates: list[tuple[Kind, Plugin, PluginRelease]] = []
-        for installed in installed_rows:
-            spec = installed.json.get("spec", {})
-            source = spec.get("source") if isinstance(spec, dict) else None
-            plugin_id = spec.get("pluginId") if isinstance(spec, dict) else None
-            current_release_id = (
-                spec.get("releaseId") if isinstance(spec, dict) else None
-            )
-            if (
-                not isinstance(source, dict)
-                or source.get("type") != "marketplace"
-                or not isinstance(plugin_id, int)
-                or not isinstance(current_release_id, int)
-            ):
-                continue
-            plugin = db.get(Plugin, plugin_id)
-            current_release = db.get(PluginRelease, current_release_id)
+        for installed, plugin_id, current_release_id in eligible_rows:
+            plugin = plugins_by_id.get(plugin_id)
+            current_release = releases_by_id.get(current_release_id)
             if (
                 not plugin
                 or not current_release
@@ -562,19 +563,67 @@ class PluginMarketplaceService:
                 or plugin.status != "published"
                 or not plugin.latest_release_id
                 or plugin.latest_release_id == current_release_id
-                or not self._can_access_plugin(db, plugin=plugin, user_id=user_id)
+                or not self._can_access_plugin(
+                    db,
+                    plugin=plugin,
+                    user_id=user_id,
+                    grants=grants_by_plugin_id.get(plugin.id, []),
+                    access_context=access_context,
+                )
             ):
                 continue
-            release = db.get(PluginRelease, plugin.latest_release_id)
+            release = releases_by_id.get(plugin.latest_release_id)
             if (
-                not release
-                or release.plugin_id != plugin.id
-                or release.status != "ready"
-                or release.scan_status != "passed"
+                release
+                and release.plugin_id == plugin.id
+                and release.status == "ready"
+                and release.scan_status == "passed"
             ):
-                continue
-            candidates.append((installed, plugin, release))
+                candidates.append((installed, plugin, release))
         return candidates
+
+    def _auto_update_eligible_rows(
+        self, installed_rows: list[Kind]
+    ) -> list[tuple[Kind, int, int]]:
+        eligible_rows: list[tuple[Kind, int, int]] = []
+        for installed in installed_rows:
+            spec = installed.json.get("spec", {})
+            source = spec.get("source") if isinstance(spec, dict) else None
+            plugin_id = spec.get("pluginId") if isinstance(spec, dict) else None
+            release_id = spec.get("releaseId") if isinstance(spec, dict) else None
+            if (
+                isinstance(source, dict)
+                and source.get("type") == "marketplace"
+                and spec.get("updatePolicy") == "auto"
+                and isinstance(plugin_id, int)
+                and isinstance(release_id, int)
+            ):
+                eligible_rows.append((installed, plugin_id, release_id))
+        return eligible_rows
+
+    def _load_auto_update_catalog(
+        self,
+        db: Session,
+        eligible_rows: list[tuple[Kind, int, int]],
+    ) -> tuple[dict[int, Plugin], dict[int, PluginRelease]]:
+        plugin_ids = {plugin_id for _, plugin_id, _ in eligible_rows}
+        plugins_by_id = {
+            plugin.id: plugin
+            for plugin in db.query(Plugin).filter(Plugin.id.in_(plugin_ids)).all()
+        }
+        release_ids = {release_id for _, _, release_id in eligible_rows}
+        release_ids.update(
+            plugin.latest_release_id
+            for plugin in plugins_by_id.values()
+            if plugin.latest_release_id
+        )
+        releases_by_id = {
+            release.id: release
+            for release in db.query(PluginRelease)
+            .filter(PluginRelease.id.in_(release_ids))
+            .all()
+        }
+        return plugins_by_id, releases_by_id
 
     def _apply_installed_release(
         self,
@@ -586,9 +635,13 @@ class PluginMarketplaceService:
         spec = installed.json.get("spec", {})
         enabled = bool(spec.get("enabled", True))
         component_states = spec.get("componentStates") or {}
+        update_policy = spec.get("updatePolicy")
+        if update_policy not in {"manual", "auto"}:
+            update_policy = "auto"
         installed.json = self._installed_payload(plugin, release)
         installed.json["spec"]["enabled"] = enabled
         installed.json["spec"]["componentStates"] = component_states
+        installed.json["spec"]["updatePolicy"] = update_policy
 
     def release_package_for_install(
         self, db: Session, *, user_id: int, installed_id: int

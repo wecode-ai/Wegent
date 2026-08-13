@@ -1,6 +1,7 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
 
 import { createHash } from 'node:crypto'
+import { rm } from 'node:fs/promises'
 
 import {
   CLOUD_DEVICE_ID,
@@ -41,7 +42,14 @@ class LocalPluginObjectStorage {
   async start() {
     this.port = await reservePort()
     this.server = createServer((request, response) => {
-      void this.handle(request, response)
+      void this.handle(request, response).catch(error => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        response.writeHead(error instanceof URIError ? 400 : 500)
+        response.end()
+      })
     })
     await new Promise((resolvePromise, reject) => {
       this.server.once('error', reject)
@@ -126,7 +134,10 @@ class LocalPluginObjectStorage {
 
   async stop() {
     if (!this.server) return
-    await new Promise(resolvePromise => this.server.close(resolvePromise))
+    await new Promise(resolvePromise => {
+      this.server.close(resolvePromise)
+      this.server.closeAllConnections?.()
+    })
   }
 }
 
@@ -258,6 +269,7 @@ class RealCloudEnvironment {
       `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
       'utf8'
     )
+    await rm(packagePath, { force: true })
     await runChecked('zip', ['-q', '-r', packagePath, '.'], { cwd: packageRoot })
     const packageBytes = await readFile(packagePath)
     const initialized = await fetchJson(`${this.backendUrl}/api/plugins/submissions/init`, {

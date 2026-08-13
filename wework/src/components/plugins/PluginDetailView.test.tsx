@@ -54,6 +54,62 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test('allows automatic updates to be changed explicitly', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'dev-tools',
+    }
+    plugin.raw.spec.pluginId = 101
+    plugin.raw.spec.updatePolicy = 'manual'
+    const onAutoUpdateChange = vi.fn()
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        autoUpdateEnabled={false}
+        onAutoUpdateChange={onAutoUpdateChange}
+      />
+    )
+
+    const toggle = screen.getByTestId('plugin-auto-update-toggle-local-1')
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(toggle)
+    expect(onAutoUpdateChange).toHaveBeenCalledWith(true)
+  })
+
+  test('shows when automatic updates pause after repeated failures', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'dev-tools',
+    }
+    plugin.raw.spec.pluginId = 101
+    plugin.raw.spec.updatePolicy = 'auto'
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        autoUpdateEnabled
+        autoUpdatePaused
+        autoUpdateFailureCount={3}
+        onAutoUpdateChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
+  })
+
   test('keeps manage access in the availability section and publish new version in the menu', () => {
     const onManageAccess = vi.fn()
     const onMenuPublish = vi.fn()

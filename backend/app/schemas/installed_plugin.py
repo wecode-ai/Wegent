@@ -222,6 +222,7 @@ class InstalledPluginUpdateRequest(BaseModel):
     displayName: Optional[str] = None
     description: Optional[str] = None
     releaseId: Optional[int] = None
+    updatePolicy: Optional[Literal["manual", "auto"]] = None
 
 
 class PluginUploadInfo(BaseModel):

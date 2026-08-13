@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.endpoints.installed_plugins import (
     _can_publish,
@@ -39,6 +40,7 @@ from app.schemas.device import (
     DeviceCapabilitySyncResult,
 )
 from app.schemas.installed_plugin import (
+    InstalledPluginUpdateRequest,
     PluginAccessTarget,
     PluginAccessUpdateRequest,
     PluginSubmissionInitRequest,
@@ -337,6 +339,7 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
     assert installed.spec.origin == "market"
     assert installed.spec.pluginId == initialized.pluginId
     assert installed.spec.releaseId == initialized.releaseId
+    assert installed.spec.updatePolicy == "auto"
     assert installed.spec.visibility == "workspace"
     assert installed.spec.packageRef is not None
     assert (
@@ -825,6 +828,7 @@ def _create_auto_update_install(
     db.flush()
     plugin.latest_release_id = latest.id
     payload = service._installed_payload(plugin, current)
+    payload["spec"]["updatePolicy"] = "auto"
     payload["spec"]["enabled"] = False
     payload["spec"]["componentStates"] = {"skills:review": False}
     installed = Kind(
@@ -900,12 +904,14 @@ def test_auto_update_is_idempotent_and_excludes_invalid_installations(
         index=3,
     )
     invalid_source.json["spec"]["source"]["type"] = "upload"
+    flag_modified(invalid_source, "json")
     invalid_catalog, _, _, _ = _create_auto_update_install(
         test_db,
         user_id=test_user.id,
         index=4,
     )
     invalid_catalog.json["spec"]["releaseId"] = 999999
+    flag_modified(invalid_catalog, "json")
     inaccessible, inaccessible_plugin, _, _ = _create_auto_update_install(
         test_db,
         user_id=test_user.id,
@@ -932,6 +938,66 @@ def test_auto_update_is_idempotent_and_excludes_invalid_installations(
     ):
         test_db.refresh(excluded)
         assert excluded.json["spec"]["version"] == "1.0.0"
+
+
+def test_auto_update_excludes_manual_policy_and_manual_update_preserves_it(
+    test_db, test_user
+):
+    service = PluginMarketplaceService()
+    installed, _, _, latest = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=1,
+    )
+    installed.json["spec"]["updatePolicy"] = "manual"
+    flag_modified(installed, "json")
+    test_db.commit()
+
+    result = service.auto_update_batch(test_db, user_id=test_user.id)
+
+    assert result.updatedCount == 0
+    assert result.remainingCount == 0
+    updated = service.update_release(
+        test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        release_id=latest.id,
+    )
+    assert updated.spec.releaseId == latest.id
+    assert updated.spec.updatePolicy == "manual"
+
+
+def test_installed_plugin_update_policy_requires_explicit_opt_in(test_db, test_user):
+    marketplace_service = PluginMarketplaceService()
+    installed, _, _, latest = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=1,
+    )
+    installed.json["spec"]["updatePolicy"] = "manual"
+    flag_modified(installed, "json")
+    test_db.commit()
+
+    opted_in = installed_plugin_service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        request=InstalledPluginUpdateRequest(updatePolicy="auto"),
+    )
+    result = marketplace_service.auto_update_batch(test_db, user_id=test_user.id)
+
+    assert opted_in.spec.updatePolicy == "auto"
+    assert result.updatedCount == 1
+    test_db.refresh(installed)
+    assert installed.json["spec"]["releaseId"] == latest.id
+
+    opted_out = installed_plugin_service.update_installed_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=installed.id,
+        request=InstalledPluginUpdateRequest(updatePolicy="manual"),
+    )
+    assert opted_out.spec.updatePolicy == "manual"
 
 
 @pytest.mark.parametrize(
@@ -1617,7 +1683,6 @@ def test_ensure_pending_for_device_creates_and_resets_failed(test_db, test_user)
         test_db,
         user_id=test_user.id,
         device_id="new-device",
-        reset_failed=True,
     )
 
     assert changed == 1
@@ -1626,6 +1691,168 @@ def test_ensure_pending_for_device_creates_and_resets_failed(test_db, test_user)
     assert row.state == "pending"
     assert row.error_message == ""
     assert row.desired_release_id == release.id
+
+
+def test_auto_update_stops_after_three_failures_until_manual_retry(test_db, test_user):
+    installed, old_release = _device_install(test_db, test_user.id)
+    new_release = PluginRelease(
+        plugin_id=old_release.plugin_id,
+        version="2.0.0",
+        manifest_json={},
+        interface_json={},
+        storage_key="plugins/device-state-2.0.0.zip",
+        sha256="f" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={},
+    )
+    test_db.add(new_release)
+    test_db.flush()
+    installed.json = {
+        **installed.json,
+        "spec": {**installed.json["spec"], "releaseId": new_release.id},
+    }
+    flag_modified(installed, "json")
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=new_release.id,
+            actual_release_id=old_release.id,
+            state="pending",
+        )
+    )
+    test_db.commit()
+    service = PluginDeviceInstallationService()
+    failed_result = DeviceCapabilitySyncResult(
+        device_id="current-device",
+        success=False,
+        error="download failed",
+    )
+
+    for expected_attempts in (1, 2, 3):
+        service.record_device_sync_result(
+            test_db,
+            user_id=test_user.id,
+            result=failed_result,
+        )
+        row = test_db.query(PluginDeviceInstallation).one()
+        assert row.attempt_count == expected_attempts
+        assert row.actual_release_id == old_release.id
+
+    assert (
+        service.ensure_pending_for_device(
+            test_db,
+            user_id=test_user.id,
+            device_id="current-device",
+        )
+        == 0
+    )
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "failed"
+
+    assert (
+        service.ensure_pending_for_device(
+            test_db,
+            user_id=test_user.id,
+            device_id="current-device",
+            manual_retry=True,
+        )
+        == 1
+    )
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "pending"
+    assert row.attempt_count == 0
+
+
+def test_new_desired_release_resets_auto_update_failure_limit(test_db, test_user):
+    installed, old_release = _device_install(test_db, test_user.id)
+    new_release = PluginRelease(
+        plugin_id=old_release.plugin_id,
+        version="2.0.0",
+        manifest_json={},
+        interface_json={},
+        storage_key="plugins/device-state-2.0.0.zip",
+        sha256="f" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={},
+    )
+    test_db.add(new_release)
+    test_db.flush()
+    installed.json = {
+        **installed.json,
+        "spec": {**installed.json["spec"], "releaseId": new_release.id},
+    }
+    flag_modified(installed, "json")
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=old_release.id,
+            actual_release_id=old_release.id,
+            state="failed",
+            attempt_count=3,
+        )
+    )
+    test_db.commit()
+
+    changed = PluginDeviceInstallationService().ensure_pending_for_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="current-device",
+    )
+
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert changed == 1
+    assert row.desired_release_id == new_release.id
+    assert row.state == "pending"
+    assert row.attempt_count == 0
+
+
+def test_device_payload_preserves_old_release_after_auto_update_circuit_opens(
+    test_db, test_user, monkeypatch
+):
+    installed, _, old_release, new_release = _create_auto_update_install(
+        test_db,
+        user_id=test_user.id,
+        index=15,
+    )
+    test_db.commit()
+    PluginMarketplaceService().auto_update_batch(test_db, user_id=test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=new_release.id,
+            actual_release_id=old_release.id,
+            state="failed",
+            attempt_count=3,
+        )
+    )
+    test_db.commit()
+    monkeypatch.setattr(
+        plugin_package_storage,
+        "presign_download",
+        lambda key: (f"https://objects.example/{key}", datetime.now()),
+    )
+
+    payload = DeviceCapabilitySyncService().build_desired_capabilities(
+        test_db,
+        user_id=test_user.id,
+        device_id="current-device",
+    )
+
+    plugin_payload = payload["plugins"][0]
+    assert plugin_payload["release_id"] == old_release.id
+    assert plugin_payload["version"] == old_release.version
+    assert plugin_payload["checksum"] == f"sha256:{old_release.sha256}"
+    assert plugin_payload["download_path"].endswith(old_release.storage_key)
 
 
 def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
@@ -1647,7 +1874,6 @@ def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
         test_db,
         user_id=test_user.id,
         device_id="new-device",
-        reset_failed=True,
     )
 
     assert changed == 0
@@ -1858,7 +2084,7 @@ def test_reset_failed_update_preserves_materialized_release(test_db, test_user):
         test_db,
         user_id=test_user.id,
         device_id="current-device",
-        reset_failed=True,
+        manual_retry=True,
     )
 
     row = test_db.query(PluginDeviceInstallation).one()
