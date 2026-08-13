@@ -30,6 +30,11 @@ import { waitForFolderPathReady, waitForFolderPickerInitialized } from './worksp
 
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
+// A cold restart must re-sync cloud projects, rescan local workspaces, and
+// re-run project deduplication before the sidebar settles. Under contended CI
+// runners this reconciliation can outlast the standard workbench-ready budget,
+// so post-restart waits get a wider window than in-session waits.
+const RESTART_RECONCILE_TIMEOUT_MS = 300_000
 const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   process.env.WEWORK_E2E_STEP_TIMEOUT_MS,
   10_000,
@@ -1385,6 +1390,7 @@ export {
   stopProcessGroup,
   DESKTOP_READY_TIMEOUT_MS,
   WORKBENCH_READY_TIMEOUT_MS,
+  RESTART_RECONCILE_TIMEOUT_MS,
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_CONTROL_SERVER_PORT,
