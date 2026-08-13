@@ -556,10 +556,12 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v2-' \
+if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v3-' \
   <<<"$desktop_cache_key" ||
+  ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
+    <<<"$desktop_cache_key" ||
   grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_key"; then
-  printf 'Wework desktop E2E Cargo cache key must not vary by command\n' >&2
+  printf 'Wework desktop E2E Cargo cache key must follow the desktop image\n' >&2
   exit 1
 fi
 
