@@ -93,6 +93,13 @@ class LoopNode(Base):
     device_id = Column(String(100), nullable=True)
     is_default = Column(Boolean, nullable=True)
     task_user_id = Column(Integer, nullable=True)
+    assignee_agent_id = Column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="Assigned project chat agent ID; empty when unassigned",
+    )
     task_id = Column(String(255), nullable=True)
     task_title = Column(String(255), nullable=True)
     backend_task_id = Column(
@@ -131,6 +138,7 @@ class LoopNode(Base):
         Index("idx_loop_items_project_type", "cloud_project_id", "resource_type"),
         Index("idx_loop_items_parent_type", "parent_id", "resource_type", "sort_order"),
         Index("idx_loop_items_project_path", "cloud_project_id", "path"),
+        Index("idx_loop_items_assignee_agent_id", "assignee_agent_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
@@ -198,6 +206,36 @@ class LoopItem(LoopNode):
         return [str(tag) for tag in tags]
 
 
+class ProjectChatAgent(LoopNode):
+    """A Wework-owned AI member in one cloud project's group chat."""
+
+    __mapper_args__ = {"polymorphic_identity": "chat_agent"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        super().__init__(**kwargs)
+
+
+class ProjectAutomationRule(LoopNode):
+    """A scheduled automation owned by one Wework project."""
+
+    __mapper_args__ = {"polymorphic_identity": "automation_rule"}
+
+
+class ProjectAutomationRun(LoopNode):
+    """One scheduled or manual occurrence of a project automation."""
+
+    __mapper_args__ = {"polymorphic_identity": "automation_run"}
+
+
+class CloudProjectLocalBinding(LoopNode):
+    __mapper_args__ = {"polymorphic_identity": "local_binding"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("is_default", False)
+        super().__init__(**kwargs)
+
+
 class LoopItemTaskBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "execution"}
 
@@ -231,6 +269,10 @@ class DeliveryAsset(LoopNode):
 
 
 _MYSQL_UNSET_DATETIME = datetime(1970, 1, 1, 0, 0, 1)
+_MYSQL_UNSET_DATETIMES = (
+    datetime(1970, 1, 1, 0, 0, 0),
+    _MYSQL_UNSET_DATETIME,
+)
 _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "cloud_project_id": "",
     "parent_id": "",
@@ -330,12 +372,30 @@ def loop_node_non_nullable_attributes(connection: Connection) -> frozenset[str]:
 
 def loop_datetime_is_unset(column: object) -> object:
     """Match unset datetimes in both nullable and sentinel schemas."""
-    return or_(column.is_(None), column == _MYSQL_UNSET_DATETIME)
+    return or_(column.is_(None), column.in_(_MYSQL_UNSET_DATETIMES))
 
 
 def loop_datetime_value_is_unset(value: datetime | None) -> bool:
     """Match an unset datetime value in both nullable and sentinel schemas."""
-    return value is None or value == _MYSQL_UNSET_DATETIME
+    return value is None or value in _MYSQL_UNSET_DATETIMES
+
+
+def loop_unset_datetime_for_connection(
+    connection: Connection, attribute: str
+) -> datetime | None:
+    """Return the correct unset datetime for the connected schema.
+
+    Some deployed MySQL schemas retain historical ``NOT NULL`` datetime
+    columns. Updates, unlike inserts, do not pass through the insert adapter,
+    so services clearing one of those columns must use its sentinel value.
+    """
+
+    if attribute not in _MYSQL_NON_NULL_DEFAULTS:
+        raise ValueError(f"Unsupported LoopNode datetime attribute: {attribute}")
+    if attribute in loop_node_non_nullable_attributes(connection):
+        value = _MYSQL_NON_NULL_DEFAULTS[attribute]
+        return value if isinstance(value, datetime) else None
+    return None
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)

@@ -109,6 +109,46 @@ def _extract_text_value_from_blocks(blocks: Any) -> str:
     return "\n".join(text_parts)
 
 
+def _decode_tool_output_payloads(tool_output: Any) -> list[dict[str, Any]]:
+    """Decode structured payloads returned through MCP text content."""
+    candidates = tool_output if isinstance(tool_output, list) else [tool_output]
+    payloads: list[dict[str, Any]] = []
+
+    for candidate in candidates:
+        value = candidate
+        if isinstance(candidate, dict) and isinstance(candidate.get("text"), str):
+            value = candidate["text"]
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if isinstance(value, dict):
+            payloads.append(value)
+
+    return payloads
+
+
+def _extract_embedded_result_blocks(blocks: Any) -> list[dict[str, Any]]:
+    """Extract standard message blocks embedded in MCP tool results."""
+    if not isinstance(blocks, list):
+        return []
+
+    embedded_blocks: list[dict[str, Any]] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool":
+            continue
+        for payload in _decode_tool_output_payloads(block.get("tool_output")):
+            result_data = payload.get("result_data")
+            if not isinstance(result_data, dict):
+                continue
+            result_blocks = result_data.get("blocks")
+            if isinstance(result_blocks, list):
+                embedded_blocks = _merge_blocks(embedded_blocks, result_blocks)
+
+    return embedded_blocks
+
+
 def _load_team_crd(team: Kind) -> Optional[Team]:
     """Best-effort load of Team CRD from ORM or lightweight test doubles."""
     team_json = getattr(team, "json", None)
@@ -164,6 +204,7 @@ def prepare_execution_session(
     should_trigger_ai: bool = True,
     bot_ids_override: Optional[List[int]] = None,
     video_config: Optional[Dict[str, Any]] = None,
+    image_config: Optional[Dict[str, Any]] = None,
     prepared_task: Optional[TaskResource] = None,
 ) -> ExecutionSessionSetup:
     """Create or reuse task/session state before building an execution request."""
@@ -338,6 +379,7 @@ def prepare_execution_session(
                 sender_user_id=user.id,
                 result=build_user_subtask_result(
                     video_config=video_config,
+                    image_config=image_config,
                     message_source=resolved_task_params.message_source,
                 ),
             )
@@ -354,6 +396,7 @@ def prepare_execution_session(
             next_message_id=next_message_id,
             parent_id=parent_id,
             video_config=video_config,
+            image_config=image_config,
             message_source=resolved_task_params.message_source,
         )
 
@@ -475,6 +518,18 @@ async def collect_completed_result(
             "[CompletedResult] Added %d blocks to %s result for subtask %s",
             len(blocks),
             normalized_status.lower(),
+            subtask_id,
+        )
+
+    embedded_blocks = _extract_embedded_result_blocks(final_result.get("blocks"))
+    if embedded_blocks:
+        final_result["blocks"] = _merge_blocks(
+            final_result.get("blocks"),
+            embedded_blocks,
+        )
+        logger.info(
+            "[CompletedResult] Promoted %d embedded result blocks for subtask %s",
+            len(embedded_blocks),
             subtask_id,
         )
 

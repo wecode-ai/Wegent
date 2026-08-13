@@ -1,6 +1,12 @@
 import type { RuntimeGoalStatus, RuntimeTaskAddress, RuntimeTaskSummary } from '@/types/api'
 
-export type RuntimeTaskExecutionPhase = 'unknown' | 'idle' | 'starting' | 'running' | 'stopping'
+export type RuntimeTaskExecutionPhase =
+  | 'unknown'
+  | 'idle'
+  | 'queued'
+  | 'starting'
+  | 'running'
+  | 'stopping'
 
 export type RuntimeTaskTurnPhase = 'idle' | 'submitting' | 'awaiting' | 'streaming'
 
@@ -22,6 +28,7 @@ export interface RuntimeTaskLifecycleState {
 export interface RuntimeTaskLifecycleDerivedState {
   executionKnown: boolean
   isRunning: boolean
+  isQueued: boolean
   isTurnActive: boolean
   isThinking: boolean
   isBusy: boolean
@@ -60,6 +67,7 @@ export type RuntimeTaskLifecycleEvent =
   | { type: 'send_requested' }
   | { type: 'send_accepted' }
   | { type: 'send_rejected' }
+  | { type: 'send_blocked_by_active_turn' }
   | { type: 'stop_requested' }
   | { type: 'stop_rejected' }
   | { type: 'executor_started' }
@@ -79,5 +87,6 @@ export interface RuntimeTaskLifecycleStoreSnapshot {
   version: number
   tasks: ReadonlyMap<string, RuntimeTaskLifecycleSnapshot>
   runningTaskKeys: ReadonlySet<string>
+  queuedTaskKeys: ReadonlySet<string>
   unreadTaskKeys: ReadonlySet<string>
 }

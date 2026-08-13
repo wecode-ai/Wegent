@@ -2,11 +2,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AppPreferences } from '@/tauri/appPreferences'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -28,15 +31,26 @@ const defaultPreferences: AppPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: [],
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
 const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 const applyLanguagePreferenceMock = vi.hoisted(() => vi.fn())
-const translateMock = vi.hoisted(() => (key: string, fallback?: string) => fallback ?? key)
+const translateMock = vi.hoisted(
+  () => (key: string, fallback?: string, options?: { modelName?: string }) => {
+    if (key === 'workbench.friendly_task_titles_model_unavailable') {
+      return `${options?.modelName ?? ''}（不可用）`
+    }
+    return fallback ?? key
+  }
+)
 const importExternalContentMock = vi.hoisted(() => vi.fn())
 const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
+const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
+const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -48,6 +62,7 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    defaultWorkspaceTab: 'task',
     systemDragEnabled: true,
     preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
@@ -68,6 +83,8 @@ vi.mock('@/tauri/appPreferences', () => ({
     appshotsPlaySound: true,
     popoutWindowShortcut: 'Alt+Shift+Space',
     popoutWindowProjectlessDefaultEnabled: false,
+    friendlyTaskTitlesEnabled: false,
+    friendlyTaskTitleModel: null,
     quickPhrases: [],
   },
   getAppPreferences: getAppPreferencesMock,
@@ -124,6 +141,8 @@ describe('GeneralSettingsPage', () => {
     applyLanguagePreferenceMock.mockReset()
     importExternalContentMock.mockReset()
     getWegentUsageDisplayMock.mockReset()
+    getRuntimeSettingsMock.mockReset()
+    updateRuntimeSettingsMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -131,6 +150,8 @@ describe('GeneralSettingsPage', () => {
       importedEntries: ['config.toml'],
     })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
+    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 3 })
+    updateRuntimeSettingsMock.mockImplementation(settings => Promise.resolve(settings))
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
     )
@@ -158,6 +179,46 @@ describe('GeneralSettingsPage', () => {
     expect(screen.getByTestId('general-language-en-button')).toBeInTheDocument()
   })
 
+  test('loads and updates the maximum parallel task count', async () => {
+    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {
+              runtimeWorkApi: {
+                getRuntimeSettings: getRuntimeSettingsMock,
+                updateRuntimeSettings: updateRuntimeSettingsMock,
+              },
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('5')
+
+    await userEvent.selectOptions(select, '2')
+
+    await waitFor(() => {
+      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
+    })
+    expect(select).toHaveValue('2')
+  })
+
+  test('uses ten parallel tasks when runtime settings are unavailable', async () => {
+    getRuntimeSettingsMock.mockResolvedValue(undefined)
+    render(<GeneralSettingsPage />)
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('10')
+  })
+
   test('saves and applies the selected language', async () => {
     render(<GeneralSettingsPage />)
 
@@ -169,6 +230,26 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
     })
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  })
+
+  test('persists the selected default workspace tab', async () => {
+    render(<GeneralSettingsPage />)
+
+    const boardButton = await screen.findByTestId('general-default-workspace-tab-board-button')
+    await waitFor(() => expect(boardButton).toBeEnabled())
+    expect(screen.getByTestId('general-default-workspace-tab-task-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(boardButton)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        defaultWorkspaceTab: 'board',
+      })
+    })
+    expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('keeps experimental features off by default and persists enabling them', async () => {
@@ -183,6 +264,90 @@ describe('GeneralSettingsPage', () => {
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
     })
+  })
+
+  test('keeps friendly titles off by default and uses the task model when enabled', async () => {
+    const taskModel = {
+      name: 'gpt-5',
+      type: 'runtime',
+      displayName: 'GPT-5',
+    }
+    const workbench = {
+      projectChat: {
+        models: [taskModel],
+        selectedModel: taskModel,
+      },
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const toggle = await screen.findByTestId('friendly-task-titles-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        friendlyTaskTitlesEnabled: true,
+        friendlyTaskTitleModel: null,
+      })
+    })
+
+    const modelSelect = screen.getByTestId('friendly-task-title-model-select')
+    expect(
+      (within(modelSelect).getByRole('option', { name: '与任务相同' }) as HTMLOptionElement)
+        .selected
+    ).toBe(true)
+    expect(
+      within(modelSelect).queryByRole('option', { name: '请选择模型' })
+    ).not.toBeInTheDocument()
+  })
+
+  test('shows an unavailable saved friendly title model for replacement', async () => {
+    const taskModel = {
+      name: 'gpt-5',
+      type: 'runtime',
+      displayName: 'GPT-5',
+    }
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      friendlyTaskTitlesEnabled: true,
+      friendlyTaskTitleModel: {
+        modelName: 'removed-model',
+        modelType: 'runtime',
+        executionModelId: 'removed-model',
+        executionModelType: 'runtime',
+      },
+    })
+
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            projectChat: {
+              models: [taskModel],
+              selectedModel: taskModel,
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const modelSelect = await screen.findByTestId('friendly-task-title-model-select')
+    expect(
+      (
+        within(modelSelect).getByRole('option', {
+          name: 'removed-model（不可用）',
+        }) as HTMLOptionElement
+      ).selected
+    ).toBe(true)
   })
 
   test('enables the system drag panel by default and persists disabling it', async () => {

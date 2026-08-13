@@ -4,6 +4,7 @@ import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
@@ -14,10 +15,16 @@ import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { PermissionModeSelector } from './PermissionModeSelector'
+import {
+  RUNTIME_PERMISSION_MODE_OPTION,
+  runtimePermissionMode,
+} from '@/features/workbench/runtimePermissionMode'
 
 interface ComposerToolbarProps {
   canSend: boolean
   disabled?: boolean
+  pluginPickerIconOnly?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -26,10 +33,11 @@ interface ComposerToolbarProps {
   onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
+  modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
@@ -61,6 +69,7 @@ const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 export function ComposerToolbar({
   canSend,
   disabled = false,
+  pluginPickerIconOnly = false,
   models,
   selectedModel,
   activeModel,
@@ -73,6 +82,7 @@ export function ComposerToolbar({
   onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
+  modelSelectorOverride,
   onFileSelect,
   planModeActive = false,
   onSetPlanMode,
@@ -146,7 +156,7 @@ export function ComposerToolbar({
         <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
         <PluginPickerMenu
           disabled={disabled}
-          iconOnly={compact}
+          iconOnly={compact || pluginPickerIconOnly}
           onListLocalApps={onListLocalApps}
         />
         {leadingContext}
@@ -166,53 +176,72 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
+        <PermissionModeSelector
+          value={runtimePermissionMode(selectedModelOptions)}
+          disabled={disabled}
+          iconOnly
+          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+        />
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}
           onCompactContext={onCompactContext}
         />
-        {isModelSelectionReady ? (
-          <ModelSelector
-            models={models}
-            selectedModel={selectedModel}
-            selectedModelOptions={selectedModelOptions}
-            nextTurn={isStreaming && modelChangePending}
-            openSignal={modelSelectorOpenSignal}
-            onOpenChange={onModelSelectorOpenChange}
-            disabled={disabled}
-            onSelectModel={onSelectModel}
-            onSelectModelAndOptions={onSelectModelAndOptions}
-            onSelectModelOption={onSelectModelOption}
-            onBlockedModelSelect={onBlockedModelSelect}
-            buttonClassName="opacity-90 hover:opacity-100"
-            maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
-          />
-        ) : (
-          <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
-        )}
+        {modelSelectorOverride ??
+          (isModelSelectionReady ? (
+            <ModelSelector
+              models={models}
+              selectedModel={selectedModel}
+              selectedModelOptions={selectedModelOptions}
+              nextTurn={isStreaming && modelChangePending}
+              openSignal={modelSelectorOpenSignal}
+              onOpenChange={onModelSelectorOpenChange}
+              disabled={disabled}
+              onSelectModel={onSelectModel}
+              onSelectModelAndOptions={onSelectModelAndOptions}
+              onSelectModelOption={onSelectModelOption}
+              onBlockedModelSelect={onBlockedModelSelect}
+              buttonClassName="opacity-90 hover:opacity-100"
+              maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+            />
+          ) : (
+            <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+          ))}
         {showWorkspaceMenu && projectWorkMenuContext ? (
           <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
         ) : null}
         {isStreaming && !canSend ? (
-          <button
-            type="button"
-            data-testid="pause-response-button"
-            onClick={onPause}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
-            aria-label={t('workbench.pause_response', '暂停回复')}
+          <Tooltip
+            label={t('workbench.pause_response', '暂停回复')}
+            align="end"
+            testId="composer-pause-tooltip"
           >
-            <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              data-testid="pause-response-button"
+              onClick={onPause}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
+              aria-label={t('workbench.pause_response', '暂停回复')}
+            >
+              <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
+            </button>
+          </Tooltip>
         ) : isStreaming && canSend ? (
           <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
-            <button
-              type="submit"
-              data-testid={sendButtonTestId}
-              className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
-              aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+            <Tooltip
+              label={t('workbench.send_after_turn', '当前回复结束后发送')}
+              align="end"
+              testId="composer-send-after-turn-tooltip"
             >
-              <ArrowUp className="h-4 w-4" />
-            </button>
+              <button
+                type="submit"
+                data-testid={sendButtonTestId}
+                className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
+                aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </Tooltip>
             <ActionMenu
               ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
               testId="send-mode-menu-button"
@@ -262,15 +291,21 @@ export function ComposerToolbar({
             />
           </div>
         ) : (
-          <button
-            type="submit"
-            data-testid={sendButtonTestId}
-            disabled={!canSend}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
-            aria-label={t('workbench.send_message', '发送消息')}
+          <Tooltip
+            label={t('workbench.send_message', '发送消息')}
+            align="end"
+            testId="composer-send-tooltip"
           >
-            <ArrowUp className="h-4 w-4" />
-          </button>
+            <button
+              type="submit"
+              data-testid={sendButtonTestId}
+              disabled={!canSend}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
+              aria-label={t('workbench.send_message', '发送消息')}
+            >
+              <ArrowUp className="h-4 w-4" />
+            </button>
+          </Tooltip>
         )}
       </div>
     </div>

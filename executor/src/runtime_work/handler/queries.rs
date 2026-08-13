@@ -5,18 +5,39 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn read_codex_thread_with_turns(
+    pub(super) async fn read_codex_recent_turns(&self, thread_id: &str) -> Result<Value, String> {
+        load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id,
+                cursor: None,
+                limit: 1,
+                direction: CodexTranscriptDirection::Descending,
+                full_content: false,
+            },
+        )
+        .await
+        .map(|page| page.thread)
+    }
+
+    pub(super) async fn read_codex_turn_page(
         &self,
         thread_id: &str,
+        limit: usize,
+        direction: CodexTranscriptDirection,
     ) -> Result<Value, String> {
-        let response = self
-            .codex_app_server
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id, "includeTurns": true}),
-            )
-            .await?;
-        Ok(response.get("thread").unwrap_or(&response).clone())
+        load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id,
+                cursor: None,
+                limit,
+                direction,
+                full_content: false,
+            },
+        )
+        .await
+        .map(|page| page.thread)
     }
 
     pub(super) async fn list_tasks(&self) -> Result<Value, AppIpcError> {
@@ -157,10 +178,14 @@ impl RuntimeWorkRpcHandler {
             if matched_local_task_ids.contains(&link.local_task_id) {
                 continue;
             }
-            let Some(thread_id) = link.thread_id.as_deref() else {
-                continue;
+            let messages = if runtime_has_provider_transcript_reader(&link.runtime) {
+                let Some(thread_id) = link.thread_id.as_deref() else {
+                    continue;
+                };
+                self.thread_messages(thread_id).await
+            } else {
+                cached_runtime_transcript_messages(link)
             };
-            let messages = self.thread_messages(thread_id).await;
             if let Some(item) = first_message_search_result(link, &self.device_id, messages, &query)
             {
                 items.push(item);
@@ -182,6 +207,12 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        if before_cursor.is_some() && after_cursor.is_some() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "Codex transcript pagination accepts only one cursor at a time",
+            ));
+        }
         let include_full_content = bool_field(&payload, "includeFullContent")
             .or_else(|| bool_field(&payload, "include_full_content"))
             .unwrap_or(false);
@@ -239,6 +270,7 @@ impl RuntimeWorkRpcHandler {
                 message_count: 0,
                 running: local_execution_running,
             });
+            let pagination = transcript_pagination(&runtime, limit, before_cursor, after_cursor);
             return Ok(transcript_response(TranscriptResponseInput {
                 local_task_id,
                 workspace_path,
@@ -246,9 +278,7 @@ impl RuntimeWorkRpcHandler {
                 messages: Vec::new(),
                 context_usage: None,
                 running: local_execution_running,
-                limit,
-                before_cursor,
-                after_cursor,
+                pagination,
                 full_content: include_full_content,
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));
@@ -270,10 +300,37 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let thread = self
-            .read_codex_thread_with_turns(&thread_id)
-            .await
-            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let CodexTranscriptPage {
+            mut thread,
+            before_cursor: page_before_cursor,
+            after_cursor: page_after_cursor,
+        } = load_codex_transcript(
+            &self.codex_app_server,
+            CodexTranscriptRequest {
+                thread_id: &thread_id,
+                cursor: before_cursor.as_deref().or(after_cursor.as_deref()),
+                limit: limit
+                    .filter(|value| *value > 0)
+                    .unwrap_or(CODEX_TRANSCRIPT_PAGE_SIZE)
+                    .min(CODEX_TRANSCRIPT_PAGE_SIZE),
+                direction: if after_cursor.is_some() {
+                    CodexTranscriptDirection::Ascending
+                } else {
+                    CodexTranscriptDirection::Descending
+                },
+                full_content: include_full_content,
+            },
+        )
+        .await
+        .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let presentation_page_messages = local_link.as_ref().map(|_| {
+            if include_full_content {
+                full_transcript_messages(&thread, &self.device_id)
+            } else {
+                transcript_messages(&thread, &self.device_id)
+            }
+        });
+        self.merge_active_codex_transcript(&local_task_id, &mut thread);
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
@@ -288,15 +345,23 @@ impl RuntimeWorkRpcHandler {
         };
         let mut messages = transcript_messages;
         if let Some(link) = local_link.as_ref() {
-            attach_user_message_presentations(&mut messages, user_message_presentations(link));
+            attach_user_message_presentations_for_page(
+                &mut messages,
+                user_message_presentations(link),
+                presentation_page_messages.as_deref().unwrap_or_default(),
+                page_before_cursor.is_some(),
+                page_after_cursor.is_some(),
+            );
+            remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
-        let running = local_execution_running;
+        attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
+        let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
             local_task_id: &local_task_id,
             thread_id: &thread_id,
-            source: "thread_read",
+            source: "thread_pagination",
             refresh,
             running_hint,
             limit,
@@ -313,16 +378,17 @@ impl RuntimeWorkRpcHandler {
             messages,
             context_usage,
             running,
-            limit: if include_full_content { None } else { limit },
-            before_cursor: if include_full_content {
-                None
-            } else {
-                before_cursor
-            },
-            after_cursor: if include_full_content {
-                None
-            } else {
-                after_cursor
+            pagination: TranscriptPagination::Opaque {
+                before_cursor: if include_full_content {
+                    None
+                } else {
+                    page_before_cursor
+                },
+                after_cursor: if include_full_content {
+                    None
+                } else {
+                    page_after_cursor
+                },
             },
             full_content: include_full_content,
             turn_item_source: TranscriptTurnItemSource::CodexItems,

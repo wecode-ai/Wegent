@@ -35,9 +35,14 @@ def normalize_external_knowledge_refs(raw_refs: list | None) -> list[dict[str, A
                 ExternalKnowledgeRef.model_validate(ref).model_dump(exclude_none=True)
             )
         except Exception:
+            safe_ref = ref if isinstance(ref, dict) else {}
             logger.warning(
-                "Ignoring invalid external knowledge ref: %s",
-                ref,
+                "Ignoring invalid external knowledge ref: "
+                "provider=%s mode=%s id=%s target_type=%s",
+                safe_ref.get("provider"),
+                safe_ref.get("mode"),
+                safe_ref.get("id"),
+                safe_ref.get("target_type"),
                 exc_info=True,
             )
     return normalized_refs
@@ -64,10 +69,20 @@ def merge_external_knowledge_refs(
 ) -> list[dict[str, Any]]:
     """Append refs while enforcing whole-KB and child-target exclusivity."""
     merged = dedup_external_knowledge_refs(existing_refs)
+    incoming = dedup_external_knowledge_refs(incoming_refs)
+    whole_kb_scopes = {
+        _scope_key(ref) for ref in incoming if _target_type(ref) == "knowledge_base"
+    }
+    incoming = [
+        ref
+        for ref in incoming
+        if _target_type(ref) == "knowledge_base"
+        or _scope_key(ref) not in whole_kb_scopes
+    ]
 
-    for incoming in incoming_refs:
-        incoming_scope = _scope_key(incoming)
-        incoming_target_type = _target_type(incoming)
+    for incoming_ref in incoming:
+        incoming_scope = _scope_key(incoming_ref)
+        incoming_target_type = _target_type(incoming_ref)
 
         if incoming_target_type == "knowledge_base":
             merged = [ref for ref in merged if _scope_key(ref) != incoming_scope]
@@ -81,7 +96,7 @@ def merge_external_knowledge_refs(
                 )
             ]
 
-        merged.append(incoming)
+        merged.append(incoming_ref)
         merged = dedup_external_knowledge_refs(merged)
 
     return merged

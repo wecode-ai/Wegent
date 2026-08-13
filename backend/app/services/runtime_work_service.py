@@ -50,6 +50,8 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
+    RuntimeIMNotificationPresenceResponse,
+    RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
     RuntimeProjectRef,
@@ -66,6 +68,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskIMNotificationSubscription,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskQueueReorderRequest,
+    RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
@@ -86,7 +90,10 @@ from app.services.device.command_service import execute_configured_device_comman
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
 from app.services.im.notification_dispatcher import im_notification_dispatcher
-from app.services.im.session_service import im_session_service
+from app.services.im.session_service import (
+    IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
+    im_session_service,
+)
 from app.services.object_storage import object_storage_presign_service
 from app.services.runtime_work_kind_store import (
     deactivate_device_workspace_kind,
@@ -102,7 +109,7 @@ RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
 RUNTIME_SEND_TIMEOUT_SECONDS = 600
-RUNTIME_CANCEL_TIMEOUT_SECONDS = 30
+RUNTIME_CONTROL_TIMEOUT_SECONDS = 30
 RUNTIME_CREATE_TIMEOUT_SECONDS = 600
 RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS = 60
 RUNTIME_FORK_TIMEOUT_SECONDS = 600
@@ -521,11 +528,6 @@ async def revert_runtime_file_changes(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Device returned malformed artifact output",
         )
-    if payload.get("success") is not True:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(payload.get("error") or "Runtime file changes revert failed"),
-        )
     if payload.get("status") == "conflicted":
         updated = _runtime_file_changes_with_status(summary, "conflicted")
         raise HTTPException(
@@ -537,6 +539,11 @@ async def revert_runtime_file_changes(
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail={"file_changes": updated, "message": "Artifact is missing"},
+        )
+    if payload.get("success") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(payload.get("error") or "Runtime file changes revert failed"),
         )
     if payload.get("status") != "reverted":
         raise HTTPException(
@@ -573,20 +580,14 @@ async def send_runtime_message(
         payload["requestUserInputResponse"] = request.request_user_input_response
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=address.device_id,
-            method="runtime.tasks.send",
-            payload=payload,
-            timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
-        )
-    except RuntimeRpcError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    return _runtime_send_response(result, address.local_task_id)
+    return await _dispatch_runtime_send(
+        db=db,
+        user_id=user_id,
+        address=address,
+        payload=payload,
+        request=request,
+        rpc_method="runtime.tasks.send",
+    )
 
 
 async def interrupt_and_send_runtime_message(
@@ -611,11 +612,60 @@ async def interrupt_and_send_runtime_message(
         payload["source"] = request.source.model_dump()
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
+    return await _dispatch_runtime_send(
+        db=db,
+        user_id=user_id,
+        address=address,
+        payload=payload,
+        request=request,
+        rpc_method="runtime.tasks.interrupt_and_send",
+    )
+
+
+async def _dispatch_runtime_send(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    payload: dict[str, Any],
+    request: RuntimeSendRequest,
+    rpc_method: str,
+) -> RuntimeSendResponse:
+    """Send a runtime task message with the required execution request.
+
+    The executor requires ``executionRequest`` to spawn a new turn (it carries
+    model config, user info, skills, etc.). The Wework frontend builds this
+    client-side for direct local sends; the IM continuation path flows through
+    the backend RPC, so we build it here from the default task-mode team.
+    Request-user-input responses use a dedicated executor channel and do not
+    spawn a new turn, so they intentionally omit ``executionRequest``.
+    """
+    if request.request_user_input_response is None:
+        try:
+            execution_request = _build_runtime_send_execution_request(
+                db=db,
+                user_id=user_id,
+                address=address,
+                message=request.message,
+                attachment_ids=request.attachment_ids,
+                additional_context=request.additional_context,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "[RuntimeWork] Failed to build executionRequest for runtime send"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to build runtime execution request",
+            ) from exc
+        payload["executionRequest"] = execution_request.to_dict()
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=address.device_id,
-            method="runtime.tasks.interrupt_and_send",
+            method=rpc_method,
             payload=payload,
             timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
         )
@@ -688,10 +738,11 @@ async def bind_runtime_task_to_im_sessions(
             session=session,
             runtime_task=runtime_task,
         )
+    task_title = await _runtime_task_title_for_address(user_id=user_id, address=address)
     notification = await im_notification_dispatcher.send_task_switched(
         db,
         sessions,
-        address.local_task_id,
+        task_title or address.local_task_id,
     )
     return BindRuntimeTaskIMSessionsResponse(
         address=address,
@@ -755,6 +806,24 @@ async def update_global_im_notification(
         session_key=request.session_key,
     )
     return await get_im_notification_settings(db=db, user_id=user_id)
+
+
+async def update_im_notification_presence(
+    *,
+    user_id: int,
+    request: RuntimeIMNotificationPresenceUpdateRequest,
+) -> RuntimeIMNotificationPresenceResponse:
+    """Refresh Wework foreground presence for away-only global IM delivery."""
+
+    away = await im_session_service.update_im_notification_presence(
+        user_id=user_id,
+        client_id=request.client_id,
+        away=request.away,
+    )
+    return RuntimeIMNotificationPresenceResponse(
+        away=away,
+        ttlSeconds=IM_NOTIFICATION_PRESENCE_TTL_SECONDS,
+    )
 
 
 async def subscribe_runtime_task_im_notification(
@@ -878,23 +947,83 @@ async def cancel_runtime_task(
 ) -> RuntimeTaskCancelResponse:
     """Cancel a running LocalTask through the owning local executor."""
 
+    normalized_address, result = await _call_runtime_task_control(
+        db=db,
+        user_id=user_id,
+        address=address,
+        method="runtime.tasks.cancel",
+    )
+    return _runtime_cancel_response(result, normalized_address)
+
+
+async def force_start_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskCancelResponse:
+    """Force one queued LocalTask to run through the owning executor."""
+
+    normalized_address, result = await _call_runtime_task_control(
+        db=db,
+        user_id=user_id,
+        address=address,
+        method="runtime.tasks.force_start",
+    )
+    return _runtime_cancel_response(result, normalized_address)
+
+
+async def reorder_runtime_task_queue(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskQueueReorderRequest,
+) -> RuntimeTaskQueueReorderResponse:
+    """Move one queued LocalTask to a new persisted execution position."""
+
+    normalized_address, result = await _call_runtime_task_control(
+        db=db,
+        user_id=user_id,
+        address=request,
+        method="runtime.tasks.queue.reorder",
+        payload_patch={"queuePosition": request.queue_position},
+    )
+    response = _runtime_cancel_response(result, normalized_address)
+    return RuntimeTaskQueueReorderResponse(
+        **response.model_dump(by_alias=True),
+        orderedTaskIds=[
+            str(task_id) for task_id in (result.get("orderedTaskIds") or [])
+        ],
+    )
+
+
+async def _call_runtime_task_control(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    method: str,
+    payload_patch: Optional[dict[str, Any]] = None,
+) -> tuple[RuntimeTaskAddress, dict[str, Any]]:
     normalized_address = _normalized_address(address)
     _ensure_owned_device(db, user_id, normalized_address.device_id)
     _touch_workspace_mapping(db, user_id, normalized_address)
+    payload = _runtime_task_address_payload(normalized_address)
+    payload.update(payload_patch or {})
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=normalized_address.device_id,
-            method="runtime.tasks.cancel",
-            payload=_runtime_task_address_payload(normalized_address),
-            timeout_seconds=RUNTIME_CANCEL_TIMEOUT_SECONDS,
+            method=method,
+            payload=payload,
+            timeout_seconds=RUNTIME_CONTROL_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    return _runtime_cancel_response(result, normalized_address)
+    return normalized_address, result
 
 
 async def list_archived_conversations(
@@ -1257,15 +1386,19 @@ async def remove_runtime_workspace(
     device_id = request.device_id.strip()
     workspace_path = normalize_workspace_path(request.workspace_path)
     _ensure_owned_device(db, user_id, device_id)
+    payload = {
+        "runtime": request.runtime,
+        "workspacePath": workspace_path,
+    }
+    project_key = request.project_key.strip() if request.project_key else ""
+    if project_key:
+        payload["projectKey"] = project_key
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=device_id,
             method="runtime.workspaces.remove",
-            payload={
-                "runtime": request.runtime,
-                "workspacePath": workspace_path,
-            },
+            payload=payload,
             timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -2179,6 +2312,49 @@ def _workspace_path_for_runtime_task(
             if isinstance(task_path, str) and task_path.strip():
                 return normalize_workspace_path(task_path)
             return workspace_path
+    return None
+
+
+async def _runtime_task_title_for_address(
+    *,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> Optional[str]:
+    """Best-effort resolution of a runtime task title for notifications."""
+
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.list",
+            payload={},
+            timeout_seconds=RUNTIME_LIST_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError:
+        return None
+    if result.get("success") is False:
+        return None
+    expected_task_id = str(address.local_task_id).strip()
+    if not expected_task_id:
+        return None
+    expected_workspace_path = (
+        normalize_workspace_path(address.workspace_path)
+        if address.workspace_path
+        else None
+    )
+    for workspace in _iter_runtime_workspaces(result):
+        workspace_path = normalize_workspace_path(workspace["workspacePath"])
+        if expected_workspace_path and workspace_path != expected_workspace_path:
+            continue
+        for task in workspace["tasks"]:
+            if not isinstance(task, dict):
+                continue
+            task_id = str(task.get("taskId") or "")
+            if task_id.strip() != expected_task_id:
+                continue
+            title = task.get("title")
+            if isinstance(title, str) and title.strip():
+                return title.strip()
     return None
 
 
@@ -3788,6 +3964,74 @@ def _get_team(db: Session, user_id: int, team_id: int) -> Kind:
             detail="Team not found",
         )
     return team
+
+
+def _get_task_mode_team(db: Session, user_id: int) -> Optional[Kind]:
+    """Resolve the default task-mode team (e.g. wegent-wework#default).
+
+    Mirrors ``IMChannelHandler._get_task_mode_team`` so the IM continuation
+    path uses the same default agent as the Wework workbench.
+    """
+    from app.services.readers.kinds import KindType, kindReader
+
+    config_value = settings.DEFAULT_TEAM_TASK
+    if not config_value or not config_value.strip():
+        return None
+    parts = config_value.strip().split("#", 1)
+    name = parts[0].strip()
+    namespace = parts[1].strip() if len(parts) > 1 else "default"
+    if not name:
+        return None
+    return kindReader.get_by_name_and_namespace(
+        db, user_id, KindType.TEAM, namespace, name
+    )
+
+
+def _build_runtime_send_execution_request(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    message: str,
+    attachment_ids: list[int],
+    additional_context: Optional[dict[str, dict[str, Any]]] = None,
+):
+    """Build an executor request for an IM continuation send.
+
+    The executor's ``runtime.tasks.send`` handler requires an
+    ``executionRequest`` to spawn a new turn (model config, user info,
+    skills, workspace, etc.). The Wework frontend constructs this
+    client-side for direct local sends; the IM continuation path flows
+    through the backend RPC, so we synthesize one here from the default
+    task-mode team — the same agent the workbench uses.
+    """
+    team = _get_task_mode_team(db, user_id)
+    if team is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Default task-mode team is not configured",
+        )
+    target = RuntimeTaskTarget(
+        device_id=address.device_id,
+        workspace_path=address.workspace_path or "",
+        project=None,
+        workspace_source="local_path",
+    )
+    request = RuntimeTaskCreateRequest(
+        deviceId=address.device_id,
+        workspacePath=address.workspace_path,
+        teamId=team.id,
+        runtime="codex",
+        message=message,
+        attachmentIds=attachment_ids,
+        additionalContext=additional_context,
+    )
+    return _build_runtime_execution_request(
+        db=db,
+        user_id=user_id,
+        request=request,
+        target=target,
+    )
 
 
 def _ensure_owned_device(db: Session, user_id: int, device_id: str) -> None:

@@ -152,6 +152,7 @@ describe('useModelSelection', () => {
     ;(getModelTypeFromConfig as jest.Mock).mockReturnValue(undefined)
     ;(getModelNamespaceFromConfig as jest.Mock).mockReturnValue(undefined)
     ;(getGlobalModelPreference as jest.Mock).mockReturnValue(null)
+    ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(null)
   })
 
   it('selects concrete models as force override without showing override text', async () => {
@@ -262,6 +263,87 @@ describe('useModelSelection', () => {
         expect.objectContaining(mockModel),
       ])
     )
+  })
+
+  it('restores the bot preset when the team loads after the model catalog', async () => {
+    ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(['openai'])
+    ;(getModelFromConfig as jest.Mock).mockReturnValue(mockModel.name)
+    ;(getModelTypeFromConfig as jest.Mock).mockReturnValue(mockModel.type)
+    const teamWithBotModel: TeamWithBotDetails = {
+      ...mockTeam,
+      bots: [
+        {
+          bot_id: 1,
+          bot_prompt: '',
+          bot: {
+            agent_config: {
+              bind_model: mockModel.name,
+              bind_model_type: mockModel.type,
+            },
+          },
+        },
+      ],
+    }
+    const modelLoad = mockDeferredModelsLoad([mockModel])
+    const { result, rerender } = renderHook(
+      ({ team }: { team: TeamWithBotDetails | null }) =>
+        useModelSelection({
+          teamId: team?.id ?? null,
+          taskId: null,
+          selectedTeam: team,
+          modelCategoryType: 'video',
+        }),
+      { initialProps: { team: null as TeamWithBotDetails | null } }
+    )
+
+    await modelLoad.resolve()
+    expect(result.current.selectedModel).toBeNull()
+
+    rerender({ team: teamWithBotModel })
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(mockModel))
+    })
+    expect(result.current.forceOverride).toBe(false)
+  })
+
+  it('selects the first available image model instead of the chat default option', async () => {
+    const imageModel: Model = {
+      name: 'gpt-image-2',
+      displayName: 'GPT Image 2',
+      provider: 'openai',
+      modelId: 'gpt-image-2',
+      type: 'public',
+    }
+    const teamWithChatDefault: TeamWithBotDetails = {
+      ...mockTeam,
+      bots: [
+        {
+          bot_id: 1,
+          bot_prompt: '',
+          bot: {
+            agent_config: { bind_model: mockModel.name },
+          },
+        },
+      ],
+    }
+    const modelLoad = mockDeferredModelsLoad([imageModel])
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: teamWithChatDefault.id,
+        taskId: null,
+        selectedTeam: teamWithChatDefault,
+        modelCategoryType: 'image',
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(imageModel))
+    })
+    expect(result.current.showDefaultOption).toBe(false)
+    expect(result.current.isModelRequired).toBe(false)
   })
 
   it('uses the configured model type when restoring an advanced bot preset model', async () => {

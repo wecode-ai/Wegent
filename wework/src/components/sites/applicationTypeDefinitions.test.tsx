@@ -1,15 +1,23 @@
 import { describe, expect, test } from 'vitest'
 import {
-  WEGENT_MINI_PROGRAM_PLUGIN_NAME,
-  WEGENT_SITES_PLUGIN_NAME,
-} from '@/features/plugins/builtinPlugins'
-import { getApplicationTypeDefinition } from './applicationTypeDefinitions'
+  defaultResolvedApplicationTypes,
+  getApplicationTypeDefinition,
+} from './applicationTypeDefinitions'
 
 describe('application type definitions', () => {
-  test.each([
-    ['web', WEGENT_SITES_PLUGIN_NAME],
-    ['miniapp', WEGENT_MINI_PROGRAM_PLUGIN_NAME],
-  ] as const)('maps %s creation to %s', (appType, pluginName) => {
-    expect(getApplicationTypeDefinition(appType)?.create.pluginName).toBe(pluginName)
+  test.each(['web', 'miniapp'] as const)(
+    'keeps %s creation identity out of static UI metadata',
+    appType => {
+      const create = getApplicationTypeDefinition(appType)?.create
+      expect(create?.pluginName).toBeUndefined()
+      expect(create?.marketplaceName).toBeUndefined()
+    }
+  )
+
+  test('does not expose create capability before cloud descriptors or cached descriptors load', () => {
+    expect(defaultResolvedApplicationTypes().map(item => [...item.capabilities])).toEqual([
+      ['publish', 'edit', 'delete'],
+      ['open_experience'],
+    ])
   })
 })

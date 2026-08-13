@@ -19,10 +19,12 @@ vi.mock('@/lib/external-links', () => ({
 const unpublishedSite: Site = {
   app_type: 'web',
   siteid: 'site-1',
+  project_id: 'prj-product',
   taskid: 'task-1',
   username: 'alice',
   name: '产品发布页',
   slug: 'product',
+  custom_domain_prefix: 'product',
   network: 'inner',
   internal_url: 'http://sites.internal/product',
   external_url: null,
@@ -56,13 +58,21 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
           app_type: 'web',
           enabled: true,
           order: 10,
-          capabilities: ['create', 'publish', 'delete'],
+          capabilities: ['create', 'publish', 'edit', 'delete'],
+          create: {
+            plugin_name: 'wegent-sites',
+            marketplace_name: 'wegent',
+          },
         },
         {
           app_type: 'miniapp',
           enabled: true,
           order: 20,
           capabilities: ['create', 'open_experience'],
+          create: {
+            plugin_name: 'weibo-miniapp-h5-develop-agent',
+            marketplace_name: 'wegent',
+          },
         },
       ],
     }),
@@ -84,6 +94,16 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
       publish_status: 'published',
       external_url: 'https://product.example.site',
     }),
+    updateSite: vi
+      .fn()
+      .mockImplementation(
+        (_siteid: string, input: { title?: string; customDomainPrefix?: string | null }) =>
+          Promise.resolve({
+            ...unpublishedSite,
+            name: input.title ?? unpublishedSite.name,
+            custom_domain_prefix: input.customDomainPrefix,
+          })
+      ),
     deleteSite: vi.fn().mockResolvedValue(undefined),
   }
 }
@@ -108,7 +128,10 @@ describe('SitesWorkspace', () => {
     expect(screen.queryByTestId('sites-refresh-button')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-site-menu-item'))
-    expect(onCreate).toHaveBeenCalledWith('web')
+    expect(onCreate).toHaveBeenCalledWith(
+      'web',
+      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
+    )
     expect(screen.getByTestId('sites-search-input')).toBeInTheDocument()
     expect(screen.queryByTestId('sites-retry-button')).not.toBeInTheDocument()
     expect(screen.queryByText('网络')).not.toBeInTheDocument()
@@ -154,12 +177,14 @@ describe('SitesWorkspace', () => {
     render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
     expect(screen.getByTestId('site-network-site-1')).toHaveTextContent('内网')
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
     expect(screen.getByTestId('site-publish-site-1')).toHaveTextContent('发布到外网')
 
     await userEvent.click(screen.getByTestId('site-publish-site-1'))
 
     await waitFor(() => expect(api.updateSiteNetwork).toHaveBeenCalledWith('site-1', 'outer'))
     expect(screen.getByTestId('site-network-site-1')).toHaveTextContent('外网')
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
     expect(screen.getByTestId('site-publish-site-1')).toHaveTextContent('发布到内网')
 
     vi.mocked(api.updateSiteNetwork).mockResolvedValueOnce({
@@ -193,6 +218,7 @@ describe('SitesWorkspace', () => {
     render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
     await userEvent.click(screen.getByTestId('site-publish-site-1'))
 
     await waitFor(() => expect(api.updateSiteNetwork).toHaveBeenCalledWith('site-1', 'outer'))
@@ -200,6 +226,7 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('site-network-site-1')).not.toHaveTextContent(
       'Outer network exposure security audit has been requeued'
     )
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
     expect(screen.getByTestId('site-publish-site-1')).toHaveTextContent('安全检查中')
     expect(screen.getByTestId('site-publish-site-1')).toBeDisabled()
   })
@@ -237,7 +264,27 @@ describe('SitesWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-site-menu-item'))
-    expect(onCreate).toHaveBeenCalledWith('web')
+    expect(onCreate).toHaveBeenCalledWith(
+      'web',
+      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
+    )
+  })
+
+  test('shows a plugin installation notice while creation is preparing chat', async () => {
+    render(
+      <SitesWorkspace
+        api={createApi([])}
+        onCreate={vi.fn()}
+        creatingType="web"
+        createNotice="正在安装应用插件，完成后将进入会话..."
+      />
+    )
+    await screen.findByText('还没有站点')
+
+    expect(screen.getByTestId('sites-create-notice')).toHaveTextContent(
+      '正在安装应用插件，完成后将进入会话...'
+    )
+    expect(screen.getByTestId('sites-create-button')).toBeDisabled()
   })
 
   test('switches to the Mini Program tab through the shared sites API', async () => {
@@ -272,7 +319,13 @@ describe('SitesWorkspace', () => {
     await userEvent.click(screen.getByTestId('sites-create-button'))
     await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
 
-    expect(onCreate).toHaveBeenCalledWith('miniapp')
+    expect(onCreate).toHaveBeenCalledWith(
+      'miniapp',
+      expect.objectContaining({
+        pluginName: 'weibo-miniapp-h5-develop-agent',
+        marketplaceName: 'wegent',
+      })
+    )
   })
 
   test('uses discovered application order and capabilities for navigation and actions', async () => {
@@ -290,12 +343,20 @@ describe('SitesWorkspace', () => {
           enabled: true,
           order: 5,
           capabilities: [],
+          create: {
+            plugin_name: 'weibo-miniapp-h5-develop-agent',
+            marketplace_name: 'wegent',
+          },
         },
         {
           app_type: 'web',
           enabled: true,
           order: 10,
           capabilities: ['create'],
+          create: {
+            plugin_name: 'wegent-sites',
+            marketplace_name: 'wegent',
+          },
         },
       ],
     })
@@ -360,7 +421,13 @@ describe('SitesWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('sites-create-site-menu-item')).toHaveFocus())
     await userEvent.keyboard('{ArrowDown}{Enter}')
 
-    expect(onCreate).toHaveBeenCalledWith('miniapp')
+    expect(onCreate).toHaveBeenCalledWith(
+      'miniapp',
+      expect.objectContaining({
+        pluginName: 'weibo-miniapp-h5-develop-agent',
+        marketplaceName: 'wegent',
+      })
+    )
   })
 
   test('requires confirmation and explains that local files are preserved', async () => {
@@ -378,6 +445,71 @@ describe('SitesWorkspace', () => {
     await userEvent.click(screen.getByTestId('site-delete-cancel-button'))
     expect(screen.queryByTestId('site-delete-dialog')).not.toBeInTheDocument()
     expect(api.deleteSite).not.toHaveBeenCalled()
+  })
+
+  test('continues development from a site row action', async () => {
+    const api = createApi()
+    const onContinueDevelopment = vi.fn()
+    render(
+      <SitesWorkspace api={api} onCreate={vi.fn()} onContinueDevelopment={onContinueDevelopment} />
+    )
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-continue-development-site-1'))
+
+    expect(onContinueDevelopment).toHaveBeenCalledWith(
+      unpublishedSite,
+      expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
+    )
+  })
+
+  test('edits a site title and custom domain prefix from the row menu', async () => {
+    const api = createApi()
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    await userEvent.click(screen.getByTestId('site-edit-menu-item-site-1'))
+
+    expect(screen.getByTestId('site-edit-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('site-edit-title-input')).toHaveValue('产品发布页')
+    expect(screen.getByTestId('site-edit-domain-prefix-input')).toHaveValue('product')
+
+    await userEvent.clear(screen.getByTestId('site-edit-title-input'))
+    await userEvent.type(screen.getByTestId('site-edit-title-input'), 'Docs Site')
+    await userEvent.clear(screen.getByTestId('site-edit-domain-prefix-input'))
+    await userEvent.type(screen.getByTestId('site-edit-domain-prefix-input'), 'Docs')
+    await userEvent.click(screen.getByTestId('site-edit-save-button'))
+
+    await waitFor(() =>
+      expect(api.updateSite).toHaveBeenCalledWith('site-1', {
+        title: 'Docs Site',
+        customDomainPrefix: 'docs',
+      })
+    )
+    expect(await screen.findByText('Docs Site')).toBeInTheDocument()
+    expect(screen.queryByTestId('site-edit-dialog')).not.toBeInTheDocument()
+  })
+
+  test('keeps the edit dialog open when metadata saving fails', async () => {
+    const api = createApi()
+    vi.mocked(api.updateSite).mockRejectedValueOnce(
+      new Error('custom_domain_prefix is already in use')
+    )
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    await userEvent.click(screen.getByTestId('site-edit-menu-item-site-1'))
+    await userEvent.clear(screen.getByTestId('site-edit-domain-prefix-input'))
+    await userEvent.type(screen.getByTestId('site-edit-domain-prefix-input'), 'taken')
+    await userEvent.click(screen.getByTestId('site-edit-save-button'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'custom_domain_prefix is already in use'
+    )
+    expect(screen.getByTestId('site-edit-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('site-row-site-1')).toHaveTextContent('产品发布页')
   })
 
   test('removes only the confirmed site after the API succeeds', async () => {

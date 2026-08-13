@@ -10,25 +10,30 @@ This directory contains YAML configuration files for initializing the Wegent sys
 
 1. **Auto-scan**: On startup, the backend scans `INIT_DATA_DIR` (default: `/app/init_data`) for all `.yaml` and `.yml` files
 2. **Auto-apply**: All resources are loaded and checked against the database
-3. **Create-only**: Resources are **only created if they don't exist** - existing resources are **skipped**
-4. **User modifications preserved**: Any changes made through the UI/API are **never overwritten** on restart
-5. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
+3. **Create-only resources**: Existing YAML resources and unversioned Skills are **skipped**
+4. **Versioned Skill upgrades**: An existing built-in Skill is updated in place only when the packaged `version` is newer
+5. **User modifications preserved**: Same-version resources are never overwritten on restart
+6. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
 
 ### ⚠️ Important: Non-Destructive Initialization
 
-**The initialization is create-only, NOT create-or-update.**
+**YAML resources remain create-only. Built-in Skills opt into upgrades by raising their version.**
 
 - ✅ First startup: Creates all resources from YAML files
 - ✅ User modifies a resource (e.g., edits a Ghost's system prompt)
-- ✅ Service restart: **User's modifications are preserved** - YAML file is ignored for that resource
-- ❌ YAML changes after first startup: **Not applied to existing resources**
+- ✅ Service restart with the same Skill version: **User's modifications are preserved**
+- ✅ Built-in Skill package with a higher version: the existing public Skill is updated in place, preserving its ID and references
+- ❌ YAML changes after first startup: **Not applied to existing YAML resources**
 
 This design ensures:
-- User customizations are never lost
+
+- User-owned resources and same-version Skill customizations are preserved
+- Versioned public built-in Skills can receive source-controlled fixes
 - Safe to restart services without data loss
-- YAML files serve as initial templates only
+- YAML files remain initial templates only
 
 If you want to update an existing resource to match YAML:
+
 1. Delete the resource through the UI/API
 2. Restart the service (it will be recreated from YAML)
 3. Or manually update it through the UI/API
@@ -67,7 +72,7 @@ kind: <ResourceType>
 metadata:
   name: <resource-name>
   namespace: <namespace>
-  user_id: <user-id>  # Optional, defaults to admin user
+  user_id: <user-id> # Optional, defaults to admin user
 spec:
   # Resource-specific configuration
 status:
@@ -148,7 +153,7 @@ No local code repository is required - the image contains all default resources 
 
 ### Optional built-in plugins
 
-To include the external `wegent-sites` and `wegent-mini-program` plugins in a
+To include the external `wegent-sites` and `weibo-miniapp-h5-develop-agent` plugins in a
 Backend image, stage the available plugins into `init_data/plugins`:
 
 ```bash
@@ -192,12 +197,14 @@ image build.
 To override the built-in init data with your own configuration:
 
 1. Create a custom directory with your YAML files:
+
    ```bash
    mkdir custom_init_data
    cp my-custom-resources.yaml custom_init_data/
    ```
 
 2. Uncomment and modify the volume mount in `docker-compose.yml`:
+
    ```yaml
    backend:
      volumes:
@@ -215,8 +222,8 @@ Control initialization behavior with these environment variables:
 
 ```yaml
 environment:
-  INIT_DATA_ENABLED: "True"   # Enable/disable initialization
-  INIT_DATA_DIR: /app/init_data  # Directory path (default)
+  INIT_DATA_ENABLED: "True" # Enable/disable initialization
+  INIT_DATA_DIR: /app/init_data # Directory path (default)
 ```
 
 ## Advantages
@@ -255,15 +262,18 @@ INIT_DATA_ENABLED=False
 ### Common Issues
 
 **Issue**: Resources not created
+
 - Check logs for errors
 - Verify YAML syntax is valid
 - Ensure `metadata.name` and `metadata.namespace` are set
 
 **Issue**: Resources duplicated
+
 - Resources are identified by `(user_id, kind, name, namespace)`
 - Check if any of these fields differ from existing resources
 
 **Issue**: Directory not found
+
 - Ensure `INIT_DATA_DIR` path exists
 - Check volume mount in `docker-compose.yml`
 

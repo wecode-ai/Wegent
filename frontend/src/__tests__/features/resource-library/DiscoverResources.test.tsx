@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { HTMLAttributes, ReactNode } from 'react'
+import { useState, type HTMLAttributes, type ReactNode } from 'react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { DiscoverResources } from '@/features/resource-library/components/DiscoverResources'
@@ -286,6 +286,57 @@ describe('DiscoverResources', () => {
       cursor: undefined,
       limit: 20,
     })
+  })
+
+  it('shows an external source after Featured and switches to its inline content', async () => {
+    function SkillMarketplace() {
+      const [activeMarketplaceKey, setActiveMarketplaceKey] = useState<string | null>(null)
+      return (
+        <DiscoverResources
+          resourceType="skill"
+          systemOnly
+          externalMarketplaces={[
+            {
+              key: 'community',
+              label: 'Community Hub',
+              content: <div data-testid="community-marketplace-content">Community search</div>,
+            },
+            {
+              key: 'partner',
+              label: 'Partner Skills',
+              content: <div data-testid="partner-marketplace-content">Partner search</div>,
+            },
+          ]}
+          activeExternalMarketplaceKey={activeMarketplaceKey}
+          onExternalMarketplaceChange={setActiveMarketplaceKey}
+        />
+      )
+    }
+
+    render(<SkillMarketplace />)
+
+    const featured = await screen.findByTestId('marketplace-tag-filter-all')
+    const category = screen.getByTestId('marketplace-tag-filter-technical_development')
+    const divider = screen.getByTestId('marketplace-source-divider')
+    const externalSource = screen.getByTestId('marketplace-external-source-community')
+    const partnerSource = screen.getByTestId('marketplace-external-source-partner')
+    expect(category.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(divider.compareDocumentPosition(externalSource)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(externalSource.compareDocumentPosition(partnerSource)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+
+    fireEvent.click(partnerSource)
+
+    expect(screen.getByTestId('partner-marketplace-content')).toBeInTheDocument()
+    expect(partnerSource).toHaveAttribute('aria-pressed', 'true')
+    expect(externalSource).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByTestId('resource-library-search-input')).not.toBeInTheDocument()
+
+    fireEvent.click(featured)
+
+    expect(screen.queryByTestId('partner-marketplace-content')).not.toBeInTheDocument()
+    expect(featured).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('includes regular marketplace resources after selecting a category', async () => {
@@ -643,7 +694,7 @@ describe('DiscoverResources', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '去编码 Coding Agent' }))
 
-    expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=83')
+    expect(mockPush).toHaveBeenCalledWith('/chat?teamId=83&agent=code')
     expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
   })
 
@@ -713,47 +764,75 @@ describe('DiscoverResources', () => {
     expect(mockToast).not.toHaveBeenCalled()
   })
 
-  it('opens an installed marketplace coding agent in code mode', async () => {
-    mockResourceLibraryApi.listListings.mockResolvedValue({
-      items: [
-        createListing({
-          id: 84,
-          resource_type: 'agent',
-          name: 'published-code-agent',
-          display_name: 'Published Code Agent',
-          publisher_user_id: 3,
-          bind_modes: ['code'],
-        }),
-      ],
-      has_more: false,
-      next_cursor: null,
-      limit: 20,
-    })
-    mockResourceLibraryApi.installListing.mockResolvedValue({
-      id: 11,
-      listing_id: 84,
-      version_id: 10,
-      user_id: 2,
-      resource_type: 'agent',
-      installed_kind_id: 14,
-      installed_reference: {
-        namespace: 'default',
-        name: 'published-code-agent',
-        team_id: 129,
-      },
-      install_status: 'installed',
-      installed_at: '2026-05-27T00:00:00',
-      updated_at: '2026-05-27T00:00:00',
-    })
+  it.each([
+    {
+      bindModes: ['code'],
+      listingId: 84,
+      teamId: 129,
+      name: 'Published Code Agent',
+      actionName: '去编码 Published Code Agent',
+      expectedHref: '/chat?teamId=129&agent=code',
+    },
+    {
+      bindModes: ['image'],
+      listingId: 85,
+      teamId: 130,
+      name: 'Published Image Agent',
+      actionName: '去对话 Published Image Agent',
+      expectedHref: '/chat?teamId=130&mode=image',
+    },
+    {
+      bindModes: ['video'],
+      listingId: 86,
+      teamId: 131,
+      name: 'Published Video Agent',
+      actionName: '去对话 Published Video Agent',
+      expectedHref: '/chat?teamId=131&mode=video',
+    },
+  ])(
+    'opens an installed marketplace agent in its bound mode',
+    async ({ bindModes, listingId, teamId, name, actionName, expectedHref }) => {
+      mockResourceLibraryApi.listListings.mockResolvedValue({
+        items: [
+          createListing({
+            id: listingId,
+            resource_type: 'agent',
+            name: `published-${bindModes[0]}-agent`,
+            display_name: name,
+            publisher_user_id: 3,
+            bind_modes: bindModes,
+          }),
+        ],
+        has_more: false,
+        next_cursor: null,
+        limit: 20,
+      })
+      mockResourceLibraryApi.installListing.mockResolvedValue({
+        id: 11,
+        listing_id: listingId,
+        version_id: 10,
+        user_id: 2,
+        resource_type: 'agent',
+        installed_kind_id: 14,
+        installed_reference: {
+          namespace: 'default',
+          name: `published-${bindModes[0]}-agent`,
+          team_id: teamId,
+        },
+        install_status: 'installed',
+        installed_at: '2026-05-27T00:00:00',
+        updated_at: '2026-05-27T00:00:00',
+      })
 
-    render(<DiscoverResources resourceType="agent" />)
+      render(<DiscoverResources resourceType="agent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '去编码 Published Code Agent' }))
+      fireEvent.click(await screen.findByRole('button', { name: actionName }))
 
-    await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=129')
-    })
-  })
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith(expectedHref)
+      })
+    }
+  )
 
   it('does not offer globally available system agents to a group', async () => {
     mockResourceLibraryApi.listListings.mockResolvedValue({

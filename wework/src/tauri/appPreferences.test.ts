@@ -14,6 +14,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 const mergedDefaultPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -36,6 +37,8 @@ const mergedDefaultPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: [
     {
       id: 'default-summary-progress',
@@ -54,6 +57,32 @@ const mergedDefaultPreferences = {
       title: '持续完成这个目标',
       content: '持续推进这个目标，直到真正完成',
       mode: 'goal',
+    },
+  ],
+  localHarnesses: [
+    {
+      id: 'opencode',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
+    },
+    {
+      id: 'claude_code',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
+    },
+    {
+      id: 'kimi_code',
+      enabled: true,
+      executablePath: null,
+      args: [],
+      env: {},
+      permissionMode: 'default',
     },
   ],
 }
@@ -91,6 +120,22 @@ describe('appPreferences', () => {
     invokeMock.mockResolvedValue({ language: 'fr' })
 
     const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+  })
+
+  test('normalizes the default workspace tab preference', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'board' })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      defaultWorkspaceTab: 'board',
+    })
+
+    invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'unsupported' })
 
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })

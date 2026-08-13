@@ -11,13 +11,14 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
+import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseType,
   KnowledgeBaseUpdate,
-  SummaryModelRef,
 } from '@/types/knowledge'
 import type { MigrationTargetGroup } from '../components/MigrateKnowledgeBaseDialog'
 
@@ -32,7 +33,6 @@ interface SidebarLike {
 
 interface UseKnowledgeBaseDialogsParams {
   sidebar: SidebarLike
-  saveSummaryModelToPreference: (summaryModelRef: SummaryModelRef | null | undefined) => void
   reloadGroupKbs: () => void
 }
 
@@ -83,7 +83,6 @@ export interface UseKnowledgeBaseDialogsReturn {
 
 export function useKnowledgeBaseDialogs({
   sidebar,
-  saveSummaryModelToPreference,
   reloadGroupKbs,
 }: UseKnowledgeBaseDialogsParams): UseKnowledgeBaseDialogsReturn {
   const router = useRouter()
@@ -146,6 +145,28 @@ export function useKnowledgeBaseDialogs({
 
         const kbType = data.kb_type || createKbType
 
+        // A code wiki is created through its own endpoint: it needs a repository,
+        // passes a repository-access gate, and starts generating straight away.
+        // Everything after that point is the same knowledge base as any other.
+        if (kbType === 'code_wiki') {
+          // The whole payload, not the repository fields plus whatever was
+          // remembered: a code wiki is an ordinary knowledge base with a repository
+          // attached, and hand-picking here is what dropped the summary settings and
+          // left the retrieval config to be auto-resolved instead of taken from the
+          // form. `data` already carries every field the dialog collected.
+          const wiki = await createCodeWiki({
+            namespace,
+            data,
+          })
+          setShowCreateDialog(false)
+          resetCreateDialogState()
+          await sidebar.refreshAll()
+          // Straight into the reader: generation has already started, and the empty
+          // state there shows its progress.
+          router.push(buildKbUrl(namespace, wiki.name, false))
+          return
+        }
+
         const { createKnowledgeBase } = await import('@/apis/knowledge')
         await createKnowledgeBase({
           name: data.name,
@@ -170,9 +191,6 @@ export function useKnowledgeBaseDialogs({
           multimodal_analysis_image_prompt: data.multimodal_analysis_image_prompt,
         })
 
-        if (data.summary_enabled && data.summary_model_ref) {
-          saveSummaryModelToPreference(data.summary_model_ref)
-        }
         setShowCreateDialog(false)
         resetCreateDialogState()
 
@@ -193,9 +211,9 @@ export function useKnowledgeBaseDialogs({
       createGroupName,
       createKbType,
       sidebar,
-      saveSummaryModelToPreference,
       reloadGroupKbs,
       resetCreateDialogState,
+      router,
     ]
   )
 
@@ -207,17 +225,13 @@ export function useKnowledgeBaseDialogs({
         const { updateKnowledgeBase } = await import('@/apis/knowledge')
         await updateKnowledgeBase(editingKb.id, data)
 
-        if (data.summary_enabled && data.summary_model_ref) {
-          saveSummaryModelToPreference(data.summary_model_ref)
-        }
-
         await sidebar.refreshAll()
         setEditingKb(null)
       } finally {
         setIsUpdating(false)
       }
     },
-    [editingKb, sidebar, saveSummaryModelToPreference]
+    [editingKb, sidebar]
   )
 
   const handleDelete = useCallback(async () => {

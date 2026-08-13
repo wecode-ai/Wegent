@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    external_tasks,
     feedback,
     groups,
     health,
@@ -28,10 +29,12 @@ from app.api.endpoints import (
     knowledge_transfer,
     knowledge_video_upload,
     local_executor,
+    loop_item_executions,
     mcp_providers,
     oidc,
     openapi_responses,
     pet,
+    project_automations,
     projects,
     prompt_optimization,
     quota,
@@ -98,6 +101,9 @@ from app.api.endpoints.internal import (
 from app.api.endpoints.internal import (
     object_storage_router,
     rag_content_router,
+)
+from app.api.endpoints.internal import robot_queue as internal_robot_queue
+from app.api.endpoints.internal import (
     services_router,
     skills_router,
     tables_router,
@@ -142,6 +148,21 @@ api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(
     cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(
+    project_automations.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-automations"],
+)
+api_router.include_router(
+    loop_item_executions.router,
+    prefix="/v1/cloud-projects",
+    tags=["cloud-projects"],
+)
+api_router.include_router(
+    loop_item_executions.claim_router,
+    prefix="/v1",
+    tags=["cloud-projects"],
 )
 api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
 api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
@@ -194,7 +215,6 @@ api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
 )
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
-api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
 )
@@ -251,6 +271,11 @@ api_router.include_router(
     knowledge_open.router,
     prefix="/knowledge",
     tags=["knowledge-open"],
+)
+api_router.include_router(
+    external_tasks.router,
+    prefix="/external/tasks",
+    tags=["external-tasks"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
@@ -349,6 +374,9 @@ api_router.include_router(
 )
 api_router.include_router(
     callback_router, prefix="/internal", tags=["internal-callback"]
+)
+api_router.include_router(
+    internal_robot_queue.router, prefix="/internal", tags=["internal-robot-queue"]
 )
 api_router.include_router(
     internal_attachments_router,

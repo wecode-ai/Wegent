@@ -57,7 +57,7 @@ export interface AnalyticsEventMap {
   }
   board_view_opened: {
     source: TelemetryDataSource
-    view: 'board' | 'table' | 'files' | 'manage'
+    view: 'board' | 'table' | 'files' | 'automation' | 'manage'
   }
   board_item_created: {
     has_parent: boolean
@@ -181,6 +181,7 @@ export interface AnalyticsEventMap {
       | 'open'
       | 'move'
       | 'update'
+      | 'edit'
       | 'rename'
       | 'save_grouping'
       | 'member_invite'
@@ -373,7 +374,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   telemetry_preference_changed: { enabled: [true] },
   board_view_opened: {
     source: ['local', 'cloud', 'unknown'],
-    view: ['board', 'table', 'files', 'manage'],
+    view: ['board', 'table', 'files', 'automation', 'manage'],
   },
   board_item_created: {
     has_parent: [true, false],
@@ -476,6 +477,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'open',
       'move',
       'update',
+      'edit',
       'rename',
       'save_grouping',
       'member_invite',

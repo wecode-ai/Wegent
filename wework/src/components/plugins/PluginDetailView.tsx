@@ -10,21 +10,21 @@ import {
   Sparkles,
   TerminalSquare,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { resolvePluginLogo } from './plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
+import type { ResolvedAppearanceMode } from '@/features/appearance/types'
+import { resolvePreferredPluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
-import { buildPluginGuidePresentation, inferPluginGuideKind } from './plugin-guide-presentation'
-import { PluginUseCaseGuideDialog } from './plugin-dialogs/PluginUseCaseGuideDialog'
+import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
-  projectName?: string | null
   onBack: () => void
   backLabel?: string
   onToggle: () => void
@@ -49,7 +49,11 @@ interface PluginDetailViewProps {
   pluginVisibility?: 'personal' | 'workspace' | 'public' | null
   shareGrantUserCount?: number
   shareGrantNamespaceCount?: number
+  manageAccessLabel?: string
   onManageAccess?: () => void
+  menuPublishLabel?: string
+  onMenuPublish?: () => void
+  menuPublishDisabled?: boolean
   submissionStatus?:
     | 'uploading'
     | 'scanning'
@@ -64,7 +68,6 @@ interface PluginDetailViewProps {
   shareRecipient?: boolean
   primaryActionIcon?: 'try' | 'install' | 'none'
   actionMenuBeforePrimary?: boolean
-  hasConversationContext?: boolean
 }
 
 interface DetailComponentItem {
@@ -184,11 +187,11 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
   ]
 }
 
-function installedPluginLogo(plugin: InstalledPluginItem) {
-  return resolvePluginLogo({
+function installedPluginLogo(plugin: InstalledPluginItem, appearanceMode: ResolvedAppearanceMode) {
+  return resolvePreferredPluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey || plugin.name,
-    logo: plugin.raw.spec.interface?.logo,
-    composerIcon: plugin.raw.spec.interface?.composerIcon,
+    appearanceMode,
+    interfaces: [plugin.raw.spec.interface],
   })
 }
 
@@ -202,10 +205,33 @@ function pluginDisplayDescription(plugin: InstalledPluginItem): string {
 
 interface PluginGuideExample {
   id: string
-  title: string
   prompt: string
-  description: string
-  logoUrl?: string | null
+}
+
+function escapeGuidePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function pluginGuideDisplayPrompt(pluginName: string, prompt: string): string {
+  const normalizedPrompt = prompt.trim()
+  const normalizedName = pluginName.trim()
+  if (!normalizedPrompt || !normalizedName) return normalizedPrompt
+
+  const pluginPattern = escapeGuidePattern(normalizedName)
+  const prefixes = [
+    new RegExp(`^use\\s+${pluginPattern}\\s+to\\s+`, 'i'),
+    new RegExp(`^use\\s+${pluginPattern}\\s+`, 'i'),
+    new RegExp(`^使用\\s*${pluginPattern}\\s*`, 'i'),
+    new RegExp(`^用\\s*${pluginPattern}\\s*`, 'i'),
+  ]
+  const stripped = prefixes.reduce(
+    (value, pattern) => (value === normalizedPrompt ? value.replace(pattern, '') : value),
+    normalizedPrompt
+  )
+  if (!stripped || stripped === normalizedPrompt) return normalizedPrompt
+
+  const [first = '', ...rest] = Array.from(stripped)
+  return `${first.toLocaleUpperCase()}${rest.join('')}`
 }
 
 function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] {
@@ -215,10 +241,7 @@ function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] 
   if (templates.length > 0) {
     return templates.map((template, index) => ({
       id: template.path || `template-${index}`,
-      title: template.name,
       prompt: template.description?.trim() || template.name,
-      description: template.description?.trim() || '',
-      logoUrl: template.logoUrl || template.logoUrlDark,
     }))
   }
 
@@ -234,9 +257,7 @@ function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] 
 
   return examples.map((prompt, index) => ({
     id: `prompt-${index}`,
-    title: prompt,
     prompt,
-    description: '',
   }))
 }
 
@@ -399,7 +420,6 @@ function detailRows(
 
 export function PluginDetailView({
   plugin,
-  projectName,
   onBack,
   backLabel,
   onToggle,
@@ -424,7 +444,11 @@ export function PluginDetailView({
   pluginVisibility = null,
   shareGrantUserCount = 0,
   shareGrantNamespaceCount = 0,
+  manageAccessLabel,
   onManageAccess,
+  menuPublishLabel,
+  onMenuPublish,
+  menuPublishDisabled = false,
   submissionStatus = null,
   submissionReviewNote = null,
   isExternalSource = false,
@@ -432,15 +456,23 @@ export function PluginDetailView({
   shareRecipient = false,
   primaryActionIcon = 'try',
   actionMenuBeforePrimary = true,
-  hasConversationContext = false,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
   const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
-  const [guideSelection, setGuideSelection] = useState<{
-    pluginId: string
-    guideId: string
-  } | null>(null)
+  const actionMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isActionMenuOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!actionMenuRef.current?.contains(event.target as Node)) {
+        setIsActionMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [isActionMenuOpen])
   const raw = plugin.raw
   const isInstalled = raw.spec.installState === 'installed'
   const distributionLabel =
@@ -512,45 +544,25 @@ export function PluginDetailView({
             className="h-8 rounded-lg bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
             onClick={onManageAccess}
           >
-            {t('workbench.plugins_manage_access', '管理权限')}
+            {manageAccessLabel || t('workbench.plugins_manage_access', '管理权限')}
           </button>
         )}
       </div>
     </section>
   )
-  const logo = installedPluginLogo(plugin)
+  const logo = installedPluginLogo(plugin, appearanceMode)
   const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
   const guideExamples = pluginGuideExamples(plugin)
-  const selectedGuideId =
-    guideSelection?.pluginId === String(plugin.id) ? guideSelection.guideId : null
-  const selectedGuide = guideExamples.find(example => example.id === selectedGuideId) ?? null
-  const selectedGuideInputKind = selectedGuide
-    ? inferPluginGuideKind(selectedGuide.prompt)
-    : 'general'
-  const selectedGuidePresentation = selectedGuide
-    ? buildPluginGuidePresentation({
-        kind: selectedGuideInputKind,
-        prompt: selectedGuide.prompt,
-        title: selectedGuide.title,
-        pluginName: plugin.name,
-        pluginDescription: description,
-        capabilities: componentItems.map(item => ({
-          name: item.name,
-          description: item.description,
-          type: item.type,
-        })),
-        projectName,
-        t,
-      })
-    : null
   const deviceSummary = pluginDeviceSummary(plugin)
   const PrimaryActionIcon =
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
-  const showActionMenu = showUninstall || Boolean(onEditAction)
+  const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
+  const showActionMenu =
+    showUninstall || Boolean(onEditAction) || Boolean(onMenuPublish) || showMenuCopy
 
   const actionMenu = showActionMenu ? (
-    <div className="relative">
+    <div ref={actionMenuRef} className="relative">
       <button
         type="button"
         aria-label={t('workbench.plugins_actions', '插件操作')}
@@ -564,7 +576,7 @@ export function PluginDetailView({
       {isActionMenuOpen && (
         <div
           data-testid={`plugin-detail-actions-menu-${plugin.id}`}
-          className="absolute right-0 top-[calc(100%+7px)] z-30 w-28 rounded-xl border border-border/30 bg-background p-1 shadow-lg"
+          className="absolute right-0 top-[calc(100%+7px)] z-30 min-w-[10.5rem] rounded-xl border border-border/30 bg-background p-1 shadow-lg"
         >
           {onEditAction && (
             <button
@@ -577,6 +589,34 @@ export function PluginDetailView({
               }}
             >
               {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
+            </button>
+          )}
+          {onMenuPublish && (
+            <button
+              type="button"
+              disabled={menuPublishDisabled}
+              data-testid={`plugin-detail-menu-publish-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface disabled:opacity-40"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onMenuPublish()
+              }}
+            >
+              {menuPublishLabel || t('workbench.plugins_publish_new_version', '发布新版本')}
+            </button>
+          )}
+          {showMenuCopy && (
+            <button
+              type="button"
+              disabled={tertiaryActionDisabled}
+              data-testid={`plugin-detail-menu-copy-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface disabled:opacity-40"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onTertiaryAction?.()
+              }}
+            >
+              {tertiaryActionLabel}
             </button>
           )}
           {showUninstall && (
@@ -620,78 +660,71 @@ export function PluginDetailView({
         {secondaryActionLabel}
       </button>
     ) : null
-  const tertiaryActionButton =
-    tertiaryActionLabel && onTertiaryAction ? (
-      <button
-        type="button"
-        disabled={tertiaryActionDisabled}
-        data-testid={`plugin-detail-tertiary-${plugin.id}`}
-        className="plugin-detail-action-secondary"
-        onClick={onTertiaryAction}
-      >
-        {tertiaryActionLabel}
-      </button>
-    ) : null
 
   const connectorItems = componentItems.filter(item => item.type === 'connector')
   const capabilityItems = componentItems.filter(item => item.type !== 'connector')
-  const primaryGuide = guideExamples[0]
-  const guideTemplateSection = primaryGuide && (
+  const guideTemplateSection = guideExamples.length > 0 && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
       <div>
         <h2 className="text-base font-medium leading-5 text-text-primary">
-          {t('workbench.plugin_detail_get_started', '开始使用')}
+          {t('workbench.plugin_detail_get_started', '试试这些任务')}
         </h2>
         <p className="text-xs leading-4 text-text-muted">
           {isInstalled
             ? t(
                 'workbench.plugin_detail_get_started_installed_hint',
-                '选择模板打开新对话，可继续修改且不会自动发送'
+                '选择一个示例，带入聊天框后仍可修改且不会自动发送'
               )
             : t(
                 'workbench.plugin_detail_get_started_uninstalled_hint',
-                '先预览使用方式；选择模板后将引导安装'
+                '点击示例后将自动安装并带入聊天框，不会自动发送'
               )}
         </p>
       </div>
-      <button
-        type="button"
-        data-testid="plugin-prompt-0"
-        aria-haspopup="dialog"
-        aria-controls="plugin-use-case-guide-dialog"
-        className="group flex w-full items-center gap-3 rounded-xl bg-surface/60 px-4 py-3 text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-        onClick={() =>
-          setGuideSelection({
-            pluginId: String(plugin.id),
-            guideId: primaryGuide.id,
-          })
-        }
-      >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-text-secondary shadow-sm">
-          <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <strong className="block text-sm font-medium leading-5 text-text-primary">
-            {t('workbench.plugin_detail_ai_guide', 'AI 使用向导')}
-          </strong>
-          <span className="block text-xs leading-4 text-text-muted">
-            {t(
-              'workbench.plugin_detail_ai_guide_hint',
-              '回答一个关键问题，生成可编辑、可直接使用的任务'
-            )}
-          </span>
-          <span className="mt-1 block truncate text-xs leading-4 text-text-secondary">
-            {t('workbench.plugin_detail_ai_guide_example', {
-              example: primaryGuide.title,
-              defaultValue: `推荐起点：${primaryGuide.title}`,
-            })}
-          </span>
-        </span>
-        <ArrowRight
-          className="h-4 w-4 shrink-0 text-text-muted transition-colors group-hover:text-text-primary"
-          aria-hidden="true"
-        />
-      </button>
+      <div className="plugin-task-examples" data-plugin-distribution={plugin.distribution}>
+        {guideExamples.map((guide, index) => {
+          const displayPrompt = pluginGuideDisplayPrompt(plugin.name, guide.prompt)
+          return (
+            <button
+              key={guide.id}
+              type="button"
+              data-testid={`plugin-prompt-${index}`}
+              data-plugin-distribution={plugin.distribution}
+              aria-label={t('workbench.plugin_detail_try_example', {
+                example: `${plugin.name} ${displayPrompt}`,
+                defaultValue: `使用示例：${plugin.name} ${displayPrompt}`,
+              })}
+              className="plugin-task-example group"
+              onClick={() => {
+                if (onPromptSelect) {
+                  onPromptSelect(guide.prompt)
+                  return
+                }
+                onToggle()
+              }}
+            >
+              <PluginSourceAvatar
+                className={[
+                  'plugin-task-example-avatar',
+                  logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+                ].join(' ')}
+                contrastPad={logo.contrastPad}
+                distribution={plugin.distribution}
+                logoUrl={logo.url}
+                name={plugin.name}
+                useInitial={logo.source === 'fallback'}
+              />
+              <span className="min-w-0 flex-1 text-base font-medium leading-6 text-text-primary">
+                <strong className="plugin-task-example-name">{plugin.name}</strong>{' '}
+                <span>{displayPrompt}</span>
+              </span>
+              <span className="plugin-task-example-arrow" aria-hidden="true">
+                <ArrowRight className="h-[18px] w-[18px]" />
+              </span>
+            </button>
+          )
+        })}
+      </div>
     </section>
   )
 
@@ -714,15 +747,18 @@ export function PluginDetailView({
       />
       <div className="mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-14 pt-7 sm:px-8">
         <header className="grid gap-4 sm:grid-cols-[60px_minmax(0,1fr)_auto] sm:items-center">
-          <div
-            data-testid="plugin-detail-logo"
+          <PluginSourceAvatar
             className={[
               'plugin-detail-header-logo',
               logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
             ].join(' ')}
-          >
-            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-7 w-7" />}
-          </div>
+            contrastPad={logo.contrastPad}
+            distribution={plugin.distribution}
+            logoUrl={logo.url}
+            name={plugin.name}
+            testId="plugin-detail-logo"
+            useInitial={logo.source === 'fallback'}
+          />
           <div className="min-w-0">
             <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
             <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
@@ -770,7 +806,6 @@ export function PluginDetailView({
           <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
             {actionMenuBeforePrimary ? (
               <>
-                {tertiaryActionButton}
                 {secondaryActionButton}
                 {actionMenu}
                 {primaryActionButton}
@@ -779,7 +814,6 @@ export function PluginDetailView({
               <>
                 {primaryActionButton}
                 {secondaryActionButton}
-                {tertiaryActionButton}
                 {actionMenu}
               </>
             )}
@@ -985,25 +1019,6 @@ export function PluginDetailView({
             onToggle()
           }}
           onToggle={enabled => onComponentToggle(selectedSkill.componentKey, enabled)}
-        />
-      )}
-      {selectedGuide && selectedGuidePresentation && (
-        <PluginUseCaseGuideDialog
-          pluginName={plugin.name}
-          title={selectedGuidePresentation.displayTitle}
-          generatedPrompt={selectedGuidePresentation.generatedPrompt}
-          confirmation={selectedGuidePresentation.confirmation}
-          hasConversationContext={hasConversationContext}
-          installed={isInstalled}
-          onClose={() => setGuideSelection(null)}
-          onConfirm={prompt => {
-            setGuideSelection(null)
-            if (onPromptSelect) {
-              onPromptSelect(prompt)
-              return
-            }
-            onToggle()
-          }}
         />
       )}
     </main>

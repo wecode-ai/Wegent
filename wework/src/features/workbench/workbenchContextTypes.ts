@@ -13,6 +13,8 @@ import type {
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  ModelSelectionConfig,
+  ModelType,
   PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
@@ -27,9 +29,12 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
+  RuntimeName,
   RuntimeSendRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
   RuntimeProjectSpaceRef,
@@ -80,6 +85,10 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   forceNewTask?: boolean
+  runtime?: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+  modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
@@ -89,7 +98,7 @@ export interface SendCurrentInputOptions {
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
-  ) => void
+  ) => void | Promise<void>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -110,6 +119,25 @@ export interface CreateProjectRuntimeTaskOptions {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
+  modelId?: string | null
+  /** Full execution model fields resolved from a UnifiedModel; replaces the
+   * global workbench model when provided, matching task-message execution. */
+  executionModel?: {
+    modelId?: string | null
+    modelType?: string | null
+    modelOptions?: ModelOptions
+  } | null
+  /** Model selection used for the created runtime task handle; replaces the
+   * global workbench selection when provided. */
+  modelSelection?: {
+    modelName: string
+    modelType: ModelType | null
+    options: ModelOptions
+  } | null
+  /** Force the runtime task onto a specific device (robot execution
+   * environment), bypassing the default project/standalone device pick. */
+  deviceId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
@@ -128,12 +156,15 @@ export interface RuntimePaneGuidanceResult {
 
 export interface WorkbenchContextValue {
   services: WorkbenchServices
+  workspaceTabId?: string
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
+    scopeKey: string
+    inputByScope: Readonly<Record<string, string>>
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
@@ -141,8 +172,10 @@ export interface WorkbenchContextValue {
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    composerError?: string | null
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
+    trialPluginApp?: LocalDeviceApp
     hasConversationContext?: boolean
     dismissTrialGuide?: () => void
     applyTrialTemplate?: (template: PluginPathComponent) => void
@@ -160,6 +193,8 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setInputForScope: (scopeKey: string, value: string) => void
+    setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -192,6 +227,9 @@ export interface WorkbenchContextValue {
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (

@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-popout|capture-workspace|snapshot|debug|click|click-at|click-then-macrotask|seed-local-project|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-popout|capture-workspace|snapshot|debug|click|click-at|click-then-macrotask|context-menu|seed-local-project|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -407,7 +407,9 @@ async function main() {
     click: 'click',
     'click-at': 'clickAt',
     'click-then-macrotask': 'clickThenMacrotask',
+    'context-menu': 'contextMenu',
     'seed-local-project': 'seedLocalProject',
+    'terminal-snapshot': 'readLocalTerminalSnapshot',
     reload: 'reloadApp',
     'close-to-tray': 'closeMainWindowToTray',
     'request-close': 'requestMainWindowClose',
@@ -416,6 +418,7 @@ async function main() {
     'drop-file': 'dropFile',
     'drop-paths': 'dropPaths',
     fill: 'fill',
+    'get-attribute': 'getAttribute',
     hover: 'hover',
     metrics: 'getElementMetrics',
     navigate: 'navigate',
@@ -444,6 +447,7 @@ async function main() {
     command === 'debug' ||
     command === 'click-at' ||
     command === 'seed-local-project' ||
+    command === 'terminal-snapshot' ||
     command === 'reload' ||
     command === 'navigate' ||
     command === 'text' ||

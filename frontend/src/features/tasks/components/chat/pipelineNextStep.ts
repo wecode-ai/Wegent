@@ -41,7 +41,7 @@ export interface PipelineNextStepDraft {
 }
 
 export interface PipelineNextStepBackendContext {
-  type: 'knowledge_base' | 'table'
+  type: 'knowledge_base' | 'table' | 'external_knowledge'
   data: Record<string, unknown>
 }
 
@@ -84,17 +84,42 @@ function buildTextItemId(message: PipelineNextStepMessage, kind: PipelineNextSte
   return `${kind}:${message.id}`
 }
 
+function isExplicitExternalKnowledgeContext(context: SubtaskContextBrief): boolean {
+  return (
+    context.context_type === 'external_knowledge' &&
+    Boolean(context.external_provider) &&
+    context.external_mode === 'explicit' &&
+    Boolean(context.external_id?.trim())
+  )
+}
+
 function getStructuredItemId(context: SubtaskContextBrief): string | null {
   if (context.context_type === 'attachment') {
     return `attachment:${context.id}`
   }
 
   if (context.context_type === 'knowledge_base' && context.knowledge_id) {
-    return `knowledge_base:${context.knowledge_id}`
+    const scopeKey = context.scope_restricted
+      ? `restricted:${[...(context.folder_ids ?? [])].sort((a, b) => a - b).join(',')}:${[
+          ...(context.document_ids ?? []),
+        ]
+          .sort((a, b) => a - b)
+          .join(',')}:${String(context.include_subfolders ?? true)}`
+      : 'all'
+    return `knowledge_base:${context.knowledge_id}:${scopeKey}`
   }
 
   if (context.context_type === 'table' && context.document_id) {
     return `table:${context.document_id}`
+  }
+
+  if (isExplicitExternalKnowledgeContext(context)) {
+    const targetType = context.external_target_type ?? 'knowledge_base'
+    const targetId =
+      targetType === 'knowledge_base'
+        ? context.external_id
+        : (context.external_node_id ?? context.external_document_id ?? 'unknown')
+    return `external_knowledge:${context.external_provider}:explicit:${context.external_scope ?? ''}:${context.external_id}:${targetType}:${targetId}`
   }
 
   return null
@@ -286,6 +311,11 @@ function toBackendContext(
         knowledge_id: context.knowledge_id,
         name: context.name,
         document_count: context.document_count,
+        document_ids: context.document_ids,
+        folder_ids: context.folder_ids,
+        folder_names: context.folder_names,
+        include_subfolders: context.include_subfolders,
+        scope_restricted: context.scope_restricted,
       },
     }
   }
@@ -301,6 +331,23 @@ function toBackendContext(
         document_id: context.document_id,
         name: context.name,
         source_config: context.source_config,
+      },
+    }
+  }
+
+  if (isExplicitExternalKnowledgeContext(context)) {
+    return {
+      type: 'external_knowledge',
+      data: {
+        provider: context.external_provider,
+        mode: 'explicit',
+        id: context.external_id,
+        name: context.name,
+        scope: context.external_scope,
+        target_type: context.external_target_type,
+        node_id: context.external_node_id,
+        document_id: context.external_document_id,
+        parent_id: context.external_parent_id,
       },
     }
   }

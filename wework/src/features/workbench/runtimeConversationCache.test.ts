@@ -22,6 +22,7 @@ import {
   removeOptimisticRuntimeConversationGuidance,
   markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
+  settleRuntimeConversationAcceptedMessage,
   settleRuntimeConversationGuidance,
   settleRuntimeConversationSubagents,
   setRuntimeConversationGoal,
@@ -53,6 +54,33 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('settles an accepted queued message when its runtime turn starts', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'accepted-message',
+        content: 'first queued message',
+        status: 'sending',
+        deliveryMode: 'message',
+        createdAt: '2026-08-09T00:00:00.000Z',
+      },
+      {
+        id: 'next-message',
+        content: 'second queued message',
+        status: 'queued',
+        createdAt: '2026-08-09T00:00:01.000Z',
+      },
+    ])
+
+    settleRuntimeConversationAcceptedMessage(address)
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'next-message',
+        status: 'queued',
+      }),
+    ])
   })
 
   test('keeps goal, plan, and subagent state independently from a mounted pane', () => {
@@ -106,6 +134,32 @@ describe('runtimeConversationCache', () => {
     settleRuntimeConversationSubagents(address)
 
     expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
+  })
+
+  test('does not let an older active Goal snapshot overwrite completion', () => {
+    setRuntimeConversationGoal(address, {
+      threadId: 'thread-1',
+      objective: 'Finish the fix',
+      status: 'complete',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 10,
+      createdAt: 1,
+      updatedAt: 3,
+    })
+
+    setRuntimeConversationGoal(address, {
+      threadId: 'thread-1',
+      objective: 'Finish the fix',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 2,
+    })
+
+    expect(getRuntimeConversationMetadata(address).goal?.status).toBe('complete')
   })
 
   test('uses device and task identity across normalized workspace paths', () => {

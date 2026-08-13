@@ -77,26 +77,6 @@
     "groupManagerDescription": "Manage groups, members, and permissions."
   },
   "skills": {
-    "search_skills": "Search in Market",
-    "search_skills_title": "Search Skills from Market",
-    "search_skills_description": "Search and install skills from various skill markets",
-    "search_placeholder": "Search by keyword...",
-    "search_hint": "Enter keywords to search for skills",
-    "searching_skills": "Searching...",
-    "no_search_results": "No skills found",
-    "install": "Install",
-    "installing": "Installing...",
-    "downloading": "Downloading...",
-    "installed": "Installed",
-    "retry_install": "Retry",
-    "install_success": "Installation successful",
-    "install_success_message": "Skill '{{skillName}}' installed successfully",
-    "install_failed": "Installation failed",
-    "public_skill": "Public",
-    "private_skill": "Private",
-    "search_failed": "Search failed",
-    "request_permission": "Request Permission",
-    "go_to_market": "Go to Market",
     "libraryTitle": "Skill Library",
     "libraryDescription": "Upload and manage skills. Skills can be auto-enabled for your conversations or bound to agents as built-in capabilities.",
     "myLibraryTitle": "My Skills",
@@ -232,6 +212,8 @@
         "executor_description": "Controls the runtime environment used to handle tasks."
       },
       "bind_mode": {
+        "more_modes": "More modes",
+        "collapse_more_modes": "Collapse more modes",
         "chat": {
           "title": "Chat",
           "description": "Use for Q&A, document discussion, and ongoing conversation."
@@ -243,6 +225,14 @@
         "task": {
           "title": "Device",
           "description": "Use for tasks that need a local device or execution environment."
+        },
+        "video": {
+          "title": "Video",
+          "description": "Use for video generation and video creation tasks."
+        },
+        "image": {
+          "title": "Image",
+          "description": "Use for image generation and image creation tasks."
         }
       },
       "executor": {

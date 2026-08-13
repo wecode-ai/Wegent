@@ -43,9 +43,12 @@
     "selectKnowledgeBase": "选择一个知识库查看文档",
     "selectWholeKb": "选择知识库",
     "selected": "已选择",
-    "selectedDocuments": "已选 {{count}} 个文档",
-    "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
-    "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
+    "scopeAllDocuments": "全部 · {{count}} 文档",
+    "scopeDocumentsCompact_one": "{{count}} 文档",
+    "scopeDocumentsCompact_other": "{{count}} 文档",
+    "scopeFoldersCompact_one": "{{count}} 文件夹",
+    "scopeFoldersCompact_other": "{{count}} 文件夹",
+    "scopeMixedCompact": "{{folderCount}} 文件夹 · {{documentCount}} 文档",
     "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
     "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
     "previewUnavailable": "预览地址不可用"
@@ -158,8 +161,8 @@
       "wikispace": "知识库",
       "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
       "wikispaceEmpty": "暂无知识库内容",
-      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
-      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
+      "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP 和钉钉文档 MCP"
     },
     "groupFilter": {
       "all": "全部分组"
@@ -244,6 +247,14 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
+      "categoryFilter": {
+        "label": "知识库类别",
+        "all": "全部",
+        "document": "文档",
+        "code": "代码",
+        "emptyDocument": "暂无文档知识库",
+        "emptyCode": "暂无代码知识库"
+      },
       "currentDefaultView": "当前默认打开方式",
       "convertToNotebook": "默认打开工作台",
       "convertToClassic": "默认打开文档管理",
@@ -252,7 +263,11 @@
       "defaultViewUpdateSuccess": "默认打开方式已更新",
       "defaultViewUpdateFailed": "默认打开方式更新失败",
       "targetGroup": "归属",
-      "selectGroup": "选择分组"
+      "selectGroup": "选择分组",
+      "kindDocument": "文档",
+      "kindDocumentDesc": "上传与整理资料",
+      "kindCode": "代码",
+      "kindCodeDesc": "从仓库生成 wiki"
     },
     "breadcrumb": {
       "root": "全部文档"
@@ -415,6 +430,7 @@
         "transferSuccessFolders": "已成功转移 {{folderCount}} 个文件夹",
         "transferSuccessMixed": "已成功转移 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "transferFailed": "转移失败",
+        "transferSelectionLimit": "每次最多选择 {{count}} 个文档和文件夹",
         "noOtherKbs": "没有符合转移规则的目标知识库",
         "errors": {
           "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
@@ -423,6 +439,7 @@
           "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
           "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
           "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "每次最多转移 200 个文档和文件夹",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }
@@ -1077,6 +1094,109 @@
       "title": "无法访问知识库",
       "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",
       "backButton": "返回知识库列表"
+    }
+  },
+  "codeWiki": {
+    "outline": {
+      "title": "本页目录",
+      "label": "页面目录"
+    },
+    "list": {
+      "empty": "还没有代码 Wiki",
+      "emptyHint": "从一个你有读权限的仓库创建。",
+      "neverGenerated": "尚未生成",
+      "lastGenerated": "更新于 {{when}}",
+      "atCommit": "commit {{commit}}",
+      "pages_one": "{{count}} 个页面",
+      "pages_other": "{{count}} 个页面"
+    },
+    "create": {
+      "title": "新建代码 Wiki",
+      "repository": "仓库",
+      "name": "名称",
+      "namePlaceholder": "留空则使用仓库名",
+      "submit": "创建",
+      "noBoundModel": "代码 Wiki 智能体未绑定模型，无法生成。",
+      "repositoryRequired": "请选择或填写仓库地址",
+      "fromMyRepositories": "从我的仓库选择",
+      "byUrl": "输入仓库地址",
+      "checking": "正在检查仓库…",
+      "notReadable": "无法读取该仓库，请检查地址或为该域名配置 token",
+      "publicRepository": "公开仓库",
+      "privateRepository": "私有仓库",
+      "language": "生成语言",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "alreadyBuilt": "已有 {{count}} 人为此仓库建过 wiki，可以向其索要分享",
+      "ownedBy": "归属 {{owner}}，可向其索要分享",
+      "showGenerationTask": "显示生成任务",
+      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。",
+      "modelLabel": "生成模型",
+      "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
+      "modelPlaceholder": "选择模型",
+      "modelRequired": "请选择生成模型"
+    },
+    "reader": {
+      "regenerate": "重新生成",
+      "regenerating": "生成中…",
+      "upToDate": "仓库自上次生成后没有变化",
+      "started": "已开始生成",
+      "back": "返回文档",
+      "askPlaceholder": "就这个 wiki 提问",
+      "sectionOnly": "该章节没有自己的页面",
+      "empty": "这个 wiki 还没有页面",
+      "emptyHint": "生成一次即可在此查看文档。",
+      "generating": "生成中…",
+      "previousRunStalled": "上次运行已中断，可重新生成",
+      "linkNotFound": "该链接指向的页面不存在",
+      "backToChat": "回到对话",
+      "openNavigation": "页面导航",
+      "generateFirst": "开始生成",
+      "regenerateConfirmTitle": "重新生成这个 wiki？",
+      "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
+      "emptyGenerating": "正在生成这个 wiki",
+      "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
+      "emptyFailed": "上次生成没有完成",
+      "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
+    },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "文档管理",
+      "generatedContent": "Wiki",
+      "userContent": "文档",
+      "permissions": "权限管理"
+    },
+    "history": {
+      "title": "生成历史",
+      "never": "尚未生成",
+      "running": "生成中",
+      "stalled": "上次运行已中断",
+      "lastFailed": "上次生成失败",
+      "completed": "已生成",
+      "updated": "更新于 {{when}}",
+      "current": "当前版本",
+      "none": "还没有生成记录",
+      "mode": {
+        "full": "全量",
+        "incremental": "增量",
+        "custom": "自定义"
+      },
+      "commitUnreported": "未记录 commit",
+      "taskFailed": "执行任务失败",
+      "republish": "恢复此版本",
+      "republished": "已恢复该版本",
+      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
+      "republishConfirmTitle": "恢复这个版本？",
+      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",
+      "viewFailure": "查看完整错误",
+      "failureDetailsTitle": "生成错误",
+      "failureDetailsDescription": "本次生成的完整错误信息。"
+    },
+    "failure": {
+      "task_ended_without_report": "执行任务已结束，但没有回报生成结果",
+      "task_not_created": "无法创建执行任务",
+      "worker_abandoned": "执行进程失联，该次运行已被回收",
+      "publish_refused": "版本已写好，但发布被闸门拒绝"
     }
   }
 }

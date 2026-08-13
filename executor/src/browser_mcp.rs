@@ -3,7 +3,10 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        OnceLock,
+    },
     time::{Duration, Instant},
 };
 
@@ -29,11 +32,13 @@ const DEFAULT_BRIDGE_URL: &str = "http://127.0.0.1:9231";
 const BRIDGE_URL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL";
 const BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
 const BROWSER_LABEL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_LABEL";
+const BROWSER_SESSION_ID_ENV: &str = "WEWORK_EMBEDDED_BROWSER_SESSION_ID";
 const BRIDGE_CONNECT_TIMEOUT_SECONDS: u64 = 5;
 const BRIDGE_REQUEST_TIMEOUT_SECONDS: u64 = 45;
 const BROWSER_MCP_LOG_FILE: &str = "wework-browser-mcp.log";
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
+static BROWSER_SESSION_ID: OnceLock<String> = OnceLock::new();
 
 pub fn is_browser_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("browser-mcp-server")
@@ -467,6 +472,12 @@ async fn call_bridge(
             object.insert("label".to_owned(), Value::String(label));
         }
     }
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "browserSessionId".to_owned(),
+            Value::String(browser_session_id()),
+        );
+    }
     let identity = current_bridge_identity();
     log_request(
         sequence,
@@ -604,6 +615,17 @@ fn browser_label() -> Option<String> {
     env::var(BROWSER_LABEL_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
+}
+
+fn browser_session_id() -> String {
+    BROWSER_SESSION_ID
+        .get_or_init(|| {
+            env::var(BROWSER_SESSION_ID_ENV)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("browser-session-{}", std::process::id()))
+        })
+        .clone()
 }
 
 fn request_method(request: &Value) -> &str {

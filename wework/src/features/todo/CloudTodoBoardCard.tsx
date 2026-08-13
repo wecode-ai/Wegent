@@ -1,10 +1,21 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Archive, CalendarDays, ChevronRight, Ellipsis, Flag, ListTodo, Plus } from 'lucide-react'
+import {
+  Archive,
+  Bot,
+  CalendarDays,
+  ChevronRight,
+  Ellipsis,
+  Flag,
+  ListTodo,
+  Plus,
+} from 'lucide-react'
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { memberAvatarClasses, priorityBadgeClasses } from './todoShared'
+import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -24,11 +35,19 @@ const priorityLabels: Record<CloudLoopItem['priority'], string> = {
 interface CloudTodoCardContentProps {
   item: CloudLoopItem
   display: BoardCardDisplaySettings
+  /** Active robot names for the current project, used when the item only
+   * carries `assignee_agent_id` (local projects do not resolve the name). */
+  agentNames?: Record<string, string>
 }
 
-export function CloudTodoCardContent({ item, display }: CloudTodoCardContentProps) {
+export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCardContentProps) {
   const tags = item.tags ?? []
   const showFooter = display.showPriority || display.showDate || display.showAssignee
+  const assigneeName =
+    item.assignee_name ||
+    (item.assignee_agent_id
+      ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
+      : null)
 
   return (
     <>
@@ -82,21 +101,17 @@ export function CloudTodoCardContent({ item, display }: CloudTodoCardContentProp
             </span>
           ) : null}
           {display.showAssignee ? (
-            item.assignee_name ? (
-              <span className="ml-auto inline-flex min-w-0 items-center gap-1.5">
-                <span className="sr-only">负责人</span>
-                <span className="sr-only">{item.assignee_name}</span>
+            assigneeName ? (
+              <Tooltip label={assigneeName} align="end" className="ml-auto min-w-0 shrink">
                 <span
-                  data-testid={`cloud-todo-card-assignee-avatar-${item.id}`}
-                  title={item.assignee_name}
-                  className={cn(
-                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-semibold text-background',
-                    memberAvatarClasses[0]
-                  )}
+                  data-testid={`cloud-todo-card-assignee-${item.id}`}
+                  className="inline-flex min-w-0 items-center gap-1.5"
                 >
-                  {item.assignee_name.slice(0, 1).toUpperCase()}
+                  <span className="sr-only">负责人</span>
+                  {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
+                  <span className="truncate">{assigneeName}</span>
                 </span>
-              </span>
+              </Tooltip>
             ) : (
               <span className="ml-auto">未指定</span>
             )
@@ -114,7 +129,9 @@ interface CloudTodoBoardCardProps {
   onAddChild: () => void
   onOpenChildren: () => void
   onArchive: () => void
+  onOpenActivity?: () => void
   display: BoardCardDisplaySettings
+  agentNames?: Record<string, string>
   dragDisabled?: boolean
   archiveDisabled?: boolean
 }
@@ -127,9 +144,11 @@ export function CloudTodoBoardCard({
   onOpenChildren,
   onArchive,
   display,
+  agentNames,
   dragDisabled = false,
   archiveDisabled = false,
 }: CloudTodoBoardCardProps) {
+  const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
   const {
     attributes,
@@ -159,19 +178,21 @@ export function CloudTodoBoardCard({
     >
       {item.can_edit !== false && !archiveDisabled ? (
         <div className="absolute right-2 top-2 z-20">
-          <button
-            type="button"
-            data-testid={`cloud-todo-card-more-${item.id}`}
-            onClick={event => {
-              event.stopPropagation()
-              setMenuOpen(current => !current)
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
-            aria-label="任务操作"
-            aria-expanded={menuOpen}
-          >
-            <Ellipsis className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
+            <button
+              type="button"
+              data-testid={`cloud-todo-card-more-${item.id}`}
+              onClick={event => {
+                event.stopPropagation()
+                setMenuOpen(current => !current)
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+              aria-label={t('todo.project_actions', '项目操作')}
+              aria-expanded={menuOpen}
+            >
+              <Ellipsis className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
           {menuOpen ? (
             <div
               data-testid={`cloud-todo-card-menu-${item.id}`}
@@ -203,7 +224,7 @@ export function CloudTodoBoardCard({
         {...listeners}
         {...attributes}
       >
-        <CloudTodoCardContent item={item} display={display} />
+        <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
       </button>
 
       <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">
@@ -229,7 +250,6 @@ export function CloudTodoBoardCard({
               onClick={onAddChild}
               className="flex h-7 shrink-0 items-center gap-1 border-l border-border/60 pl-3 text-xs text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 disabled:hidden"
               aria-label="新建子任务"
-              title="新建子任务"
             >
               <Plus className="h-3.5 w-3.5" />
               添加子任务

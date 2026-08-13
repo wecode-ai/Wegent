@@ -31,12 +31,8 @@ class TestSanitizeFilename:
 
     def test_filename_with_backslash(self):
         """Test filename with backslash is sanitized."""
-        # On Linux, os.path.basename doesn't recognize Windows paths
-        # So backslashes are replaced with underscores
         result = _sanitize_filename("C:\\Windows\\System32\\file.txt")
-        # Result should not contain backslashes
-        assert "\\" not in result
-        assert "/" not in result
+        assert result == "file.txt"
 
     def test_filename_with_control_chars(self):
         """Test filename with control characters is sanitized."""

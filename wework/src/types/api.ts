@@ -37,6 +37,7 @@ export interface ProjectWorkPreference {
 export interface Team {
   id: number
   name: string
+  namespace?: string | null
   displayName?: string | null
   is_active: boolean
   default_for_modes?: string[]
@@ -250,6 +251,7 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 export interface RuntimeTaskAddress {
   deviceId: string
   taskId: string
+  runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -374,6 +376,7 @@ export interface RuntimeTaskSummary {
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
@@ -382,6 +385,18 @@ export interface RuntimeTaskSummary {
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
+}
+
+export interface RuntimeSettings {
+  maxConcurrentTasks: number
+}
+
+export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
+  queuePosition: number
+}
+
+export interface RuntimeTaskQueueReorderResponse extends RuntimeTaskCancelResponse {
+  orderedTaskIds?: string[]
 }
 
 export type RuntimeSupervisorMode = 'suggest' | 'auto'
@@ -402,7 +417,7 @@ export interface RuntimeSupervisorState {
   mode: RuntimeSupervisorMode
   status: RuntimeSupervisorStatus
   instructions: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds?: number
   lastEvaluatedAt?: number | null
   lastError?: string | null
@@ -642,6 +657,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
@@ -778,13 +794,17 @@ export interface RuntimeSupervisorSetRequest {
   address: RuntimeTaskAddress
   mode: RuntimeSupervisorMode
   instructions?: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds: number
 }
 
 export type RuntimeSupervisorCreateInput = Omit<RuntimeSupervisorSetRequest, 'address'>
 
 export interface RuntimeSupervisorClearRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeSupervisorRunNowRequest {
   address: RuntimeTaskAddress
 }
 
@@ -959,6 +979,16 @@ export interface RuntimeIMNotificationSettingsResponse {
 export interface RuntimeGlobalIMNotificationUpdateRequest {
   enabled: boolean
   sessionKey?: string | null
+}
+
+export interface RuntimeIMNotificationPresenceUpdateRequest {
+  clientId: string
+  away: boolean
+}
+
+export interface RuntimeIMNotificationPresenceResponse {
+  away: boolean
+  ttlSeconds: number
 }
 
 export interface RuntimeTaskIMNotificationSubscriptionRequest {
@@ -1143,6 +1173,12 @@ export interface RuntimeTaskRenameRequest {
   title: string
 }
 
+export interface RuntimeTaskFriendlyTitleConfig {
+  modelId: string
+  modelType?: ModelType | null
+  modelOptions?: Record<string, string>
+}
+
 export interface RuntimeTaskCancelResponse {
   accepted: boolean
   taskId?: string
@@ -1155,19 +1191,25 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  standaloneChatWorkspace?: boolean
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
   message: string
+  bot?: Array<Record<string, unknown>>
   clientUserMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
+  modelConfig?: Record<string, unknown>
   modelSelection?: ModelSelectionConfig | null
+  friendlyTitle?: RuntimeTaskFriendlyTitleConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
@@ -1178,6 +1220,12 @@ export interface RuntimeTaskCreateRequest {
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
+  origin?: {
+    type: 'board_comment' | 'board_task'
+    cloudProjectId: string
+    loopItemId: string
+    rootCommentId?: string
+  }
   additionalContext?: RuntimeAdditionalContext
 }
 
@@ -1188,6 +1236,8 @@ export interface RuntimeTaskCreateResponse {
   workspacePath: string
   runtime: RuntimeName
   runtimeHandle?: Record<string, unknown> | null
+  status?: 'queued' | 'running'
+  queuePosition?: number | null
   error?: string | null
 }
 
@@ -1326,8 +1376,10 @@ export interface LocalDeviceSkill {
 export interface LocalDeviceApp {
   id: string
   name: string
+  pluginKey?: string | null
   description?: string | null
   logoUrl?: string | null
+  logoUrlDark?: string | null
   installUrl?: string | null
   isAccessible?: boolean
   isEnabled?: boolean
@@ -1584,6 +1636,8 @@ export interface RuntimeContextUsage {
 
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
+  itemId?: string
+  item_id?: string
   error?: string
   reasoningChunk?: string
   blocks?: ChatBlock[]
@@ -2072,6 +2126,7 @@ export interface PluginMarketplaceItem {
   featured: boolean
   installed: boolean
   installedPluginId?: string | number | null
+  installedLocally?: boolean
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null
@@ -2144,6 +2199,12 @@ export interface DeviceCapabilitySyncResponse {
 export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
   sync?: DeviceCapabilitySyncResponse | null
+}
+
+export interface PluginDeviceSyncResponse {
+  deviceId: string
+  pendingCount: number
+  sync: DeviceCapabilitySyncResponse
 }
 
 export interface PluginMarketplaceCapabilities {
@@ -2254,6 +2315,8 @@ export interface ChatBlock {
   timestamp?: number | string | null
   created_at?: number | string | null
   createdAt?: number | string | null
+  completed_at?: number | string | null
+  completedAt?: number | string | null
 }
 
 export interface ChatBlockCreatedPayload {
@@ -2279,6 +2342,8 @@ export interface ChatBlockUpdatedPayload {
   renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
+  completedAt?: number
+  durationMs?: number
   deviceId?: string
 }
 
@@ -2302,6 +2367,13 @@ export interface RuntimeGoalEventPayload {
   threadId?: string
   turnId?: string
   goal?: RuntimeGoal | null
+}
+
+export interface RuntimeTaskTitleUpdatedPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  title: string
 }
 
 export type RuntimeGoalContinuationStatus = 'started' | 'settled'

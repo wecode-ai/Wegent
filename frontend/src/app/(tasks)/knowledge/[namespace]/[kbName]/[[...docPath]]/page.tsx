@@ -21,7 +21,7 @@
  *   /knowledge/{namespace}/{kbName}/path/doc.md
  */
 
-import { Suspense, useState, useCallback, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import { BookOpen, FileText } from 'lucide-react'
@@ -41,21 +41,11 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
-import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
-import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { KnowledgeView } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
 import { useKnowledgeTaskSidebar } from '@/features/knowledge/document/hooks/useKnowledgeTaskSidebar'
-
-const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
-  ssr: false,
-})
-
-const CancelConfirmDialog = dynamic(() => import('@/features/knowledge/CancelConfirmDialog'), {
-  ssr: false,
-})
 
 const KnowledgeDocumentPage = dynamic(
   () =>
@@ -64,9 +54,6 @@ const KnowledgeDocumentPage = dynamic(
     })),
   { ssr: false }
 )
-
-// Storage key for knowledge sidebar collapsed state
-const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
 
 function KnowledgeVirtualPageContent() {
   const params = useParams()
@@ -89,65 +76,12 @@ function KnowledgeVirtualPageContent() {
   // For all others, pass the actual namespace
   const namespace = rawNamespace === 'public' ? undefined : rawNamespace
 
-  // Wiki projects hook (needed for AddRepoModal and CancelConfirmDialog)
-  const {
-    isModalOpen,
-    formErrors,
-    isSubmitting,
-    confirmDialogOpen,
-    selectedRepo,
-    wikiConfig,
-    handleCloseModal,
-    handleRepoChange,
-    handleSubmit,
-    confirmCancelGeneration,
-    setConfirmDialogOpen,
-    setPendingCancelProjectId,
-  } = useWikiProjects()
-
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
-  // Knowledge sidebar collapsed state (for document tab)
-  const [isKnowledgeSidebarCollapsed, setIsKnowledgeSidebarCollapsed] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY) === 'true'
-    }
-    return false
-  })
-
   const [knowledgeViewState, setKnowledgeViewState] = useState<KnowledgeViewState>({
     visible: false,
     currentView: 'notebook',
   })
-
-  // Listen for knowledge sidebar collapse changes from KnowledgeDocumentPageDesktop
-  useEffect(() => {
-    const handleCollapseChange = (event: CustomEvent<{ collapsed: boolean }>) => {
-      setIsKnowledgeSidebarCollapsed(event.detail.collapsed)
-    }
-
-    window.addEventListener(
-      'knowledge-sidebar-collapse-change',
-      handleCollapseChange as EventListener
-    )
-
-    return () => {
-      window.removeEventListener(
-        'knowledge-sidebar-collapse-change',
-        handleCollapseChange as EventListener
-      )
-    }
-  }, [])
-
-  // Handle expanding the knowledge sidebar from TopNavigation
-  const handleExpandKnowledgeSidebar = useCallback(() => {
-    setIsKnowledgeSidebarCollapsed(false)
-    localStorage.setItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY, 'false')
-    window.dispatchEvent(
-      new CustomEvent('knowledge-sidebar-collapse-change', { detail: { collapsed: false } })
-    )
-  }, [])
 
   useEffect(() => {
     saveLastTab('wiki')
@@ -170,28 +104,55 @@ function KnowledgeVirtualPageContent() {
   const knowledgeViewSwitcher = knowledgeViewState.visible ? (
     <Tabs
       value={knowledgeViewState.currentView}
-      onValueChange={value => knowledgeViewState.onViewChange?.(value as KnowledgeView)}
+      onValueChange={value =>
+        knowledgeViewState.onViewChange?.(value as KnowledgeView | CodeWikiView)
+      }
       className="flex-shrink-0"
     >
       <TabsList className="h-11 sm:h-8 rounded-md bg-surface/80 p-0 sm:p-0.5">
-        <TabsTrigger
-          value="documents"
-          aria-label={t('document.knowledgeBase.typeClassic')}
-          data-testid="knowledge-view-documents-trigger"
-          className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
-        >
-          <FileText className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">{t('document.knowledgeBase.typeClassic')}</span>
-        </TabsTrigger>
-        <TabsTrigger
-          value="notebook"
-          aria-label={t('document.knowledgeBase.typeNotebook')}
-          data-testid="knowledge-view-notebook-trigger"
-          className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">{t('document.knowledgeBase.typeNotebook')}</span>
-        </TabsTrigger>
+        {knowledgeViewState.switcher === 'code-wiki' ? (
+          <>
+            <TabsTrigger
+              value="documents"
+              aria-label={t('codeWiki.workspace.documents')}
+              data-testid="code-wiki-view-documents"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('codeWiki.workspace.documents')}</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="wiki"
+              aria-label={t('codeWiki.workspace.wiki')}
+              data-testid="code-wiki-view-wiki"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('codeWiki.workspace.wiki')}</span>
+            </TabsTrigger>
+          </>
+        ) : (
+          <>
+            <TabsTrigger
+              value="documents"
+              aria-label={t('document.knowledgeBase.typeClassic')}
+              data-testid="knowledge-view-documents-trigger"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('document.knowledgeBase.typeClassic')}</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="notebook"
+              aria-label={t('document.knowledgeBase.typeNotebook')}
+              data-testid="knowledge-view-notebook-trigger"
+              className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('document.knowledgeBase.typeNotebook')}</span>
+            </TabsTrigger>
+          </>
+        )}
       </TabsList>
     </Tabs>
   ) : null
@@ -228,18 +189,6 @@ function KnowledgeVirtualPageContent() {
         <TopNavigation
           activePage="wiki"
           variant="with-sidebar"
-          centerContent={
-            <KnowledgeTabs
-              activeTab="document"
-              onTabChange={tab => {
-                if (tab === 'code') {
-                  router.push('/knowledge?type=code')
-                }
-              }}
-              isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
-              onExpandClick={handleExpandKnowledgeSidebar}
-            />
-          }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isTaskSidebarCollapsed}
         >
@@ -257,31 +206,6 @@ function KnowledgeVirtualPageContent() {
           />
         </div>
       </div>
-
-      {/* Add repository modal */}
-      {isModalOpen && (
-        <AddRepoModal
-          isOpen={isModalOpen}
-          onClose={handleCloseModal}
-          formErrors={formErrors}
-          isSubmitting={isSubmitting}
-          onRepoChange={handleRepoChange}
-          onSubmit={handleSubmit}
-          selectedRepo={selectedRepo}
-          wikiConfig={wikiConfig}
-        />
-      )}
-      {/* Cancel confirm dialog */}
-      {confirmDialogOpen && (
-        <CancelConfirmDialog
-          isOpen={confirmDialogOpen}
-          onClose={() => {
-            setConfirmDialogOpen(false)
-            setPendingCancelProjectId(null)
-          }}
-          onConfirm={confirmCancelGeneration}
-        />
-      )}
     </div>
   )
 }

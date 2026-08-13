@@ -5,6 +5,7 @@ import type {
   PluginAccessResponse,
   PluginAccessUpdateRequest,
   PluginCopyResponse,
+  PluginDeviceSyncResponse,
   PluginMarketplaceInstallResponse,
   PluginMarketplaceCapabilities,
   PluginMarketplaceListResponse,
@@ -41,6 +42,9 @@ export function createPluginApi(client: HttpClient) {
     },
     listInstalledPlugins(deviceId?: string): Promise<InstalledPluginListResponse> {
       return client.get(`/plugins/installed${deviceQuery(deviceId)}`)
+    },
+    syncInstalledPluginsToDevice(deviceId: string): Promise<PluginDeviceSyncResponse> {
+      return client.post(`/plugins/installed/sync-device${deviceQuery(deviceId)}`)
     },
     updateInstalledPlugin(
       id: string | number,

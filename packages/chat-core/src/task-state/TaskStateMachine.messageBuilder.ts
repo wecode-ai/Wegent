@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { TaskDetailSubtask } from '../api-types'
+import type { ImageBlock } from '../message-blocks'
 import type {
   MessageStatus,
   StreamingRecoveryPayload,
@@ -15,6 +16,65 @@ interface BuildMessagesParams {
   subtasks: TaskDetailSubtask[]
   syncOptions: SyncOptions
   streamRecovery?: StreamingRecoveryPayload
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function getImageConfig(subtask?: TaskDetailSubtask): Record<string, unknown> | null {
+  const result = asRecord(subtask?.result)
+  return asRecord(result?.image_config)
+}
+
+function findImageConfigForAssistantSubtask(
+  subtasks: TaskDetailSubtask[],
+  assistantIndex: number
+): Record<string, unknown> | null {
+  const assistantConfig = getImageConfig(subtasks[assistantIndex])
+  if (assistantConfig) return assistantConfig
+
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const candidate = subtasks[index]
+    const isUserMessage = candidate.role === 'USER' || candidate.role?.toUpperCase() === 'USER'
+    if (!isUserMessage) continue
+
+    return getImageConfig(candidate)
+  }
+
+  return null
+}
+
+function ensureRunningImagePlaceholder(
+  result: UnifiedMessage['result'],
+  imageConfig: Record<string, unknown> | null,
+  subtaskId: number,
+  createdAt: string
+): UnifiedMessage['result'] {
+  if (!imageConfig || result?.blocks?.length) {
+    return result
+  }
+
+  const imageSize = typeof imageConfig.size === 'string' ? imageConfig.size : undefined
+  const placeholder: ImageBlock = {
+    id: `image-placeholder-${subtaskId}`,
+    type: 'image',
+    status: 'streaming',
+    is_placeholder: true,
+    image_urls: [],
+    image_attachment_ids: [],
+    image_count: 0,
+    content: '',
+    timestamp: new Date(createdAt).getTime(),
+    ...(imageSize && { image_size: imageSize }),
+  }
+
+  return {
+    ...result,
+    blocks: [placeholder],
+  }
 }
 
 /**
@@ -62,7 +122,8 @@ export function buildMessagesFromSubtasks({
     s => s.role === 'USER' || s.role?.toUpperCase() === 'USER'
   )
 
-  for (const subtask of subtasks) {
+  for (let subtaskIndex = 0; subtaskIndex < subtasks.length; subtaskIndex += 1) {
+    const subtask = subtasks[subtaskIndex]
     const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER'
     const messageId = isUserMessage ? `user-backend-${subtask.id}` : `ai-${subtask.id}`
 
@@ -89,6 +150,13 @@ export function buildMessagesFromSubtasks({
         bestContent = streamRecovery.cached_content
       }
 
+      const runningResult = ensureRunningImagePlaceholder(
+        subtaskResult,
+        findImageConfigForAssistantSubtask(subtasks, subtaskIndex),
+        subtask.id,
+        subtask.created_at
+      )
+
       messages.set(messageId, {
         id: messageId,
         type: 'ai',
@@ -101,7 +169,7 @@ export function buildMessagesFromSubtasks({
         contexts: subtask.contexts,
         botName: subtask.bots?.[0]?.name || teamName,
         subtaskStatus: subtask.status,
-        result: subtaskResult,
+        result: runningResult,
         error: hasFrontendError ? existingMessage?.error : undefined,
         errorType: hasFrontendError ? existingMessage?.errorType : undefined,
         reasoningContent: existingAiMessage?.reasoningContent,

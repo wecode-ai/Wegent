@@ -64,11 +64,32 @@ describe('stripCodexUiDirectives', () => {
     ])
   })
 
+  test('parses ChatGPT visualize content references with absolute paths', () => {
+    const content = [
+      '这里是可视化结果。',
+      '',
+      'visualize{"path":"/tmp/codex/visualizations/latency.html","mode":"wide","title":"Latency"}',
+    ].join('\n')
+
+    expect(splitCodexInlineVisualizations(content)).toEqual([
+      { kind: 'markdown', content: '这里是可视化结果。\n' },
+      {
+        kind: 'visualization',
+        file: '/tmp/codex/visualizations/latency.html',
+        mode: 'wide',
+        title: 'Latency',
+      },
+    ])
+  })
+
   test('preserves malformed, unsafe, and code-fenced visualization directives as markdown', () => {
     const content = [
       '::codex-inline-vis{file="../private.html"}',
+      'visualize{"path":"/tmp/private.html"}',
+      'visualize{"path":"relative/visualizations/trend.html"}',
       '```text',
       '::codex-inline-vis{file="trend.html"}',
+      'visualize{"path":"/tmp/visualizations/trend.html"}',
       '```',
       '::codex-inline-vis{file="trend.txt"}',
     ].join('\n')

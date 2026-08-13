@@ -21,21 +21,24 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { buildKbUrl, findKbByVirtualPath } from '@/utils/knowledgeUrl'
 import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
-import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { canManageNamespace } from '@/utils/namespace-permissions'
+import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
+import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
 import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
+import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
-import { getKnowledgeBase } from '@/apis/knowledge'
+import { getKnowledgeBase, updateKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeViewState } from './KnowledgeDocumentPage'
 import type {
+  CodeWikiView,
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseType,
-  SummaryModelRef,
+  KnowledgeBaseUpdate,
 } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 import type { Group } from '@/types/group'
@@ -58,7 +61,6 @@ export function KnowledgeDocumentPageMobile({
   onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
-
   // Knowledge tree hook
   const tree = useKnowledgeTree()
 
@@ -69,15 +71,43 @@ export function KnowledgeDocumentPageMobile({
 
   const [detailKb, setDetailKb] = useState<KnowledgeBase | null>(null)
   const [detailKbLoading, setDetailKbLoading] = useState(false)
+  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
+  const [isUpdating, setIsUpdating] = useState(false)
   const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
-
+  const [codeWikiView, setCodeWikiView] = useState<CodeWikiView>('wiki')
   useEffect(() => {
+    if (detailKb?.kb_type === 'code_wiki') {
+      onKnowledgeViewStateChange?.({
+        visible: Boolean(isDetailMode),
+        switcher: 'code-wiki',
+        currentView: codeWikiView,
+        onViewChange: view => {
+          if (view === 'wiki' || view === 'documents') setCodeWikiView(view)
+        },
+      })
+      return
+    }
+
     onKnowledgeViewStateChange?.({
       visible: Boolean(detailKb && isDetailMode),
+      switcher: 'document',
       currentView,
-      onViewChange: setCurrentView,
+      onViewChange: view => {
+        if (view === 'documents' || view === 'notebook') setCurrentView(view)
+      },
     })
-  }, [currentView, detailKb, isDetailMode, onKnowledgeViewStateChange, setCurrentView])
+  }, [
+    codeWikiView,
+    currentView,
+    detailKb,
+    isDetailMode,
+    onKnowledgeViewStateChange,
+    setCurrentView,
+  ])
+
+  useEffect(() => {
+    setCodeWikiView('wiki')
+  }, [detailKb?.id])
 
   const allLoadedKbs = useMemo((): KnowledgeBase[] => {
     const kbs: KnowledgeBase[] = []
@@ -193,21 +223,6 @@ export function KnowledgeDocumentPageMobile({
   const knowledgeBindModel = knowledgeTeamInfo.bindModel
 
   // Helper: save summary model to knowledge team's preference
-  const saveSummaryModelToPreference = useCallback(
-    (summaryModelRef: SummaryModelRef | null | undefined) => {
-      if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
-
-      const preference: ModelPreference = {
-        modelName: summaryModelRef.name,
-        modelType: summaryModelRef.type,
-        forceOverride: true,
-        updatedAt: Date.now(),
-      }
-
-      saveGlobalModelPreference(knowledgeDefaultTeamId, preference)
-    },
-    [knowledgeDefaultTeamId]
-  )
 
   // Handle KB selection - navigate to detail page (full screen on mobile)
   const handleSelectKb = useCallback(
@@ -248,6 +263,24 @@ export function KnowledgeDocumentPageMobile({
         // Use kb_type from dialog (user can change it in the dialog)
         const kbType = data.kb_type || createKbType
 
+        if (kbType === 'code_wiki') {
+          const wiki = await createCodeWiki({ namespace, data })
+
+          setShowCreateDialog(false)
+          if (createScope === 'organization') {
+            await tree.refreshOrg()
+          } else if (createGroupName) {
+            await tree.refreshGroup(createGroupName)
+          } else {
+            await tree.refreshPersonal()
+          }
+          setCreateGroupName(undefined)
+          setCreateScope('personal')
+          setCreateKbType('notebook')
+          router.push(buildKbUrl(namespace, wiki.name, false))
+          return
+        }
+
         const { createKnowledgeBase } = await import('@/apis/knowledge')
         await createKnowledgeBase({
           name: data.name,
@@ -271,9 +304,6 @@ export function KnowledgeDocumentPageMobile({
         })
 
         // Save model preference when summary is enabled and model is selected
-        if (data.summary_enabled && data.summary_model_ref) {
-          saveSummaryModelToPreference(data.summary_model_ref)
-        }
 
         setShowCreateDialog(false)
 
@@ -292,13 +322,37 @@ export function KnowledgeDocumentPageMobile({
         setIsCreating(false)
       }
     },
-    [createScope, createGroupName, createKbType, tree, saveSummaryModelToPreference]
+    [createScope, createGroupName, createKbType, router, tree]
   )
 
   // Handle open group settings
   const handleOpenGroupSettings = useCallback((group: Group) => {
     window.location.href = `/resource-library?tab=mine&type=agent&scope=group&group=${encodeURIComponent(group.name)}`
   }, [])
+
+  const handleUpdate = useCallback(
+    async (data: KnowledgeBaseUpdate) => {
+      if (!editingKb) return
+
+      setIsUpdating(true)
+      try {
+        const updatedKb = await updateKnowledgeBase(editingKb.id, data)
+        setDetailKb(updatedKb)
+        setEditingKb(null)
+
+        if (editingKb.namespace === tree.orgNamespace) {
+          await tree.refreshOrg()
+        } else if (editingKb.namespace !== 'default') {
+          await tree.refreshGroup(editingKb.namespace)
+        } else {
+          await tree.refreshPersonal()
+        }
+      } finally {
+        setIsUpdating(false)
+      }
+    },
+    [editingKb, tree]
+  )
 
   const canManageGroup = useCallback(
     (group: Group) =>
@@ -312,28 +366,55 @@ export function KnowledgeDocumentPageMobile({
     const matched = !!detailKb && !!targetKb && detailKb.id === targetKb.id
 
     if (matched) {
+      const isCodeWiki = detailKb!.kb_type === 'code_wiki'
+
       return (
-        <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
-          <div className="flex items-center gap-2 h-12 px-2 border-b border-border shrink-0">
-            <button
-              type="button"
-              onClick={handleBack}
-              aria-label={t('document.backToList')}
-              data-testid="knowledge-detail-back-button"
-              className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-secondary hover:bg-surface"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <span className="truncate text-sm font-medium text-text-primary">{detailKb!.name}</span>
+        <>
+          <div className="flex flex-col h-full" data-testid="knowledge-document-page-mobile">
+            {(!isCodeWiki || codeWikiView === 'documents') && (
+              <div className="flex items-center gap-2 h-12 px-2 border-b border-border shrink-0">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  aria-label={t('document.backToList')}
+                  data-testid="knowledge-detail-back-button"
+                  className="h-11 min-w-[44px] flex items-center justify-center rounded-md text-text-secondary hover:bg-surface"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+                <span className="truncate text-sm font-medium text-text-primary">
+                  {detailKb!.name}
+                </span>
+              </div>
+            )}
+            {!isCodeWiki && (
+              <KnowledgeDetailPanel
+                key={`${detailKb!.id}-${initialDocPath ?? ''}`}
+                selectedKb={detailKb}
+                onSyncKnowledgeBase={setDetailKb}
+                initialDocPath={initialDocPath}
+                currentView={currentView}
+              />
+            )}
+            {isCodeWiki && (
+              <CodeWikiWorkspace
+                key={detailKb!.id}
+                wiki={detailKb!}
+                view={codeWikiView}
+                onConfigure={() => setEditingKb(detailKb!)}
+              />
+            )}
           </div>
-          <KnowledgeDetailPanel
-            key={`${detailKb!.id}-${initialDocPath ?? ''}`}
-            selectedKb={detailKb}
-            onSyncKnowledgeBase={setDetailKb}
-            initialDocPath={initialDocPath}
-            currentView={currentView}
+          <EditKnowledgeBaseDialog
+            open={!!editingKb}
+            onOpenChange={open => !isUpdating && !open && setEditingKb(null)}
+            knowledgeBase={editingKb}
+            onSubmit={handleUpdate}
+            loading={isUpdating}
+            knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+            bindModel={knowledgeBindModel}
           />
-        </div>
+        </>
       )
     }
 

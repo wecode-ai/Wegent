@@ -25,6 +25,7 @@ import type {
   KnowledgeFolder,
   KnowledgeFolderCreate,
   KnowledgeFolderUpdate,
+  KnowledgeContentOrigin,
   KnowledgeResourceScope,
   TableUrlValidationResponse,
   WebScrapeResponse,
@@ -101,6 +102,7 @@ export interface ListDocumentsParams {
   keyword?: string
   sort_by?: 'name' | 'size' | 'createdAt' | 'updatedAt'
   sort_order?: 'asc' | 'desc'
+  origin?: KnowledgeContentOrigin
 }
 
 /**
@@ -131,6 +133,9 @@ export async function listDocuments(
   }
   if (params?.sort_order) {
     searchParams.set('sort_order', params.sort_order)
+  }
+  if (params?.origin) {
+    searchParams.set('origin', params.origin)
   }
   const query = searchParams.toString()
   return apiClient.get<KnowledgeDocumentListResponse>(
@@ -500,7 +505,12 @@ export async function getDocumentDetail(documentId: number): Promise<DocumentDet
 }
 
 /**
- * Read a small page of document content and its stable identity metadata.
+ * Read a slice of document content and its stable identity metadata.
+ *
+ * `limit` is a **character count**, not a page number, and it defaults to 1 — enough
+ * for the identity fields and nothing else. Callers that want the text should use
+ * {@link readDocumentText}; asking for the body here returns a single character, and
+ * looks like a rendering fault rather than a truncated read.
  */
 export async function getDocumentContent(
   documentId: number,
@@ -512,13 +522,45 @@ export async function getDocumentContent(
   )
 }
 
+/** The server's own per-request ceiling; asking for more is rejected. */
+const DOCUMENT_READ_CHUNK = 100000
+
+/**
+ * A document's whole text, following the pagination to its end.
+ *
+ * The endpoint is paginated by character offset and caps each request, so a single
+ * call is a truncated read whatever limit it asks for. Long generated pages are the
+ * ones that would be cut, which is also where losing the tail is least visible.
+ */
+export async function readDocumentText(documentId: number): Promise<string> {
+  const parts: string[] = []
+  let offset = 0
+
+  for (;;) {
+    const chunk = await getDocumentContent(documentId, offset, DOCUMENT_READ_CHUNK)
+    parts.push(chunk.content ?? '')
+    // returned_length rather than the string's own length: they agree, but the
+    // server's count is what its has_more was computed against, and advancing by a
+    // different number would re-read or skip.
+    offset += chunk.returned_length
+    // The second test stops a document that reports has_more forever from looping.
+    if (!chunk.has_more || chunk.returned_length <= 0) break
+  }
+
+  return parts.join('')
+}
+
 // ============== Knowledge Folder APIs ==============
 
 /**
  * Get the folder tree for a knowledge base
  */
-export async function getFolderTree(knowledgeBaseId: number): Promise<KnowledgeFolder[]> {
-  return apiClient.get<KnowledgeFolder[]>(`/knowledge-bases/${knowledgeBaseId}/folders`)
+export async function getFolderTree(
+  knowledgeBaseId: number,
+  origin?: KnowledgeContentOrigin
+): Promise<KnowledgeFolder[]> {
+  const query = origin ? `?origin=${origin}` : ''
+  return apiClient.get<KnowledgeFolder[]>(`/knowledge-bases/${knowledgeBaseId}/folders${query}`)
 }
 
 /**

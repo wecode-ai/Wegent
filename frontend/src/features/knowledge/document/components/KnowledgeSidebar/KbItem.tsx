@@ -10,7 +10,8 @@
 
 'use client'
 
-import { BookOpen, Database, X } from 'lucide-react'
+import { X } from 'lucide-react'
+import { KnowledgeBaseIcon } from '../KnowledgeBaseIcon'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBase } from '@/types/knowledge'
 
@@ -37,8 +38,6 @@ export function KbItem({
   secondaryText,
   showDocCount = false,
 }: KbItemProps) {
-  const isClassic = kb.kb_type === 'classic'
-
   return (
     <div
       className={cn(
@@ -50,15 +49,14 @@ export function KbItem({
     >
       {/* Icon */}
       <span className="flex-shrink-0">
-        {isClassic ? (
-          <Database className="w-3.5 h-3.5 text-text-secondary" />
-        ) : (
-          <BookOpen className="w-3.5 h-3.5 text-primary" />
-        )}
+        <KnowledgeBaseIcon kbType={kb.kb_type} />
       </span>
 
-      {/* Name */}
-      <span className="flex-1 truncate text-sm">{kb.name}</span>
+      {/* Name. Titled because it truncates: a code wiki is named after its
+          repository, which is routinely longer than a narrow sidebar. */}
+      <span className="flex-1 truncate text-sm" title={kb.name}>
+        {kb.name}
+      </span>
 
       {/* Secondary text (e.g., time ago) */}
       {secondaryText && (

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Database, Trash2 } from 'lucide-react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ActionMenu } from './ActionMenu'
@@ -91,5 +91,75 @@ describe('ActionMenu', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByTestId('more-actions-menu')).not.toBeInTheDocument()
+  })
+
+  test('opens submenu on hover, closes on mouse leave, and reopens on re-hover', async () => {
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        items={[
+          {
+            label: 'Clear browsing data',
+            testId: 'clear-data',
+            children: [
+              {
+                label: 'Clear cookies',
+                testId: 'clear-cookies',
+                onSelect: vi.fn(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+    expect(screen.queryByTestId('clear-data-submenu')).not.toBeInTheDocument()
+
+    fireEvent.pointerEnter(screen.getByTestId('clear-data'))
+    await screen.findByTestId('clear-data-submenu')
+
+    fireEvent.pointerLeave(screen.getByTestId('clear-data'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('clear-data-submenu')).not.toBeInTheDocument()
+    })
+
+    fireEvent.pointerEnter(screen.getByTestId('clear-data'))
+    await screen.findByTestId('clear-data-submenu')
+  })
+
+  test('toggles submenu open and closed when clicking a parent item', async () => {
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        items={[
+          {
+            label: 'Clear browsing data',
+            testId: 'clear-data',
+            children: [
+              {
+                label: 'Clear cookies',
+                testId: 'clear-cookies',
+                onSelect: vi.fn(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+    fireEvent.click(screen.getByTestId('clear-data'))
+    await screen.findByTestId('clear-data-submenu')
+
+    fireEvent.click(screen.getByTestId('clear-data'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('clear-data-submenu')).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('clear-data'))
+    await screen.findByTestId('clear-data-submenu')
   })
 })

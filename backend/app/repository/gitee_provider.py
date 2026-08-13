@@ -61,7 +61,7 @@ class GiteeProvider(RepositoryProvider):
                 entries.append(
                     {
                         "git_domain": info.get("git_domain", ""),
-                        "git_token": info.get("git_token", ""),
+                        "git_token": self.decrypt_token(info.get("git_token", "")),
                         "type": info.get("type", ""),
                     }
                 )
@@ -164,6 +164,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -195,8 +196,8 @@ class GiteeProvider(RepositoryProvider):
                         for repo in repos
                     ]
                 )
-            except requests.exceptions.RequestException:
-                # skip failed domain, continue others
+            except requests.exceptions.RequestException as e:
+                self._log_domain_failure("list repositories", git_domain, e)
                 continue
 
         return all_repos
@@ -246,6 +247,7 @@ class GiteeProvider(RepositoryProvider):
                         "per_page": per_page,
                         "page": page,
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -280,7 +282,9 @@ class GiteeProvider(RepositoryProvider):
 
         try:
             response = requests.get(
-                f"{api_base_url}/repos/{repo_name}", params={"access_token": git_token}
+                f"{api_base_url}/repos/{repo_name}",
+                params={"access_token": git_token},
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
@@ -317,9 +321,16 @@ class GiteeProvider(RepositoryProvider):
         # Use custom domain if provided, otherwise use default
         api_base_url = self._get_api_base_url(git_domain)
 
+        # Re-validating an already stored credential hands this the ciphertext, the
+        # same way the other providers are given it. Decrypting here keeps that case
+        # from reading as an invalid token.
+        decrypt_token = self.decrypt_token(token)
+
         try:
             response = requests.get(
-                f"{api_base_url}/user", params={"access_token": token}
+                f"{api_base_url}/user",
+                params={"access_token": decrypt_token},
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
 
             if response.status_code == 401:
@@ -516,6 +527,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
                 repos = response.json()
@@ -559,8 +571,8 @@ class GiteeProvider(RepositoryProvider):
                         for r in filtered_repos
                     ]
                 )
-            except requests.exceptions.RequestException:
-                # skip this domain on error
+            except requests.exceptions.RequestException as e:
+                self._log_domain_failure("search repositories", git_domain, e)
                 continue
 
         return all_results
@@ -606,6 +618,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -720,6 +733,7 @@ class GiteeProvider(RepositoryProvider):
             response = requests.get(
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
                 params={"access_token": git_token},
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 

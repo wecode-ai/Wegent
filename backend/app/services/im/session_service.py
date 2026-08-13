@@ -6,6 +6,7 @@
 
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Sequence
@@ -21,9 +22,13 @@ PENDING_STATE_TTL_MINUTES = 15
 PRIVATE_SESSION_KEY_PREFIX = "channel:private_session:"
 USER_PRIVATE_SESSIONS_PREFIX = "channel:user_private_sessions:"
 USER_GLOBAL_NOTIFICATION_PREFIX = "channel:user_global_notification:"
+USER_IM_NOTIFICATION_PRESENCE_PREFIX = "channel:user_im_notification_presence:"
 USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX = "channel:user_runtime_task_subscriptions:"
 RUNTIME_TASK_REPLY_TARGET_PREFIX = "channel:runtime_task_reply_target:"
 RUNTIME_TASK_REPLY_TARGET_TTL_SECONDS = 7 * 24 * 60 * 60
+IM_NOTIFICATION_PRESENCE_TTL_SECONDS = 90
+IM_NOTIFICATION_PRESENCE_ACTIVE = "active"
+IM_NOTIFICATION_PRESENCE_AWAY = "away"
 
 CHANNEL_LABELS = {
     "dingtalk": "钉钉",
@@ -204,6 +209,57 @@ class IMSessionService:
         )
         await self._save_global_notification_settings(user_id, settings)
         return settings
+
+    async def update_im_notification_presence(
+        self,
+        *,
+        user_id: int,
+        client_id: str,
+        away: bool,
+    ) -> bool:
+        """Refresh one client presence and return the aggregated away state."""
+
+        key = self._im_notification_presence_key(user_id)
+        active_member = self._im_notification_presence_member(
+            client_id,
+            IM_NOTIFICATION_PRESENCE_ACTIVE,
+        )
+        away_member = self._im_notification_presence_member(
+            client_id,
+            IM_NOTIFICATION_PRESENCE_AWAY,
+        )
+        next_member = away_member if away else active_member
+        now = time.time()
+        client = await cache_manager._get_client()
+        try:
+            await client.zrem(key, active_member, away_member)
+            await client.zadd(
+                key,
+                {next_member: now + IM_NOTIFICATION_PRESENCE_TTL_SECONDS},
+            )
+            members = await self._fresh_im_notification_presence_members(
+                client,
+                key,
+                now,
+            )
+        finally:
+            await client.aclose()
+        return self._presence_members_are_away(members)
+
+    async def is_user_away_for_im_notifications(self, user_id: int) -> bool:
+        """Return whether no fresh Wework client is currently foregrounded."""
+
+        key = self._im_notification_presence_key(user_id)
+        client = await cache_manager._get_client()
+        try:
+            members = await self._fresh_im_notification_presence_members(
+                client,
+                key,
+                time.time(),
+            )
+        finally:
+            await client.aclose()
+        return self._presence_members_are_away(members)
 
     async def subscribe_runtime_task_notification(
         self,
@@ -468,6 +524,27 @@ class IMSessionService:
 
     def _global_notification_key(self, user_id: int) -> str:
         return f"{USER_GLOBAL_NOTIFICATION_PREFIX}{user_id}"
+
+    def _im_notification_presence_key(self, user_id: int) -> str:
+        return f"{USER_IM_NOTIFICATION_PRESENCE_PREFIX}{user_id}"
+
+    def _im_notification_presence_member(self, client_id: str, state: str) -> str:
+        return f"{client_id}\0{state}"
+
+    async def _fresh_im_notification_presence_members(
+        self,
+        client: Any,
+        key: str,
+        now: float,
+    ) -> list[Any]:
+        await client.zremrangebyscore(key, "-inf", now)
+        return await client.zrevrange(key, 0, -1)
+
+    def _presence_members_are_away(self, members: Sequence[Any]) -> bool:
+        return not any(
+            _decode_member(member).endswith(f"\0{IM_NOTIFICATION_PRESENCE_ACTIVE}")
+            for member in members
+        )
 
     def _runtime_task_subscriptions_key(self, user_id: int) -> str:
         return f"{USER_RUNTIME_TASK_SUBSCRIPTIONS_PREFIX}{user_id}"

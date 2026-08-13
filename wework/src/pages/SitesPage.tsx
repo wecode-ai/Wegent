@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
-import type { SiteAppType } from '@/api/sites'
+import type { Site, SiteAppType } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -16,105 +14,198 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { SitesWorkspace } from '@/components/sites/SitesWorkspace'
 import { getApplicationTypeDefinition } from '@/components/sites/applicationTypeDefinitions'
+import type { ApplicationCreateStrategy } from '@/components/sites/applicationTypeDefinitions'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
+import { managedMarketplaceName } from '@/features/plugins/pluginMarketplaceIdentity'
 import {
   notifyLocalPluginSkillsChanged,
-  queuePluginReferenceTrial,
+  queuePluginInputTrial,
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { localPathExists } from '@/lib/local-terminal'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
+import type {
+  DeviceCapabilityItemResult,
+  DeviceCapabilitySyncResponse,
+  InstalledPlugin,
+  RuntimeTaskAddress,
+} from '@/types/api'
 
 class ApplicationPluginSyncConfirmationError extends Error {}
 
-const CODEX_SITES_PLUGIN_NAME = 'sites'
-const CODEX_SITES_MARKETPLACE = 'openai-bundled'
-
-function normalizedPluginKey(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-')
+interface PreparedApplicationPlugin {
+  plugin: InstalledPlugin
+  pluginName: string
+  marketplaceName: string
 }
 
-function isEnabledCodexSitesPlugin(plugin: InstalledPlugin): boolean {
-  if (!plugin.spec.enabled || plugin.spec.installState !== 'installed') return false
-  if (normalizedPluginKey(plugin.spec.source.pluginKey) !== CODEX_SITES_PLUGIN_NAME) return false
+function sanitizeMarkdownLinkLabel(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\[/g, ' ')
+    .replace(/]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
-  const payload =
-    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
-      ? (plugin.spec.sourcePayload as Record<string, unknown>)
-      : {}
-  const marketplaceNames = [
-    plugin.metadata.namespace,
-    plugin.spec.source.providerKey,
-    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '',
-  ].filter((marketplace): marketplace is string => typeof marketplace === 'string')
-  return marketplaceNames.some(
-    marketplace => normalizedPluginKey(marketplace) === CODEX_SITES_MARKETPLACE
+function buildSiteContinueDevelopmentInput(
+  site: Pick<Site, 'name' | 'project_id' | 'siteid'>,
+  suffix: string
+): string | null {
+  const projectId = String(site.project_id || site.siteid || '').trim()
+  if (!projectId) return null
+  const label = sanitizeMarkdownLinkLabel(site.name) || projectId
+  const normalizedSuffix = suffix.trim()
+  return `[${label}](wegent-sites-project://${encodeURIComponent(projectId)})${
+    normalizedSuffix ? ` ${normalizedSuffix}` : ''
+  }`
+}
+
+function installedPluginId(plugin: InstalledPlugin): string | null {
+  const labels =
+    plugin.metadata.labels && typeof plugin.metadata.labels === 'object'
+      ? (plugin.metadata.labels as Record<string, unknown>)
+      : null
+  const value = labels?.id
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : null
+}
+
+function pluginSourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
+  const payload = plugin.spec.sourcePayload
+  return payload && typeof payload === 'object' ? payload : {}
+}
+
+function installedPluginMarketplaces(plugin: InstalledPlugin): string[] {
+  const payload = pluginSourcePayload(plugin)
+  const metadataNamespace =
+    typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace !== 'default'
+      ? plugin.metadata.namespace
+      : null
+  return [
+    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : null,
+    managedMarketplaceName(plugin),
+    plugin.spec.source.marketplace,
+    metadataNamespace,
+  ]
+    .map(candidate => String(candidate ?? '').trim())
+    .filter(
+      (candidate, index, candidates) =>
+        candidate.length > 0 && candidates.indexOf(candidate) === index
+    )
+}
+
+function installedPluginMatches(
+  plugin: InstalledPlugin,
+  pluginName: string,
+  marketplaceName: string
+): boolean {
+  const manifestName = plugin.spec.manifest?.name
+  const payload = pluginSourcePayload(plugin)
+  const nameCandidates = [
+    plugin.spec.source.pluginKey,
+    payload.pluginName,
+    payload.remotePluginId,
+    plugin.metadata.name,
+    manifestName,
+  ]
+  const nameMatches = nameCandidates.some(
+    candidate => String(candidate ?? '').trim() === pluginName
+  )
+  const marketplaceMatches = installedPluginMarketplaces(plugin).some(
+    candidate => candidate === marketplaceName
+  )
+  return nameMatches && marketplaceMatches
+}
+
+function applicationPluginReferenceName(plugin: InstalledPlugin, fallback: string): string {
+  const manifestName = plugin.spec.manifest?.name
+  const payload = pluginSourcePayload(plugin)
+  const candidates = [
+    plugin.spec.displayName,
+    plugin.spec.interface?.displayName,
+    plugin.spec.source.pluginKey,
+    payload.pluginName,
+    payload.remotePluginId,
+    plugin.metadata.name,
+    manifestName,
+    fallback,
+  ]
+  return (
+    candidates
+      .map(candidate => String(candidate ?? '').trim())
+      .find(candidate => candidate.length > 0) ?? fallback
   )
 }
 
-function isNativeCodexSitesPluginSkill(skill: LocalDeviceSkill): boolean {
-  if (skill.source !== 'codex' || skill.name.trim().toLowerCase() !== 'sites:sites-building') {
-    return false
-  }
-  const normalizedPath = skill.path.trim().toLowerCase().replace(/\\/g, '/')
-  return normalizedPath.includes('/plugins/cache/openai-bundled/sites/')
+function isPluginInstalledOnDevice(plugin: InstalledPlugin, deviceId: string): boolean {
+  const accountInstalled =
+    plugin.spec.installState === 'installed' || plugin.spec.installState === 'update_available'
+  if (!accountInstalled || !plugin.spec.enabled) return false
+  return (
+    plugin.status.devices?.some(
+      device => device.deviceId === deviceId && device.state === 'installed'
+    ) ?? false
+  )
 }
 
-function queueCodexSitesPluginReference(): boolean {
-  return queuePluginReferenceTrial({
-    pluginName: CODEX_SITES_PLUGIN_NAME,
-    marketplaceName: CODEX_SITES_MARKETPLACE,
-    displayName: 'Sites',
-  })
+function findInstalledApplicationPlugin(
+  plugins: readonly InstalledPlugin[],
+  pluginName: string,
+  marketplaceName: string,
+  deviceId: string
+): InstalledPlugin | null {
+  return (
+    plugins.find(
+      plugin =>
+        installedPluginMatches(plugin, pluginName, marketplaceName) &&
+        isPluginInstalledOnDevice(plugin, deviceId)
+    ) ?? null
+  )
 }
 
-function nativeCodexSitesPluginPaths(nativeCodexHome: string): string[] {
-  const normalizedHome = nativeCodexHome.trim().replace(/[\\/]+$/, '')
-  if (!normalizedHome) return []
-  return [
-    `${normalizedHome}/plugins/cache/openai-bundled/sites`,
-    `${normalizedHome}/.tmp/bundled-marketplaces/openai-bundled/plugins/sites/.codex-plugin/plugin.json`,
-  ]
+function syncedPluginItemMatches(
+  item: DeviceCapabilityItemResult,
+  pluginName: string,
+  pluginId: string | null
+): boolean {
+  if (item.status !== 'synced') return false
+  return (
+    String(item.name ?? '').trim() === pluginName ||
+    (pluginId !== null && String(item.id ?? '') === pluginId)
+  )
 }
 
-async function tryQueueLocalCodexSitesTrial(api: LocalCodexPluginApi): Promise<boolean> {
-  try {
-    const installedPlugins = await api.listInstalledPlugins()
-    const codexSitesPlugin = installedPlugins.items.find(isEnabledCodexSitesPlugin)
-    if (codexSitesPlugin && queuePluginTrial(codexSitesPlugin)) return true
-  } catch {
-    // Continue through the remaining local discovery sources.
+function isApplicationPluginSyncConfirmed(
+  sync: DeviceCapabilitySyncResponse | null | undefined,
+  plugin: InstalledPlugin,
+  pluginName: string,
+  deviceId: string
+): boolean {
+  if (!sync) return false
+  const pluginId = installedPluginId(plugin)
+  const targetResult = Array.isArray(sync.results)
+    ? sync.results.find(result => result.device_id === deviceId)
+    : null
+  if (targetResult) {
+    return (
+      targetResult.success &&
+      targetResult.plugins.some(item => syncedPluginItemMatches(item, pluginName, pluginId))
+    )
   }
-
-  try {
-    const migrationStatus = await api.codexHomeMigrationStatus()
-    if (migrationStatus.nativeCodexHomeExists) {
-      for (const path of nativeCodexSitesPluginPaths(migrationStatus.nativeCodexHome)) {
-        if ((await localPathExists(path)) && queueCodexSitesPluginReference()) return true
-      }
-    }
-  } catch {
-    // Continue through the remaining local discovery sources.
-  }
-
-  try {
-    const localSkills = await api.listSkills({ forceReload: true })
-    return localSkills.some(isNativeCodexSitesPluginSkill) && queueCodexSitesPluginReference()
-  } catch {
-    return false
-  }
+  return (
+    sync.success &&
+    sync.failed === 0 &&
+    sync.skipped === 0 &&
+    (sync.device_id === deviceId || !sync.device_id) &&
+    sync.plugins.some(item => syncedPluginItemMatches(item, pluginName, pluginId))
+  )
 }
 
 export function SitesPage() {
@@ -128,7 +219,9 @@ export function SitesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [createNotice, setCreateNotice] = useState<string | null>(null)
   const [creatingType, setCreatingType] = useState<SiteAppType | null>(null)
+  const [continuingSiteId, setContinuingSiteId] = useState<string | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -182,7 +275,6 @@ export function SitesPage() {
     cloudConnection.token,
     isLocalFirst,
   ])
-  const localCodexPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
       return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -232,7 +324,93 @@ export function SitesPage() {
     startNewProjectChat(projectId)
   }
 
-  const handleCreate = async (appType: SiteAppType) => {
+  const prepareApplicationPlugin = async (
+    createStrategy: ApplicationCreateStrategy
+  ): Promise<PreparedApplicationPlugin | null> => {
+    if (!createStrategy.pluginName || !createStrategy.marketplaceName) {
+      setCreateError(
+        t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
+      )
+      return null
+    }
+    if (!pluginApi) {
+      setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
+      return null
+    }
+    const targetDeviceId = getPreferredStandaloneDeviceId(
+      state.devices,
+      state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+    )
+    if (!targetDeviceId) {
+      setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建应用'))
+      return null
+    }
+
+    const installedPlugins = await pluginApi.listInstalledPlugins(targetDeviceId).catch(error => {
+      console.warn('[Wework Applications] failed to inspect local plugin installation', error)
+      return { items: [] }
+    })
+    const locallyInstalledPlugin = findInstalledApplicationPlugin(
+      installedPlugins.items,
+      createStrategy.pluginName,
+      createStrategy.marketplaceName,
+      targetDeviceId
+    )
+    const plugin = locallyInstalledPlugin
+    if (!plugin) {
+      setCreateNotice(t('plugin_installing', '正在安装应用插件，完成后将进入会话...'))
+    }
+    const prepared = plugin
+      ? { plugin, sync: null }
+      : await pluginApi.ensureBuiltinPluginInstalled(createStrategy.pluginName, {
+          deviceId: targetDeviceId,
+        })
+    const syncConfirmed =
+      locallyInstalledPlugin !== null ||
+      isPluginInstalledOnDevice(prepared.plugin, targetDeviceId) ||
+      isApplicationPluginSyncConfirmed(
+        prepared.sync,
+        prepared.plugin,
+        createStrategy.pluginName,
+        targetDeviceId
+      )
+    if (!syncConfirmed) {
+      throw new ApplicationPluginSyncConfirmationError(
+        'The Backend did not confirm application plugin synchronization to the target device'
+      )
+    }
+    return {
+      plugin: prepared.plugin,
+      pluginName: createStrategy.pluginName,
+      marketplaceName: createStrategy.marketplaceName,
+    }
+  }
+
+  const handleApplicationPluginError = (error: unknown) => {
+    console.error('[Wework Applications] cloud plugin preparation failed', error)
+    if (error instanceof ApiError && error.status === 404) {
+      setCreateError(
+        t(
+          'plugin_backend_upgrade_required',
+          '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
+        )
+      )
+    } else if (error instanceof ApiError && error.status === 503) {
+      setCreateError(
+        t('plugin_not_published', '云端市场尚未发布对应的应用插件，请检查内置插件打包配置')
+      )
+    } else if (error instanceof ApiError && error.status === 409) {
+      setCreateError(t('plugin_device_unavailable', '目标设备当前离线，请连接设备后重试'))
+    } else if (error instanceof ApiError && error.status === 502) {
+      setCreateError(t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试'))
+    } else if (error instanceof ApplicationPluginSyncConfirmationError) {
+      setCreateError(t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试'))
+    } else {
+      setCreateError(t('plugin_install_failed', '应用插件安装失败，请重试'))
+    }
+  }
+
+  const handleCreate = async (appType: SiteAppType, createStrategy: ApplicationCreateStrategy) => {
     if (creatingType) return
     setCreatingType(appType)
     setCreateError(null)
@@ -242,84 +420,67 @@ export function SitesPage() {
         setCreateError(t('unsupported_application_type', '当前版本不支持该应用类型'))
         return
       }
-      const createStrategy = definition.create
-      if (appType === 'web' && (await tryQueueLocalCodexSitesTrial(localCodexPluginApi))) {
-        navigateTo('/')
-        return
-      }
-      if (!pluginApi) {
-        setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
-        return
-      }
-      const targetDeviceId = getPreferredStandaloneDeviceId(
-        state.devices,
-        state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-      )
-      if (!targetDeviceId) {
-        setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建应用'))
-        return
-      }
-
-      const { plugin, sync } = await pluginApi.ensureBuiltinPluginInstalled(
-        createStrategy.pluginName,
-        { deviceId: targetDeviceId }
-      )
-      const applicationPluginSynced = sync?.plugins.some(
-        item => item.name === createStrategy.pluginName && item.status === 'synced'
-      )
-      if (
-        !sync?.success ||
-        sync.mode !== 'merge' ||
-        sync.synced !== 1 ||
-        sync.failed !== 0 ||
-        sync.skipped !== 0 ||
-        !applicationPluginSynced
-      ) {
-        throw new ApplicationPluginSyncConfirmationError(
-          'The Backend did not confirm application plugin synchronization to the target device'
-        )
-      }
-      const queued = queuePluginTrial(
-        plugin,
-        createStrategy.prompt
-          ? { prompt: t(createStrategy.prompt.key, createStrategy.prompt.fallback) }
-          : undefined
-      )
+      const prepared = await prepareApplicationPlugin(createStrategy)
+      if (!prepared) return
+      const queued = queuePluginTrial(prepared.plugin, {
+        openInNewChat: true,
+        reference: {
+          pluginName: prepared.pluginName,
+          marketplaceName: prepared.marketplaceName,
+          displayName: applicationPluginReferenceName(prepared.plugin, prepared.pluginName),
+        },
+      })
       if (!queued) {
         throw new Error('The installed application plugin cannot be referenced in chat')
       }
 
       notifyLocalPluginSkillsChanged()
       setCreateError(null)
+      setCreateNotice(null)
       navigateTo('/')
     } catch (error) {
-      console.error('[Wework Applications] cloud plugin preparation failed', error)
-      if (error instanceof ApiError && error.status === 404) {
-        setCreateError(
-          t(
-            'plugin_backend_upgrade_required',
-            '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
-          )
-        )
-      } else if (error instanceof ApiError && error.status === 503) {
-        setCreateError(
-          t('plugin_not_published', '云端市场尚未发布对应的应用插件，请检查内置插件打包配置')
-        )
-      } else if (error instanceof ApiError && error.status === 409) {
-        setCreateError(t('plugin_device_unavailable', '目标设备当前离线，请连接设备后重试'))
-      } else if (error instanceof ApiError && error.status === 502) {
-        setCreateError(
-          t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试')
-        )
-      } else if (error instanceof ApplicationPluginSyncConfirmationError) {
-        setCreateError(
-          t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试')
-        )
-      } else {
-        setCreateError(t('plugin_install_failed', '应用插件安装失败，请重试'))
-      }
+      handleApplicationPluginError(error)
     } finally {
+      setCreateNotice(null)
       setCreatingType(null)
+    }
+  }
+
+  const handleContinueDevelopment = async (
+    site: Site,
+    createStrategy: ApplicationCreateStrategy
+  ) => {
+    if (continuingSiteId) return
+    setContinuingSiteId(site.siteid)
+    setCreateError(null)
+    try {
+      const prepared = await prepareApplicationPlugin(createStrategy)
+      if (!prepared) return
+      const suffix = t('continue_development_prompt_suffix', '请说出你要做的改动')
+      const input = buildSiteContinueDevelopmentInput(site, suffix)
+      if (!input) {
+        setCreateError(
+          t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
+        )
+        return
+      }
+      const queued = queuePluginInputTrial(prepared.plugin, input, {
+        openInNewChat: true,
+        prompt: `${site.name} ${suffix}`,
+      })
+      if (!queued) {
+        throw new Error('The installed application plugin cannot be referenced in chat')
+      }
+
+      notifyLocalPluginSkillsChanged()
+      setCreateError(null)
+      setCreateNotice(null)
+      navigateTo('/')
+    } catch (error) {
+      handleApplicationPluginError(error)
+    } finally {
+      setCreateNotice(null)
+      setContinuingSiteId(null)
     }
   }
 
@@ -454,8 +615,11 @@ export function SitesPage() {
         <SitesWorkspace
           api={sitesApi}
           onCreate={handleCreate}
+          onContinueDevelopment={handleContinueDevelopment}
           creatingType={creatingType}
+          continuingSiteId={continuingSiteId}
           createError={createError}
+          createNotice={createNotice}
           onOpenPlugins={() => navigateTo('/plugins')}
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={topBarLeftActions}

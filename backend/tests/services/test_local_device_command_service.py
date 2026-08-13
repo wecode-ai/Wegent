@@ -244,6 +244,32 @@ def test_runtime_local_turn_file_changes_review_accepts_zero_task_id(tmp_path):
     assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
 
 
+def test_runtime_local_turn_file_changes_review_accepts_named_artifact_id(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(
+        tmp_path, task_id="codex", subtask_id="turn-abc_123"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "review",
+            "turn-file-changes/codex/turn-abc_123",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["success"] is True
+    assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
+
+
 def test_turn_file_changes_revert_is_conflict_safe(tmp_path):
     from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
 

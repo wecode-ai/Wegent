@@ -216,6 +216,10 @@ function cloudWorkErrorMessage(
   return `${label}: ${String(result.reason || 'failed')}`
 }
 
+function hasCompletedCloudRuntimeSync(snapshot: CloudRuntimeSnapshot | null): boolean {
+  return snapshot?.fetchedAt != null
+}
+
 export function startCloudRuntimeSync(
   state: CloudRuntimeState,
   trigger: CloudSyncTrigger,
@@ -223,22 +227,21 @@ export function startCloudRuntimeSync(
 ): CloudRuntimeState {
   const revision = state.nextRevision
   const current = state.current ?? state.lastGood ?? createBaseCloudSnapshot(revision)
-  const checks = cloneChecks(current.checks)
-  keys.forEach(key => {
-    checks[key] = {
-      status: 'syncing',
-      updatedAt: new Date().toISOString(),
-      error: null,
-    }
-  })
+  const isInitialSync = !hasCompletedCloudRuntimeSync(state.current)
+  const checks = isInitialSync ? cloneChecks(current.checks) : current.checks
+  if (isInitialSync) {
+    keys.forEach(key => {
+      checks[key] = {
+        status: 'syncing',
+        updatedAt: new Date().toISOString(),
+        error: null,
+      }
+    })
+  }
   return {
     ...state,
     availability: 'syncing',
-    current: {
-      ...current,
-      revision,
-      checks,
-    },
+    current: isInitialSync ? { ...current, revision, checks } : current,
     inFlightRevision: revision,
     lastTrigger: trigger,
     nextRevision: revision + 1,
@@ -312,10 +315,7 @@ export function selectCloudRuntimeSnapshot(state: CloudRuntimeState): CloudRunti
 }
 
 export function selectCloudWorkStatus(state: CloudRuntimeState): CloudWorkStatus {
-  const snapshot =
-    state.inFlightRevision != null && state.lastGood
-      ? state.lastGood
-      : (state.current ?? state.lastGood)
+  const snapshot = state.current
   if (!snapshot) return EMPTY_CLOUD_WORK_STATUS
   const checks = {
     teams: cloudRuntimeCheckToLegacyStatus(snapshot.checks.teams.status),
@@ -453,47 +453,6 @@ function resolveDeviceSource(device: DeviceInfo): DeviceRoute['source'] {
   return 'local'
 }
 
-export function startCloudWorkSync(keys: CloudWorkCheckKey[]): CloudWorkStatus {
-  const checks = { ...EMPTY_CLOUD_WORK_STATUS.checks }
-  keys.forEach(key => {
-    checks[key] = 'syncing'
-  })
-  return {
-    availability: cloudWorkAvailability(checks),
-    checks,
-    error: null,
-    updatedAt: new Date().toISOString(),
-  }
-}
-
-export function finishCloudWorkCheck(
-  current: CloudWorkStatus,
-  key: CloudWorkCheckKey,
-  label: string,
-  result: PromiseSettledResult<unknown>,
-  options?: {
-    isEmpty?: (value: unknown) => boolean
-  }
-): CloudWorkStatus {
-  const status =
-    result.status === 'rejected'
-      ? 'unavailable'
-      : options?.isEmpty?.(result.value)
-        ? 'empty'
-        : 'available'
-  const checks = {
-    ...current.checks,
-    [key]: status,
-  }
-  const nextError = cloudWorkErrorMessage(label, result)
-  return {
-    availability: cloudWorkAvailability(checks),
-    checks,
-    error: nextError ?? (status === 'available' || status === 'empty' ? current.error : null),
-    updatedAt: new Date().toISOString(),
-  }
-}
-
 export function readCachedDeviceList(): DeviceInfo[] {
   try {
     const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY)
@@ -522,11 +481,23 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
   }
 }
 
-export function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
+export function resolveDeviceListWithCache(
+  devices: DeviceInfo[],
+  options: { useCacheFallback?: boolean } = {}
+): DeviceInfo[] {
   const claudeCodeDevices = filterClaudeCodeDevices(devices)
   if (claudeCodeDevices.length > 0) {
     writeCachedDeviceList(claudeCodeDevices)
     return claudeCodeDevices
+  }
+
+  if (options.useCacheFallback === false) {
+    try {
+      window.sessionStorage.removeItem(DEVICE_LIST_CACHE_KEY)
+    } catch {
+      // The authoritative empty result still applies when storage is unavailable.
+    }
+    return devices
   }
 
   const cachedDevices = readCachedDeviceList()

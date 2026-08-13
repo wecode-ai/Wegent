@@ -1,19 +1,12 @@
-import {
-  Boxes,
-  Copy,
-  Ellipsis,
-  Loader2,
-  MessageCirclePlus,
-  Trash2,
-  Upload,
-  UserCog,
-} from 'lucide-react'
+import { Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, Upload, UserCog } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
-import { resolvePluginLogo } from './plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
+import { resolvePreferredPluginLogo } from './plugin-assets'
 import type { PluginDistribution } from './pluginDistribution'
 import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
+import { PluginSourceAvatar } from './PluginSourceAvatar'
 
 export interface InstalledPluginItem {
   id: string | number
@@ -43,7 +36,9 @@ export function InstalledPluginRow({
   onOpen,
   onTry,
   onPublish,
+  publishLabel,
   onShare,
+  shareLabel,
   onCopy,
   onToggle,
   onUninstall,
@@ -54,23 +49,26 @@ export function InstalledPluginRow({
   onOpen?: () => void
   onTry?: () => void
   onPublish?: () => void
+  publishLabel?: string
   onShare?: () => void
+  shareLabel?: string
   onCopy?: () => void
   onToggle: () => void
   onUninstall: () => void
   isUninstalling?: boolean
 }) {
   const { t } = useTranslation('common')
+  const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const actionsRef = useRef<HTMLDivElement>(null)
   const shareRecipient = marketplaceItem?.accessRole === 'recipient'
   const toggleLabel = plugin.enabled
     ? t('workbench.plugins_disable_plugin', '停用插件')
     : t('workbench.plugins_enable_plugin', '启用插件')
-  const logo = resolvePluginLogo({
+  const logo = resolvePreferredPluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey,
-    logo: plugin.raw.spec.interface?.logo,
-    composerIcon: plugin.raw.spec.interface?.composerIcon,
+    appearanceMode,
+    interfaces: [plugin.raw.spec.interface, marketplaceItem?.interface],
   })
   const distributionLabel =
     plugin.distribution === 'official'
@@ -97,19 +95,19 @@ export function InstalledPluginRow({
 
   const mainContent = (
     <>
-      <div
-        data-testid={`installed-plugin-logo-frame-${plugin.id}`}
+      <PluginSourceAvatar
+        testId={`installed-plugin-logo-frame-${plugin.id}`}
+        imageTestId={`installed-plugin-logo-${plugin.id}`}
         className={[
           'plugin-management-logo',
           logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
         ].join(' ')}
-      >
-        {logo.url ? (
-          <img src={logo.url} alt="" data-testid={`installed-plugin-logo-${plugin.id}`} />
-        ) : (
-          <Boxes className="h-5 w-5 text-text-muted" />
-        )}
-      </div>
+        contrastPad={logo.contrastPad}
+        distribution={plugin.distribution}
+        logoUrl={logo.url}
+        name={plugin.name}
+        useInitial={logo.source === 'fallback'}
+      />
       <div className="min-w-0">
         <strong className="block truncate text-base font-medium leading-5 text-text-primary">
           {plugin.name}
@@ -214,20 +212,6 @@ export function InstalledPluginRow({
             data-testid={`installed-plugin-actions-menu-${plugin.id}`}
             className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
           >
-            {onPublish && (
-              <button
-                type="button"
-                data-testid={`installed-plugin-publish-${plugin.id}`}
-                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-                onClick={() => {
-                  setIsMenuOpen(false)
-                  onPublish()
-                }}
-              >
-                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {t('workbench.plugins_publish_to_marketplace', '发布')}
-              </button>
-            )}
             {onShare && (
               <button
                 type="button"
@@ -239,7 +223,21 @@ export function InstalledPluginRow({
                 }}
               >
                 <UserCog className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-                {t('workbench.plugins_manage_access', '管理权限')}
+                {shareLabel || t('workbench.plugins_manage_access', '管理权限')}
+              </button>
+            )}
+            {onPublish && (
+              <button
+                type="button"
+                data-testid={`installed-plugin-publish-${plugin.id}`}
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  onPublish()
+                }}
+              >
+                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+                {publishLabel || t('workbench.plugins_publish_to_marketplace', '发布')}
               </button>
             )}
             {onCopy && (

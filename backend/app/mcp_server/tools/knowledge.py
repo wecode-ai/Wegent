@@ -306,7 +306,9 @@ def list_knowledge_bases(
     param_descriptions={
         "knowledge_base_id": "Knowledge base ID to list documents from",
         "folder_id": "Optional folder ID to filter documents by (0 or omit for root/all documents)",
-        "include_subfolders": "Whether folder_id includes descendant folders",
+        "include_subfolders": (
+            "Whether folder_id includes descendant folders (default: true)"
+        ),
         "keyword": "Optional keyword to search document names",
         "sort_by": "Sort field: name, size, createdAt, or updatedAt",
         "sort_order": "Sort order: asc or desc",
@@ -318,7 +320,7 @@ def list_documents(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     folder_id: Optional[int] = None,
-    include_subfolders: bool = False,
+    include_subfolders: bool = True,
     keyword: Optional[str] = None,
     sort_by: str = "createdAt",
     sort_order: str = "desc",

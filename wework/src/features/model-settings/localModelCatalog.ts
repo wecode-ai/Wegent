@@ -58,7 +58,7 @@ export function createDefaultLocalModelCatalogEntry(input: {
     effective_context_window_percent: 95,
     experimental_supported_tools: [],
     input_modalities: ['text'],
-    supports_search_tool: false,
+    supports_search_tool: true,
     use_responses_lite: false,
     auto_review_model_override: null,
     tool_mode: null,

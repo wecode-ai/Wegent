@@ -1,4 +1,5 @@
 import { getToken } from '@/api/auth'
+import { createAttachmentApi } from '@/api/attachments'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
@@ -18,6 +19,9 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
+import { createProjectChatClient } from '@/api/backend/projectChatSocket'
+import { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import { createProjectAutomationApi } from '@/api/projectAutomations'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -59,6 +63,11 @@ export function createBackendWorkbenchServices(
     auth: { client_origin: WEWORK_CLIENT_ORIGIN },
     logger: console,
   })
+  const projectChatClient = createProjectChatClient({
+    socketBaseUrl,
+    socketPath,
+    getToken: resolveToken,
+  })
 
   return {
     teamApi: createTeamApi(client),
@@ -76,6 +85,10 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    attachmentApi: createAttachmentApi({
+      apiBaseUrl,
+      getToken: resolveToken,
+    }),
     executorClient: createExecutorClientFromApis({
       transportKind,
       deviceApi,
@@ -86,6 +99,9 @@ export function createBackendWorkbenchServices(
     }),
     userApi: createUserApi(client),
     socketClient,
+    projectChatClient,
+    projectChatAgentApi: createProjectChatAgentApi(client),
+    projectAutomationApi: createProjectAutomationApi(client),
     workspaceSessionApi: {
       startProjectTerminal: projectApi.startTerminalSession,
       startProjectCodeServer: projectApi.startCodeServerSession,

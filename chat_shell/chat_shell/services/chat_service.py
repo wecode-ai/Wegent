@@ -122,6 +122,10 @@ class ChatService(ChatInterface):
         """
         parts: list[str] = []
 
+        selected_knowledge_prompt = getattr(request, "selected_knowledge_prompt", "")
+        if selected_knowledge_prompt:
+            parts.append(selected_knowledge_prompt)
+
         # Prefer Backend-provided kb_meta_prompt (HTTP mode).
         if request.kb_meta_prompt:
             parts.append(request.kb_meta_prompt)
@@ -259,6 +263,16 @@ class ChatService(ChatInterface):
                 request.subtask_id,
             )
             context_metrics_tracker: ContextMetricsTracker | None = None
+
+            # The prompt advertises attachment paths inside the task sandbox.
+            # Materialize those files before the model can call sandbox tools so
+            # a newly-created sandbox cannot race the upload-time best-effort sync.
+            from chat_shell.services.sandbox_attachment_sync import (
+                sync_chat_attachments_to_sandbox,
+            )
+
+            add_span_event("syncing_sandbox_attachments")
+            await sync_chat_attachments_to_sandbox(request)
 
             # Prepare all context resources in parallel
             add_span_event("preparing_context")

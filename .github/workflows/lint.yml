@@ -58,33 +58,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.11 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.11'
 
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-
       - name: Install dependencies
         working-directory: ./backend
-        run: |
-          source $HOME/.cargo/env
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run Black format check
         working-directory: ./backend
-        run: |
-          source $HOME/.cargo/env
-          uv run black --check app/
+        run: uv run black --check app/
 
       - name: Run isort check
         working-directory: ./backend
-        run: |
-          source $HOME/.cargo/env
-          uv run isort --check-only --diff app/
+        run: uv run isort --check-only --diff app/
 
   lint-knowledge-engine:
     name: Lint Knowledge Engine (Black & isort)
@@ -96,33 +85,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.12 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.12'
 
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-
       - name: Install dependencies
         working-directory: ./knowledge_engine
-        run: |
-          source $HOME/.cargo/env
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run Black format check
         working-directory: ./knowledge_engine
-        run: |
-          source $HOME/.cargo/env
-          uv run black --check knowledge_engine tests
+        run: uv run black --check knowledge_engine tests
 
       - name: Run isort check
         working-directory: ./knowledge_engine
-        run: |
-          source $HOME/.cargo/env
-          uv run isort --check-only --diff knowledge_engine tests
+        run: uv run isort --check-only --diff knowledge_engine tests
 
   lint-frontend:
     name: Lint Frontend (ESLint & TypeScript)
@@ -134,18 +112,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: ./pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run ESLint
         run: pnpm --filter wecode-ai-assistant lint
@@ -163,18 +131,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: ./pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run ESLint
         run: pnpm --filter wework lint
@@ -197,6 +155,12 @@ jobs:
 
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
+
+      - name: Test CI cache policy
+        run: .github/scripts/test-ci-cache-policy.sh
+
+      - name: Test Wegent release policy
+        run: scripts/test-publish-image-release-policy.sh
 
       - name: Test repository policy workflow
         run: scripts/test-repository-policy-workflow.sh

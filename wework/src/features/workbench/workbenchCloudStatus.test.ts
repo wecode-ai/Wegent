@@ -1,10 +1,12 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   mergeRuntimeWorkLists,
+  readCachedDeviceList,
+  resolveDeviceListWithCache,
   selectCloudWorkStatus,
   selectProjectCreatableDevices,
   selectRuntimeWorkView,
@@ -154,6 +156,26 @@ describe('mergeRuntimeWorkLists', () => {
     }
 
     expect(mergeRuntimeWorkLists(localWork, cloudWork).chats).toEqual([])
+  })
+})
+
+describe('resolveDeviceListWithCache', () => {
+  beforeEach(() => sessionStorage.clear())
+
+  test('accepts an authoritative empty device list and clears stale cache', () => {
+    const cachedDevice = device({ device_id: 'stale-device' })
+    resolveDeviceListWithCache([cachedDevice])
+
+    expect(readCachedDeviceList()).toHaveLength(1)
+    expect(resolveDeviceListWithCache([], { useCacheFallback: false })).toEqual([])
+    expect(readCachedDeviceList()).toEqual([])
+  })
+
+  test('retains cached devices when the caller explicitly permits fallback', () => {
+    const cachedDevice = device({ device_id: 'cached-device' })
+    resolveDeviceListWithCache([cachedDevice])
+
+    expect(resolveDeviceListWithCache([]).map(item => item.device_id)).toEqual(['cached-device'])
   })
 })
 
@@ -353,7 +375,14 @@ describe('cloud runtime sync state', () => {
     expect(selectVisibleDevices([], stale)).toEqual([])
   })
 
-  test('keeps sidebar cloud work status stable during a background refresh', () => {
+  test('shows syncing during the initial cloud refresh', () => {
+    const refreshing = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+
+    expect(selectCloudWorkStatus(refreshing).availability).toBe('syncing')
+    expect(selectCloudWorkStatus(refreshing).checks.devices).toBe('syncing')
+  })
+
+  test('keeps available cloud work status stable during a later background refresh', () => {
     const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
     const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
       devices: { status: 'fulfilled', value: [device()] },
@@ -362,6 +391,40 @@ describe('cloud runtime sync state', () => {
 
     expect(selectCloudWorkStatus(refreshing).availability).toBe('available')
     expect(selectCloudWorkStatus(refreshing).checks.devices).toBe('available')
+  })
+
+  test('keeps unavailable cloud work status stable until a later refresh succeeds', () => {
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+    const unavailable = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: { status: 'rejected', reason: new Error('backend unavailable') },
+    })
+    const refreshing = startCloudRuntimeSync(unavailable, 'poll', ['devices'])
+
+    expect(selectCloudWorkStatus(refreshing).availability).toBe('unavailable')
+    expect(selectCloudWorkStatus(refreshing).checks.devices).toBe('unavailable')
+
+    const recovered = finishCloudRuntimeSync(refreshing, refreshing.inFlightRevision ?? 0, {
+      devices: { status: 'fulfilled', value: [device()] },
+    })
+    expect(selectCloudWorkStatus(recovered).availability).toBe('available')
+  })
+
+  test('publishes a failed refresh instead of falling back to last successful status', () => {
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: { status: 'fulfilled', value: [device()] },
+    })
+    const refreshing = startCloudRuntimeSync(ready, 'poll', ['devices'])
+    const unavailable = finishCloudRuntimeSync(refreshing, refreshing.inFlightRevision ?? 0, {
+      devices: { status: 'rejected', reason: new Error('backend unavailable') },
+    })
+
+    expect(selectCloudWorkStatus(unavailable).availability).toBe('unavailable')
+    expect(selectCloudWorkStatus(unavailable).checks.devices).toBe('unavailable')
+    expect(selectCloudWorkStatus(unavailable).error).toContain('backend unavailable')
+    expect(selectVisibleDevices([], unavailable)).toEqual([
+      expect.objectContaining({ device_id: 'cloud-device', status: 'online' }),
+    ])
   })
 
   test('derives runtime work from last good cloud snapshot without duplicating tasks', () => {

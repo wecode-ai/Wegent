@@ -56,31 +56,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
         with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Cache frontend node_modules
-        id: frontend-node-modules-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            node_modules
-            frontend/node_modules
-            packages/*/node_modules
-          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-node-24-frontend-
-
-      - name: Install frontend dependencies
-        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Resolve Playwright version
         id: playwright-version
@@ -89,27 +68,35 @@ jobs:
           version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Cache Playwright browsers
+      - name: Restore shared Playwright browsers
         id: playwright-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ steps.playwright-version.outputs.version }}
+          key: ${{ runner.os }}-playwright-chromium-v2-${{ steps.playwright-version.outputs.version }}
 
       - name: Install Playwright browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         run: ../.github/scripts/install-playwright-browser.sh
 
-      - name: Cache Next.js build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Save shared Playwright browsers
+        if: github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
+
+      - name: Restore shared Next.js build cache
+        id: nextjs-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          key: ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-e2e-
+            ${{ runner.os }}-nextjs-e2e-v2-${{ hashFiles('./pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-e2e-v2-
 
       - name: Build frontend for E2E
         working-directory: ./frontend
@@ -119,6 +106,13 @@ jobs:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: pnpm run build
+
+      - name: Save shared Next.js build cache
+        if: github.ref == 'refs/heads/main' && steps.nextjs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ./frontend/.next/cache
+          key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
 
       - name: Archive frontend E2E build
         run: .github/scripts/archive-frontend-e2e-build.sh
@@ -143,12 +137,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
       - name: Build ClaudeCode Source Executor Image
-        run: |
-          docker build \
-            -t wegent/e2e-claudecode-executor:latest \
-            -f frontend/e2e/fixtures/claudecode-executor/Dockerfile \
-            .
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: frontend/e2e/fixtures/claudecode-executor/Dockerfile
+          load: true
+          tags: wegent/e2e-claudecode-executor:latest
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
       - name: Extract ClaudeCode Executor Binary
         run: |
@@ -196,7 +195,8 @@ jobs:
           --health-cmd="mysqladmin ping"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=3
+          --health-start-period=45s
+          --health-retries=6
 
       redis:
         image: redis:7-alpine
@@ -235,53 +235,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      # Cache Python packages
-      - name: Cache Python packages
-        id: python-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cache/uv
-            backend/.venv
-            shared/.venv
-          key: ${{ runner.os }}-python-3.11-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-python-3.11-e2e-
-            ${{ runner.os }}-python-3.11-
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Cache frontend node_modules
-        id: frontend-node-modules-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            node_modules
-            frontend/node_modules
-            packages/*/node_modules
-          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-node-24-frontend-
-
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      - name: Set up Python 3.11 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
 
-      - name: Install uv
-        run: pip install uv
-
-      # Install dependencies in parallel
       - name: Install shared module
-        if: steps.python-cache.outputs.cache-hit != 'true'
         working-directory: ./shared
         run: |
           uv venv --allow-existing
@@ -289,16 +251,11 @@ jobs:
           uv pip install -e .
 
       - name: Install backend dependencies
-        if: steps.python-cache.outputs.cache-hit != 'true'
         working-directory: ./backend
         run: |
           uv sync
           source .venv/bin/activate
           uv pip install -e ../shared
-
-      - name: Install frontend dependencies
-        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
 
       - name: Download frontend E2E build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -309,13 +266,12 @@ jobs:
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
-      # Cache Playwright browsers
-      - name: Cache Playwright browsers
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore shared Playwright browsers
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ needs.build-frontend-e2e.outputs.playwright_version }}
+          key: ${{ runner.os }}-playwright-chromium-v2-${{ needs.build-frontend-e2e.outputs.playwright_version }}
 
       - name: Install Playwright browser
         working-directory: ./frontend
@@ -415,6 +371,17 @@ jobs:
         run: |
           pnpm exec playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+      - name: Run Provider-native E2E tests serially
+        if: matrix.shardIndex == 1
+        working-directory: ./frontend
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:8000
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          CI: true
+        run: pnpm exec playwright test --project=provider-native-chromium --workers=1 --no-deps
 
       - name: Stop Mock Model Server
         if: always()
@@ -529,72 +496,30 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Free executor E2E runner disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h
+        run: .github/scripts/free-runner-disk-space-if-needed.sh 50
 
       - name: Install executor Rust system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+        run: .github/scripts/install-executor-rust-system-dependencies.sh
 
-      - name: Cache Python packages
-        id: executor-python-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cache/uv
-            backend/.venv
-            executor_manager/.venv
-            shared/.venv
-          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-python-3.11-executor-e2e-
-            ${{ runner.os }}-python-3.11-
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+      - name: Add local harness CLIs to PATH
+        run: echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Cache frontend node_modules
-        id: frontend-node-modules-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            node_modules
-            frontend/node_modules
-            packages/*/node_modules
-          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-node-24-frontend-
-
-      - name: Configure npm global cache path
-        run: |
-          mkdir -p ~/.npm-global/bin
-          npm config set prefix ~/.npm-global
-          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
-
-      - name: Cache Claude Code CLI
+      - name: Restore shared Claude Code CLI
         id: claude-code-cli-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: ~/.npm-global
-          key: ${{ runner.os }}-node-24-claude-code-cli-2.1.142
+          path: .github/claude-code-cli/node_modules
+          key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      - name: Set up Python 3.11 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.11"
 
-      - name: Install uv
-        run: pip install uv
-
       - name: Install shared module
-        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./shared
         run: |
           uv venv --allow-existing
@@ -602,7 +527,6 @@ jobs:
           uv pip install -e .
 
       - name: Install backend dependencies
-        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./backend
         run: |
           uv sync
@@ -610,20 +534,25 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install executor manager dependencies
-        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./executor_manager
         run: |
           uv sync
           source .venv/bin/activate
           uv pip install -e ../shared
 
-      - name: Install Claude Code CLI
+      - name: Install local harness CLIs
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
-        run: npm install -g @anthropic-ai/claude-code@2.1.142
+        run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
 
-      - name: Install frontend dependencies
-        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
+      - name: Verify local harness CLIs
+        run: .github/scripts/verify-local-harness-clis.sh
+
+      - name: Save shared local harness CLIs
+        if: github.ref == 'refs/heads/main' && steps.claude-code-cli-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .github/claude-code-cli/node_modules
+          key: ${{ steps.claude-code-cli-cache.outputs.cache-primary-key }}
 
       - name: Download frontend E2E build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -634,12 +563,12 @@ jobs:
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Restore shared Playwright browsers
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium-${{ needs.build-frontend-e2e.outputs.playwright_version }}
+          key: ${{ runner.os }}-playwright-chromium-v2-${{ needs.build-frontend-e2e.outputs.playwright_version }}
 
       - name: Install Playwright browser
         working-directory: ./frontend
@@ -951,27 +880,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Cache frontend node_modules
-        id: frontend-node-modules-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            node_modules
-            frontend/node_modules
-            packages/*/node_modules
-          key: ${{ runner.os }}-node-24-frontend-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-node-24-frontend-
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Download all blob reports
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -979,10 +889,6 @@ jobs:
           pattern: blob-report-*
           path: all-blob-reports
           merge-multiple: true
-
-      - name: Install frontend dependencies
-        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
-        run: pnpm install --frozen-lockfile
 
       - name: Merge reports
         working-directory: ./frontend

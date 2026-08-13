@@ -70,6 +70,39 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders a ChatGPT visualize content reference from its absolute path', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<div>可视化内容</div>'))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chatgpt-visualization')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-chatgpt-visualization',
+            role: 'assistant',
+            content: [
+              '已生成可视化。',
+              '',
+              'visualize{"path":"/tmp/codex/visualizations/latency.html","title":"Latency"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-08-12T10:00:00Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成可视化。')).toBeInTheDocument()
+    expect(screen.queryByText('visualize')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+        'src',
+        'blob:chatgpt-visualization'
+      )
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
@@ -302,6 +335,42 @@ describe('MessageList', () => {
     fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
 
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
+  })
+
+  test('does not render viewed images as final message artifacts', () => {
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-view-image',
+            role: 'assistant',
+            content: 'The screenshot is visible in the tool details.',
+            status: 'done',
+            createdAt: '2026-08-08T10:00:01Z',
+            blocks: [
+              {
+                id: 'view-image-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'view_image',
+                toolInput: { path: '/tmp/screenshot.png' },
+                toolOutput: { image_url: imageUrl },
+                renderPayload: {
+                  dataUrl: imageUrl,
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('generated-image-gallery')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('generated-image')).not.toBeInTheDocument()
   })
 
   test('uses browser-native content visibility without message window placeholders', () => {
@@ -3290,6 +3359,37 @@ describe('MessageList', () => {
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
   })
 
+  test('copies only the visible request from Codex user messages with file mentions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'codex-image-mention-copy',
+            role: 'user',
+            content: [
+              '# Files mentioned by the user:',
+              '',
+              '## image.png: /Users/me/.wework/workspace/attachments/draft/image.png',
+              '',
+              '## My request for Codex:',
+              '分析下这个图片',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    expect(writeText).toHaveBeenCalledWith('分析下这个图片')
+  })
+
   test('renders Codex local non-image file mentions as compact file chips', () => {
     const onOpenWorkspaceFile = vi.fn()
 
@@ -3984,6 +4084,31 @@ describe('MessageList', () => {
     expect(openExternalUrlMock).toHaveBeenCalledWith(
       'https://github.com/wecode-ai/Wegent/pull/2350'
     )
+  })
+
+  test('renders sent Wegent Sites project links like composer chips', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-sites-project-link',
+            role: 'user',
+            content: '[产品发布页](wegent-sites-project://prj_product) 请说出你要做的改动',
+            status: 'done',
+            createdAt: '2026-07-30T10:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const message = screen.getByTestId('message-user')
+    const chip = within(message).getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('产品发布页')
+    expect(chip).toHaveAttribute('data-composer-link-url', 'wegent-sites-project://prj_product')
+    expect(chip).toHaveAttribute('data-composer-link-provider', 'wegent-sites-project')
+    expect(chip.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+    expect(message).toHaveTextContent('产品发布页 请说出你要做的改动')
+    expect(message).not.toHaveTextContent('wegent-sites-project://prj_product')
   })
 
   test('renders GitHub link chips in the edit form and opens the link edit popover', async () => {
@@ -5158,11 +5283,8 @@ describe('MessageList', () => {
       '/plugins?plugin=documents&marketplace=openai-primary-runtime'
     )
     expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
-    expect(screen.getByTestId('sent-plugin-icon-Documents').tagName).toBe('IMG')
-    expect(screen.getByTestId('sent-plugin-icon-Documents')).toHaveAttribute(
-      'src',
-      '/plugin-icons/wework.svg'
-    )
+    expect(screen.getByTestId('sent-plugin-icon-Documents').tagName).toBe('SPAN')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toHaveTextContent('D')
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'Documents Draft a project memo as a document'
     )

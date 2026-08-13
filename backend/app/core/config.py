@@ -174,6 +174,18 @@ class Settings(BaseSettings):
     CHAT_HISTORY_MAX_MESSAGES: int = 50  # Maximum messages to keep in history
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
 
+    # Async video polling configuration
+    VIDEO_POLL_INTERVAL_SECONDS: int = 3
+    VIDEO_MAX_POLL_COUNT: int = 600
+    VIDEO_POLL_SCHEDULE_LEASE_SECONDS: int = 10
+    VIDEO_RECOVERY_STALE_SECONDS: int = 10
+    VIDEO_RECOVERY_LOOKBACK_HOURS: int = 1
+
+    # Default models used by image/video generation MCP tools when the current
+    # task model is not a matching generation model.
+    DEFAULT_IMAGE_GENERATION_MODEL: str = ""
+    DEFAULT_VIDEO_GENERATION_MODEL: str = ""
+
     # Tool calling flow limits
     CHAT_TOOL_MAX_REQUESTS: int = 10  # Maximum LLM requests in tool calling flow
     CHAT_TOOL_MAX_TIME_SECONDS: float = (
@@ -219,6 +231,9 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public base URL used for short-lived model-provider attachment downloads.
+    # Required when remote generation providers use locally uploaded references.
+    ATTACHMENT_PUBLIC_BASE_URL: str = ""
     # Public Socket.IO origin returned to Wework desktop clients.
     WEGENT_SOCKET_URL: str = ""
     # Optional Web URL used to build Wework desktop cloud authorization pages.
@@ -248,6 +263,11 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
+
+    # Public base URL of this backend, reachable from executor devices. The
+    # cloud-model LLM proxy URL is derived from it
+    # (`{WEGENT_BACKEND_PUBLIC_URL}/api/runtime-work/llm-responses-proxy`).
+    WEGENT_BACKEND_PUBLIC_URL: str = "http://localhost:8000"
 
     # Rate limiting configuration for OpenAPI endpoints
     # Format: "requests/period" where period can be second, minute, hour, day
@@ -396,6 +416,12 @@ class Settings(BaseSettings):
         3  # RUNNING executions older than this will be marked FAILED
     )
 
+    # Project robot queue scheduler
+    ROBOT_QUEUE_SCHEDULER_ENABLED: bool = True
+    ROBOT_QUEUE_SCAN_INTERVAL_SECONDS: int = 5
+    ROBOT_CLOUD_DEVICE_SLOTS: int = 2
+    ROBOT_LOCAL_DEVICE_SLOTS: int = 2
+
     # Knowledge indexing protection configuration
     KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
@@ -537,6 +563,13 @@ class Settings(BaseSettings):
     DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
+
+    # How long a repository read may take before it is given up on. These run inside
+    # a user-facing request -- resolving a repository, checking access, reading HEAD
+    # -- and `requests` has no default timeout, so without one an unresponsive
+    # provider holds the worker until the OS gives up on the socket. Configurable
+    # because the right number depends on how far away the git host is.
+    REPOSITORY_READ_TIMEOUT_SECONDS: int = 15
 
     # Plugin marketplace package storage and controlled publishing.
     PLUGIN_STORAGE_BUCKET: str = "plugins"

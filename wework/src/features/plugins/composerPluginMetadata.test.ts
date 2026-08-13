@@ -4,6 +4,7 @@ import {
   appendInstalledPluginsAsComposerApps,
   composerAppPluginKey,
   enrichComposerApps,
+  overlayMarketplaceLogosOnComposerApps,
 } from './composerPluginMetadata'
 
 const githubApp: LocalDeviceApp = {
@@ -102,12 +103,44 @@ describe('enrichComposerApps', () => {
     expect(enrichComposerApps([githubApp], [githubPlugin])).toEqual([
       expect.objectContaining({
         name: 'GitHub',
+        pluginKey: 'github',
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
         logoUrl: '/Users/test/plugins/github/assets/icon.png',
         pluginDisplayNames: ['GitHub'],
         trialTemplates: expect.any(Array),
       }),
     ])
+  })
+
+  test('preserves the canonical plugin key when the app uses a localized display name', () => {
+    const localizedPlugin: InstalledPlugin = {
+      ...githubPlugin,
+      metadata: { name: 'weibo-api-wiki', namespace: 'default' },
+      spec: {
+        ...githubPlugin.spec,
+        source: {
+          ...githubPlugin.spec.source,
+          pluginKey: 'weibo-api-wiki',
+        },
+        displayName: '微博开放平台内部WIKI',
+        components: {
+          ...githubPlugin.spec.components,
+          apps: [{ name: '微博开放平台内部WIKI', path: 'weibo-api-wiki' }],
+        },
+        interface: null,
+      },
+    }
+    const localizedApp: LocalDeviceApp = {
+      ...githubApp,
+      id: 'weibo-api-wiki',
+      name: '微博开放平台内部WIKI',
+      pluginDisplayNames: ['微博开放平台内部WIKI'],
+    }
+
+    const [app] = enrichComposerApps([localizedApp], [localizedPlugin])
+
+    expect(app?.pluginKey).toBe('weibo-api-wiki')
+    expect(app && composerAppPluginKey(app)).toBe('weibo-api-wiki')
   })
 
   test('enriches a Wegent connector app after connector synchronization', () => {
@@ -182,6 +215,7 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       expect.objectContaining({
         id: 'plugin:superpowers',
         name: 'superpowers',
+        pluginKey: 'superpowers',
         source: 'installed-plugin',
         skillPath: 'plugin://superpowers@openai-official',
         logoUrl: '/tmp/plugins/superpowers/assets/icon.png',
@@ -268,6 +302,122 @@ describe('appendInstalledPluginsAsComposerApps', () => {
     ])
   })
 
+  test('uses the workspace marketplace for managed installs without explicit marketplace', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wegent',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
+  test('uses visibility over stale source marketplace for managed installs', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        visibility: 'workspace',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+          marketplace: 'wework',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wegent',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
+  test('uses the public marketplace for public managed installs without explicit marketplace', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        visibility: 'public',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wework',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
+  test('uses the personal marketplace for personal managed installs without explicit marketplace', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        visibility: 'personal',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wework-personal',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
   test('keeps composer apps when another installed plugin has broken components', () => {
     const broken: InstalledPlugin = {
       ...githubPlugin,
@@ -293,6 +443,71 @@ describe('appendInstalledPluginsAsComposerApps', () => {
       expect.objectContaining({
         id: 'plugin:broken-plugin',
         skillPath: 'plugin://broken-plugin@wegent',
+      }),
+    ])
+  })
+})
+
+describe('overlayMarketplaceLogosOnComposerApps', () => {
+  test('replaces unresolved composer logos with marketplace package logos', () => {
+    const apps: LocalDeviceApp[] = [
+      {
+        id: 'plugin:weibo-api-wiki',
+        name: '微博开放平台内部WIKI',
+        pluginKey: 'weibo-api-wiki',
+        description: null,
+        logoUrl: '/plugin-icons/wework.svg',
+        isAccessible: true,
+        isEnabled: true,
+        source: 'installed-plugin',
+      },
+      {
+        id: 'wegent:dingtalk',
+        name: '钉钉',
+        description: null,
+        logoUrl: 'https://example.com/dingtalk.png',
+        isAccessible: true,
+        isEnabled: true,
+        source: 'wegent-connector',
+      },
+    ]
+
+    expect(
+      overlayMarketplaceLogosOnComposerApps(apps, [
+        {
+          id: 42,
+          remotePluginId: 'wegent~Plugin_42',
+          name: 'weibo-api-wiki',
+          displayName: '微博开放平台内部WIKI',
+          description: '',
+          visibility: 'workspace',
+          featured: false,
+          installed: true,
+          enabled: true,
+          sourceType: 'marketplace',
+          ownerUserId: 1,
+          components: {
+            skills: [],
+            commands: [],
+            agents: [],
+            hooks: [],
+            mcps: [],
+            lsps: [],
+            monitors: [],
+            bins: [],
+          },
+          manifest: {},
+          interface: { logo: 'data:image/png;base64,wiki' },
+        },
+      ])
+    ).toEqual([
+      expect.objectContaining({
+        id: 'plugin:weibo-api-wiki',
+        logoUrl: 'data:image/png;base64,wiki',
+      }),
+      expect.objectContaining({
+        id: 'wegent:dingtalk',
+        logoUrl: 'https://example.com/dingtalk.png',
       }),
     ])
   })

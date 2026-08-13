@@ -30,7 +30,8 @@ import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
-import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
+import { useOptionalAppearance } from '@/features/appearance'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -44,6 +45,7 @@ import {
   getComposerApps,
   publishComposerApps,
   readComposerAppsSnapshot,
+  shouldSuppressComposerAppsSync,
   subscribeComposerApps,
 } from './composerAppsSnapshot'
 import {
@@ -121,9 +123,11 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       workspaceFileApi,
       cloudMentionCandidates = [],
       conversationMentionCandidates = [],
+      externalMentionCandidates = [],
       cloudProjectCandidates = [],
       cloudSpaceEnabled = false,
       onSelectCloudProject,
+      onSelectExternalMention,
       onListLocalSkills,
       onListLocalApps,
       models = [],
@@ -139,6 +143,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     ref
   ) {
     const { t } = useTranslation('common')
+    const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
     const menuRef = useRef<HTMLDivElement>(null)
     const modelMenuRef = useRef<HTMLDivElement>(null)
     const skillsLoadedRef = useRef(false)
@@ -220,6 +225,17 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         ),
       [filteredMentionCandidates]
     )
+
+    const filteredExternalMentionCandidates = useMemo(() => {
+      if (activeMenu?.kind !== 'mention') return []
+      const query = activeMenu.trigger.query.trim().toLocaleLowerCase()
+      if (!query) return externalMentionCandidates
+      return externalMentionCandidates.filter(candidate =>
+        [candidate.title, ...(candidate.searchAliases ?? [])].some(value =>
+          value.toLocaleLowerCase().includes(query)
+        )
+      )
+    }, [activeMenu, externalMentionCandidates])
 
     const workspaceSearch = useWorkspaceMentionSearch(
       activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
@@ -342,22 +358,28 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
     const pluginSlashCommands = useMemo<SlashCommand[]>(() => {
       const pluginGroup = t('workbench.slash_command_group_plugins', '插件')
-      const commands: SlashCommand[] = appCandidates.map(candidate => ({
-        id: candidate.key,
-        title: candidate.title,
-        description: candidate.description,
-        group: pluginGroup,
-        searchAliases: candidate.searchAliases,
-        Icon: Plug,
-        iconUrl: resolvePluginLogoUrl({
+      const commands: SlashCommand[] = appCandidates.map(candidate => {
+        const logo = resolvePluginLogo({
           pluginKey: composerAppPluginKey(candidate.app),
           logo: candidate.app.logoUrl,
-        }),
-        trailingIcon: CornerDownLeft,
-        enabled: candidate.enabled,
-        testId: slashAppTestId(candidate.app.id),
-        app: candidate.app,
-      }))
+          logoDark: candidate.app.logoUrlDark,
+          appearanceMode,
+        })
+        return {
+          id: candidate.key,
+          title: candidate.title,
+          description: candidate.description,
+          group: pluginGroup,
+          searchAliases: candidate.searchAliases,
+          Icon: Plug,
+          iconUrl: logo.url,
+          iconContrastPad: logo.contrastPad,
+          trailingIcon: CornerDownLeft,
+          enabled: candidate.enabled,
+          testId: slashAppTestId(candidate.app.id),
+          app: candidate.app,
+        }
+      })
 
       commands.push({
         id: 'plugin-marketplace',
@@ -372,7 +394,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       })
 
       return commands
-    }, [appCandidates, t])
+    }, [appCandidates, appearanceMode, t])
 
     const slashCommands = useMemo(
       () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
@@ -411,6 +433,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         }
         return [
           { kind: 'files-action' },
+          ...filteredExternalMentionCandidates.map(
+            candidate => ({ kind: 'external', candidate }) as MentionMenuRow
+          ),
           ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
           ...(!planModeActive && onSetPlanMode
             ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
@@ -435,6 +460,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         ]
       }
       return [
+        ...filteredExternalMentionCandidates.map(
+          candidate => ({ kind: 'external', candidate }) as MentionMenuRow
+        ),
         ...filteredMentionCandidates.map(
           candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
         ),
@@ -447,6 +475,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       cloudProjectsOpen,
       cloudSpaceEnabled,
       filteredCloudProjectCandidates,
+      filteredExternalMentionCandidates,
       filteredMentionCandidates,
       filteredSkillCandidates,
       onSetGoal,
@@ -620,6 +649,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       // The toolbar picker asks slash to re-publish when Vite HMR has split the
       // module singleton or the picker opened before the first publish landed.
       const onRequestSync = () => {
+        if (shouldSuppressComposerAppsSync()) return
         if (appsRef.current.length > 0) publishComposerApps(appsRef.current)
       }
       window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onRequestSync)
@@ -631,7 +661,13 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       // shared composer app inventory after install/uninstall.
       return subscribeComposerApps(() => {
         const next = getComposerApps()
-        if (next.length === 0) return
+        if (next.length === 0) {
+          setApps([])
+          appsLoadedRef.current = true
+          setAppsLoadError(false)
+          setAppsLoading(false)
+          return
+        }
         setApps(current => {
           if (
             current.length === next.length &&
@@ -832,13 +868,18 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
         const snapshot = editor.getSnapshot()
         if (candidate.kind === 'app') {
-          registerComposerMentionIcon(
-            candidate.reference,
-            resolvePluginLogoUrl({
-              pluginKey: composerAppPluginKey(candidate.app),
-              logo: candidate.app.logoUrl,
+          const logo = resolvePluginLogo({
+            pluginKey: composerAppPluginKey(candidate.app),
+            logo: candidate.app.logoUrl,
+            logoDark: candidate.app.logoUrlDark,
+            appearanceMode,
+          })
+          if (logo.source === 'provided' && logo.url) {
+            registerComposerMentionIcon(candidate.reference, {
+              url: logo.url,
+              contrastPad: logo.contrastPad,
             })
-          )
+          }
         }
         const replacement = replaceComposerMentionTrigger(
           snapshot.value,
@@ -849,14 +890,14 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
         commitEditorValue(replacement.value, replacement.cursor)
         if (candidate.kind === 'app') {
-          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
+          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates, candidate.app)
         }
         closeAutocompleteMenu()
         textareaRef.current?.focus()
         editor.focus()
         return true
       },
-      [closeAutocompleteMenu, commitEditorValue, textareaRef]
+      [appearanceMode, closeAutocompleteMenu, commitEditorValue, textareaRef]
     )
 
     const selectSkill = useCallback(
@@ -917,6 +958,11 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             onSelectCloudProject?.(row.candidate.project)
           }
           return selected
+        }
+        if (row.kind === 'external') {
+          onSelectExternalMention?.(row.candidate)
+          closeAutocompleteMenu()
+          return true
         }
         if (row.kind === 'cloud-projects-action') {
           setCloudProjectsOpen(true)
@@ -1091,22 +1137,40 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       }
     }, [])
 
+    const pendingTrialFocusExpectedRef = useRef<string | null>(null)
+
+    const focusTrialComposer = useCallback(() => {
+      const editor = editorRef.current
+      if (!editor) return
+      editor.setValue(valueRef.current, valueRef.current.length)
+      editor.focus()
+      closeAutocompleteMenu()
+    }, [closeAutocompleteMenu])
+
     useEffect(() => {
       const handleFocusRequest = (event: Event) => {
         const detail = (event as CustomEvent<{ expectedValue?: string }>).detail
-        if (detail?.expectedValue && detail.expectedValue !== valueRef.current) return
-        const editor = editorRef.current
-        if (!editor) return
-        editor.setValue(valueRef.current, valueRef.current.length)
-        editor.focus()
-        closeAutocompleteMenu()
+        const expectedValue = detail?.expectedValue
+        if (expectedValue && expectedValue !== valueRef.current) {
+          pendingTrialFocusExpectedRef.current = expectedValue
+          return
+        }
+        pendingTrialFocusExpectedRef.current = null
+        focusTrialComposer()
       }
 
       window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
       return () => {
         window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
       }
-    }, [closeAutocompleteMenu])
+    }, [focusTrialComposer])
+
+    useEffect(() => {
+      const expectedValue = pendingTrialFocusExpectedRef.current
+      if (!expectedValue || expectedValue !== value) return
+      pendingTrialFocusExpectedRef.current = null
+      focusTrialComposer()
+    }, [focusTrialComposer, value])
 
     useEffect(() => {
       let focusFrame: number | null = null

@@ -69,6 +69,10 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
+IMAGE_MCP_MOUNT_PATH = "/mcp/image"
+IMAGE_MCP_TRANSPORT_PATH = "/sse"
+VIDEO_MCP_MOUNT_PATH = "/mcp/video"
+VIDEO_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,24 @@ class McpAppSpec:
     log_prefix: str
     include_root_metadata: bool = True
     allow_user_token: bool = False
+
+
+@dataclass(frozen=True)
+class CustomMcpAppSpec:
+    """MCP app registered by a deployment-specific extension."""
+
+    name: str
+    mount_path: str
+    transport_path: str
+    build_app: Callable[[str], Starlette]
+
+
+_custom_mcp_app_specs: dict[str, CustomMcpAppSpec] = {}
+
+
+def register_custom_mcp_app(spec: CustomMcpAppSpec) -> None:
+    """Register or replace a deployment-specific MCP app before startup."""
+    _custom_mcp_app_specs[spec.name] = spec
 
 
 @dataclass(frozen=True)
@@ -526,6 +548,56 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
+# ============== Generation MCP Servers ==============
+
+image_mcp_server = FastMCP(
+    "wegent-image-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+video_mcp_server = FastMCP(
+    "wegent-video-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+_image_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_image_request_token_info", default=None)
+)
+_video_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_video_request_token_info", default=None)
+)
+_image_tools_registered = False
+_video_tools_registered = False
+
+
+def ensure_image_tools_registered() -> None:
+    global _image_tools_registered
+    if _image_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import image_generation  # noqa: F401
+
+    count = register_tools_to_server(image_mcp_server, "image")
+    logger.info("[MCP:Image] Registered %s tools", count)
+    _image_tools_registered = True
+
+
+def ensure_video_tools_registered() -> None:
+    global _video_tools_registered
+    if _video_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import video_generation  # noqa: F401
+
+    count = register_tools_to_server(video_mcp_server, "video")
+    logger.info("[MCP:Video] Registered %s tools", count)
+    _video_tools_registered = True
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -583,12 +655,34 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_IMAGE_MCP_SPEC = McpAppSpec(
+    name="image",
+    service_name="wegent-image-mcp",
+    mount_path=IMAGE_MCP_MOUNT_PATH,
+    transport_path=IMAGE_MCP_TRANSPORT_PATH,
+    server=image_mcp_server,
+    token_context=_image_request_token_info,
+    log_prefix="Image",
+)
+
+_VIDEO_MCP_SPEC = McpAppSpec(
+    name="video",
+    service_name="wegent-video-mcp",
+    mount_path=VIDEO_MCP_MOUNT_PATH,
+    transport_path=VIDEO_MCP_TRANSPORT_PATH,
+    server=video_mcp_server,
+    token_context=_video_request_token_info,
+    log_prefix="Video",
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
+    _IMAGE_MCP_SPEC,
+    _VIDEO_MCP_SPEC,
 )
 
 MCP_CONTEXT_SERVER_NAMES = frozenset(
@@ -597,6 +691,8 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
         "interactive_form_question",
         "prompt_optimization",
         "subscription",
+        "image",
+        "video",
     }
 )
 
@@ -632,6 +728,10 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+    elif spec.name == "image":
+        ensure_image_tools_registered()
+    elif spec.name == "video":
+        ensure_video_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -768,6 +868,21 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
             effective_spec.name,
             effective_spec.mount_path,
             effective_spec.transport_path,
+        )
+
+    for custom_spec in _custom_mcp_app_specs.values():
+        custom_mount_path = (
+            f"{normalized_prefix}{custom_spec.mount_path}"
+            if normalized_prefix
+            else custom_spec.mount_path
+        )
+        custom_app = custom_spec.build_app(custom_mount_path)
+        app.mount(custom_mount_path, custom_app)
+        logger.info(
+            "Mounted custom MCP server '%s' at %s (transport: %s)",
+            custom_spec.name,
+            custom_mount_path,
+            custom_spec.transport_path,
         )
 
     if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:

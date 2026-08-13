@@ -9,23 +9,36 @@ export function reduceRuntimeTaskLifecycle(
       const snapshotRunning = typeof event.task.running === 'boolean' ? event.task.running : null
       const expectedRunning = state.expectedExecutorRunning
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
+      const terminalStatus = isTerminalTaskStatus(event.task.status)
+      const queuedStatus = isQueuedTaskStatus(event.task.status)
+      const snapshotConfirmsActiveTurn =
+        snapshotRunning === true &&
+        (isRunningTaskStatus(event.task.threadStatus) || isRunningTaskStatus(event.task.turnStatus))
+      const settledLocalHarness =
+        snapshotRunning === false &&
+        state.turnPhase !== 'streaming' &&
+        isLocalHarnessRuntime(event.task.runtime)
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
-        (!isTerminalTaskStatus(event.task.status) || hasIdentifiedActiveTurn)
-      const executionPhase =
-        snapshotRunning === null
-          ? state.executionPhase
-          : shouldIgnoreStaleSnapshot
-            ? state.executionPhase
-            : snapshotRunning
-              ? 'running'
-              : 'idle'
+        !queuedStatus &&
+        (!terminalStatus || hasIdentifiedActiveTurn) &&
+        !snapshotConfirmsActiveTurn &&
+        !settledLocalHarness
+      if (shouldIgnoreStaleSnapshot) return state
+
+      const executionPhase = queuedStatus
+        ? 'queued'
+        : terminalStatus || snapshotRunning === false
+          ? 'idle'
+          : snapshotRunning === true
+            ? 'running'
+            : state.executionPhase
       const turnPhase =
-        snapshotRunning === false && !shouldIgnoreStaleSnapshot ? 'idle' : state.turnPhase
+        queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
       const activeTurnId =
-        snapshotRunning === false && !shouldIgnoreStaleSnapshot ? null : state.activeTurnId
+        queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
 
       return {
         ...state,
@@ -37,10 +50,10 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
-          !shouldIgnoreStaleSnapshot &&
-          snapshotRunning !== null &&
-          event.task.optimistic !== true &&
-          (snapshotRunning === expectedRunning || isTerminalTaskStatus(event.task.status))
+          queuedStatus ||
+          (snapshotRunning !== null &&
+            event.task.optimistic !== true &&
+            (snapshotRunning === expectedRunning || terminalStatus))
             ? null
             : expectedRunning,
       }
@@ -77,6 +90,15 @@ export function reduceRuntimeTaskLifecycle(
             expectedExecutorRunning: false,
           }
     }
+
+    case 'send_blocked_by_active_turn':
+      return {
+        ...state,
+        executionPhase: 'running',
+        turnPhase: 'idle',
+        activeTurnId: null,
+        expectedExecutorRunning: null,
+      }
 
     case 'stop_requested':
       return {
@@ -147,10 +169,19 @@ export function reduceRuntimeTaskLifecycle(
         : state
 
     case 'goal_status_received':
-      return {
-        ...state,
-        goalStatus: event.goalStatus,
-      }
+      return event.goalStatus !== null && event.goalStatus !== 'active'
+        ? {
+            ...state,
+            executionPhase: 'idle',
+            turnPhase: 'idle',
+            activeTurnId: null,
+            goalStatus: event.goalStatus,
+            expectedExecutorRunning: false,
+          }
+        : {
+            ...state,
+            goalStatus: event.goalStatus,
+          }
 
     case 'marked_read':
       return state.unread ? { ...state, unread: false } : state
@@ -158,6 +189,10 @@ export function reduceRuntimeTaskLifecycle(
     case 'marked_unread':
       return state.unread ? state : { ...state, unread: true }
   }
+}
+
+function isQueuedTaskStatus(status: string | null | undefined): boolean {
+  return status?.trim().toLowerCase() === 'queued'
 }
 
 function isTerminalTaskStatus(status: string | null | undefined): boolean {
@@ -168,6 +203,15 @@ function isTerminalTaskStatus(status: string | null | undefined): boolean {
       normalized
     )
   )
+}
+
+function isRunningTaskStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
+}
+
+function isLocalHarnessRuntime(runtime: string | null | undefined): boolean {
+  return runtime === 'opencode' || runtime === 'claude_code' || runtime === 'kimi_code'
 }
 
 function mergeAddress(

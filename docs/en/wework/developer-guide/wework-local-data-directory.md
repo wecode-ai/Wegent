@@ -22,24 +22,29 @@ The default Executor Home is `~/.wework` and contains:
 - `device-config.json` and `device_id`: local device identity.
 
 The `WEGENT_EXECUTOR_HOME` environment variable overrides the default Executor
-Home. When it is set explicitly, Wework does not run the default-directory
-migration, which keeps isolated sessions, tests, and custom deployments intact.
+Home. This is useful for isolated sessions, tests, and custom deployments.
 
-## Legacy Directory Migration
+## Automatic Cleanup and Retention
 
-On the first start with the default directory, Wework automatically migrates
-legacy data into `~/.wework`:
+Wework runs storage maintenance in the background immediately after launch and
+then every 30 minutes. Maintenance only processes temporary data that Wework
+explicitly owns. It does not age-delete user projects or managed worktrees that
+may still need recovery:
 
-1. `~/.wegent-executor` is migrated first.
-2. The older `~/.wecode/wegent-executor` is merged afterwards.
+- `app-runtime/wework-<pid>-<timestamp>/`: an isolated Executor instance is
+  deleted after 14 days only when it is inactive. An instance holding
+  `.instance.lock` is always preserved. For legacy lockless directories, Wework
+  also checks the PID embedded in the directory name before deletion. Legacy
+  `wework-dev-*` directories follow the same rules.
+- Files older than 14 days under `logs/`, and files older than 24 hours in
+  feedback staging or the built-in browser temporary directory, are removed in
+  batches. Current-process logs and symbolic links are preserved.
+- Stale `marketplace-add-*` and `marketplace-upgrade-*` directories older than
+  7 days are removed from `codex/.tmp/marketplaces/.staging/`. This covers both
+  `~/.wework/codex` and `~/.wework/apps/<namespace>/codex` without deleting
+  installed marketplaces.
 
-Migration rules:
-
-- When `~/.wework` does not exist, the legacy directory is renamed as a whole,
-  preserving file attributes, directory structure, and symbolic links.
-- When both directories exist, non-conflicting content is merged recursively;
-  files already in `~/.wework` always win.
-- Conflicting legacy entries are archived under
-  `~/.wework/.legacy-migration-conflicts/<source>/` instead of being overwritten.
-- After migration, the legacy directory is removed and old paths are never read
-  at runtime.
+`workspace/worktrees/` contains task data rather than disposable cache. Its
+lifecycle is driven by archived tasks and the Worktree retention settings, with
+a Git snapshot saved before deletion. The storage maintenance thread does not
+delete these directories directly.

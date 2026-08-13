@@ -11,6 +11,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
@@ -22,22 +23,77 @@ pub fn is_space_mcp_command() -> bool {
 }
 
 pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
+    // `wework_space` is a project-space context server. Inject it only when the
+    // request is bound to a cloud project or explicitly references one, for
+    // example through the workbench cloud mention picker that emits
+    // `cloud://projects` links. Generic coding and assistant tasks must not
+    // receive project-space tools.
+    let bound_project_id = request
+        .extra
+        .get("cloudProjectId")
+        .or_else(|| request.extra.get("cloud_project_id"))
+        .and_then(id_value)
+        .filter(|value| !value.is_empty());
+    let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
+    log_executor_event(
+        "space mcp injection decision",
+        &[
+            ("task_id", request.task_id.clone()),
+            (
+                "bound_project_id",
+                bound_project_id.as_deref().unwrap_or("").to_owned(),
+            ),
+            ("prompt_has_cloud_ref", prompt_has_cloud_ref.to_string()),
+            (
+                "shell_type",
+                request.resolved_shell_type().unwrap_or_default(),
+            ),
+        ],
+    );
+    if bound_project_id.is_none() && !prompt_has_cloud_ref {
+        return;
+    }
     let Ok(executable) = env::current_exe() else {
         return;
     };
+    // The App-side payload used to carry these; the robot queue dispatchers
+    // build payloads server-side, so fall back to the device's own backend
+    // connection configuration (same source as `normalize_local_task_request`).
+    if request
+        .backend_url
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        if let Ok(url) = env::var("WEGENT_BACKEND_URL") {
+            let url = url.trim().to_owned();
+            if !url.is_empty() {
+                request.backend_url = Some(url);
+            }
+        }
+    }
+    if request
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        if let Ok(token) = env::var("WEGENT_AUTH_TOKEN") {
+            let token = token.trim().to_owned();
+            if !token.is_empty() {
+                request.auth_token = Some(token);
+            }
+        }
+    }
     let mut server = json!({
         "name": SPACE_MCP_SERVER_NAME,
         "type": "stdio",
         "command": executable,
         "args": ["space-mcp-server"],
     });
-    if let Some(project_id) = request
-        .extra
-        .get("cloudProjectId")
-        .or_else(|| request.extra.get("cloud_project_id"))
-        .and_then(id_value)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(project_id) = bound_project_id {
         server["env"] = json!({"WEWORK_SPACE_ID": project_id});
     }
     if let Some(backend_url) = request
@@ -60,6 +116,32 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
         *existing = server;
     } else {
         request.mcp_servers.push(server);
+    }
+    log_executor_event(
+        "space mcp server injected",
+        &[
+            ("task_id", request.task_id.clone()),
+            ("mcp_server_count", request.mcp_servers.len().to_string()),
+        ],
+    );
+}
+
+fn prompt_references_cloud_projects(prompt: &Value) -> bool {
+    match prompt {
+        Value::String(text) => text.contains("cloud://projects"),
+        Value::Array(blocks) => blocks.iter().any(|block| match block {
+            Value::String(text) => text.contains("cloud://projects"),
+            Value::Object(object) => object
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("cloud://projects")),
+            _ => false,
+        }),
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("cloud://projects")),
+        _ => false,
     }
 }
 
@@ -927,6 +1009,7 @@ fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
                         .get("creator_user_id")
                         .and_then(Value::as_i64)
                         .map_or(true, |id| task["created_by_user_id"] == id)
+                    && matches_filter(task, arguments, "parent_id")
             })
             .take(limit)
             .collect(),
@@ -1446,6 +1529,9 @@ mod tests {
     #[test]
     fn injects_wework_space_once() {
         let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
 
         ensure_space_mcp_server(&mut request);
         ensure_space_mcp_server(&mut request);
@@ -1454,6 +1540,89 @@ mod tests {
         assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
         assert_eq!(request.mcp_servers[0]["type"], "stdio");
         assert_eq!(request.mcp_servers[0]["args"], json!(["space-mcp-server"]));
+    }
+
+    #[test]
+    fn skips_wework_space_without_project_space_context() {
+        let mut request = ExecutionRequest::default();
+
+        ensure_space_mcp_server(&mut request);
+
+        assert!(request.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn skips_wework_space_when_prompt_lacks_a_cloud_project_reference() {
+        let mut request = ExecutionRequest {
+            prompt: json!("帮我看一下这个仓库的代码"),
+            ..ExecutionRequest::default()
+        };
+
+        ensure_space_mcp_server(&mut request);
+
+        assert!(request.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn injects_wework_space_when_prompt_references_a_cloud_project() {
+        let mut request = ExecutionRequest {
+            prompt: json!("请查看 [任务:T-1](cloud://projects/cloud-42/todos/T-1)"),
+            ..ExecutionRequest::default()
+        };
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
+        assert!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"].is_null());
+    }
+
+    #[test]
+    fn injects_wework_space_for_array_prompt_with_cloud_project_reference() {
+        let mut request = ExecutionRequest {
+            prompt: json!([{"type": "text", "text": "参考 [整个空间](cloud://projects/proj-7)"}]),
+            ..ExecutionRequest::default()
+        };
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
+    }
+
+    #[test]
+    fn falls_back_to_device_backend_env_for_space_mcp() {
+        let previous_url = env::var("WEGENT_BACKEND_URL").ok();
+        let previous_token = env::var("WEGENT_AUTH_TOKEN").ok();
+        env::set_var("WEGENT_BACKEND_URL", "https://wework.example.com");
+        env::set_var("WEGENT_AUTH_TOKEN", "device-token");
+
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
+        ensure_space_mcp_server(&mut request);
+
+        let server = &request.mcp_servers[0];
+        assert_eq!(
+            server["env"]["WEWORK_SPACE_BACKEND_URL"],
+            json!("https://wework.example.com")
+        );
+        assert_eq!(
+            server["env"]["WEWORK_SPACE_AUTH_TOKEN"],
+            json!("device-token")
+        );
+
+        if let Some(url) = previous_url {
+            env::set_var("WEGENT_BACKEND_URL", url);
+        } else {
+            env::remove_var("WEGENT_BACKEND_URL");
+        }
+        if let Some(token) = previous_token {
+            env::set_var("WEGENT_AUTH_TOKEN", token);
+        } else {
+            env::remove_var("WEGENT_AUTH_TOKEN");
+        }
     }
 
     #[test]
@@ -1639,6 +1808,27 @@ mod tests {
     }
 
     #[test]
+    fn backend_task_search_filters_by_parent_id() {
+        let response = json!({
+            "items": [
+                {"id": "parent", "parent_id": null},
+                {"id": "matching-child", "parent_id": "requested-parent"},
+                {"id": "other-child", "parent_id": "other-parent"}
+            ]
+        });
+
+        let result = filter_backend_tasks(
+            response,
+            &json!({"parent_id": "requested-parent", "limit": 50}),
+        );
+
+        assert_eq!(
+            result,
+            json!([{"id": "matching-child", "parent_id": "requested-parent"}])
+        );
+    }
+
+    #[test]
     fn exposes_only_wework_space_business_vocabulary() {
         let serialized = serde_json::to_string(&tools()).unwrap().to_lowercase();
 
@@ -1650,6 +1840,7 @@ mod tests {
             "project_id",
             "task_id",
             "\"todo\"",
+            "report_automation_bug",
         ] {
             assert!(!serialized.contains(forbidden), "found {forbidden}");
         }

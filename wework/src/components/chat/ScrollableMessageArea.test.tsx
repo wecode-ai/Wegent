@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
+import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 
 function mockRect(element: Element, top: number, bottom: number) {
   element.getBoundingClientRect = vi.fn(
@@ -162,6 +163,33 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.lastElementChild).toBe(footer)
   })
 
+  test('renders an optional content footer directly after the message list', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'Create a worktree',
+            status: 'done',
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+        ]}
+        contentFooterClassName="content-footer-shell"
+        contentFooter={<div data-testid="creation-status">Creating worktree</div>}
+      />
+    )
+
+    const content = screen.getByTestId('chat-message-scroll-area-content')
+    const messageList = screen.getByTestId('message-user').parentElement
+    const footer = screen.getByTestId('chat-message-scroll-area-content-footer')
+
+    expect(footer).toHaveClass('content-footer-shell')
+    expect(footer).toContainElement(screen.getByTestId('creation-status'))
+    expect(content.lastElementChild).toBe(footer)
+    expect(messageList?.nextElementSibling).toBe(footer)
+  })
+
   test('keeps older transcript loading controls at the top of the message flow', () => {
     render(
       <ScrollableMessageArea
@@ -180,6 +208,84 @@ describe('ScrollableMessageArea', () => {
 
     expect(screen.getByTestId('chat-message-scroll-area-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('load-older-runtime-transcript-button')).toBeInTheDocument()
+  })
+
+  test('preserves distance from the bottom when older transcript messages are prepended', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const onLoadMoreBefore = vi.fn()
+    const currentMessages = [
+      {
+        id: 'current',
+        role: 'assistant' as const,
+        content: 'Current page',
+        status: 'done' as const,
+        createdAt: '2026-08-10T00:00:01.000Z',
+      },
+    ]
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="paginated-scroll"
+        hasMoreBefore
+        messages={currentMessages}
+        onLoadMoreBefore={onLoadMoreBefore}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    let scrollHeight = 1_000
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+    flushScheduledTimers()
+    scroller.scrollTop = 300
+    fireEvent.wheel(scroller)
+    fireEvent.scroll(scroller)
+
+    fireEvent.click(screen.getByTestId('load-older-runtime-transcript-button'))
+    expect(onLoadMoreBefore).toHaveBeenCalledOnce()
+
+    scrollHeight = 1_600
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="paginated-scroll"
+        messages={[
+          {
+            id: 'older',
+            role: 'user',
+            content: 'Older page',
+            status: 'done',
+            createdAt: '2026-08-10T00:00:00.000Z',
+          },
+          ...currentMessages,
+        ]}
+        onLoadMoreBefore={onLoadMoreBefore}
+      />
+    )
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(900)
   })
 
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
@@ -698,6 +804,18 @@ describe('ScrollableMessageArea', () => {
               '<application_context>',
               '[wework.terminal.current]',
               'Wework terminal context',
+              '[referencedConversations]',
+              JSON.stringify([
+                {
+                  role: 'user',
+                  content:
+                    '<application_context>\\n[source]\\nstate\\n</application_context>\\n\\nReferenced question',
+                },
+                {
+                  role: 'assistant',
+                  content: 'Referenced answer that must stay hidden',
+                },
+              ]),
               '</application_context>',
               '',
               '第二条用户需求',
@@ -784,6 +902,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByText('第一条回复摘要')).toHaveLength(2)
     expect(screen.getAllByText('第二条用户需求')).toHaveLength(2)
     expect(screen.queryByText(/application_context/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Referenced answer that must stay hidden/)).not.toBeInTheDocument()
   })
 
   test('renders message navigation in an overlay outside the external scroller', () => {
@@ -1474,7 +1593,7 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
-  test('tracks the active turn from a mounted assistant row when the user row is virtualized', () => {
+  test('activates a turn from mounted assistant rows when user rows are virtualized', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
     const messages = [
@@ -1549,9 +1668,9 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     mockRect(scroller, 0, 300)
-    mockRect(screen.getByText('First response'), -200, 120)
+    mockRect(screen.getByText('First response'), -500, -400)
     mockRect(screen.getByText('Long second response'), 40, 1_200)
-    mockRect(screen.getByText('Transient response without a transcript index'), 80, 120)
+    mockRect(screen.getByText('Transient response without a transcript index'), 1_300, 1_400)
 
     fireEvent.resize(window)
     flushScheduledTimers()
@@ -1568,7 +1687,7 @@ describe('ScrollableMessageArea', () => {
     expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
-  test('tracks a page-leading assistant without a runtime message index', () => {
+  test('activates a turn from a page-leading assistant', () => {
     const scrollRef = createRef<HTMLDivElement>()
     const contentRef = createRef<HTMLDivElement>()
 
@@ -1642,6 +1761,142 @@ describe('ScrollableMessageArea', () => {
     })
     mockRect(scroller, 0, 300)
     mockRect(screen.getByText('Boundary response'), 40, 1_200)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+  })
+
+  test('activates every user message visible in the viewport', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'visible-user-1',
+            role: 'user',
+            content: 'Visible request one',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:00.000Z',
+          },
+          {
+            id: 'visible-assistant',
+            role: 'assistant',
+            content: 'Visible response',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:01.000Z',
+          },
+          {
+            id: 'visible-user-2',
+            role: 'user',
+            content: 'Visible request two',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:02.000Z',
+          },
+          {
+            id: 'hidden-user',
+            role: 'user',
+            content: 'Hidden request',
+            status: 'done',
+            createdAt: '2026-07-31T00:00:03.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 200,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('Visible request one').closest('[data-message-id]')!, -20, 80)
+    mockRect(screen.getByText('Visible response').closest('[data-message-id]')!, 80, 120)
+    mockRect(screen.getByText('Visible request two').closest('[data-message-id]')!, 200, 80)
+    mockRect(screen.getByText('Hidden request').closest('[data-message-id]')!, 420, 80)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'true')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+  })
+
+  test('tracks the active turn when the loaded page contains only its assistant response', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = projectRuntimeConversationTurns([
+      {
+        id: 'assistant-only-turn',
+        runtimeMessageIndex: 10,
+        items: [
+          {
+            id: 'assistant-only-item',
+            type: 'assistant_text',
+            content: 'Only the response is loaded on this page',
+            createdAt: '2026-08-09T00:00:00.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ])
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          <div data-message-id={messages[0].id}>Only the response is loaded on this page</div>
+        </div>
+        <MessageTurnNavigation
+          messages={messages}
+          turnNavigation={[
+            {
+              id: 'previous-user',
+              turnIndex: 4,
+              messageIndex: 8,
+              promptPreview: 'Previous request',
+              responsePreview: 'Previous response',
+            },
+            {
+              id: 'assistant-only-user',
+              turnIndex: 5,
+              messageIndex: 10,
+              promptPreview: 'Request for the loaded response',
+              responsePreview: 'Only the response is loaded on this page',
+            },
+            {
+              id: 'next-user',
+              turnIndex: 6,
+              messageIndex: 12,
+              promptPreview: 'Next request',
+              responsePreview: 'Next response',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 4_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 2_800,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('Only the response is loaded on this page'), 40, 1_200)
 
     fireEvent.resize(window)
     flushScheduledTimers()

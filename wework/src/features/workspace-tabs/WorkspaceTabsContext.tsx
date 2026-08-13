@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { navigateTo, toBrowserPath } from '@/lib/navigation'
 import {
@@ -45,6 +45,7 @@ interface WorkspaceTabsProviderProps {
   search: string
   storageScope: string
   labels: WorkspaceTabLabels
+  startupTabKind?: Exclude<WorkspaceTabKind, 'auxiliary'>
   children: ReactNode
 }
 
@@ -218,8 +219,10 @@ export function WorkspaceTabsProvider({
   search,
   storageScope,
   labels,
+  startupTabKind,
   children,
 }: WorkspaceTabsProviderProps) {
+  const startupTabApplied = useRef(false)
   const [state, dispatch] = useReducer(
     workspaceTabsReducer,
     undefined,
@@ -229,6 +232,24 @@ export function WorkspaceTabsProvider({
   useEffect(() => {
     dispatch({ type: 'routeChanged', pathname, search, labels })
   }, [labels, pathname, search])
+
+  useEffect(() => {
+    if (startupTabApplied.current || !startupTabKind) return
+    startupTabApplied.current = true
+    const location = parseWorkspaceLocation(pathname, search)
+    if (pathname !== '/' || location.tabId || location.contentRoute !== '/') return
+    const existingStartupTab = state.tabs.find(tab => tab.kind === startupTabKind)
+    if (existingStartupTab?.id === state.activeTabId) return
+    const startupTab = existingStartupTab ?? createWorkspaceTab(startupTabKind, labels)
+    flushSync(() =>
+      dispatch(
+        existingStartupTab
+          ? { type: 'select', tabId: existingStartupTab.id }
+          : { type: 'open', tab: startupTab }
+      )
+    )
+    navigateTo(workspaceTabRoute(startupTab))
+  }, [labels, pathname, search, startupTabKind, state.activeTabId, state.tabs])
 
   useEffect(() => {
     try {

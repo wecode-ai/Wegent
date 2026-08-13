@@ -71,29 +71,12 @@ describe('InstalledPluginRow', () => {
     expect(screen.getByTestId('installed-plugin-row-59')).toHaveClass('min-h-[76px]')
   })
 
-  test('falls back to bundled brand icons when the plugin has no logo metadata', () => {
+  test('uses the plugin name initial when the plugin has no logo metadata', () => {
     render(<InstalledPluginRow plugin={createPlugin()} onToggle={vi.fn()} onUninstall={vi.fn()} />)
 
-    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
-      'src',
-      '/plugin-icons/github.svg'
-    )
+    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveTextContent('G')
+    expect(screen.getByTestId('installed-plugin-logo-59').tagName).toBe('SPAN')
     expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-fallback')
-  })
-
-  test('uses the Wework fallback icon when no logo metadata and no known plugin key', () => {
-    render(
-      <InstalledPluginRow
-        plugin={createPlugin({ pluginKey: 'unknown-plugin' })}
-        onToggle={vi.fn()}
-        onUninstall={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
-      'src',
-      '/plugin-icons/wework.svg'
-    )
   })
 
   test('uses the switch only for enablement and keeps uninstall in the more menu', () => {
@@ -149,6 +132,32 @@ describe('InstalledPluginRow', () => {
     expect(screen.queryByTestId('installed-plugin-try-59')).not.toBeInTheDocument()
     expect(screen.queryByTestId('installed-plugin-toggle-59')).not.toBeInTheDocument()
     expect(screen.queryByTestId('installed-plugin-actions-59')).not.toBeInTheDocument()
+  })
+
+  test('lists share before publish and uses custom labels', () => {
+    const onPublish = vi.fn()
+    const onShare = vi.fn()
+    render(
+      <InstalledPluginRow
+        plugin={createPlugin()}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        onPublish={onPublish}
+        publishLabel="发布新版本"
+        onShare={onShare}
+        shareLabel="管理权限"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('installed-plugin-actions-59'))
+    const share = screen.getByTestId('installed-plugin-share-59')
+    const publish = screen.getByTestId('installed-plugin-publish-59')
+    expect(share).toHaveTextContent('管理权限')
+    expect(publish).toHaveTextContent('发布新版本')
+    expect(share.compareDocumentPosition(publish) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(share)
+    expect(onShare).toHaveBeenCalledTimes(1)
   })
 })
 

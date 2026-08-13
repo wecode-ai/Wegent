@@ -47,6 +47,19 @@ function pluginIdentity(item: InstalledPlugin): string {
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
 }
 
+export function linkedCloudPluginId(item: InstalledPlugin): number | null {
+  const value = item.spec.sourcePayload?.cloudPluginId
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string' || !value.trim()) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export function linkedCloudInstalledPluginId(item: InstalledPlugin): string | number | null {
+  const value = item.spec.sourcePayload?.cloudInstalledPluginId
+  return typeof value === 'string' || typeof value === 'number' ? value : null
+}
+
 export function mergeInstalledPlugins(
   cloudItems: InstalledPlugin[],
   localItems: InstalledPlugin[],
@@ -54,30 +67,99 @@ export function mergeInstalledPlugins(
 ): InstalledPlugin[] {
   const merged = new Map<string, InstalledPlugin>()
   const cloudPluginIdentities = new Set<string>()
+  const cloudInstallsByPluginId = new Map(
+    cloudItems.flatMap(item => {
+      const installedPluginId = localPluginId(item)
+      return typeof item.spec.pluginId === 'number' && installedPluginId !== null
+        ? [[String(item.spec.pluginId), installedPluginId] as const]
+        : []
+    })
+  )
+  const locallyPublishedPluginIds = new Set(
+    localItems
+      .map(linkedCloudPluginId)
+      .filter((pluginId): pluginId is number => pluginId !== null)
+      .map(String)
+  )
+  const localItemsByIdentity = new Map(
+    localItems.flatMap(item => {
+      const identity = pluginIdentity(item)
+      return identity ? ([[identity, item]] as const) : []
+    })
+  )
 
   for (const item of cloudItems) {
     if (item.spec.pluginId && item.spec.releaseId) {
+      const currentDeviceInstallation = item.status.devices?.find(
+        device => device.deviceId === currentDeviceId
+      )
+      const hasMaterializedRelease = Boolean(currentDeviceInstallation?.actualReleaseId)
       if (
         currentDeviceId &&
         item.spec.installState !== 'installed' &&
-        item.spec.installState !== 'update_available'
+        item.spec.installState !== 'update_available' &&
+        !hasMaterializedRelease
       ) {
         continue
       }
-      merged.set(`market:${item.spec.pluginId}:${item.spec.releaseId}`, item)
+      if (locallyPublishedPluginIds.has(String(item.spec.pluginId))) {
+        continue
+      }
       const identity = pluginIdentity(item)
+      const actualReleaseId = currentDeviceInstallation?.actualReleaseId
+      const localMaterialization =
+        actualReleaseId && actualReleaseId !== item.spec.releaseId && identity
+          ? localItemsByIdentity.get(identity)
+          : undefined
+      const mergedItem = localMaterialization
+        ? {
+            ...item,
+            spec: {
+              ...item.spec,
+              releaseId: actualReleaseId,
+              version: localMaterialization.spec.version ?? null,
+              manifest: localMaterialization.spec.manifest,
+              components: localMaterialization.spec.components,
+              interface: localMaterialization.spec.interface,
+              packageRef: localMaterialization.spec.packageRef,
+              sourcePayload: {
+                ...(localMaterialization.spec.sourcePayload ?? {}),
+                ...(item.spec.sourcePayload ?? {}),
+                releaseId: actualReleaseId,
+                cloudInstalledPluginId: localPluginId(item),
+              },
+            },
+          }
+        : item
+      merged.set(`market:${item.spec.pluginId}:${mergedItem.spec.releaseId}`, mergedItem)
       if (identity) cloudPluginIdentities.add(identity)
     }
   }
 
   for (const item of localItems) {
     if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
-      const id = localPluginId(item)
-      const identity = pluginIdentity(item)
+      const cloudPluginId = linkedCloudPluginId(item)
+      const cloudInstalledPluginId =
+        cloudPluginId === null ? null : cloudInstallsByPluginId.get(String(cloudPluginId))
+      const mergedItem =
+        cloudInstalledPluginId === null || cloudInstalledPluginId === undefined
+          ? item
+          : {
+              ...item,
+              spec: {
+                ...item.spec,
+                sourcePayload: {
+                  ...(item.spec.sourcePayload ?? {}),
+                  cloudInstalledPluginId,
+                },
+              },
+            }
+      const id = localPluginId(mergedItem)
+      const identity = pluginIdentity(mergedItem)
       // Prefer stable local ids; fall back to plugin@marketplace so installs without
       // labels.id (common for local Codex marketplace plugins) are not dropped.
-      if (id) merged.set(`created:${id}`, item)
-      else if (identity) merged.set(`created:${identity}`, item)
+      if (id) merged.set(`created:${id}`, mergedItem)
+      else if (identity) merged.set(`created:${identity}`, mergedItem)
       continue
     }
 
@@ -131,4 +213,31 @@ export function installedPluginSourceLabel(item: InstalledPlugin): string {
 
 export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
   return typeof item.spec.pluginId === 'number'
+}
+
+/**
+ * Progressive paints may reuse a device-local Codex peek beside an account-scoped
+ * marketplace cache. Same-device installs are authoritative for materialized packages;
+ * a peek from another device must not widen the current account strip.
+ */
+export function resolveProgressiveLocalInstalledRaw<T>(options: {
+  hasCachedSnapshot: boolean
+  cachedInstalledRaw: T[]
+  localInstalledRaw?: T[] | null
+  localStateIsPeek: boolean
+  cachedDeviceId?: string | null
+  localDeviceId?: string | null
+}): T[] {
+  if (options.hasCachedSnapshot && options.localStateIsPeek) {
+    const cachedDeviceId = options.cachedDeviceId?.trim() || ''
+    const localDeviceId = options.localDeviceId?.trim() || ''
+    if (localDeviceId && (!cachedDeviceId || cachedDeviceId === localDeviceId)) {
+      return options.localInstalledRaw ?? options.cachedInstalledRaw
+    }
+    return options.cachedInstalledRaw
+  }
+  if (options.localInstalledRaw != null) {
+    return options.localInstalledRaw
+  }
+  return options.hasCachedSnapshot ? options.cachedInstalledRaw : []
 }

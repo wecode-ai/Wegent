@@ -2,10 +2,6 @@ import type { ReactNode } from 'react'
 import { Globe2, Smartphone } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ApplicationCapability, SiteAppType, SiteListItem } from '@/api/sites'
-import {
-  WEGENT_MINI_PROGRAM_PLUGIN_NAME,
-  WEGENT_SITES_PLUGIN_NAME,
-} from '@/features/plugins/builtinPlugins'
 import { MiniProgramApplicationRow, SiteApplicationRow } from './ApplicationRows'
 import type { ApplicationRowContext } from './ApplicationRows'
 
@@ -17,8 +13,8 @@ export interface ApplicationCopy {
 export interface ApplicationCreateStrategy {
   label: ApplicationCopy
   testId: string
-  pluginName: string
-  prompt?: ApplicationCopy
+  pluginName?: string
+  marketplaceName?: string
 }
 
 export interface ApplicationTypeDefinition {
@@ -47,7 +43,7 @@ export interface ResolvedApplicationTypeDefinition {
 const siteDefinition: ApplicationTypeDefinition = {
   appType: 'web',
   icon: Globe2,
-  capabilities: ['create', 'publish', 'delete'],
+  capabilities: ['create', 'publish', 'edit', 'delete'],
   tab: { key: 'site_tab', fallback: '站点' },
   search: { key: 'search', fallback: '搜索站点' },
   loading: { key: 'loading', fallback: '正在加载站点' },
@@ -63,7 +59,6 @@ const siteDefinition: ApplicationTypeDefinition = {
   create: {
     label: { key: 'create_site', fallback: '站点' },
     testId: 'sites-create-site-menu-item',
-    pluginName: WEGENT_SITES_PLUGIN_NAME,
   },
   isItem: item => item.app_type === 'web',
   renderRow: (item, context) =>
@@ -95,8 +90,6 @@ const miniProgramDefinition: ApplicationTypeDefinition = {
   create: {
     label: { key: 'create_mini_program', fallback: '小程序' },
     testId: 'sites-create-mini-program-menu-item',
-    pluginName: WEGENT_MINI_PROGRAM_PLUGIN_NAME,
-    prompt: { key: 'create_mini_program_prompt', fallback: '创建并发布一个小程序' },
   },
   isItem: item => item.app_type === 'miniapp',
   renderRow: (item, context) =>
@@ -125,6 +118,6 @@ export function getApplicationTypeDefinition(
 export function defaultResolvedApplicationTypes(): ResolvedApplicationTypeDefinition[] {
   return APPLICATION_TYPE_DEFINITIONS.map(definition => ({
     definition,
-    capabilities: new Set(definition.capabilities),
+    capabilities: new Set(definition.capabilities.filter(capability => capability !== 'create')),
   }))
 }

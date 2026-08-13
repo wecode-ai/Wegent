@@ -7,6 +7,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import AuthGuard from '@/features/common/AuthGuard'
 import { userApis } from '@/apis/user'
 import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
@@ -24,9 +25,9 @@ jest.mock('@/apis/user', () => ({
 
 // Mock useTranslation
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
+  useTranslation: jest.fn(() => ({
     t: (key: string) => key,
-  }),
+  })),
 }))
 
 describe('AuthGuard', () => {
@@ -52,11 +53,14 @@ describe('AuthGuard', () => {
       ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
 
       // Act
-      render(
+      const { getByText } = render(
         <AuthGuard>
           <div>Protected Content</div>
         </AuthGuard>
       )
+
+      expect(getByText('loading')).toBeInTheDocument()
+      expect(useTranslation).toHaveBeenCalledWith('common')
 
       // Assert - the component redirects but stays in loading state
       // so we only check that router.replace was called

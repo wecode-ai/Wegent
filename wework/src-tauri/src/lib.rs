@@ -1,3 +1,4 @@
+mod agent_plugins;
 mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
@@ -15,6 +16,7 @@ mod process_environment;
 #[cfg(desktop)]
 mod storage_maintenance;
 mod system_drag;
+mod system_lock;
 mod system_sleep;
 mod todo_store;
 mod workbench_background;
@@ -313,6 +315,8 @@ const LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT: &str = "wework-open-local-workspace-
 #[cfg(desktop)]
 const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT: &str = "wework-close-to-tray-hint-requested";
 #[cfg(desktop)]
+const MAIN_WINDOW_FOCUS_CHANGED_EVENT: &str = "wework-main-window-focus-changed";
+#[cfg(desktop)]
 const TRAY_MENU_OPEN_ID: &str = "open";
 #[cfg(desktop)]
 const TRAY_MENU_SETTINGS_ID: &str = "settings";
@@ -544,6 +548,32 @@ fn env_flag_enabled(key: &str) -> bool {
 #[cfg(desktop)]
 const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopE2ERuntimeConfig {
+    cloud_backend_url: Option<String>,
+    cloud_token: Option<String>,
+    control_url: Option<String>,
+    model_server_url: Option<String>,
+    posthog_host: Option<String>,
+}
+
+#[tauri::command]
+fn get_desktop_e2e_runtime_config() -> Option<DesktopE2ERuntimeConfig> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
+        return None;
+    }
+
+    let read = |key| std::env::var(key).ok().and_then(normalized_non_empty);
+    Some(DesktopE2ERuntimeConfig {
+        cloud_backend_url: read("WEWORK_E2E_CLOUD_BACKEND_URL"),
+        cloud_token: read("WEWORK_E2E_CLOUD_TOKEN"),
+        control_url: read("WEWORK_E2E_CONTROL_URL"),
+        model_server_url: read("WEWORK_E2E_MODEL_SERVER_URL"),
+        posthog_host: read("WEWORK_E2E_POSTHOG_HOST"),
+    })
+}
+
 #[cfg(desktop)]
 fn should_activate_main_window() -> bool {
     !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
@@ -571,6 +601,8 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     #[serde(default = "default_true")]
     show_main_window_on_launch: bool,
+    #[serde(default = "default_workspace_tab")]
+    default_workspace_tab: String,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
     #[serde(default = "default_true")]
@@ -614,8 +646,14 @@ struct AppPreferences {
     popout_window_shortcut: Option<String>,
     #[serde(default)]
     popout_window_projectless_default_enabled: bool,
+    #[serde(default)]
+    friendly_task_titles_enabled: bool,
+    #[serde(default)]
+    friendly_task_title_model: Option<serde_json::Value>,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
+    #[serde(default = "default_local_harness_preferences")]
+    local_harnesses: Vec<LocalHarnessPreference>,
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -629,6 +667,89 @@ struct QuickPhrase {
     attachment_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     created_at: Option<u64>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalHarnessPreference {
+    id: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    executable_path: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default = "default_harness_permission_mode")]
+    permission_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_key: Option<String>,
+}
+
+fn default_harness_permission_mode() -> String {
+    "default".to_string()
+}
+
+fn default_local_harness_preferences() -> Vec<LocalHarnessPreference> {
+    ["opencode", "claude_code", "kimi_code"]
+        .into_iter()
+        .map(|id| LocalHarnessPreference {
+            id: id.to_string(),
+            enabled: true,
+            executable_path: None,
+            args: Vec::new(),
+            env: HashMap::new(),
+            permission_mode: default_harness_permission_mode(),
+            model_key: None,
+        })
+        .collect()
+}
+
+fn normalize_local_harness_preferences(
+    preferences: Vec<LocalHarnessPreference>,
+) -> Vec<LocalHarnessPreference> {
+    default_local_harness_preferences()
+        .into_iter()
+        .map(|default_preference| {
+            let Some(mut preference) = preferences
+                .iter()
+                .find(|preference| preference.id == default_preference.id)
+                .cloned()
+            else {
+                return default_preference;
+            };
+            preference.executable_path = preference.executable_path.and_then(normalized_non_empty);
+            preference.model_key = preference.model_key.and_then(normalized_non_empty);
+            preference
+                .args
+                .retain(|arg| !arg.is_empty() && !arg.contains('\0'));
+            preference.env = preference
+                .env
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let key = key.trim();
+                    if key.is_empty()
+                        || key.contains('=')
+                        || key.contains('\0')
+                        || value.contains('\0')
+                    {
+                        return None;
+                    }
+                    Some((key.to_string(), value))
+                })
+                .collect();
+            if preference.id != "claude_code"
+                || !matches!(
+                    preference.permission_mode.as_str(),
+                    "default" | "plan" | "bypass"
+                )
+            {
+                preference.permission_mode = default_harness_permission_mode();
+            }
+            preference
+        })
+        .collect()
 }
 
 fn default_quick_phrases() -> Vec<QuickPhrase> {
@@ -676,6 +797,11 @@ fn default_language_preference() -> String {
 }
 
 #[cfg(desktop)]
+fn default_workspace_tab() -> String {
+    "task".to_string()
+}
+
+#[cfg(desktop)]
 fn default_browser_external_link_target() -> String {
     "system".to_string()
 }
@@ -696,6 +822,7 @@ impl Default for AppPreferences {
         Self {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
+            default_workspace_tab: default_workspace_tab(),
             system_drag_enabled: true,
             prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
@@ -718,7 +845,10 @@ impl Default for AppPreferences {
             appshots_play_sound: true,
             popout_window_shortcut: default_popout_window_shortcut(),
             popout_window_projectless_default_enabled: false,
+            friendly_task_titles_enabled: false,
+            friendly_task_title_model: None,
             quick_phrases: default_quick_phrases(),
+            local_harnesses: default_local_harness_preferences(),
         }
     }
 }
@@ -750,6 +880,7 @@ where
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    default_workspace_tab: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -773,7 +904,11 @@ struct AppPreferencesPatch {
     #[serde(default)]
     popout_window_shortcut: PatchField<String>,
     popout_window_projectless_default_enabled: Option<bool>,
+    friendly_task_titles_enabled: Option<bool>,
+    #[serde(default)]
+    friendly_task_title_model: PatchField<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
+    local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
 
 #[cfg(desktop)]
@@ -795,6 +930,12 @@ struct MainWindowLifecycleState {
     next_frontend_probe_id: AtomicU64,
     acknowledged_frontend_probe_id: AtomicU64,
     last_main_window_unfocused_at: Mutex<Option<std::time::Instant>>,
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct AppPreferencesWriteState {
+    guard: Mutex<()>,
 }
 
 #[cfg(desktop)]
@@ -1053,7 +1194,14 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
-    preferences.context_compaction_threshold = preferences.context_compaction_threshold.clamp(1, 100);
+    if !matches!(
+        preferences.default_workspace_tab.as_str(),
+        "task" | "board" | "agent"
+    ) {
+        preferences.default_workspace_tab = default_workspace_tab();
+    }
+    preferences.context_compaction_threshold =
+        preferences.context_compaction_threshold.clamp(1, 100);
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -1068,6 +1216,7 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     preferences.popout_window_shortcut = preferences
         .popout_window_shortcut
         .and_then(normalized_non_empty);
+    preferences.local_harnesses = normalize_local_harness_preferences(preferences.local_harnesses);
     preferences
         .quick_phrases
         .retain(|phrase| !is_expired_quick_phrase_stash(phrase));
@@ -1310,8 +1459,13 @@ fn get_app_preferences(app: tauri::AppHandle) -> Result<AppPreferences, String> 
 fn update_app_preferences(
     app: tauri::AppHandle,
     patch: AppPreferencesPatch,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
     telemetry: tauri::State<NativeTelemetryState>,
 ) -> Result<AppPreferences, String> {
+    let _guard = preferences_write
+        .guard
+        .lock()
+        .map_err(|_| "Failed to lock app preferences for update".to_string())?;
     let mut preferences = read_app_preferences_impl(&app);
     let telemetry_was_enabled =
         preferences.telemetry_consent_asked && preferences.telemetry_enabled;
@@ -1320,6 +1474,9 @@ fn update_app_preferences(
     }
     if let Some(value) = patch.show_main_window_on_launch {
         preferences.show_main_window_on_launch = value;
+    }
+    if let Some(value) = patch.default_workspace_tab {
+        preferences.default_workspace_tab = value;
     }
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
@@ -1390,8 +1547,17 @@ fn update_app_preferences(
     if let Some(value) = patch.popout_window_projectless_default_enabled {
         preferences.popout_window_projectless_default_enabled = value;
     }
+    if let Some(value) = patch.friendly_task_titles_enabled {
+        preferences.friendly_task_titles_enabled = value;
+    }
+    if let PatchField::Value(value) = patch.friendly_task_title_model {
+        preferences.friendly_task_title_model = value;
+    }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
+    }
+    if let Some(value) = patch.local_harnesses {
+        preferences.local_harnesses = normalize_local_harness_preferences(value);
     }
     write_app_preferences_impl(&app, &preferences)?;
     let telemetry_is_enabled = preferences.telemetry_consent_asked && preferences.telemetry_enabled;
@@ -1409,6 +1575,7 @@ fn update_app_preferences(
 struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
+    default_workspace_tab: String,
     system_drag_enabled: bool,
     prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
@@ -1429,7 +1596,12 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
     appshots_play_sound: bool,
+    popout_window_shortcut: Option<String>,
+    popout_window_projectless_default_enabled: bool,
+    friendly_task_titles_enabled: bool,
+    friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Vec<QuickPhrase>,
+    local_harnesses: Vec<LocalHarnessPreference>,
 }
 
 #[cfg(not(desktop))]
@@ -1438,6 +1610,7 @@ struct AppPreferences {
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    default_workspace_tab: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1458,7 +1631,12 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    popout_window_shortcut: Option<String>,
+    popout_window_projectless_default_enabled: Option<bool>,
+    friendly_task_titles_enabled: Option<bool>,
+    friendly_task_title_model: Option<serde_json::Value>,
     quick_phrases: Option<Vec<QuickPhrase>>,
+    local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
 
 #[cfg(not(desktop))]
@@ -1467,6 +1645,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
     Ok(AppPreferences {
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
+        default_workspace_tab: "task".to_string(),
         system_drag_enabled: true,
         prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
@@ -1487,7 +1666,12 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_download_directory: None,
         browser_ask_before_download: false,
         appshots_play_sound: true,
+        popout_window_shortcut: Some(default_popout_window_shortcut()),
+        popout_window_projectless_default_enabled: false,
+        friendly_task_titles_enabled: false,
+        friendly_task_title_model: None,
         quick_phrases: default_quick_phrases(),
+        local_harnesses: default_local_harness_preferences(),
     })
 }
 
@@ -1500,6 +1684,10 @@ fn update_app_preferences(
     Ok(AppPreferences {
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
+        default_workspace_tab: patch
+            .default_workspace_tab
+            .filter(|value| matches!(value.as_str(), "task" | "board" | "agent"))
+            .unwrap_or_else(|| "task".to_string()),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
         prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
@@ -1535,7 +1723,21 @@ fn update_app_preferences(
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
         appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
+        popout_window_shortcut: patch
+            .popout_window_shortcut
+            .and_then(normalized_non_empty)
+            .or_else(|| Some(default_popout_window_shortcut())),
+        popout_window_projectless_default_enabled: patch
+            .popout_window_projectless_default_enabled
+            .unwrap_or(false),
+        friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
+        friendly_task_title_model: patch.friendly_task_title_model,
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
+        local_harnesses: normalize_local_harness_preferences(
+            patch
+                .local_harnesses
+                .unwrap_or_else(default_local_harness_preferences),
+        ),
     })
 }
 
@@ -2581,7 +2783,6 @@ fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, S
         .path()
         .home_dir()
         .map_err(|error| format!("Failed to locate home directory: {error}"))?;
-    local_executor::migrate_legacy_executor_homes(&home)?;
     Ok(home.join(".wework"))
 }
 
@@ -2670,10 +2871,6 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         candidates.push(executor_home.join("device_id"));
     }
     if let Some(home) = dirs::home_dir() {
-        if let Err(error) = local_executor::migrate_legacy_executor_homes(&home) {
-            log::warn!("Failed to migrate legacy Wework home: {error}");
-            return None;
-        }
         if let Some(device_id) = read_device_config(home.join(".wework").join("device-config.json"))
         {
             return Some(device_id);
@@ -2977,6 +3174,19 @@ fn schedule_frontend_resume_probe<R: tauri::Runtime>(app: &tauri::AppHandle<R>) 
 }
 
 #[cfg(desktop)]
+fn emit_main_window_focus_changed<R: tauri::Runtime>(window: &tauri::Window<R>, focused: bool) {
+    if window.label() != MAIN_WINDOW_LABEL {
+        return;
+    }
+    if let Err(error) = window
+        .app_handle()
+        .emit(MAIN_WINDOW_FOCUS_CHANGED_EVENT, focused)
+    {
+        log::warn!("Failed to emit main window focus changed event: {error}");
+    }
+}
+
+#[cfg(desktop)]
 fn handle_main_window_focus_for_frontend_recovery<R: tauri::Runtime>(
     window: &tauri::Window<R>,
     focused: bool,
@@ -3070,10 +3280,25 @@ fn hide_main_window_on_close<R: tauri::Runtime>(
 
 #[cfg(desktop)]
 #[tauri::command]
-fn close_main_window_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+fn close_main_window_to_tray(
+    app: tauri::AppHandle,
+    preferences_write: tauri::State<AppPreferencesWriteState>,
+) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    match preferences_write.guard.lock() {
+        Ok(_guard) => {
+            let mut preferences = read_app_preferences_impl(&app);
+            if !preferences.close_to_tray_hint_seen {
+                preferences.close_to_tray_hint_seen = true;
+                if let Err(error) = write_app_preferences_impl(&app, &preferences) {
+                    log::warn!("Failed to persist close-to-tray hint acknowledgement: {error}");
+                }
+            }
+        }
+        Err(_) => log::warn!("Failed to lock app preferences for close-to-tray acknowledgement"),
+    }
     let state = app.state::<MainWindowLifecycleState>();
     state
         .destroy_to_tray_in_progress
@@ -4108,8 +4333,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalized_browser_link_target,
-        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        local_workspace_opener_app_name, normalize_local_harness_preferences,
+        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
+        wework_cli_launcher_content, LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4213,6 +4439,51 @@ mod tests {
             cleared.popout_window_shortcut,
             PatchField::Value(None)
         ));
+    }
+
+    #[test]
+    fn normalizes_local_harness_preferences_and_restores_missing_harnesses() {
+        let preferences = normalize_local_harness_preferences(vec![LocalHarnessPreference {
+            id: "claude_code".to_string(),
+            enabled: false,
+            executable_path: Some("  /opt/claude  ".to_string()),
+            args: vec![
+                "--verbose".to_string(),
+                String::new(),
+                "bad\0arg".to_string(),
+            ],
+            env: [
+                (" REGION ".to_string(), "us-west-2".to_string()),
+                ("BAD=KEY".to_string(), "ignored".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            permission_mode: "plan".to_string(),
+            model_key: Some("  wework:user:default:42:glm  ".to_string()),
+        }]);
+
+        assert_eq!(preferences.len(), 3);
+        assert_eq!(preferences[0].id, "opencode");
+        assert!(preferences[0].enabled);
+        assert_eq!(preferences[1].id, "claude_code");
+        assert!(!preferences[1].enabled);
+        assert_eq!(
+            preferences[1].executable_path.as_deref(),
+            Some("/opt/claude")
+        );
+        assert_eq!(preferences[1].args, vec!["--verbose"]);
+        assert_eq!(
+            preferences[1].env.get("REGION").map(String::as_str),
+            Some("us-west-2")
+        );
+        assert_eq!(preferences[1].permission_mode, "plan");
+        assert_eq!(
+            preferences[1].model_key.as_deref(),
+            Some("wework:user:default:42:glm")
+        );
+        assert_eq!(preferences[2].id, "kimi_code");
+        assert!(preferences[2].enabled);
+        assert_eq!(preferences[2].permission_mode, "default");
     }
 
     #[cfg(desktop)]
@@ -4710,6 +4981,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
@@ -4717,12 +4989,14 @@ pub fn run() {
         .manage(local_terminal::LocalTerminalState::default())
         .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
+        .manage(system_lock::SystemLockState::default())
         .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             {
                 if let tauri::WindowEvent::Focused(focused) = event {
                     handle_main_window_focus_for_frontend_recovery(window, *focused);
+                    emit_main_window_focus_changed(window, *focused);
                 }
                 if hide_main_window_on_close(window, event) {
                     return;
@@ -4771,11 +5045,14 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let preferences = read_app_preferences_impl(app.handle());
-                app.state::<NativeTelemetryState>()
-                    .configure(preferences.telemetry_consent_asked && preferences.telemetry_enabled);
+                app.state::<NativeTelemetryState>().configure(
+                    preferences.telemetry_consent_asked && preferences.telemetry_enabled,
+                );
             }
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
+            #[cfg(desktop)]
+            system_lock::setup(app.handle().clone());
             #[cfg(desktop)]
             appshots::setup(app.handle());
             #[cfg(desktop)]
@@ -4842,6 +5119,7 @@ pub fn run() {
             #[cfg(desktop)]
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_close_many,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
@@ -4850,16 +5128,20 @@ pub fn run() {
             embedded_browser::embedded_browser_go_forward,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_pending_open_requests,
             embedded_browser::embedded_browser_pause_download,
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_set_active_tab,
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_bounds,
+            local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
+            local_terminal::delete_archived_local_harness_session,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
@@ -4878,8 +5160,11 @@ pub fn run() {
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
             local_executor::local_executor_link_plugin_release,
+            local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
+            local_executor::local_executor_read_plugin_cloud_links,
+            local_executor::local_executor_list_personal_marketplace_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
@@ -4888,6 +5173,7 @@ pub fn run() {
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
             get_app_log_directory,
+            get_desktop_e2e_runtime_config,
             get_app_preferences,
             close_main_window_to_tray,
             open_app_log_directory,
@@ -4922,8 +5208,18 @@ pub fn run() {
             system_drag::dismiss_system_drag_panel,
             system_drag::log_system_drag_debug,
             system_drag::take_pending_system_drag_drops,
+            #[cfg(desktop)]
+            system_lock::get_system_session_locked,
+            local_terminal::get_local_terminal_snapshot,
+            local_terminal::list_archived_local_harness_sessions,
+            local_terminal::list_local_harnesses,
+            local_terminal::list_local_harness_sessions,
+            local_terminal::resolve_local_harness_plugin_roots,
             local_terminal::resize_local_terminal,
+            local_terminal::start_local_harness,
             local_terminal::start_local_terminal,
+            local_terminal::unarchive_local_harness_session,
+            local_terminal::update_local_harness_session_title,
             local_terminal::write_local_terminal,
             #[cfg(desktop)]
             popout_window::dismiss_popout_window,

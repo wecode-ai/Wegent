@@ -59,6 +59,10 @@ Some Anthropic Messages-compatible services may return a stop reason and positiv
 
 This check activates only when no model output has been observed. Responses that already produced text, thinking content, or a tool call are not replayed, and valid connection-prewarm responses with zero `output_tokens` remain unaffected.
 
+### Claude Code Tool-Result Integrity
+
+Claude Code calls the Wework model router through the Anthropic Messages protocol. Before converting a request to OpenAI Responses or Chat Completions, the executor checks that every assistant `tool_use` has a later user `tool_result` with the same ID. If a tool process terminates before returning a result, the proxy inserts an explicit failure result so the request history remains protocol-valid and the model can continue from the failure. Existing successful or failed tool results are never replaced or duplicated.
+
 ### Namespace Tool Compatibility
 
 Codex can group child tools under a `type: "namespace"` tool when it sends an OpenAI Responses request. OpenAI Chat Completions and Anthropic Messages have no equivalent namespace field, so the executor Codex compatibility proxy applies a reversible mapping at the protocol boundary:
@@ -69,6 +73,17 @@ Codex can group child tools under a `type: "namespace"` tool when it sends an Op
 4. When the upstream returns a flat tool call, the proxy restores the original `name` and `namespace` before emitting Responses events back to Codex.
 
 The mapping is request-scoped protocol context. It is not persisted in model configuration and does not guess a namespace from the returned tool name. Tools with the same child name in different namespaces therefore continue to route to the correct executor.
+
+### On-Demand App Tool Expansion
+
+Wework must not inject the complete schemas of every App and browser child tool into the first model request of a new conversation. The Codex launch configuration enables Remote Apps and `tool_search`; the model searches for a required namespace first, and only tools returned by that search are added to later model requests:
+
+- Responses models with native Codex `tool_search` and namespace-tool support use the native protocol without redundant executor conversion.
+- For models using OpenAI Chat Completions, Anthropic Messages, or another protocol without namespace tools, the executor expands only namespaces matched by the current `tool_search` result. Tools from unmatched Apps must not enter the request.
+- The executor converts the active tool list, historical tool calls, tool results, and explicit `tool_choice` together, then restores the original namespace identity before returning events to Codex.
+- An ordinary message carries only the compact `tool_search` entry point. Adding Apps or browser tools must not make the initial request grow linearly with all tool schemas.
+
+Protocol-conversion E2E coverage must include Responses, Chat Completions, and Anthropic Messages. It verifies that the initial request contains no expanded namespace, only searched tools appear afterward, tool calls and results round-trip, and the initial serialized tool payload stays under a fixed size limit.
 
 ## Security Benefits
 

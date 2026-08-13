@@ -13,6 +13,7 @@ import {
   COMPOSER_APPS_REQUEST_SYNC_EVENT,
   clearComposerAppsSnapshot,
   publishComposerApps,
+  replaceComposerApps,
   resetComposerAppsMemory,
 } from './composerAppsSnapshot'
 import { RECENT_PLUGIN_APPS_KEY } from './composerPluginSort'
@@ -89,6 +90,7 @@ describe('PluginPickerMenu', () => {
     expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
     expect(screen.getByTestId('composer-plugin-preview-icons')).toHaveClass('-space-x-1')
     expect(screen.getByTestId('composer-plugin-preview-icon-github')).toHaveClass(
+      'plugin-icon-slot',
       'h-6',
       'w-6',
       'rounded-full',
@@ -116,6 +118,20 @@ describe('PluginPickerMenu', () => {
 
     window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
     window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
+  })
+
+  test('renders a single icon trigger when iconOnly is set', async () => {
+    const onListLocalApps = vi.fn().mockResolvedValue([githubApp, superpowersApp, echoIdApp])
+
+    render(<PluginPickerMenu iconOnly onListLocalApps={onListLocalApps} />)
+
+    const trigger = screen.getByTestId('composer-plugin-picker-button')
+    expect(trigger).toHaveClass('h-7', 'w-7', 'rounded-lg')
+    expect(trigger).not.toHaveTextContent('插件')
+    expect(screen.queryByTestId(/composer-plugin-preview-icon-/)).not.toBeInTheDocument()
+
+    await userEvent.click(trigger)
+    expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
   })
 
   test('orders available plugins by usage count then recent selection', async () => {
@@ -210,6 +226,25 @@ describe('PluginPickerMenu', () => {
 
     await act(async () => resolveApps([]))
     expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
+  })
+
+  test('clears visible plugins when the shared composer app store is explicitly emptied', async () => {
+    publishComposerApps([superpowersApp])
+    const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp])
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(
+      await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).toBeInTheDocument()
+
+    act(() => replaceComposerApps([]))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
+      ).not.toBeInTheDocument()
+    )
   })
 
   test('shows plugins published by slash autocomplete even when fetch returns empty', async () => {

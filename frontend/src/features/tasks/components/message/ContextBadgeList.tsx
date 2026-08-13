@@ -5,11 +5,21 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2 } from 'lucide-react'
+import { Database, Loader2, Table2 } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
+import ImageGallery from './ImageGallery'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { isImageExtension } from '@/apis/attachments'
+import { useAttachmentImage } from '@/hooks/useAttachmentImage'
+import {
+  getExternalKnowledgeSourceLabel,
+  useExternalKnowledgeSources,
+} from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import {
+  formatCompactKnowledgeScope,
+  formatKnowledgeScopeSummary,
+} from '@/features/knowledge/knowledgeContextPresentation'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -22,11 +32,19 @@ interface ContextPreviewBaseProps {
   title: string
   /** Secondary text (file size, document count, etc.) */
   subtitle?: string
+  /** Optional source/provider label shown below the scope summary */
+  sourceLabel?: string
   /** Optional className for customization */
   className?: string
 }
 
-function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPreviewBaseProps) {
+function ContextPreviewBase({
+  icon,
+  title,
+  subtitle,
+  sourceLabel,
+  className = '',
+}: ContextPreviewBaseProps) {
   return (
     <div
       className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full ${className}`}
@@ -37,6 +55,7 @@ function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPr
           {title}
         </div>
         {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
+        {sourceLabel && <div className="text-xs text-text-muted">{sourceLabel}</div>}
       </div>
     </div>
   )
@@ -49,6 +68,55 @@ interface ContextBadgeListProps {
   onContextReselect?: (context: SubtaskContextBrief) => void
   /** Share token for public access (no login required) */
   shareToken?: string
+  /** Render image attachments as generated media instead of compact input badges */
+  displayGeneratedMedia?: boolean
+}
+
+interface MessageContextGroup {
+  key: string
+  context: SubtaskContextBrief
+  folderCount: number
+  documentCount: number
+}
+
+export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageContextGroup[] {
+  const groups: MessageContextGroup[] = []
+  const groupIndexes = new Map<string, number>()
+
+  for (const context of contexts) {
+    const isExternalKnowledge =
+      context.context_type === 'external_knowledge' &&
+      context.external_provider &&
+      context.external_mode
+    const key = isExternalKnowledge
+      ? `external:${context.external_provider}:${context.external_mode}:${context.external_scope ?? ''}:${context.external_id ?? 'all'}`
+      : `${context.context_type}:${context.id}`
+    const existingIndex = groupIndexes.get(key)
+    const isWholeKnowledgeBase =
+      isExternalKnowledge &&
+      (!context.external_target_type || context.external_target_type === 'knowledge_base')
+    const folderCount = isExternalKnowledge && context.external_target_type === 'folder' ? 1 : 0
+    const documentCount = isExternalKnowledge && context.external_target_type === 'document' ? 1 : 0
+
+    if (existingIndex === undefined) {
+      groupIndexes.set(key, groups.length)
+      groups.push({ key, context, folderCount, documentCount })
+    } else {
+      const existing = groups[existingIndex]
+      const existingIsWholeKnowledgeBase =
+        !existing.context.external_target_type ||
+        existing.context.external_target_type === 'knowledge_base'
+      if (existingIsWholeKnowledgeBase) continue
+      if (isWholeKnowledgeBase) {
+        groups[existingIndex] = { key, context, folderCount: 0, documentCount: 0 }
+        continue
+      }
+      existing.folderCount += folderCount
+      existing.documentCount += documentCount
+    }
+  }
+
+  return groups
 }
 
 /**
@@ -65,6 +133,7 @@ export function ContextBadgeList({
   contexts,
   onContextReselect,
   shareToken,
+  displayGeneratedMedia = false,
 }: ContextBadgeListProps) {
   if (!contexts || contexts.length === 0) {
     return null
@@ -72,12 +141,15 @@ export function ContextBadgeList({
 
   return (
     <div className="flex flex-wrap gap-2 mb-3">
-      {contexts.map(context => (
+      {groupMessageContexts(contexts).map(group => (
         <ContextBadgeItem
-          key={`${context.context_type}-${context.id}`}
-          context={context}
+          key={group.key}
+          context={group.context}
+          folderCount={group.folderCount}
+          documentCount={group.documentCount}
           onReselect={onContextReselect}
           shareToken={shareToken}
+          displayGeneratedMedia={displayGeneratedMedia}
         />
       ))}
     </div>
@@ -89,20 +161,38 @@ export function ContextBadgeList({
  */
 function ContextBadgeItem({
   context,
+  folderCount,
+  documentCount,
   onReselect,
   shareToken,
+  displayGeneratedMedia,
 }: {
   context: SubtaskContextBrief
+  folderCount: number
+  documentCount: number
   onReselect?: (context: SubtaskContextBrief) => void
   shareToken?: string
+  displayGeneratedMedia: boolean
 }) {
   switch (context.context_type) {
     case 'attachment':
-      return <AttachmentContextBadge context={context} shareToken={shareToken} />
+      return (
+        <AttachmentContextBadge
+          context={context}
+          shareToken={shareToken}
+          displayGeneratedMedia={displayGeneratedMedia}
+        />
+      )
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
     case 'external_knowledge':
-      return <ExternalKnowledgeBadge context={context} />
+      return (
+        <ExternalKnowledgeBadge
+          context={context}
+          folderCount={folderCount}
+          documentCount={documentCount}
+        />
+      )
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
     default:
@@ -118,9 +208,11 @@ function ContextBadgeItem({
 function AttachmentContextBadge({
   context,
   shareToken,
+  displayGeneratedMedia,
 }: {
   context: SubtaskContextBrief
   shareToken?: string
+  displayGeneratedMedia: boolean
 }) {
   // Map context status to Attachment status
   // SubtaskContextBrief uses lowercase status values (pending, ready, failed)
@@ -154,12 +246,58 @@ function AttachmentContextBadge({
     created_at: '',
   }
 
+  if (displayGeneratedMedia && isImageExtension(attachment.file_extension)) {
+    return <GeneratedImageContextBadge attachment={attachment} shareToken={shareToken} />
+  }
+
   return (
     <AttachmentPreview
       attachment={attachment}
-      compact={false}
+      compact={isImageExtension(attachment.file_extension)}
       showDownload={true}
       shareToken={shareToken}
+    />
+  )
+}
+
+function GeneratedImageContextBadge({
+  attachment,
+  shareToken,
+}: {
+  attachment: Attachment
+  shareToken?: string
+}) {
+  const { blobUrl, isLoading, error } = useAttachmentImage(attachment.id, true, shareToken)
+  const [imageSize, setImageSize] = React.useState<string>()
+
+  React.useEffect(() => {
+    if (!blobUrl) return
+
+    const image = new window.Image()
+    image.onload = () => setImageSize(`${image.naturalWidth}x${image.naturalHeight}`)
+    image.src = blobUrl
+  }, [blobUrl])
+
+  if (isLoading || (!blobUrl && !error)) {
+    return (
+      <div
+        className="flex h-[220px] w-[220px] items-center justify-center rounded-lg bg-muted"
+        data-testid="generated-context-image-loading"
+      >
+        <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
+      </div>
+    )
+  }
+
+  if (error || !blobUrl) {
+    return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />
+  }
+
+  return (
+    <ImageGallery
+      images={[{ url: blobUrl, attachmentId: attachment.id }]}
+      imageSize={imageSize}
+      className="mb-2"
     />
   )
 }
@@ -171,13 +309,15 @@ function AttachmentContextBadge({
  */
 function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('knowledge')
-
-  const subtitle =
-    context.document_count !== undefined &&
-    context.document_count !== null &&
-    context.document_count > 0
-      ? formatDocumentCount(context.document_count, t)
-      : undefined
+  const subtitle = formatKnowledgeScopeSummary(
+    {
+      documentCount: context.document_count,
+      documentIds: context.document_ids,
+      folderIds: context.folder_ids,
+      scopeRestricted: context.scope_restricted,
+    },
+    t
+  )
 
   return (
     <div>
@@ -190,24 +330,35 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   )
 }
 
-function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
+function ExternalKnowledgeBadge({
+  context,
+  folderCount,
+  documentCount,
+}: {
+  context: SubtaskContextBrief
+  folderCount: number
+  documentCount: number
+}) {
   const { t } = useTranslation('knowledge')
-  const targetLabel =
-    context.external_target_type === 'document'
-      ? t('picker.target.document')
-      : context.external_target_type === 'folder'
-        ? t('picker.target.folder')
-        : t('picker.target.knowledgeBase')
-  const subtitle = [context.external_provider?.toUpperCase(), targetLabel]
-    .filter(Boolean)
-    .join(' · ')
+  const externalSources = useExternalKnowledgeSources()
+  const externalSource = externalSources.find(
+    source => source.providerId === context.external_provider
+  )
+  const scopeLabel =
+    folderCount > 0 || documentCount > 0
+      ? formatCompactKnowledgeScope(folderCount, documentCount, t)
+      : undefined
+  const sourceLabel = context.external_provider
+    ? getExternalKnowledgeSourceLabel(context.external_provider, externalSource)
+    : undefined
 
   return (
     <div>
       <ContextPreviewBase
         icon={<Database className="text-primary" />}
         title={context.name}
-        subtitle={subtitle}
+        subtitle={scopeLabel}
+        sourceLabel={sourceLabel}
       />
     </div>
   )

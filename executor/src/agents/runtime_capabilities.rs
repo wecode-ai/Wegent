@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     io::Cursor,
     path::{Component, Path, PathBuf},
@@ -237,6 +237,66 @@ pub async fn sync_attachments_for_request(request: ExecutionRequest) -> Value {
     )
 }
 
+pub async fn prepare_runtime_attachments(mut request: ExecutionRequest) -> ExecutionRequest {
+    let attachments = attachment_records(&request);
+    let pending_ids = pending_download_attachments(&attachments)
+        .into_iter()
+        .map(|attachment| attachment.id)
+        .collect::<HashSet<_>>();
+    if pending_ids.is_empty() {
+        return request;
+    }
+
+    let original = request
+        .extra
+        .get("attachments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let pending = original
+        .iter()
+        .filter(|attachment| {
+            value_i64(attachment.get("id")).is_some_and(|id| pending_ids.contains(&id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if pending.is_empty() {
+        return request;
+    }
+
+    let mut sync_request = request.clone();
+    sync_request
+        .extra
+        .insert("attachments".to_owned(), Value::Array(pending));
+    let response = sync_attachments_for_request(sync_request).await;
+    let synced = response
+        .get("attachments")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    request.extra.insert(
+        "attachments".to_owned(),
+        Value::Array(merge_synced_attachments(&original, &synced)),
+    );
+    request
+}
+
+fn merge_synced_attachments(original: &[Value], synced: &[Value]) -> Vec<Value> {
+    let synced_by_id = synced
+        .iter()
+        .filter_map(|attachment| value_i64(attachment.get("id")).map(|id| (id, attachment.clone())))
+        .collect::<HashMap<_, _>>();
+    original
+        .iter()
+        .map(|attachment| {
+            value_i64(attachment.get("id"))
+                .and_then(|id| synced_by_id.get(&id))
+                .cloned()
+                .unwrap_or_else(|| attachment.clone())
+        })
+        .collect()
+}
+
 fn apply_attachment_prompt_updates(
     request: &mut ExecutionRequest,
     success: &[AttachmentRecord],
@@ -296,7 +356,7 @@ pub async fn prepare_claude_runtime(
         .get("SKILLS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| config_dir.join("skills"));
-    deploy_request_skills(request, &skills_dir).await;
+    deploy_request_skills(request, &skills_dir).await?;
 
     let global_mcps = load_global_mcp_records();
     log_runtime_event(
@@ -352,7 +412,11 @@ pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root().join(&request.task_id));
     let codex_skills_dir = codex_skills_dir(&task_dir);
-    deploy_request_skills(request, &codex_skills_dir).await;
+    if let Err(error) = deploy_request_skills(request, &codex_skills_dir).await {
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
+        push_error_fields(&mut fields, error);
+        log_executor_event("codex Skill deployment failed", &fields);
+    }
 }
 
 pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
@@ -364,9 +428,16 @@ pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     overrides
 }
 
-async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
+async fn deploy_request_skills(
+    request: &ExecutionRequest,
+    skills_dir: &Path,
+) -> Result<(), String> {
+    let required_skills = required_skill_names(request);
     let Some(primary_bot) = primary_bot(request) else {
-        return;
+        return required_skills
+            .is_empty()
+            .then_some(())
+            .ok_or_else(|| "required Skills cannot be deployed without a bot".to_owned());
     };
     let Some(plan) = build_skill_deployment_plan(
         primary_bot,
@@ -377,15 +448,109 @@ async fn deploy_request_skills(request: &ExecutionRequest, skills_dir: &Path) {
             skip_existing: false,
         },
     ) else {
-        return;
+        return required_skills.is_empty().then_some(()).ok_or_else(|| {
+            format!(
+                "required Skills are missing from the deployment plan: {}",
+                required_skills.join(", ")
+            )
+        });
     };
 
     let api_base_url = request_api_base_url(request);
-    if let Err(error) = deploy_skills(&plan, &api_base_url).await {
-        let mut fields = task_fields(&request.task_id, &request.subtask_id);
-        fields.push(("error_len", error.len().to_string()));
-        log_executor_event("skill deployment skipped after error", &fields);
+    let report = deploy_skills(&plan, &api_base_url).await?;
+    let missing_required = missing_required_skills(&required_skills, &plan, &report);
+    if !missing_required.is_empty() {
+        return Err(format!(
+            "required Skill deployment failed: {}",
+            missing_required.join(", ")
+        ));
     }
+    Ok(())
+}
+
+pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value, String> {
+    let required_skills = required_skill_names(&request);
+    let Some(primary_bot) = primary_bot(&request) else {
+        return required_skills
+            .is_empty()
+            .then(|| json!({"success": true, "skill_count": 0, "failed_skills": []}))
+            .ok_or_else(|| "required Skills cannot be deployed without a bot".to_owned());
+    };
+    let skills_dir = claude_config_dir(&request, None)
+        .ok_or_else(|| "Claude config directory is unavailable".to_owned())?
+        .join("skills");
+    let Some(plan) = build_skill_deployment_plan(
+        primary_bot,
+        &request,
+        SkillDeploymentOptions {
+            skills_dir,
+            clear_cache: false,
+            skip_existing: false,
+        },
+    ) else {
+        return required_skills
+            .is_empty()
+            .then(|| json!({"success": true, "skill_count": 0, "failed_skills": []}))
+            .ok_or_else(|| {
+                format!(
+                    "required Skills are missing from the deployment plan: {}",
+                    required_skills.join(", ")
+                )
+            });
+    };
+
+    let api_base_url = request_api_base_url(&request);
+    let report = deploy_skills(&plan, &api_base_url).await?;
+    let missing_required = missing_required_skills(&required_skills, &plan, &report);
+    if !missing_required.is_empty() {
+        return Err(format!(
+            "required Skill deployment failed: {}",
+            missing_required.join(", ")
+        ));
+    }
+
+    Ok(json!({
+        "success": true,
+        "skill_count": report.skill_count,
+        "success_count": report.success_skills.len(),
+        "success_skills": report.success_skills,
+        "failed_skills": report.failed_skills,
+        "required_skills": required_skills,
+        "skills_dir": plan.skills_dir,
+    }))
+}
+
+fn required_skill_names(request: &ExecutionRequest) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for key in ["required_skills", "preload_skills"] {
+        if let Some(values) = request.extra.get(key).and_then(Value::as_array) {
+            names.extend(
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
+            );
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn missing_required_skills(
+    required_skills: &[String],
+    plan: &SkillDeploymentPlan,
+    report: &SkillDeploymentReport,
+) -> Vec<String> {
+    required_skills
+        .iter()
+        .filter(|skill| {
+            !plan.skills.contains(skill)
+                || report.failed_skills.contains(skill)
+                || !plan.skills_dir.join(skill).join("SKILL.md").is_file()
+        })
+        .cloned()
+        .collect()
 }
 
 struct AttachmentDownloadOutcome {
@@ -551,7 +716,10 @@ async fn download_attachments(
     let client = reqwest::Client::new();
     let mut success = Vec::new();
     let mut failed = Vec::new();
+    let mut used_filenames = HashMap::new();
     for attachment in attachments {
+        let filename =
+            unique_attachment_filename(&attachment.original_filename, &mut used_filenames);
         log_executor_event(
             "attachment download item started",
             &[
@@ -570,6 +738,7 @@ async fn download_attachments(
             &client,
             attachment,
             attachments_dir,
+            &filename,
             api_base_url,
             auth_token,
         )
@@ -615,6 +784,7 @@ async fn download_attachment(
     client: &reqwest::Client,
     attachment: &AttachmentRecord,
     attachments_dir: &Path,
+    filename: &str,
     api_base_url: &str,
     auth_token: &str,
 ) -> Result<PathBuf, String> {
@@ -644,9 +814,28 @@ async fn download_attachment(
         .bytes()
         .await
         .map_err(|error| format!("Read error: {error}"))?;
-    let path = attachments_dir.join(sanitize_filename(&attachment.original_filename));
+    let path = attachments_dir.join(filename);
     fs::write(&path, bytes).map_err(|error| format!("IO error: {error}"))?;
     Ok(path)
+}
+
+fn unique_attachment_filename(filename: &str, used: &mut HashMap<String, usize>) -> String {
+    let base = sanitize_filename(filename);
+    let count = used.entry(base.clone()).or_insert(0);
+    *count += 1;
+    if *count == 1 {
+        return base;
+    }
+    let path = Path::new(&base);
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| base.clone());
+    let extension = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy()))
+        .unwrap_or_default();
+    format!("{stem}-{count}{extension}")
 }
 
 fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
@@ -657,7 +846,10 @@ fn attachment_ids(attachments: &[AttachmentRecord]) -> String {
         .join(",")
 }
 
-async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result<(), String> {
+async fn deploy_skills(
+    plan: &SkillDeploymentPlan,
+    api_base_url: &str,
+) -> Result<SkillDeploymentReport, String> {
     fs::create_dir_all(&plan.skills_dir).map_err(|error| {
         format!(
             "failed to create skills dir {}: {error}",
@@ -672,13 +864,26 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             async move {
                 let target = plan.skills_dir.join(&skill);
                 let skill_ref = plan.resolved_skill_map.get(&skill);
-                let Some(cache_miss_reason) =
-                    skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref)?
-                else {
-                    return Ok::<SkillDeploymentResult, String>(SkillDeploymentResult {
+                let cache_miss_reason =
+                    match skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref) {
+                        Ok(reason) => reason,
+                        Err(error) => {
+                            let mut fields = vec![("skill", skill.clone())];
+                            push_error_fields(&mut fields, error);
+                            log_executor_event("skill cache validation failed", &fields);
+                            return SkillDeploymentResult {
+                                skill_name: skill,
+                                success: false,
+                                installed: None,
+                            };
+                        }
+                    };
+                let Some(cache_miss_reason) = cache_miss_reason else {
+                    return SkillDeploymentResult {
+                        skill_name: skill.clone(),
                         success: true,
                         installed: None,
-                    });
+                    };
                 };
                 let mut fields = vec![
                     ("skill", skill.clone()),
@@ -702,15 +907,16 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
                     let _ = fs::remove_dir_all(&target);
                 }
                 match download_skill(client, plan, &skill, skill_ref, api_base_url).await {
-                    Ok(result) => Ok(result),
+                    Ok(result) => result,
                     Err(error) => {
                         let mut fields = vec![("skill", skill.clone())];
                         push_error_fields(&mut fields, error);
                         log_executor_event("skill deployment item skipped after error", &fields);
-                        Ok(SkillDeploymentResult {
+                        SkillDeploymentResult {
+                            skill_name: skill,
                             success: false,
                             installed: None,
-                        })
+                        }
                     }
                 }
             }
@@ -719,15 +925,18 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
         .collect::<Vec<_>>()
         .await;
 
-    let success_count = results
+    let success_count = results.iter().filter(|result| result.success).count();
+    let success_skills = results
         .iter()
-        .filter(|result| matches!(result, Ok(SkillDeploymentResult { success: true, .. })))
-        .count();
-    for installed in results
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter_map(|result| result.installed)
-    {
+        .filter(|result| result.success)
+        .map(|result| result.skill_name.clone())
+        .collect::<Vec<_>>();
+    let failed_skills = results
+        .iter()
+        .filter(|result| !result.success)
+        .map(|result| result.skill_name.clone())
+        .collect::<Vec<_>>();
+    for installed in results.into_iter().filter_map(|result| result.installed) {
         record_installed_skill(
             &plan.skills_dir,
             &installed.skill_name,
@@ -745,10 +954,22 @@ async fn deploy_skills(plan: &SkillDeploymentPlan, api_base_url: &str) -> Result
             ("skills_dir", plan.skills_dir.display().to_string()),
         ],
     );
-    Ok(())
+    Ok(SkillDeploymentReport {
+        skill_count: plan.skills.len(),
+        success_skills,
+        failed_skills,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SkillDeploymentReport {
+    skill_count: usize,
+    success_skills: Vec<String>,
+    failed_skills: Vec<String>,
 }
 
 struct SkillDeploymentResult {
+    skill_name: String,
     success: bool,
     installed: Option<DownloadedSkillRecord>,
 }
@@ -878,6 +1099,7 @@ async fn download_skill(
         resolve_skill(client, plan, skill_name, skill_ref, api_base_url).await?
     else {
         return Ok(SkillDeploymentResult {
+            skill_name: skill_name.to_owned(),
             success: false,
             installed: None,
         });
@@ -898,6 +1120,7 @@ async fn download_skill(
     .await?;
     match download {
         SkillArchiveResponse::NotModified => Ok(SkillDeploymentResult {
+            skill_name: skill_name.to_owned(),
             success: true,
             installed: None,
         }),
@@ -915,6 +1138,7 @@ async fn download_skill(
                     .or(content_hash),
             });
             Ok(SkillDeploymentResult {
+                skill_name: skill_name.to_owned(),
                 success: extracted,
                 installed,
             })
@@ -1955,6 +2179,29 @@ mod tests {
     };
 
     #[test]
+    fn attachment_filenames_are_disambiguated_on_collision() {
+        let mut used = HashMap::new();
+        assert_eq!(
+            unique_attachment_filename("image.png", &mut used),
+            "image.png"
+        );
+        assert_eq!(
+            unique_attachment_filename("image.png", &mut used),
+            "image-2.png"
+        );
+        assert_eq!(
+            unique_attachment_filename("image.png", &mut used),
+            "image-3.png"
+        );
+        assert_eq!(
+            unique_attachment_filename("notes.txt", &mut used),
+            "notes.txt"
+        );
+        assert_eq!(unique_attachment_filename("draft", &mut used), "draft");
+        assert_eq!(unique_attachment_filename("draft", &mut used), "draft-2");
+    }
+
+    #[test]
     fn coordinate_subagent_uses_its_resolved_model() {
         let bot = json!({
             "id": 106,
@@ -2124,6 +2371,33 @@ mod tests {
         assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
         assert_eq!(payload["attachments"][1]["status"], "failed");
         assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
+    }
+
+    #[test]
+    fn merge_synced_attachments_preserves_local_items_and_replaces_downloaded_items() {
+        let original = vec![
+            json!({
+                "id": 1,
+                "original_filename": "local.png",
+                "local_path": "/workspace/local.png"
+            }),
+            json!({
+                "id": 2,
+                "original_filename": "cloud.png"
+            }),
+        ];
+        let synced = vec![json!({
+            "id": 2,
+            "original_filename": "cloud.png",
+            "local_path": "/workspace/cloud.png",
+            "status": "success"
+        })];
+
+        let merged = merge_synced_attachments(&original, &synced);
+
+        assert_eq!(merged[0], original[0]);
+        assert_eq!(merged[1]["local_path"], "/workspace/cloud.png");
+        assert_eq!(merged[1]["status"], "success");
     }
 
     #[test]

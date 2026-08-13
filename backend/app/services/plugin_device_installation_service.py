@@ -200,6 +200,15 @@ class PluginDeviceInstallationService:
             return
         state, error_message = self._device_install_state(result, item_result)
         row = self._device_row(db, installed.id, result.device_id)
+        if (
+            item_result is None
+            and result.success
+            and row
+            and row.state == "installed"
+            and row.actual_release_id == release_id
+        ):
+            # Device omitted an already-materialized plugin; keep the confirmed state.
+            return
         if not row:
             row = PluginDeviceInstallation(
                 installed_kind_id=installed.id,
@@ -211,13 +220,68 @@ class PluginDeviceInstallationService:
         row.desired_release_id = release_id
         if state == "installed":
             row.actual_release_id = release_id
-        elif state != "failed":
-            row.actual_release_id = 0
         row.state = state
         row.error_code = "PLUGIN_SYNC_FAILED" if state == "failed" else ""
         row.error_message = error_message or ""
         row.attempt_count = (row.attempt_count or 0) + 1
         row.last_sync_at = datetime.now()
+
+    def ensure_pending_for_device(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        reset_failed: bool = True,
+    ) -> int:
+        """Ensure account desired plugins are pending on one device until synced.
+
+        Creates missing rows and resets stale failed gaps so marketplace can show
+        syncing instead of a false retry banner.
+        """
+        normalized_device_id = device_id.strip()
+        if not normalized_device_id:
+            return 0
+        changed = 0
+        for installed in self._desired_installs(db, user_id):
+            release_id = installed.json.get("spec", {}).get("releaseId")
+            if not isinstance(release_id, int):
+                continue
+            row = self._device_row(db, installed.id, normalized_device_id)
+            if not row:
+                db.add(
+                    PluginDeviceInstallation(
+                        installed_kind_id=installed.id,
+                        user_id=user_id,
+                        device_id=normalized_device_id,
+                        desired_release_id=release_id,
+                        state="pending",
+                    )
+                )
+                changed += 1
+                continue
+            row.desired_release_id = release_id
+            if row.state == "installed" and row.actual_release_id == release_id:
+                continue
+            # Never interrupt an in-flight uninstall; the Kind may still be
+            # active for a brief window before account uninstall completes.
+            if row.state == "uninstalling":
+                continue
+            if row.state == "failed" and not reset_failed:
+                continue
+            if (
+                row.state == "pending"
+                and not row.error_code
+                and not row.error_message
+                and row.actual_release_id in {0, release_id}
+            ):
+                continue
+            row.state = "pending"
+            row.error_code = ""
+            row.error_message = ""
+            changed += 1
+        db.commit()
+        return changed
 
     def _device_install_state(
         self,
@@ -232,7 +296,9 @@ class PluginDeviceInstallationService:
         if not result.success:
             return "failed", item_result.error if item_result else result.error
         if item_result is None:
-            return "failed", "Device response omitted plugin result"
+            # Overall ack succeeded but this plugin was not reported yet — keep
+            # waiting instead of marking a hard failure that surfaces as retry.
+            return "pending", None
         return "installed", None
 
     def _device_row(

@@ -7,6 +7,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -90,6 +91,9 @@ describe('createLocalAppServices', () => {
     })
     const models = await services.modelApi.listModels()
 
+    expect(request).toHaveBeenCalledWith('runtime.codex.models.list', {
+      includeHidden: true,
+    })
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
@@ -107,6 +111,7 @@ describe('createLocalAppServices', () => {
             ui: expect.objectContaining({
               family: 'model-interface:%E6%9C%AC%E5%9C%B0%E6%8E%A8%E7%90%86',
               familyLabel: '本地推理',
+              reasoningEfforts: [],
             }),
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
@@ -114,10 +119,18 @@ describe('createLocalAppServices', () => {
       ]),
     })
     const modelIds = models.data.map(model => model.modelId)
-    expect(modelIds).not.toContain('gpt-5.5')
-    expect(modelIds).not.toContain('Sol')
-    expect(modelIds).not.toContain('Terra')
-    expect(modelIds).not.toContain('Luna')
+    expect(modelIds).toEqual(
+      expect.arrayContaining([
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.3-codex-spark',
+      ])
+    )
+    expect(modelIds).not.toContain('gpt-5.2')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
@@ -152,6 +165,123 @@ describe('createLocalAppServices', () => {
       totalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('registers harness models through the executor Messages proxy', async () => {
+    const config = saveLocalModelConfig({
+      id: 'harness-model',
+      displayName: 'Harness Model',
+      modelId: 'upstream-model',
+      baseUrl: 'https://models.example.com/v1',
+      apiFormat: 'openai-chat-completions',
+      requestPath: '/chat/completions',
+      apiKey: 'provider-secret',
+      catalogReady: false,
+    })
+    saveLocalProxyUrl('socks5://127.0.0.1:7890')
+    const request = vi.fn().mockImplementation(async method => {
+      if (method === 'runtime.harness_proxy.register') {
+        return {
+          token: 'proxy-token',
+          baseUrl: 'http://127.0.0.1:1234/v1/harness-router/proxy-token',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const launch = await services.localHarnessModelApi?.resolveLaunch('opencode', {
+      key: 'local',
+      label: 'Harness Model',
+      source: 'local',
+      model: {
+        name: `local-model:${config.id}`,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Harness Model',
+        modelId: 'upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.harness_proxy.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:opencode:/),
+        upstream: {
+          base_url: 'https://models.example.com/v1',
+          request_url: 'https://models.example.com/v1/chat/completions',
+          api_format: 'openai-chat-completions',
+          convert_custom_tools: true,
+          native_tool_search: false,
+          native_namespace_tools: false,
+          api_key: 'provider-secret',
+          default_headers: [],
+          proxy_url: 'socks5://127.0.0.1:7890',
+          model_id: 'upstream-model',
+          routing_model_id: null,
+          max_output_tokens: null,
+        },
+      })
+    )
+    expect(launch).toMatchObject({
+      modelId: 'wework-messages/wework-selected',
+      proxyToken: 'proxy-token',
+    })
+    expect(launch?.env.OPENCODE_CONFIG_CONTENT).not.toContain('provider-secret')
+    expect(launch?.env.OPENCODE_CONFIG_CONTENT).not.toContain('socks5://')
+
+    const secondConfig = saveLocalModelConfig({
+      id: 'second-harness-model',
+      displayName: 'Second Harness Model',
+      modelId: 'second-upstream-model',
+      baseUrl: 'https://second-model.example.com/v1',
+      apiFormat: 'anthropic-messages',
+      requestPath: '/messages',
+      apiKey: 'second-provider-secret',
+      catalogReady: false,
+    })
+    const secondLaunch = await services.localHarnessModelApi?.resolveLaunch('claude_code', {
+      key: 'second-local',
+      label: 'Second Harness Model',
+      source: 'local',
+      model: {
+        name: `local-model:${secondConfig.id}`,
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Second Harness Model',
+        modelId: 'second-upstream-model',
+        config: { weworkModelKind: 'model-interface' },
+      },
+    })
+
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.harness_proxy.register',
+      expect.objectContaining({
+        scope: expect.stringMatching(/^harness:claude_code:/),
+        upstream: expect.objectContaining({
+          request_url: 'https://second-model.example.com/v1/messages',
+          api_format: 'anthropic-messages',
+          api_key: 'second-provider-secret',
+          model_id: 'second-upstream-model',
+        }),
+      })
+    )
+    expect(secondLaunch).toMatchObject({
+      modelId: 'wework-selected',
+      proxyToken: 'proxy-token',
+    })
+    expect(secondLaunch?.env).not.toEqual(
+      expect.objectContaining({ ANTHROPIC_API_KEY: 'second-provider-secret' })
+    )
   })
 
   test('does not expose a custom model until its catalog restart is applied', async () => {
@@ -641,6 +771,7 @@ describe('createLocalAppServices', () => {
             original_filename: 'clipboard.png',
             file_size: 1200,
             mime_type: 'image/png',
+            status: 'ready',
             subtask_id: expect.any(String),
             file_extension: '.png',
             local_path: '/Users/me/.wework/workspace/attachments/draft/-45/clipboard.png',
@@ -654,6 +785,163 @@ describe('createLocalAppServices', () => {
       command_key: 'home_dir',
       timeout_seconds: 10,
     })
+  })
+
+  test('keeps backend attachment metadata in direct runtime execution requests', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      deviceId: 'cloud-device',
+      taskId: 'task-cloud-attachment',
+      workspacePath: '/workspace/project',
+      runtime: 'codex',
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'cloud-device' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'cloud-device',
+      workspacePath: '/workspace/project',
+      taskId: 'task-cloud-attachment',
+      runtime: 'codex',
+      message: 'inspect the image',
+      attachments: [
+        {
+          id: 42,
+          filename: 'cloud-image.png',
+          file_size: 1200,
+          mime_type: 'image/png',
+          status: 'ready',
+          file_extension: '.png',
+          created_at: '2026-08-11T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.attachments).toEqual([
+      {
+        id: 42,
+        filename: 'cloud-image.png',
+        original_filename: 'cloud-image.png',
+        file_size: 1200,
+        mime_type: 'image/png',
+        status: 'ready',
+        subtask_id: expect.any(String),
+        file_extension: '.png',
+      },
+    ])
+  })
+
+  test('runs Claude Code through the ordinary runtime task conversation API', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'device-uuid',
+          taskId: 'claude-task',
+          workspacePath: '/Users/me/project',
+          runtime: 'claude_code',
+        }
+      }
+      return { accepted: true }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'claude-task',
+      runtime: 'claude_code',
+      runtimeExecutablePath: '/Users/me/.local/bin/claude',
+      message: 'hello',
+      title: 'Claude',
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'claude-task',
+        runtime: 'claude_code',
+      },
+      message: 'continue',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+
+    expect(createPayload.runtime).toBe('claude_code')
+    expect(createPayload.executionRequest.bot).toEqual([{ id: 0, shell_type: 'ClaudeCode' }])
+    expect(createPayload.executionRequest.runtime_executable_path).toBe(
+      '/Users/me/.local/bin/claude'
+    )
+    expect(createPayload.executionRequest.model_config).toEqual({})
+    expect(createPayload).not.toHaveProperty('friendlyTitleExecutionRequest')
+    expect(sendPayload.address.runtime).toBe('claude_code')
+    expect(sendPayload.executionRequest.bot).toEqual([{ id: 0, shell_type: 'ClaudeCode' }])
+    expect(sendPayload.executionRequest.model_config).toEqual({})
+  })
+
+  test('keeps the backend model_config when the claim payload provides it', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      cloudProjectId: 'cloud-project-42',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'run the scan',
+      title: 'Scan',
+      modelId: 'wecode-kimi',
+      modelConfig: {
+        base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+        api_key: 'short-lived-token',
+        codex_catalog_model_id: 'wework-kimi-k2-7',
+        codex_responses_compat_proxy: true,
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({
+        executionRequest: expect.objectContaining({
+          model_config: expect.objectContaining({
+            base_url: 'https://gateway.example/api/runtime-work/llm-responses-proxy',
+            api_key: 'short-lived-token',
+            codex_catalog_model_id: 'wework-kimi-k2-7',
+          }),
+        }),
+      })
+    )
   })
 
   test('rejects local runtime task creation without a workspace path', async () => {
@@ -673,6 +961,68 @@ describe('createLocalAppServices', () => {
       })
     ).rejects.toThrow('workspacePath is required')
     expect(request).not.toHaveBeenCalled()
+  })
+
+  test('persists projectless automations as standalone chat workspaces', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.automations.create') {
+          return { automation: data.automation }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.automationApi?.createAutomation({
+      source: 'local',
+      name: 'Projectless automation',
+      prompt: 'Say hello',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'local-device',
+        standaloneChatWorkspace: true,
+        teamId: 0,
+        runtime: 'codex',
+        message: 'Say hello',
+        initialGoal: {
+          objective: 'Say hello',
+          status: 'active',
+          tokenBudget: null,
+        },
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith(
+      'runtime.automations.create',
+      {
+        automation: expect.objectContaining({
+          taskPayload: expect.objectContaining({
+            standaloneChatWorkspace: true,
+            initialGoal: {
+              objective: 'Say hello',
+              status: 'active',
+              tokenBudget: null,
+            },
+            executionRequest: expect.objectContaining({
+              standalone_chat_workspace: true,
+            }),
+          }),
+        }),
+      },
+      'local-device'
+    )
+    const automationPayload = request.mock.calls[0]?.[1]?.automation.taskPayload
+    expect(automationPayload).not.toHaveProperty('workspacePath')
+    expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
   })
 
   test('creates a git worktree from the current branch before creating a local runtime task', async () => {
@@ -959,6 +1309,7 @@ describe('createLocalAppServices', () => {
               original_filename: 'follow-up.png',
               file_size: 640,
               mime_type: 'image/png',
+              status: 'ready',
               subtask_id: expect.any(String),
               file_extension: '.png',
               local_path: '/Users/me/.wework/workspace/attachments/draft/-46/follow-up.png',
@@ -1094,7 +1445,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('uses local model settings for create and continue execution requests', async () => {
-    saveLocalModelConfig({
+    const ollama = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
       modelId: 'gpt-oss:20b',
@@ -1102,7 +1453,7 @@ describe('createLocalAppServices', () => {
       contextWindow: 128000,
       catalogReady: true,
     })
-    saveLocalModelConfig({
+    const lmstudio = saveLocalModelConfig({
       id: 'lmstudio',
       displayName: 'LM Studio',
       modelId: 'qwen3-coder',
@@ -1112,7 +1463,7 @@ describe('createLocalAppServices', () => {
       imageGenerationEnabled: true,
       catalogReady: true,
     })
-    saveLocalModelConfig({
+    const custom = saveLocalModelConfig({
       id: 'custom',
       displayName: 'Custom Gateway',
       modelId: 'custom-model',
@@ -1135,7 +1486,7 @@ describe('createLocalAppServices', () => {
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
-      modelId: 'local-model:ollama',
+      modelId: ollama.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1144,7 +1495,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
-      modelId: 'local-model:ollama',
+      modelId: ollama.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1153,7 +1504,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'secure continue',
-      modelId: 'local-model:lmstudio',
+      modelId: lmstudio.codexCatalogModelId,
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
       address: {
@@ -1162,7 +1513,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'custom continue',
-      modelId: 'local-model:custom',
+      modelId: custom.codexCatalogModelId,
     })
 
     const createPayload = request.mock.calls.find(
@@ -1178,9 +1529,9 @@ describe('createLocalAppServices', () => {
 
     expect(continueModelConfig).toEqual(createModelConfig)
     expect(sendPayloads.map(payload => payload.modelSelection)).toEqual([
-      { modelName: 'local-model:ollama', modelType: null, options: {} },
-      { modelName: 'local-model:lmstudio', modelType: null, options: {} },
-      { modelName: 'local-model:custom', modelType: null, options: {} },
+      { modelName: ollama.codexCatalogModelId, modelType: null, options: {} },
+      { modelName: lmstudio.codexCatalogModelId, modelType: null, options: {} },
+      { modelName: custom.codexCatalogModelId, modelType: null, options: {} },
     ])
     expect(createModelConfig).toEqual(
       expect.objectContaining({
@@ -1696,6 +2047,8 @@ describe('createLocalAppServices', () => {
           reasoning: { effort: 'high' },
         })
       )
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_tool_search')
+      expect(payload.executionRequest.model_config).not.toHaveProperty('native_namespace_tools')
     }
   )
 
@@ -1848,6 +2201,7 @@ describe('createLocalAppServices', () => {
         codexProviderId: 'openai',
         codexProviderName: 'OpenAI',
         codexProviderType: 'official',
+        permissionMode: 'full-access',
       },
     })
 
@@ -1862,6 +2216,7 @@ describe('createLocalAppServices', () => {
         provider_name: 'OpenAI',
       })
     )
+    expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
   })
 
   test('builds cloud model gateway config without resolving credentials', async () => {
@@ -2025,6 +2380,8 @@ describe('createLocalAppServices', () => {
         codex_catalog_model_id: 'wework-kimi-k3',
         api_format: 'responses',
         upstream_api_format: 'openai-chat-completions',
+        native_tool_search: false,
+        native_namespace_tools: false,
         tool_profile: 'custom',
         protocol: 'openai-responses',
         base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
@@ -2042,6 +2399,48 @@ describe('createLocalAppServices', () => {
             configured: true,
           },
         },
+      })
+    )
+  })
+
+  test('passes native Responses tool capabilities to the executor', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-native-responses',
+      runtime: 'codex',
+      message: 'build a site',
+      title: 'Native Responses',
+      modelId: 'gpt-5.6-sol',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model_id: 'gpt-5.6-sol',
+        upstream_api_format: 'openai-responses',
+        native_tool_search: true,
+        native_namespace_tools: true,
       })
     )
   })
@@ -2320,15 +2719,36 @@ describe('createLocalAppServices', () => {
       address: { deviceId: 'local-device', taskId: 'task-1' },
       mode: 'suggest',
       instructions: 'Keep scope focused',
-      modelId: 'gpt-5.6-luna',
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
       intervalSeconds: 60,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.set', {
       address: { deviceId: 'device-uuid', taskId: 'task-1' },
       mode: 'suggest',
       instructions: 'Keep scope focused',
-      modelId: 'gpt-5.6-luna',
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
       intervalSeconds: 60,
+    })
+
+    await services.runtimeWorkApi?.runRuntimeSupervisorNow({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.run_now', {
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
     })
   })
 
@@ -2785,6 +3205,67 @@ describe('createLocalAppServices', () => {
       args: ['image.png', '0'],
       timeout_seconds: 30,
       max_output_bytes: 1024 * 1024 * 2,
+    })
+  })
+
+  test('reverts local runtime file changes through the owning device command', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { success: true, status: 'reverted' },
+      stderr: '',
+      error: null,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'device-uuid',
+        version: '1.9.0',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+    const fileChanges: TurnFileChangesSummary = {
+      version: 1,
+      status: 'active',
+      artifact_id: 'turn-file-changes/codex/turn-1',
+      device_id: 'device-uuid',
+      workspace_path: '/Users/me/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'README.md',
+          change_type: 'modified',
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      revertible: true,
+    }
+
+    const response = await services.runtimeWorkApi?.revertRuntimeFileChanges({
+      address: {
+        deviceId: 'device-uuid',
+        taskId: 'runtime-1',
+        workspacePath: '/Users/me/project',
+      },
+      fileChanges,
+    })
+
+    expect(response?.fileChanges).toMatchObject({
+      status: 'reverted',
+      artifact_id: fileChanges.artifact_id,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'turn_file_changes_revert',
+      path: '/Users/me/project',
+      args: ['turn-file-changes/codex/turn-1'],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
     })
   })
 })

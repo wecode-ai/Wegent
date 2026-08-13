@@ -91,6 +91,60 @@ describe('runtime transcript status', () => {
     )
   })
 
+  test('restores tool lifecycle timing from the runtime transcript', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'block-item-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              timestamp: 1_780_000_001_250,
+              completedAt: 1_780_000_004_750,
+            },
+          },
+          {
+            id: 'block-item-2',
+            type: 'block',
+            block: {
+              id: 'tool-2',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              timestamp: 1_780_000_010_000,
+              durationMs: 2_500,
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toEqual([
+      expect.objectContaining({
+        id: 'block-item-1',
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt: 1_780_000_001_250,
+          completedAt: 1_780_000_004_750,
+        }),
+      }),
+      expect.objectContaining({
+        id: 'block-item-2',
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt: 1_780_000_010_000,
+          completedAt: 1_780_000_012_500,
+        }),
+      }),
+    ])
+  })
+
   test('does not infer streaming from an active conversation status', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
@@ -158,6 +212,32 @@ describe('createRuntimeTaskStreamHandlers', () => {
       offset: 0,
     })
     expect('messageId' in actions[0]).toBe(false)
+  })
+
+  test('forwards an active task title change without refreshing runtime work', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onRuntimeTaskTitleUpdated = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onRuntimeTaskTitleUpdated,
+    })
+
+    handlers.onRuntimeTaskTitleUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'friendly-title-turn',
+      deviceId: 'device-1',
+      title: '测试标题生成功能',
+    })
+
+    expect(onRuntimeTaskTitleUpdated).toHaveBeenCalledWith({
+      taskId: 'runtime-task-1',
+      subtaskId: 'friendly-title-turn',
+      deviceId: 'device-1',
+      title: '测试标题生成功能',
+    })
   })
 
   test('inserts an idle supervisor correction before its assistant turn starts', () => {
@@ -477,18 +557,16 @@ describe('createRuntimeTaskStreamHandlers', () => {
     )
   })
 
-  test('passes context compaction through regular block created actions', () => {
+  test('passes context compaction through regular block created actions without refreshing work', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
       taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const onAssistantSettled = vi.fn()
-    const onRefreshWorkLists = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => actions.push(action),
       onAssistantSettled,
-      onRefreshWorkLists,
     })
 
     handlers.onBlockCreated?.({
@@ -519,7 +597,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'runtime-task-1-context-compact',
     })
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
-    expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
   })
 
   test('passes reclassified assistant text identity to the conversation reducer', () => {
@@ -567,11 +644,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
     }
     const actions: RuntimePaneMessageAction[] = []
     const onAssistantSettled = vi.fn()
-    const onRefreshWorkLists = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => actions.push(action),
       onAssistantSettled,
-      onRefreshWorkLists,
     })
 
     handlers.onBlockCreated?.({
@@ -599,7 +674,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       },
     })
     expect(onAssistantSettled).not.toHaveBeenCalled()
-    expect(onRefreshWorkLists).not.toHaveBeenCalled()
   })
 
   test('preserves request user input render payload on block created events', () => {
@@ -758,6 +832,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'subtask-9',
       deviceId: 'device-1',
       result: {
+        itemId: 'assistant-item-9',
         value: '最终回答。',
       },
     })
@@ -766,6 +841,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       expect.objectContaining({
         type: 'assistant_done',
         subtaskId: 'subtask-9',
+        itemId: 'assistant-item-9',
         content: '最终回答。',
       }),
     ])
@@ -996,7 +1072,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
       deviceId: 'device-1',
       blockId: 'text-local-task-1-0-1',
       content: 'partial',
-      status: 'streaming',
+      status: 'done',
+      completedAt: 1_780_000_004_750,
+      durationMs: 3_500,
     })
 
     expect(actions).toHaveLength(1)
@@ -1006,7 +1084,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
       blockId: 'text-local-task-1-0-1',
       updates: {
         content: 'partial',
-        status: 'streaming',
+        status: 'done',
+        completedAt: 1_780_000_004_750,
+        durationMs: 3_500,
       },
     })
     expect(warn).not.toHaveBeenCalled()

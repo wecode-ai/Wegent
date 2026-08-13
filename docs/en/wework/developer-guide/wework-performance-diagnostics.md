@@ -68,6 +68,10 @@ To reduce frontend and executor memory pressure, runtime task lists, runtime han
 
 Conversation rendering still uses `WorkbenchMessage` values produced from transcript loads and message actions. Task lists and status polling are for status, titles, running state, and workspace metadata. When investigating slow list refreshes or memory growth while switching tasks, first check whether raw messages or command output have been reintroduced into the runtime list, handle, or transcript metadata path.
 
+Codex 0.147 history reads must follow the `historyMode` selected when the thread was persisted. The executor first reads metadata with `thread/read(includeTurns: false)`: `paginated` threads use `thread/turns/list(itemsView: notLoaded)` followed by `thread/items/list` for the complete items of each turn, while `legacy` threads use `thread/turns/list(itemsView: full)` directly. Legacy rollout stores do not support `thread/items/list`, so the executor must not force item pagination based only on the Codex version.
+
+Codex filters `<codex_internal_context>` from history APIs, so Wework must preserve visible goal and continuation input by `clientUserMessageId` when sending it, then merge that presentation with provider items while loading the transcript. For pre-upgrade `legacy` conversations without a local presentation, the executor may restore the first request from the thread preview only when the first turn on the oldest page has no user message at all. It must not add the preview when that turn already contains text, image, or attachment messages.
+
 ### Pane Cache and Resource Lifetimes
 
 The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript.

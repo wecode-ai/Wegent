@@ -26,6 +26,7 @@ class LoopItemCreate(BaseModel):
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_agent_id: str | None = Field(default=None, max_length=64)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
@@ -40,6 +41,7 @@ class LoopItemUpdate(BaseModel):
     description: str | None = None
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
+    assignee_agent_id: str | None = Field(default=None, max_length=64)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
@@ -70,6 +72,17 @@ class LoopItemResponse(BaseModel):
     status: str
     assignee_user_id: int | None
     assignee_name: str | None = None
+    assignee_agent_id: str | None = None
+    assignee_agent_name: str | None = None
+    ai_state: dict[str, Any] | None = None
+    execution_state: str | None = None
+    can_approve: bool = False
+    assignment_history: list[dict[str, Any]] = Field(default_factory=list)
+    approval: dict[str, Any] | None = None
+    queued_at: str | None = None
+    execution_note: str | None = None
+    execution_error: str | None = None
+    automation: dict[str, Any] | None = None
     priority: str
     due_at: datetime | None
     sort_order: int
@@ -87,14 +100,77 @@ class LoopItemResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def populate_tags(cls, value: object) -> object:
-        """Fill tags from the metadata JSON when the input has no tags key."""
+        """Fill tags and metadata-derived fields when the input has no tags key."""
         if isinstance(value, dict) and "tags" not in value:
             metadata = value.get("metadata_json")
-            tags = metadata.get("tags") if isinstance(metadata, dict) else None
-            return {**value, "tags": _normalize_tags(tags)}
+            metadata = metadata if isinstance(metadata, dict) else {}
+            ai_state = (
+                value.get("ai_state")
+                if value.get("ai_state") is not None
+                else (
+                    metadata.get("ai_state")
+                    if isinstance(metadata.get("ai_state"), dict)
+                    else None
+                )
+            )
+            assignment_history = (
+                value.get("assignment_history")
+                if value.get("assignment_history") is not None
+                else (
+                    metadata.get("assignment_history")
+                    if isinstance(metadata.get("assignment_history"), list)
+                    else []
+                )
+            )
+            approval = (
+                value.get("approval")
+                if value.get("approval") is not None
+                else (
+                    metadata.get("approval")
+                    if isinstance(metadata.get("approval"), dict)
+                    else None
+                )
+            )
+            queued_at_value = value.get("queued_at")
+            if isinstance(queued_at_value, datetime):
+                queued_at = queued_at_value.isoformat()
+            elif isinstance(queued_at_value, str):
+                queued_at = queued_at_value
+            else:
+                queued_at = metadata.get("queued_at")
+            return {
+                **value,
+                "tags": _normalize_tags(metadata.get("tags")),
+                "ai_state": ai_state,
+                "execution_state": (
+                    value.get("execution_state")
+                    if value.get("execution_state") is not None
+                    else metadata.get("execution_state")
+                ),
+                "assignment_history": assignment_history,
+                "approval": approval,
+                "queued_at": queued_at,
+                "execution_note": (
+                    value.get("execution_note")
+                    if value.get("execution_note") is not None
+                    else metadata.get("execution_note")
+                ),
+                "execution_error": (
+                    value.get("execution_error")
+                    if value.get("execution_error") is not None
+                    else metadata.get("execution_error")
+                ),
+                "automation": (
+                    value.get("automation")
+                    if value.get("automation") is not None
+                    else metadata.get("automation")
+                ),
+            }
         return value
 
-    @field_validator("parent_id", "current_delivery_id", mode="before")
+    @field_validator(
+        "parent_id", "current_delivery_id", "assignee_agent_id", mode="before"
+    )
     @classmethod
     def normalize_empty_id(cls, value: object) -> object:
         return None if value == "" else value

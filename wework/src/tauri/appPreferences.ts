@@ -1,5 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import type { ModelSelectionConfig } from '@/types/api'
+import {
+  defaultLocalHarnessPreferences,
+  normalizeLocalHarnessPreferences,
+  type LocalHarnessPreference,
+} from '@/lib/local-harness'
 
 export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
@@ -15,6 +21,7 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
+  defaultWorkspaceTab: DefaultWorkspaceTab
   systemDragEnabled: boolean
   preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
@@ -37,7 +44,18 @@ export interface AppPreferences {
   appshotsPlaySound: boolean
   popoutWindowShortcut: string | null
   popoutWindowProjectlessDefaultEnabled: boolean
+  friendlyTaskTitlesEnabled: boolean
+  friendlyTaskTitleModel: FriendlyTaskTitleModelConfig | null
   quickPhrases: QuickPhrase[]
+  localHarnesses: LocalHarnessPreference[]
+}
+
+export interface FriendlyTaskTitleModelConfig {
+  modelName: string
+  modelType: ModelSelectionConfig['modelType']
+  executionModelId: string
+  executionModelType: ModelSelectionConfig['modelType']
+  options?: ModelSelectionConfig['options']
 }
 
 export type QuickPhraseMode = 'normal' | 'plan' | 'goal'
@@ -70,10 +88,12 @@ export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now())
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type BrowserLinkTarget = 'system' | 'wework'
+export type DefaultWorkspaceTab = 'task' | 'board' | 'agent'
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
+  defaultWorkspaceTab?: DefaultWorkspaceTab
   systemDragEnabled?: boolean
   preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
@@ -96,7 +116,10 @@ export interface AppPreferencesPatch {
   appshotsPlaySound?: boolean
   popoutWindowShortcut?: string | null
   popoutWindowProjectlessDefaultEnabled?: boolean
+  friendlyTaskTitlesEnabled?: boolean
+  friendlyTaskTitleModel?: FriendlyTaskTitleModelConfig | null
   quickPhrases?: QuickPhrase[]
+  localHarnesses?: LocalHarnessPreference[]
 }
 
 export const defaultQuickPhrases: QuickPhrase[] = [
@@ -123,6 +146,7 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -145,13 +169,17 @@ export const defaultAppPreferences: AppPreferences = {
   appshotsPlaySound: true,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
+  friendlyTaskTitlesEnabled: false,
+  friendlyTaskTitleModel: null,
   quickPhrases: defaultQuickPhrases,
+  localHarnesses: defaultLocalHarnessPreferences,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
 const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
+const supportedDefaultWorkspaceTabs = new Set<DefaultWorkspaceTab>(['task', 'board', 'agent'])
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -182,6 +210,11 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
+    defaultWorkspaceTab:
+      typeof record.defaultWorkspaceTab === 'string' &&
+      supportedDefaultWorkspaceTabs.has(record.defaultWorkspaceTab as DefaultWorkspaceTab)
+        ? (record.defaultWorkspaceTab as DefaultWorkspaceTab)
+        : defaultAppPreferences.defaultWorkspaceTab,
     systemDragEnabled:
       typeof record.systemDragEnabled === 'boolean'
         ? record.systemDragEnabled
@@ -276,11 +309,55 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.popoutWindowProjectlessDefaultEnabled === 'boolean'
         ? record.popoutWindowProjectlessDefaultEnabled
         : defaultAppPreferences.popoutWindowProjectlessDefaultEnabled,
+    friendlyTaskTitlesEnabled:
+      typeof record.friendlyTaskTitlesEnabled === 'boolean'
+        ? record.friendlyTaskTitlesEnabled
+        : defaultAppPreferences.friendlyTaskTitlesEnabled,
+    friendlyTaskTitleModel: normalizeFriendlyTaskTitleModel(record.friendlyTaskTitleModel),
     quickPhrases: Array.isArray(record.quickPhrases)
       ? record.quickPhrases
           .flatMap(item => normalizeQuickPhrase(item))
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
+    localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
+  }
+}
+
+function normalizeFriendlyTaskTitleModel(value: unknown): FriendlyTaskTitleModelConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Partial<FriendlyTaskTitleModelConfig>
+  const modelName = typeof record.modelName === 'string' ? record.modelName.trim() : ''
+  const executionModelId =
+    typeof record.executionModelId === 'string' ? record.executionModelId.trim() : ''
+  if (!modelName || !executionModelId) return null
+  const modelType =
+    record.modelType === 'public' ||
+    record.modelType === 'user' ||
+    record.modelType === 'group' ||
+    record.modelType === 'runtime'
+      ? record.modelType
+      : null
+  const executionModelType =
+    record.executionModelType === 'public' ||
+    record.executionModelType === 'user' ||
+    record.executionModelType === 'group' ||
+    record.executionModelType === 'runtime'
+      ? record.executionModelType
+      : null
+  const options =
+    record.options && typeof record.options === 'object' && !Array.isArray(record.options)
+      ? Object.fromEntries(
+          Object.entries(record.options).flatMap(([key, option]) =>
+            typeof option === 'string' ? [[key, option]] : []
+          )
+        )
+      : undefined
+  return {
+    modelName,
+    modelType,
+    executionModelId,
+    executionModelType,
+    ...(options ? { options } : {}),
   }
 }
 

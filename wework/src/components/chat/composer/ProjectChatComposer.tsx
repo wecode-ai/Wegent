@@ -43,6 +43,7 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface ProjectChatComposerProps {
@@ -52,6 +53,7 @@ interface ProjectChatComposerProps {
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
@@ -69,7 +71,7 @@ interface ProjectChatComposerProps {
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
   contextUsage?: RuntimeContextUsage
-  onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -79,8 +81,10 @@ interface ProjectChatComposerProps {
   workspaceFileApi?: WorkspaceFileApi
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   conversationMentionCandidates?: ComposerConversationMentionCandidate[]
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
@@ -103,7 +107,11 @@ interface ProjectChatComposerProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
+  /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
+  onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarTrailingContext?: ReactNode
+  modelSelectorOverride?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -119,6 +127,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onCompositionEnd,
       onSubmit,
       disabled,
+      pluginPickerIconOnly = false,
       submitDisabled = false,
       disabledReason,
       placeholder,
@@ -146,8 +155,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       workspaceFileApi,
       cloudMentionCandidates,
       conversationMentionCandidates,
+      externalMentionCandidates,
       cloudProjectCandidates,
       cloudSpaceEnabled,
+      onSelectExternalMention,
       onSelectCloudProject,
       selectedCloudProjectId,
       planModeActive = false,
@@ -170,7 +181,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onPause,
       showWorkspaceMenu,
       inputLeadingContext,
+      onDismissInputLeadingContext,
       toolbarLeadingContext,
+      projectWorkBarTrailingContext,
+      modelSelectorOverride,
     },
     ref
   ) {
@@ -295,8 +309,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onCreateBranch={projectWork.onCreateBranch}
             worktreeBranch={projectWork.worktreeBranch}
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+            showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            trailingContext={projectWorkBarTrailingContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
             buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
           />
@@ -360,52 +376,74 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               <span className="text-text-muted">· {t('workbench.supervisor_pending_edit')}</span>
             </button>
           ) : null}
-          <div
-            data-testid={inputLeadingContext ? 'composer-input-leading-context' : undefined}
-            className="flex min-h-[48px] w-full items-baseline gap-1"
-          >
-            {inputLeadingContext}
-            <ComposerTextarea
-              ref={composerRef}
-              testId={inputTestId}
-              textareaRef={textareaRef}
-              value={value}
-              onChange={handleComposerChange}
-              onBlur={onBlur}
-              onCompositionEnd={onCompositionEnd}
-              onSubmit={onSubmit}
-              canSend={canSend}
-              disabled={disabled}
-              placeholder={placeholder}
-              rows={2}
-              onPasteFiles={onFileSelect}
-              onOpenSkillFile={onOpenSkillFile}
-              workspaceTarget={workspaceTarget}
-              workspaceFileApi={workspaceFileApi}
-              cloudMentionCandidates={cloudMentionCandidates}
-              conversationMentionCandidates={conversationMentionCandidates}
-              cloudProjectCandidates={cloudProjectCandidates}
-              cloudSpaceEnabled={cloudSpaceEnabled}
-              onSelectCloudProject={onSelectCloudProject}
-              className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
-              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
-              onListLocalSkills={onListLocalSkills}
-              onListLocalApps={onListLocalApps}
-              models={models}
-              selectedModel={selectedModel}
-              selectedModelOptions={selectedModelOptions}
-              planModeActive={planModeActive}
-              onSetPlanMode={onSetPlanMode}
-              onSetGoal={onSetGoal}
-              onSelectModel={onSelectModel}
-              onBlockedModelSelect={onBlockedModelSelect}
-              isModelSelectionReady={isModelSelectionReady}
-            />
-          </div>
+          {inputLeadingContext ? (
+            <div
+              data-testid="composer-input-leading-context"
+              className="mb-1 flex w-full items-center"
+            >
+              {inputLeadingContext}
+            </div>
+          ) : null}
+          <ComposerTextarea
+            ref={composerRef}
+            testId={inputTestId}
+            textareaRef={textareaRef}
+            value={value}
+            onChange={handleComposerChange}
+            onBlur={onBlur}
+            onCompositionEnd={onCompositionEnd}
+            onSubmit={onSubmit}
+            canSend={canSend}
+            disabled={disabled}
+            placeholder={placeholder}
+            rows={2}
+            onPasteFiles={onFileSelect}
+            onOpenSkillFile={onOpenSkillFile}
+            workspaceTarget={workspaceTarget}
+            workspaceFileApi={workspaceFileApi}
+            cloudMentionCandidates={cloudMentionCandidates}
+            conversationMentionCandidates={conversationMentionCandidates}
+            externalMentionCandidates={externalMentionCandidates}
+            cloudProjectCandidates={cloudProjectCandidates}
+            cloudSpaceEnabled={cloudSpaceEnabled}
+            onSelectExternalMention={onSelectExternalMention}
+            onSelectCloudProject={onSelectCloudProject}
+            onKeyDown={(event, snapshot) => {
+              if (
+                !onDismissInputLeadingContext ||
+                !inputLeadingContext ||
+                event.key !== 'Backspace' ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.altKey
+              ) {
+                return false
+              }
+              if (snapshot.value.length > 0 || snapshot.selectionStart !== 0) {
+                return false
+              }
+              onDismissInputLeadingContext()
+              return true
+            }}
+            className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
+            skillMenuClassName="left-[-1rem] right-[-0.5rem]"
+            onListLocalSkills={onListLocalSkills}
+            onListLocalApps={onListLocalApps}
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={selectedModelOptions}
+            planModeActive={planModeActive}
+            onSetPlanMode={onSetPlanMode}
+            onSetGoal={onSetGoal}
+            onSelectModel={onSelectModel}
+            onBlockedModelSelect={onBlockedModelSelect}
+            isModelSelectionReady={isModelSelectionReady}
+          />
           <ComposerToolbar
             canSend={canSend}
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
+            pluginPickerIconOnly={pluginPickerIconOnly}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}
@@ -417,6 +455,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSelectModelAndOptions={onSelectModelAndOptions}
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
+            modelSelectorOverride={modelSelectorOverride}
             contextUsage={contextUsage}
             onFileSelect={onFileSelect}
             planModeActive={planModeActive}

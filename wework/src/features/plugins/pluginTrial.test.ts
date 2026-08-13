@@ -10,6 +10,7 @@ import {
   getPluginUseCount30d,
   pluginTrialInput,
   pluginTrialTemplates,
+  queuePluginInputTrial,
   queuePluginPromptTrial,
   queuePluginReferenceTrial,
   queuePluginTrial,
@@ -130,10 +131,77 @@ describe('plugin trial state', () => {
     expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
   })
 
+  test('falls back to the workspace marketplace for managed marketplace installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
+  test('uses visibility over stale source marketplace for managed marketplace installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'workspace'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+      marketplace: 'wework',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
+  test('falls back to the public marketplace for public managed installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'public'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework) ')
+  })
+
+  test('falls back to the personal marketplace for personal managed installs', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.visibility = 'personal'
+    plugin.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'documents',
+    }
+    plugin.spec.sourcePayload = { filename: 'documents.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wework-personal) ')
+  })
+
   test('queues and consumes plugin trial input once', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')
     expect(consumePluginTrialInput()).toBeNull()
+  })
+
+  test('queues a custom plugin trial input for a fresh chat', () => {
+    const input = '[产品发布页](wegent-sites-project://prj_product) 请说出你要做的改动'
+
+    expect(queuePluginInputTrial(pluginWithSkill(), input, { openInNewChat: true })).toBe(true)
+
+    const trial = consumePluginTrial()
+    expect(trial?.input).toBe(input)
+    expect(trial?.pluginName).toBe('Documents')
+    expect(trial?.openInNewChat).toBe(true)
   })
 
   test('queues a canonical plugin reference without an installed plugin record', () => {
@@ -162,6 +230,14 @@ describe('plugin trial state', () => {
         logoUrl: 'https://example.com/memo.png',
       },
     ])
+    expect(trial?.app).toEqual(
+      expect.objectContaining({
+        id: 'plugin:documents',
+        name: 'Documents',
+        pluginKey: 'documents',
+        source: 'installed-plugin',
+      })
+    )
     expect(trial?.openInNewChat).toBe(true)
   })
 

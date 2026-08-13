@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import type { ChatSubmitOptions } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
@@ -21,6 +22,7 @@ import {
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
+import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -95,6 +97,7 @@ export function TemporaryChatPanel({
     projectChat,
     createTemporaryRuntimeTask,
     sendRuntimePaneMessage,
+    sendRuntimePaneGuidance,
     cancelRuntimePaneTask,
     subscribeRuntimeTaskStream,
     loadRuntimeTranscriptForPane,
@@ -140,6 +143,11 @@ export function TemporaryChatPanel({
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
+  const queuedMessagesRef = useRef(queuedMessages)
+
+  useEffect(() => {
+    queuedMessagesRef.current = queuedMessages
+  }, [queuedMessages])
 
   const updateAddress = useCallback(
     (nextAddress: RuntimeTaskAddress | null) => {
@@ -265,6 +273,25 @@ export function TemporaryChatPanel({
       onMessageAction: dispatchMessages,
       onAssistantStart: () => setSending(false),
       onAssistantSettled: () => setSending(false),
+      onGuidanceApplied: payload => {
+        const guidanceMessage = queuedMessagesRef.current.find(
+          message =>
+            message.status === 'sending' &&
+            message.deliveryMode === 'guidance' &&
+            (message.id === payload.clientGuidanceId ||
+              (!payload.clientGuidanceId && message.content === payload.message))
+        )
+        if (!guidanceMessage) return
+        const remainingMessages = queuedMessagesRef.current.filter(
+          message => message.id !== guidanceMessage.id
+        )
+        queuedMessagesRef.current = remainingMessages
+        setQueuedMessages(remainingMessages)
+        setMessages(current => [
+          ...current.filter(message => message.id !== guidanceMessage.id),
+          createAppliedRuntimeGuidanceMessage(guidanceMessage, payload),
+        ])
+      },
     })
   }, [address, dispatchMessages, subscribeRuntimeTaskStream])
 
@@ -350,10 +377,61 @@ export function TemporaryChatPanel({
     void sendQueuedMessage(queuedMessage)
   }, [address, busy, queuedMessages, sendQueuedMessage])
 
+  const sendQueuedMessageAsGuidance = useCallback(
+    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
+      if (!address || queuedMessage.status === 'sending') return false
+      if (!busy && !forceActiveTurn) {
+        await sendQueuedMessage(queuedMessage)
+        return true
+      }
+
+      const sendingMessages = queuedMessagesRef.current.map(message =>
+        message.id === queuedMessage.id
+          ? {
+              ...message,
+              status: 'sending' as const,
+              deliveryMode: 'guidance' as const,
+              error: undefined,
+              notice: '正在引导当前对话',
+            }
+          : message
+      )
+      queuedMessagesRef.current = sendingMessages
+      setQueuedMessages(sendingMessages)
+      const messageAttachments = queuedMessage.attachments ?? []
+      const attachmentIds = remoteAttachmentIds(messageAttachments)
+      const attachments = localRuntimeAttachments(messageAttachments)
+      const result = await sendRuntimePaneGuidance({
+        address,
+        message: queuedMessage.content,
+        clientGuidanceId: queuedMessage.id,
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      })
+      if (result.sent) return true
+
+      const failedMessages = queuedMessagesRef.current.map(message =>
+        message.id === queuedMessage.id
+          ? {
+              ...message,
+              status: 'failed' as const,
+              deliveryMode: undefined,
+              notice: undefined,
+              error: result.error || '引导发送失败',
+            }
+          : message
+      )
+      queuedMessagesRef.current = failedMessages
+      setQueuedMessages(failedMessages)
+      return false
+    },
+    [address, busy, sendQueuedMessage, sendRuntimePaneGuidance]
+  )
+
   const send = useCallback(
-    async (valueOverride?: string) => {
+    async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       const message = (valueOverride ?? input).trim()
-      if (!message) return
+      if (!message) return false
       setError(null)
       setInput('')
 
@@ -367,9 +445,14 @@ export function TemporaryChatPanel({
         ...selectedModelFields,
       }
       if (address && busy) {
-        setQueuedMessages(current => [...current, queuedMessage])
+        const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
+        queuedMessagesRef.current = pendingMessages
+        setQueuedMessages(pendingMessages)
         sideChatProjectChat.resetAttachments()
-        return
+        if (options.guideWhenBusy) {
+          return sendQueuedMessageAsGuidance(queuedMessage)
+        }
+        return true
       }
 
       setSending(true)
@@ -406,12 +489,12 @@ export function TemporaryChatPanel({
         setInput(current => current || message)
         updateAddress(null)
         setSending(false)
-        return
+        return false
       }
       if (!address) {
         updateAddress(targetAddress)
         sideChatProjectChat.resetAttachments()
-        return
+        return true
       }
 
       let sendError: string | null = null
@@ -434,15 +517,23 @@ export function TemporaryChatPanel({
       if (sent) {
         setMessages(current => [...current, createUserMessage(message, queuedMessage.id)])
         sideChatProjectChat.resetAttachments()
-        return
+        return true
       }
       if (isRuntimeTaskBusyError(sendError)) {
-        setQueuedMessages(current => [...current, queuedMessage])
+        const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
+        queuedMessagesRef.current = pendingMessages
+        setQueuedMessages(pendingMessages)
         sideChatProjectChat.resetAttachments()
+        if (options.guideWhenBusy) {
+          setSending(false)
+          return sendQueuedMessageAsGuidance(queuedMessage, true)
+        }
       } else {
         handleError(sendError || '发送失败')
+        return false
       }
       setSending(false)
+      return true
     },
     [
       address,
@@ -454,6 +545,7 @@ export function TemporaryChatPanel({
       queuedMessages.length,
       sideChatProjectChat,
       selectedModelFields,
+      sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       source,
       sendEphemeral,
@@ -477,6 +569,15 @@ export function TemporaryChatPanel({
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
     [queuedMessages, sideChatProjectChat]
+  )
+
+  const guideQueuedMessage = useCallback(
+    (id: string) => {
+      const queuedMessage = queuedMessages.find(message => message.id === id)
+      if (!queuedMessage) return
+      void sendQueuedMessageAsGuidance(queuedMessage, true)
+    },
+    [queuedMessages, sendQueuedMessageAsGuidance]
   )
 
   const pause = useCallback(() => {
@@ -533,8 +634,10 @@ export function TemporaryChatPanel({
           <BufferedChatInput
             value={input}
             onChange={setInput}
+            onDraftEdit={() => setError(null)}
             onSubmit={send}
             disabled={false}
+            pluginPickerIconOnly
             error={error}
             placeholder={placeholder}
             variant="desktop"
@@ -542,6 +645,7 @@ export function TemporaryChatPanel({
             showProjectWorkBar={false}
             queuedMessages={queuedMessages}
             onCancelQueuedMessage={cancelQueuedMessage}
+            onSendQueuedAsGuidance={guideQueuedMessage}
             onEditQueuedMessage={editQueuedMessage}
             isStreaming={busy}
             onPause={pause}

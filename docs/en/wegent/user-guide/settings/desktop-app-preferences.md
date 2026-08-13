@@ -32,6 +32,14 @@ When **Show main window on launch** is enabled, Wework opens the main window whe
 
 When the main window is not visible, click the system tray icon to reopen it.
 
+## Maximum Concurrent Tasks and the Task Queue
+
+Under **Settings → General → Runtime**, choose how many tasks the current device may run at the same time. The supported range is 1–20, and the default is 10. Once the limit is reached, new tasks enter the device's waiting queue without sending a model request.
+
+Queued tasks show their current position in the task list. Move a task forward or backward to change the real order used when execution slots become available. **Run now** temporarily lets a selected task exceed the configured limit. It does not interrupt work that is already running, and no additional queued task starts until the active count falls below the configured limit again.
+
+The executor schedules the waiting queue in memory and stores a sealed recovery copy in the local application data directory. Pending tasks are restored in the saved order after Wework exits or restarts. The sealed file avoids plaintext exposure of queued credentials and detects tampering. Its key is stored in the same current-user-private application data directory, so it is not intended to protect against compromise of the local user account. The queue belongs only to the current device and is not uploaded or synchronized to another device.
+
 ## Popout Window
 
 Open **Settings → General → Popout Window** to configure the lightweight input window that is independent of the main interface. The default global shortcut is `⌥⇧Space`. Select the pencil to record another modifier-plus-main-key combination, or select delete to disable the global shortcut.
@@ -65,6 +73,8 @@ The first release does not import project lists, Claude Code plugins, or convers
 
 The first time you close the main window, Wework explains that tasks can continue after the window is closed. You can keep the window open or confirm that the app should move to the background. After confirmation, this explanation is not shown on every close.
 
+After you select **Move to background**, the confirmation closes immediately and the main window then moves to the system tray. If the native window cannot close, the confirmation appears again so you can retry.
+
 When Wework moves to the background, it destroys the main window WebView to release resources used by the UI. The task executor is not stopped. Reopening from the tray creates a new main window and restores the current task state.
 
 When no conversation is open, the newly created main window keeps the task launcher within the window bounds. The message area scrolls as needed only after a conversation is opened.
@@ -74,6 +84,8 @@ When no conversation is open, the newly created main window keeps the task launc
 **Prevent sleep while tasks are running** is enabled by default. While at least one task is running, Wework prevents the computer from entering idle system sleep. This inhibition remains active when the main window is closed and Wework continues from the system tray.
 
 After every task completes, fails, or is interrupted, Wework immediately releases the inhibition and restores the operating system's normal sleep policy. Wework does not force the computer to sleep and does not change the configured system sleep timeout.
+
+On macOS, Wework prevents sleep with a system power assertion tied to the application process instead of starting a persistent `caffeinate` process. If Wework exits unexpectedly, macOS automatically releases the assertion, so no background process remains to keep blocking idle sleep.
 
 To keep Wework from controlling sleep, disable this option under **Settings → General**. Disabling it immediately releases any current sleep inhibition. If it is enabled again while a task is still running, Wework resumes preventing idle sleep.
 

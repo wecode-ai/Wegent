@@ -19,6 +19,7 @@ sidebar_position: 4
 ## 当前测试覆盖率
 
 ### 后端 (`backend/`)
+
 - ✅ 核心安全：身份验证、JWT 令牌、password 哈希
 - ✅ 配置管理
 - ✅ 异常处理
@@ -27,21 +28,25 @@ sidebar_position: 4
 - ⏳ API 端点（占位符目录已存在）
 
 ### 执行器 (`executor/`)
+
 - ✅ Agent 工厂
 - ✅ 基础 agent 类
 - ✅ 模拟 AI 客户端交互（Anthropic、OpenAI）
 
 ### 执行器管理器 (`executor_manager/`)
+
 - ✅ 基础执行器类
 - ✅ 任务调度器
 - ✅ Docker 执行器和工具
 - ✅ Docker 常量和配置
 
 ### 共享模块 (`shared/`)
+
 - ✅ 加密工具
 - ✅ 敏感数据脱敏（令牌、API 密钥等）
 
 ### 前端 (`frontend/`)
+
 - ⏳ 组件测试（已建立基本设置）
 - ⏳ Hook 测试
 - ⏳ 工具函数测试
@@ -195,8 +200,8 @@ shared/tests/
 
 - **加密**：敏感数据的加密和解密（Git 令牌、API 密钥）
 - **数据脱敏**：日志和输出中敏感信息的自动脱敏
-  - GitHub 令牌（github_pat_*）
-  - Anthropic API 密钥（sk-ant-api03-*）
+  - GitHub 令牌（`github_pat_*`）
+  - Anthropic API 密钥（`sk-ant-api03-*`）
   - OpenAI API 密钥
   - 通用 API 密钥和 secrets
   - 文件路径保护（无误报）
@@ -222,13 +227,28 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## Wework 桌面云设备测试
+
+从仓库根目录运行云设备功能 E2E：
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+该场景会启动真实后端、Redis、云设备 executor 和 Tauri 应用，验证云项目任务、
+Goal 自动续跑与未读状态、忙碌任务转 Goal，以及本地与云端模型协议矩阵。失败时应
+使用命令输出中的 `wework/test-results/desktop-e2e/<run-id>/` 目录，对照前端、
+后端和 executor 日志定位主链路问题。
+
 ## 持续集成
 
 ### GitHub Actions 工作流
 
-`.github/workflows/test.yml` 工作流在以下情况下自动运行：
-- 推送到 `main` 分支
-- 向 `main` 分支提交的拉取请求
+测试与缓存工作流在以下情况下自动运行：
+
+- `.github/workflows/test.yml` 响应面向 `main` 的 PR 和 merge queue。
+- `.github/workflows/ci-cache-warmup.yml` 在相关依赖、源码或 CI 配置进入 `main`
+  后预热共享缓存。
 
 CI 会先运行 `.github/scripts/classify-ci-changes.sh`，根据改动路径决定需要执行的
 模块任务。模块依赖也会纳入判断，例如修改 `shared/` 时会同时运行 Backend、
@@ -245,6 +265,54 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 同一 PR 或 `main` 上有更新提交时，旧的未完成运行会被取消。`test-summary` 和
 `lint-summary` 始终存在，并验证所有被分类为必需的任务确实成功，未执行的无关模块
 不会导致汇总任务误报失败。
+
+CI 稳定性依赖以下约束：
+
+- 平台 E2E 的 MySQL 服务必须为首次初始化保留启动宽限。健康检查的
+  `start-period` 应覆盖共享 runner 上的冷启动，再通过检查间隔和重试次数判断失败；
+  不要依赖重跑掩盖初始化超时。
+- `pull_request_target` 触发的 Repository Policy 必须从受信任的 base checkout
+  运行策略脚本，但扫描目标应按 PR head 仓库和不可变的 head SHA 检出。不要依赖
+  `refs/pull/<number>/merge`，因为 PR 同步提交时这个短生命周期引用可能被替换或删除；
+  策略任务也不得执行 PR 提供的代码。
+- 桌面 E2E 遇到异步独立渲染的最终文本和附属控件时，必须分别等待目标元素出现后再
+  读取属性或断言状态。看到最终文本不代表折叠控件、时间线等关联 UI 已完成挂载。
+- Wework 发布说明查询 GitHub 提交作者时会对瞬时 API 或 TLS 故障进行有限次数的
+  指数退避重试。重试耗尽后发布任务仍必须失败，不能静默省略作者信息或生成不完整的
+  发布说明。
+
+### CI 缓存所有权
+
+大型缓存由 `main` 分支统一预热。PR 和 merge queue 可以恢复 `main` 缓存，但不会
+保存新的副本：
+
+- Linux workspace `node_modules` 按 Node 版本和 `pnpm-lock.yaml` 建立一份共享缓存，
+  供 Tests、Lint 和平台 E2E 使用。
+- Wework 浏览器和桌面 E2E 使用发布到 GHCR 的依赖镜像。镜像标签由对应
+  Dockerfile 的内容哈希决定；工作流只在该标签不存在时构建并发布镜像，后续任务
+  直接在镜像容器中运行，不再逐任务安装 Node、pnpm、uv、Rust、Playwright 浏览器
+  或桌面系统包。本地调试命令不会构建这些 CI 镜像。
+- uv 只缓存下载和构建结果，不缓存项目 `.venv`。缓存 key 包含对应 `uv.lock`，
+  按 Python 3.10、3.11、3.12 各维护一份共享缓存，保存前执行 CI prune。
+- Playwright browser、Next.js build cache、本地 harness CLI 和桌面 Cargo target
+  采用显式 restore/save；只有 `refs/heads/main` 可以 save。OpenCode、Claude Code
+  和 Kimi Code 通过 `.github/claude-code-cli/package-lock.json` 共享一份锁定完整
+  依赖图和包完整性的 npm 安装。
+- Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
+  输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的桌面
+  `--build-only`，非 `main` 任务以只读模式访问共享 sccache。
+- Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
+  在多个桌面 job 之间复用同一套完整二进制产物。
+- 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
+  build cache tag，不占用 GitHub Actions dependency cache 配额。
+- 非 Wework E2E 的 Executor 和 Tauri 系统依赖安装前先检查 runner 已安装的软件包；
+  APT 下载缓存只有 `main` 写入，PR 只恢复。
+
+`.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入
+`main` 后运行，并拒绝非 `main` 的手动预热。它只下载依赖或编译缓存，不重复执行
+已经由 merge queue 验证过的测试。不要在 PR/merge-group 上新增大型自动保存缓存；需要增加缓存时，应采用
+`actions/cache/restore` 和仅限 `main` 的 `actions/cache/save`，或使用已有共享
+action。
 
 ### 写入 GitHub Actions 输出
 
@@ -283,7 +351,7 @@ Frontend、Executor、Executor Manager、Shared、Chat Shell、Chat Core、Docke
 Draft PR 跳过昂贵的 E2E，转为 Ready for review 后再运行。
 
 完整的平台 E2E 每天 UTC 02:00 定时运行；完整 Wework E2E 每天 UTC 04:00 定时
-运行。定时任务与 `main` push 使用不同的 concurrency group，互相不会取消。
+运行。定时任务与 PR、merge queue 使用不同的 concurrency group，互相不会取消。
 
 ### 覆盖率报告
 
@@ -483,14 +551,17 @@ pnpm --filter wecode-ai-assistant test -- src/__tests__/utils/test_example.test.
 ### 常见问题
 
 **测试中的导入错误：**
+
 - 确保您从正确的目录运行 pytest
 - 检查模块是否已安装：`uv sync`
 
 **数据库错误：**
+
 - 测试使用 SQLite 内存数据库，无需设置
 - 检查 fixture 是否正确导入
 
 **前端测试失败：**
+
 - 确保已安装 Node.js 20+
 - 在仓库根目录运行 `pnpm install --frozen-lockfile` 以安装确切的依赖版本
 - 清除 Jest 缓存：`pnpm --filter wecode-ai-assistant exec jest --clearCache`

@@ -72,6 +72,7 @@ import { MessageLoadingStage } from './MessageLoadingStage'
 import { SaveToKnowledgeDialog } from './SaveToKnowledgeDialog'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import { ToastAction } from '@/components/ui/toast'
+import { documentViewOf } from '@/types/knowledge'
 import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/knowledge'
 
 type SendMessageOptions = {
@@ -1483,7 +1484,7 @@ function MessagesArea({
           }}
           document={knowledgeDocumentToView.document}
           knowledgeBaseId={knowledgeDocumentToView.knowledgeBase.id}
-          kbType={knowledgeDocumentToView.knowledgeBase.kb_type}
+          kbType={documentViewOf(knowledgeDocumentToView.knowledgeBase.kb_type) ?? undefined}
           canEdit={true}
           knowledgeBaseName={knowledgeDocumentToView.knowledgeBase.name}
           knowledgeBaseNamespace={knowledgeDocumentToView.knowledgeBase.namespace}

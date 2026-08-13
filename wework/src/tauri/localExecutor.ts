@@ -119,13 +119,6 @@ async function reconcileBundledPluginMarketplace(
       },
     })
     const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
-    if (
-      existing &&
-      normalizedMarketplacePath(existing.path) === normalizedMarketplacePath(marketplace.path)
-    ) {
-      reconciledBundledPluginMarketplaceKey = reconciliationKey
-      return
-    }
     if (!existing) {
       throw new Error(`Bundled plugin marketplace ${marketplace.id} could not be registered`, {
         cause: addError,
@@ -246,7 +239,16 @@ export function requestLocalExecutor<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  return invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params })
+  return invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params }).catch((cause: unknown) => {
+    console.error('[local-ipc] request failed', {
+      method,
+      paramsKeys: Object.keys(params ?? {}),
+      error: String(cause),
+      message: (cause as { message?: unknown } | null)?.message ?? null,
+      stack: (cause as { stack?: unknown } | null)?.stack ?? null,
+    })
+    throw cause
+  })
 }
 
 export function subscribeLocalExecutorEvents(

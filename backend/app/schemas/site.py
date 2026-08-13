@@ -18,7 +18,13 @@ SitePublishStatus = Literal[
 ]
 SiteNetwork = Literal["inner", "outer"]
 SiteAppType = Literal["web", "miniapp", "site", "mini_program"]
-ApplicationCapability = Literal["create", "publish", "delete", "open_experience"]
+ApplicationCapability = Literal[
+    "create",
+    "publish",
+    "edit",
+    "delete",
+    "open_experience",
+]
 
 
 class SiteResponse(BaseModel):
@@ -26,10 +32,12 @@ class SiteResponse(BaseModel):
 
     app_type: Literal["web"] = "web"
     siteid: str
+    project_id: str
     taskid: str
     username: str
     name: str
     slug: str
+    custom_domain_prefix: str | None = None
     network: SiteNetwork
     internal_url: AnyHttpUrl
     external_url: AnyHttpUrl | None = None
@@ -46,6 +54,7 @@ class MiniProgramResponse(BaseModel):
 
     app_type: Literal["miniapp"] = "miniapp"
     siteid: str
+    project_id: str
     taskid: str
     username: str
     name: str
@@ -75,6 +84,13 @@ class SiteListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class ApplicationCreatePluginResponse(BaseModel):
+    """Plugin configuration used to create one application type."""
+
+    plugin_name: str
+    marketplace_name: str
+
+
 class ApplicationTypeResponse(BaseModel):
     """One application type supported by the current Backend."""
 
@@ -82,6 +98,7 @@ class ApplicationTypeResponse(BaseModel):
     enabled: bool = True
     order: int
     capabilities: list[ApplicationCapability]
+    create: ApplicationCreatePluginResponse | None = None
 
 
 class ApplicationTypeListResponse(BaseModel):
@@ -101,3 +118,11 @@ class SiteUpdateRequest(BaseModel):
 
     sitename: str | None = Field(default=None, min_length=1, max_length=255)
     name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
+class SiteMetadataUpdateRequest(BaseModel):
+    """Request to update editable site project metadata."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    custom_domain_prefix: str | None = Field(default=None, min_length=4, max_length=63)

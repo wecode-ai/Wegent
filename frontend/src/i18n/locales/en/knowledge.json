@@ -43,9 +43,12 @@
     "selectKnowledgeBase": "Select a knowledge base to view documents",
     "selectWholeKb": "Select KB",
     "selected": "Selected",
-    "selectedDocuments": "{{count}} documents selected",
-    "selectedFolders": "{{count}} folders selected, including subfolders",
-    "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
+    "scopeAllDocuments": "All · {{count}} docs",
+    "scopeDocumentsCompact_one": "{{count}} doc",
+    "scopeDocumentsCompact_other": "{{count}} docs",
+    "scopeFoldersCompact_one": "{{count}} folder",
+    "scopeFoldersCompact_other": "{{count}} folders",
+    "scopeMixedCompact": "{{folderCount}} folders · {{documentCount}} docs",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"
@@ -158,8 +161,8 @@
       "wikispace": "Knowledge Base",
       "wikispaceSyncHint": "Click sync to pull knowledge bases from DingTalk",
       "wikispaceEmpty": "No knowledge base content",
-      "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
-      "wikispaceConfigureHint": "Please go to settings to configure DingTalk Knowledge Base MCP"
+      "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
+      "wikispaceConfigureHint": "Please configure DingTalk Knowledge Base MCP and DingTalk Docs MCP in settings"
     },
     "groupFilter": {
       "all": "All Groups"
@@ -244,6 +247,14 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
+      "categoryFilter": {
+        "label": "Knowledge base category",
+        "all": "All",
+        "document": "Document",
+        "code": "Code",
+        "emptyDocument": "No document knowledge bases",
+        "emptyCode": "No code knowledge bases"
+      },
       "currentDefaultView": "Current Default Opening View",
       "convertToNotebook": "Open Workspace by Default",
       "convertToClassic": "Open Document Management by Default",
@@ -252,7 +263,11 @@
       "defaultViewUpdateSuccess": "Default opening view updated",
       "defaultViewUpdateFailed": "Failed to update default opening view",
       "targetGroup": "Target Group",
-      "selectGroup": "Select Group"
+      "selectGroup": "Select Group",
+      "kindDocument": "Documents",
+      "kindDocumentDesc": "Upload and organise material",
+      "kindCode": "Code",
+      "kindCodeDesc": "Generated from a repository"
     },
     "breadcrumb": {
       "root": "All Documents"
@@ -415,6 +430,7 @@
         "transferSuccessFolders": "Transferred {{folderCount}} folder(s) successfully",
         "transferSuccessMixed": "Transferred {{folderCount}} folder(s) and {{docCount}} document(s) successfully",
         "transferFailed": "Transfer failed",
+        "transferSelectionLimit": "Select at most {{count}} documents and folders per transfer",
         "noOtherKbs": "No target knowledge bases match the transfer rules",
         "errors": {
           "SOURCE_TARGET_SAME": "Source and target knowledge bases must be different",
@@ -423,6 +439,7 @@
           "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
           "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "A transfer can include at most 200 documents and folders",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
@@ -1077,6 +1094,109 @@
       "title": "Cannot Access Knowledge Base",
       "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",
       "backButton": "Back to Knowledge Base List"
+    }
+  },
+  "codeWiki": {
+    "outline": {
+      "title": "On this page",
+      "label": "Page outline"
+    },
+    "list": {
+      "empty": "No code wikis yet",
+      "emptyHint": "Create one from a repository you can read.",
+      "neverGenerated": "Not generated yet",
+      "lastGenerated": "Updated {{when}}",
+      "atCommit": "at {{commit}}",
+      "pages_one": "{{count}} page",
+      "pages_other": "{{count}} pages"
+    },
+    "create": {
+      "title": "New code wiki",
+      "repository": "Repository",
+      "name": "Name",
+      "namePlaceholder": "Leave blank to use the repository name",
+      "submit": "Create",
+      "noBoundModel": "The code wiki agent has no model bound, so generation cannot run.",
+      "repositoryRequired": "Select or enter a repository address",
+      "fromMyRepositories": "From my repositories",
+      "byUrl": "By repository address",
+      "checking": "Checking the repository…",
+      "notReadable": "Cannot read this repository. Check the address, or add a token for this domain.",
+      "publicRepository": "Public repository",
+      "privateRepository": "Private repository",
+      "language": "Generation language",
+      "languageZh": "Chinese",
+      "languageEn": "English",
+      "alreadyBuilt": "{{count}} other wiki(s) already document this repository — you could ask for a share",
+      "ownedBy": "owned by {{owner}} — ask them for a share",
+      "showGenerationTask": "Show generation runs",
+      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id.",
+      "modelLabel": "Generation model",
+      "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
+      "modelPlaceholder": "Select a model",
+      "modelRequired": "Select the model to generate with"
+    },
+    "reader": {
+      "regenerate": "Regenerate",
+      "regenerating": "Generating…",
+      "upToDate": "Already up to date with the repository",
+      "started": "Generation started",
+      "back": "Back to the page",
+      "askPlaceholder": "Ask about this wiki",
+      "sectionOnly": "This section has no page of its own",
+      "empty": "This wiki has no pages yet",
+      "emptyHint": "Generate it to see its documentation here.",
+      "generating": "Generating…",
+      "previousRunStalled": "The previous run stalled; you can start another",
+      "linkNotFound": "This link points to a page that does not exist",
+      "backToChat": "Back to conversation",
+      "openNavigation": "Page navigation",
+      "generateFirst": "Generate",
+      "regenerateConfirmTitle": "Regenerate this wiki?",
+      "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
+      "emptyGenerating": "This wiki is being generated",
+      "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
+      "emptyFailed": "The last run did not finish",
+      "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
+    },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "Document Management",
+      "generatedContent": "Wiki",
+      "userContent": "Documents",
+      "permissions": "Permissions"
+    },
+    "history": {
+      "title": "Generation history",
+      "never": "Never generated",
+      "running": "Generating",
+      "stalled": "Last run stalled",
+      "lastFailed": "Last run failed",
+      "completed": "Generated",
+      "updated": "Updated {{when}}",
+      "current": "Current",
+      "none": "No runs yet",
+      "mode": {
+        "full": "Full",
+        "incremental": "Incremental",
+        "custom": "Custom"
+      },
+      "commitUnreported": "no commit reported",
+      "taskFailed": "The task failed",
+      "republish": "Restore this version",
+      "republished": "This version is published again",
+      "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
+      "republishConfirmTitle": "Restore this version?",
+      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "viewFailure": "View full error",
+      "failureDetailsTitle": "Generation error",
+      "failureDetailsDescription": "Full error message from this generation run."
+    },
+    "failure": {
+      "task_ended_without_report": "The task ended without reporting a result",
+      "task_not_created": "The generation task could not be created",
+      "worker_abandoned": "The worker stopped reporting and the run was reclaimed",
+      "publish_refused": "The version was written but refused by the publish gate"
     }
   }
 }

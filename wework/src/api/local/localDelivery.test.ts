@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createExternalIssueApi, createLocalDeliveryApi } from './localDelivery'
+import {
+  createExternalIssueApi,
+  createLocalDeliveryApi,
+  createLocalProjectChatAgentApi,
+} from './localDelivery'
 
 const projectRecord = {
   id: 'project-1',
@@ -39,6 +43,41 @@ const taskRecord = {
 }
 
 describe('local delivery API', () => {
+  test('maps execution state from local task records', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') {
+        return [
+          {
+            ...taskRecord,
+            assignee_agent_id: 'LA-1',
+            execution_id: 5,
+            execution_state: 'pending_approval',
+          },
+        ]
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const { items } = await api.listLoopItems('project-1')
+    expect(items[0].execution_id).toBe(5)
+    expect(items[0].execution_state).toBe('pending_approval')
+    expect(items[0].assignee_agent_id).toBe('LA-1')
+  })
+
+  test('local robot create sends the creator id', async () => {
+    const request = vi.fn(async () => ({ id: 'LA-1', created_by_user_id: 7 }))
+    const api = createLocalProjectChatAgentApi(request, 7)
+    await api.create('project-1', {
+      name: 'Local Bot',
+      runtime: 'codex',
+      executionDeviceId: 'local-device',
+    })
+    expect(request).toHaveBeenCalledWith('chat_agents.create', {
+      project_id: 'project-1',
+      agent: expect.objectContaining({ created_by_user_id: 7 }),
+    })
+  })
+
   test('queries a backend project provider without creating a local project', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'external_projects.configure') return projectRecord
@@ -303,6 +342,7 @@ describe('local delivery API', () => {
           linked_at: '2026-07-27T00:00:00Z',
         }
       }
+      if (method === 'projects.list') return [projectRecord]
       if (method === 'todos.get') return taskRecord
       throw new Error(`Unexpected method: ${method}`)
     })
@@ -451,6 +491,40 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       task_id: 'LOCAL-1',
       todo: { version: 1, status: 'in_review' },
+    })
+  })
+
+  test('synchronizes a friendly runtime title through executor IPC', async () => {
+    const renamedTask = { ...taskRecord, title: '修复登录回调', version: 2 }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') {
+        return {
+          id: 'binding-1',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime task',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return taskRecord
+      if (method === 'todos.update') return renamedTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.updateTaskTrackingTitle({ deviceId: 'local-device', taskId: 'runtime-1' }, '修复登录回调')
+    ).resolves.toMatchObject({ id: 'LOCAL-1', title: '修复登录回调' })
+
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: { version: 1, title: '修复登录回调' },
     })
   })
 

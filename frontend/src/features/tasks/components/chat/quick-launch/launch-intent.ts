@@ -42,7 +42,7 @@ export function getCurrentTargetPageByMode(currentMode: string): TeamTargetPage 
   if (currentMode === 'code') return 'code'
   if (currentMode === 'knowledge') return 'knowledge'
   if (currentMode === 'task') return 'devices/chat'
-  if (currentMode === 'video' || currentMode === 'image') return 'generate'
+  if (currentMode === 'video' || currentMode === 'image') return currentMode
   return 'chat'
 }
 
@@ -69,7 +69,6 @@ export function parseQuickLaunchIntent(searchParams: URLSearchParams): QuickLaun
 
 export function removeQuickLaunchQueryParams(searchParams: URLSearchParams): URLSearchParams {
   const nextParams = new URLSearchParams(searchParams.toString())
-  nextParams.delete(QUICK_LAUNCH_QUERY.teamId)
   nextParams.delete(QUICK_LAUNCH_QUERY.launcher)
   nextParams.delete(QUICK_LAUNCH_QUERY.preset)
   nextParams.delete(QUICK_LAUNCH_QUERY.showPresets)

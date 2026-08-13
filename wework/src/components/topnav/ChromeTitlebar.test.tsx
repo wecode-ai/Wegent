@@ -25,9 +25,8 @@ const labels = {
   auxiliaryRoutes: {
     plugins: '插件',
     sites: '站点',
-    automations: '自动化',
+    automations: '已安排',
     cloud: '云端工作',
-    apps: '应用',
   },
 }
 
@@ -71,7 +70,14 @@ describe('ChromeTitlebar', () => {
       afterTabs: <button type="button">Update</button>,
     })
 
-    expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]')
+    expect(screen.getByTestId('chrome-titlebar')).toHaveClass(
+      'h-[38px]',
+      'bg-[rgb(var(--color-titlebar))]'
+    )
+    expect(screen.getByTestId('chrome-titlebar')).not.toHaveClass(
+      'backdrop-blur-xl',
+      'backdrop-saturate-150'
+    )
     expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('任务')
     expect(screen.getByTestId('chrome-titlebar-before-tabs')).toHaveTextContent('Toggle sidebar')
     expect(screen.getByTestId('chrome-titlebar-after-tabs')).toHaveTextContent('Update')

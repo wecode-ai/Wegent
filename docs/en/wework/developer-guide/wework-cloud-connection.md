@@ -36,6 +36,8 @@ The desktop sidebar provides two cloud entry points with distinct responsibiliti
 - After connection, the account area shows the cloud username and email, while the workspace entry shows the cloud host, cloud user, and online cloud device count.
 - Expired or failed cloud connections do not block local features.
 
+The Cloud Work status in the workspace entry comes from a complete background probe of teams, devices, and cloud runtime work, not from cached historical data. The first probe shows `Syncing`. After that probe completes, later refreshes keep showing the most recent `Available`, `No devices`, or `Unavailable` result until the full refresh finishes. If any cloud read fails, the latest result is `Unavailable`, even when the UI continues using the last successful snapshot to retain historical devices or task data. An overlapping refresh cancels the older request and replaces it with a new complete probe; it must not refresh only devices or fall back to a historical `Available` result.
+
 Settings are grouped by capability:
 
 - Default features: local Codex, local model configs, local executor, local workspaces, and local conversations.
@@ -52,6 +54,8 @@ Workbench services have three layers:
 3. `createHybridWorkbenchServices()` merges local and cloud services when cloud is connected.
 
 When disconnected, Wework continues to use local services only. When connected, models, devices, and runtime work lists are merged; execution and stream subscriptions route to local IPC or Backend relay by device or source.
+
+New-chat composer preferences follow the same connection ownership. When disconnected, the selected model, reasoning effort, collaboration mode, and each project's current-workspace/worktree mode are written to the local Wework user preferences. Once cloud is connected, those selections are written through the Backend user API to the current cloud account and restored from that account after restart. Backend stores the model and its `options` in `wework_new_chat_model_selection`, and stores `executionMode` plus `worktreeBranch` per `project:<id>` in `wework_project_work_preferences`. Hybrid services must not keep writing connected-account preferences to local user storage; doing so makes the current window appear updated while a restart restores the cloud account's stale or default values.
 
 ## Cloud Runtime IPC Relay
 

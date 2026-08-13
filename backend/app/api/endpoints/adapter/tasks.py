@@ -46,6 +46,7 @@ from app.schemas.task import (
     PromptDraftGenerateResponse,
     TaskArchiveBatchResponse,
     TaskArchiveResponse,
+    TaskBulkDeleteRequest,
     TaskCreate,
     TaskDetail,
     TaskInDB,
@@ -336,6 +337,42 @@ def delete_archived_tasks(
         db=db, user_id=current_user.id, client_origin=client_origin
     )
     return {"message": "Archived chats deleted successfully", "count": count}
+
+
+@router.delete("/bulk", response_model=TaskArchiveBatchResponse)
+def bulk_delete_tasks(
+    request: TaskBulkDeleteRequest,
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskArchiveBatchResponse:
+    """Soft delete up to 50 tasks owned by the current user."""
+    count = task_kinds_service.bulk_delete_tasks(
+        db=db,
+        task_ids=request.task_ids,
+        user_id=current_user.id,
+        client_origin=client_origin,
+    )
+    return TaskArchiveBatchResponse(
+        message="Tasks deleted successfully",
+        count=count,
+    )
+
+
+@router.delete("/all", response_model=TaskArchiveBatchResponse)
+def delete_all_personal_tasks(
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskArchiveBatchResponse:
+    """Soft delete up to 50 active personal tasks owned by the current user."""
+    count = task_kinds_service.delete_all_personal_tasks(
+        db=db, user_id=current_user.id, client_origin=client_origin
+    )
+    return TaskArchiveBatchResponse(
+        message="All personal tasks deleted successfully",
+        count=count,
+    )
 
 
 @router.get("/{task_id}/runtime-check", response_model=TaskRuntimeCheck)
@@ -674,7 +711,7 @@ def get_pipeline_stage_info(
 @router.post("/{task_id}/share", response_model=TaskShareResponse)
 def share_task(
     task_id: int,
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """

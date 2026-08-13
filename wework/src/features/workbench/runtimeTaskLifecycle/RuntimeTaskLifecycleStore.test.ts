@@ -68,6 +68,30 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
   })
 
+  test('reconciles an optimistic start into a queued executor snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'queued' })))
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution).toMatchObject({
+      known: true,
+      running: false,
+      phase: 'queued',
+    })
+    expect(snapshot?.derived).toMatchObject({
+      isQueued: true,
+      isBusy: true,
+      shouldShowSidebarRunning: false,
+    })
+    expect(store.getSnapshot().queuedTaskKeys).toEqual(
+      new Set([getRuntimeTaskLifecycleKey(address)])
+    )
+    expect(store.getSnapshot().unreadTaskKeys).toEqual(new Set())
+  })
+
   test('owns optimistic send, accepted, stream, and settled turn transitions', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task()))
@@ -100,6 +124,41 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.turnStarted(address, 'turn-2')
     expect(store.getTask(address)?.turn.outcome).toBeNull()
+  })
+
+  test('rejects a stale running snapshot after a terminal event without a matching start', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+
+    store.turnSettled(address, null, 'succeeded')
+    const accepted = store.syncRuntimeTask(address, task({ running: true }))
+
+    expect(accepted).toBe(false)
+    expect(store.getTask(address)?.execution.running).toBe(false)
+  })
+
+  test('keeps terminal executor snapshots idle even when running remains true', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const terminalTask = task({ running: true, status: 'complete' })
+
+    store.syncRuntimeWork(runtimeWork(terminalTask))
+    store.syncRuntimeWork(runtimeWork(terminalTask))
+
+    expect(store.getTask(address)?.execution.running).toBe(false)
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+  })
+
+  test('rejects a snapshot when a newer send starts before the response arrives', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.turnSettled(address, null, 'succeeded')
+    const expectedSnapshot = store.getTask(address)
+
+    store.sendRequested(address)
+    const accepted = store.syncRuntimeTask(address, task({ running: true }), expectedSnapshot)
+
+    expect(accepted).toBe(false)
+    expect(store.getTask(address)?.turn.phase).toBe('submitting')
   })
 
   test('does not regress a stream that starts before the create acknowledgement', () => {
@@ -141,6 +200,21 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+  })
+
+  test('settles a local harness turn from an authoritative idle executor snapshot', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.syncRuntimeWork(
+      runtimeWork(task({ runtime: 'claude_code', running: false, status: 'active' }))
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.derived.isThinking).toBe(false)
   })
 
   test('does not clear an active send because a transcript contains historical settled output', () => {
@@ -186,6 +260,21 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
+  test('recovers from a stale idle view when the provider rejects an overlapping turn', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.turnStarted(address, 'stale-client-turn')
+    store.sendRequested(address)
+    store.sendBlockedByActiveTurn(address)
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+    store.turnSettled(address, 'provider-active-turn', 'succeeded')
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+  })
+
   test('does not let a stale idle transcript override a live streaming turn', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
@@ -204,6 +293,26 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.execution.phase).toBe('running')
     expect(snapshot?.turn.phase).toBe('streaming')
     expect(snapshot?.derived.isTurnActive).toBe(true)
+  })
+
+  test('recovers a streaming turn after restart when coarse transcript running state is stale', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.syncTranscript(
+      address,
+      transcript({
+        running: false,
+        turns: [{ id: 'restored-turn', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(store.getSnapshot().runningTaskKeys).toEqual(
+      new Set([getRuntimeTaskLifecycleKey(address)])
+    )
   })
 
   test('treats an explicit executor snapshot as authoritative over a live turn', () => {
@@ -315,6 +424,27 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
+  test('accepts an executor-confirmed autonomous turn after the previous turn settles', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.executorSettled(address)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('ignores a settled event from an older turn after a newer turn starts', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.turnStarted(address, 'turn-1')
@@ -360,6 +490,22 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
   })
+
+  test.each(['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const)(
+    'settles execution when the Goal reports %s',
+    goalStatus => {
+      const store = new RuntimeTaskLifecycleStore('test')
+      store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
+      store.turnStarted(address, 'goal-turn')
+      store.turnSettled(address, 'goal-turn')
+
+      store.goalStatusReceived(address, goalStatus)
+
+      expect(store.getTask(address)?.goalStatus).toBe(goalStatus)
+      expect(store.getTask(address)?.execution.running).toBe(false)
+      expect(store.getTask(address)?.turn.phase).toBe('idle')
+    }
+  )
 
   test('migrates optimistic lifecycle state when the executor resolves a new task identity', () => {
     const store = new RuntimeTaskLifecycleStore('test')

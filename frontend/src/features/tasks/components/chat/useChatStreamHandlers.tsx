@@ -43,6 +43,10 @@ import type {
 import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+import {
+  buildDingTalkKnowledgeRef,
+  normalizeSelectedExternalKnowledgeRefs,
+} from './selectedKnowledge'
 
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
@@ -126,6 +130,8 @@ export interface GenerateParams {
   ratio?: string
   /** Duration in seconds for video generation */
   duration?: number
+  /** Selected model-defined video generation mode */
+  generation_mode_id?: string
   /** Model name for video/image generation (for display in user message) */
   model?: string
   /** Image size for image generation (e.g., '2048x2048') */
@@ -508,26 +514,23 @@ export function useChatStreamHandlers({
         }
       }
 
-      snapshotContexts
-        .filter(ctx => ctx.type === 'external_knowledge')
-        .map(ctx => (ctx as ExternalKnowledgeContext).ref)
-        .forEach(ref => {
-          contextItems.push({
-            type: 'external_knowledge',
-            data: {
-              provider: ref.provider,
-              mode: ref.mode,
-              id: ref.id,
-              name: ref.name,
-              scope: ref.scope,
-              target_type: ref.target_type,
-              node_id: ref.node_id,
-              document_id: ref.document_id,
-              parent_id: ref.parent_id,
-              target_name: ref.target_name,
-            },
-          })
+      const selectedExternalKnowledgeRefs = normalizeSelectedExternalKnowledgeRefs([
+        ...snapshotContexts
+          .filter(ctx => ctx.type === 'external_knowledge')
+          .map(ctx => (ctx as ExternalKnowledgeContext).ref),
+        ...snapshotContexts
+          .filter(
+            (ctx): ctx is import('@/types/context').DingTalkDocContext =>
+              ctx.type === 'dingtalk_doc'
+          )
+          .map(buildDingTalkKnowledgeRef),
+      ])
+      selectedExternalKnowledgeRefs.forEach(ref => {
+        contextItems.push({
+          type: 'external_knowledge',
+          data: { ...ref },
         })
+      })
 
       let messageWithQueueContent = finalMessage
       const queueMessageContexts = snapshotContexts.filter(ctx => ctx.type === 'queue_message')
@@ -536,18 +539,6 @@ export function useChatStreamHandlers({
           .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
           .join('\n\n---\n\n')
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
-      }
-
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-      if (dingtalkDocContexts.length > 0) {
-        const docRefs = dingtalkDocContexts
-          .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
-          })
-          .join('\n')
-        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
       }
 
       const queueAttachmentIds = queueMessageContexts.flatMap(
@@ -667,24 +658,25 @@ export function useChatStreamHandlers({
             document_id: tableContext.document_id,
             source_config: tableContext.source_config,
           })
-        } else if (ctx.type === 'external_knowledge') {
-          const externalContext = ctx as ExternalKnowledgeContext
-          pendingContexts.push({
-            id: -(pendingContexts.length + 1),
-            context_type: 'external_knowledge',
-            name: ctx.name,
-            status: 'ready',
-            external_provider: externalContext.ref.provider,
-            external_mode: externalContext.ref.mode,
-            external_id: externalContext.ref.id,
-            external_scope: externalContext.ref.scope,
-            external_target_type: externalContext.ref.target_type,
-            external_node_id: externalContext.ref.node_id,
-            external_document_id: externalContext.ref.document_id,
-            external_parent_id: externalContext.ref.parent_id,
-          })
         }
       }
+
+      selectedExternalKnowledgeRefs.forEach(ref => {
+        pendingContexts.push({
+          id: -(pendingContexts.length + 1),
+          context_type: 'external_knowledge',
+          name: ref.name ?? ref.id,
+          status: 'ready',
+          external_provider: ref.provider,
+          external_mode: ref.mode,
+          external_id: ref.id,
+          external_scope: ref.scope,
+          external_target_type: ref.target_type,
+          external_node_id: ref.node_id,
+          external_document_id: ref.document_id,
+          external_parent_id: ref.parent_id,
+        })
+      })
 
       const request: ContextSendRequest = {
         message: messageWithQueueContent,

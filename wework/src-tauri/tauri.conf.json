@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.1.11",
+  "version": "0.1.16-beta.1",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
@@ -22,10 +22,7 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,
-        "transparent": true,
-        "windowEffects": {
-          "effects": ["sidebar"]
-        },
+        "transparent": false,
         "dragDropEnabled": false,
         "trafficLightPosition": {
           "x": 19,

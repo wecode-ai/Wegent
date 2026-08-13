@@ -77,26 +77,6 @@
     "groupManagerDescription": "管理组、成员和权限。"
   },
   "skills": {
-    "search_skills": "在市场搜索",
-    "search_skills_title": "从技能市场搜索",
-    "search_skills_description": "从各种技能市场搜索并安装技能",
-    "search_placeholder": "输入关键词搜索...",
-    "search_hint": "输入关键词搜索技能",
-    "searching_skills": "搜索中...",
-    "no_search_results": "未找到技能",
-    "install": "安装",
-    "installing": "安装中...",
-    "downloading": "下载中...",
-    "installed": "已安装",
-    "retry_install": "重试",
-    "install_success": "安装成功",
-    "install_success_message": "技能 '{{skillName}}' 安装成功",
-    "install_failed": "安装失败",
-    "public_skill": "公开",
-    "private_skill": "私有",
-    "search_failed": "搜索失败",
-    "request_permission": "申请权限",
-    "go_to_market": "去市场看看",
     "libraryTitle": "技能库",
     "libraryDescription": "上传、管理技能。技能可以设为自动启用，跟随你进入对话；也可以在智能体里添加技能，强化智能体的能力。",
     "myLibraryTitle": "我的技能",
@@ -232,6 +212,8 @@
         "executor_description": "决定智能体处理任务时使用的运行环境。"
       },
       "bind_mode": {
+        "more_modes": "更多模式",
+        "collapse_more_modes": "收起更多模式",
         "chat": {
           "title": "对话",
           "description": "用于普通问答、资料讨论和持续对话。"
@@ -243,6 +225,14 @@
         "task": {
           "title": "设备",
           "description": "用于需要本地设备或执行环境参与的任务。"
+        },
+        "video": {
+          "title": "视频",
+          "description": "用于视频生成和视频素材创作任务。"
+        },
+        "image": {
+          "title": "图片",
+          "description": "用于图片生成和图片素材创作任务。"
         }
       },
       "executor": {

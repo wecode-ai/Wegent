@@ -67,6 +67,17 @@ describe('recognized links', () => {
     expect(link?.isAbbreviated).toBe(true)
   })
 
+  test('recognizes Wegent Sites project links', () => {
+    const link = getRecognizedLink('wegent-sites-project://prj_01K0')
+    expect(link).toMatchObject({
+      url: 'wegent-sites-project://prj_01K0',
+      label: 'prj_01K0',
+      provider: 'wegent-sites-project',
+      iconUrl: '/plugin-icons/wework.svg',
+      isAbbreviated: true,
+    })
+  })
+
   test('returns undefined for unsupported URLs', () => {
     expect(getRecognizedLink('https://example.com/page')).toBeUndefined()
   })

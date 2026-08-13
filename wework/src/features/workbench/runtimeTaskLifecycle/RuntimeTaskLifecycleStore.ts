@@ -23,6 +23,7 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
   version: 0,
   tasks: new Map(),
   runningTaskKeys: new Set(),
+  queuedTaskKeys: new Set(),
   unreadTaskKeys: new Set(),
 }
 
@@ -67,6 +68,24 @@ export class RuntimeTaskLifecycleStore {
     if (changed) this.publish()
   }
 
+  syncRuntimeTask(
+    address: RuntimeTaskAddress,
+    task: RuntimeTaskSummary,
+    expectedSnapshot?: RuntimeTaskLifecycleSnapshot | null
+  ): boolean {
+    if (expectedSnapshot !== undefined && this.getTask(address) !== expectedSnapshot) {
+      return false
+    }
+    const changed = this.reduceMachine(address, {
+      type: 'executor_snapshot_received',
+      address,
+      task,
+    })
+    if (changed) this.publish()
+    const executionRunning = this.getTask(address)?.execution.running
+    return typeof task.running !== 'boolean' || task.running === executionRunning
+  }
+
   setCurrentTask(address: RuntimeTaskAddress | null | undefined): void {
     const nextKey = address ? getRuntimeTaskLifecycleKey(address) : null
     if (nextKey === this.currentTaskKey) return
@@ -88,6 +107,10 @@ export class RuntimeTaskLifecycleStore {
 
   sendRejected(address: RuntimeTaskAddress): void {
     this.dispatch(address, { type: 'send_rejected' })
+  }
+
+  sendBlockedByActiveTurn(address: RuntimeTaskAddress): void {
+    this.dispatch(address, { type: 'send_blocked_by_active_turn' })
   }
 
   stopRequested(address: RuntimeTaskAddress): void {
@@ -132,19 +155,17 @@ export class RuntimeTaskLifecycleStore {
       options.preserveActiveTurn === true &&
       (this.getTask(address)?.derived.isRunning ?? false)
 
-    if (transcript.running === true) {
+    if (hasStreamingTurn) {
       this.executorStarted(address)
-    } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
-      this.executorSettled(address)
-    }
-
-    if (hasStreamingTurn && transcript.running !== false) {
       this.dispatch(address, {
         type: 'turn_recovered',
         streaming: true,
         turnId: streamingTurn?.id,
       })
+    } else if (transcript.running === true) {
+      this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
+      this.executorSettled(address)
       this.turnSettled(address)
     }
   }
@@ -218,6 +239,7 @@ export class RuntimeTaskLifecycleStore {
     if (
       previous.derived.isRunning &&
       !next.derived.isRunning &&
+      !next.derived.isQueued &&
       next.goalStatus !== 'active' &&
       next.key !== this.currentTaskKey
     ) {
@@ -242,11 +264,13 @@ export class RuntimeTaskLifecycleStore {
   private publish(): void {
     const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
     const runningTaskKeys = new Set<string>()
+    const queuedTaskKeys = new Set<string>()
     const unreadTaskKeys = new Set<string>()
     for (const [key, machine] of this.machines) {
       const task = machine.getSnapshot()
       tasks.set(key, task)
       if (task.derived.isRunning) runningTaskKeys.add(key)
+      if (task.derived.isQueued) queuedTaskKeys.add(key)
       if (task.derived.shouldShowUnread) unreadTaskKeys.add(key)
     }
     this.version += 1
@@ -254,6 +278,7 @@ export class RuntimeTaskLifecycleStore {
       version: this.version,
       tasks,
       runningTaskKeys,
+      queuedTaskKeys,
       unreadTaskKeys,
     }
     this.persistUnreadKeys(unreadTaskKeys)
@@ -311,6 +336,7 @@ function getRuntimeTaskAddress(
   return {
     deviceId: workspace.deviceId,
     taskId: task.taskId,
+    ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     threadId: task.threadId,
     workspacePath: task.workspacePath || workspace.workspacePath,
     runtimeHandle: task.runtimeHandle,
@@ -323,7 +349,7 @@ function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummar
     threadId: address.threadId,
     workspacePath: address.workspacePath ?? '',
     title: address.taskId,
-    runtime: 'codex',
+    runtime: address.runtime ?? 'codex',
     runtimeHandle: address.runtimeHandle,
   }
 }

@@ -99,6 +99,7 @@ export function ChatPageMobile() {
   const _hasShareId = !!getSearchParam(searchParams, 'share_id')
   const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
   const isCodeAgentMode = getSearchParam(searchParams, 'agent') === 'code'
+  const requestedMode = getSearchParam(searchParams, 'mode')
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
@@ -109,10 +110,24 @@ export function ChatPageMobile() {
     selectedTask: selectedTaskDetail,
     selectedDeviceId,
     isCodeAgentMode,
+    requestedMode,
   })
-  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
-    taskType === 'task' ? 'task' : taskType === 'code' ? 'code' : hasWeworkCodeUrl ? 'all' : 'chat'
-  const showRepositorySelector = taskType !== 'task' && teamModeFilter !== 'chat'
+  const isGenerationMode = taskType === 'video' || taskType === 'image'
+  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' = isGenerationMode
+    ? 'all'
+    : taskType === 'task'
+      ? 'task'
+      : taskType === 'code'
+        ? 'code'
+        : hasWeworkCodeUrl
+          ? 'all'
+          : 'chat'
+  const showRepositorySelector =
+    !isGenerationMode && taskType !== 'task' && teamModeFilter !== 'chat'
+  const visibleTeams = useMemo(
+    () => (isGenerationMode ? teams.filter(team => team.bind_mode?.includes(taskType)) : teams),
+    [isGenerationMode, taskType, teams]
+  )
 
   // Compute disabled reason for device mode
   const disabledReason =
@@ -253,6 +268,17 @@ export function ChatPageMobile() {
     return await refreshTeams()
   }
 
+  const handleGenerateModeChange = useCallback(
+    (mode: 'video' | 'image') => {
+      if (taskId) return
+      const nextParams = new URLSearchParams(searchParams.toString())
+      nextParams.set('mode', mode)
+      nextParams.delete('agent')
+      router.replace(`/chat?${nextParams.toString()}`)
+    },
+    [router, searchParams, taskId]
+  )
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Mobile sidebar - use TaskSidebar's built-in MobileSidebar component */}
@@ -279,9 +305,10 @@ export function ChatPageMobile() {
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={false}
+          hideGroupChatOptions={isGenerationMode}
         >
           {/* Create Group Chat Button - compact on mobile */}
-          {!hasOpenTask && (
+          {!hasOpenTask && !isGenerationMode && (
             <Button
               variant="outline"
               size="sm"
@@ -305,7 +332,7 @@ export function ChatPageMobile() {
         </TopNavigation>
         {/* Chat area - taskType switches based on device selection */}
         <ChatArea
-          teams={teams}
+          teams={visibleTeams}
           isTeamsLoading={isTeamsLoading}
           selectedTeamForNewTask={_selectedTeamForNewTask}
           showRepositorySelector={showRepositorySelector}
@@ -313,6 +340,7 @@ export function ChatPageMobile() {
           teamModeFilter={teamModeFilter}
           onShareButtonRender={handleShareButtonRender}
           onRefreshTeams={handleRefreshTeams}
+          onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
           disabledReason={disabledReason}
           extension={{ teamEdit: teamEditExtension }}
         />

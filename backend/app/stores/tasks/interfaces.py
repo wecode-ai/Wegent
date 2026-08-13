@@ -442,6 +442,8 @@ class TaskStore(Protocol):
         scope: Literal["all", "standalone", "project", "project_id"],
         project_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        exclude_group_chats: bool = False,
+        limit: Optional[int] = None,
     ) -> list[TaskResource]: ...
 
     def list_archived_task_ids(
@@ -863,6 +865,10 @@ class SubtaskStore(Protocol):
     ) -> list[Subtask]: ...
 
     def list_running(self, db: Session) -> list[Subtask]: ...
+
+    def list_running_since(
+        self, db: Session, *, created_after: datetime
+    ) -> list[Subtask]: ...
 
     def list_session_task_ids(
         self, db: Session, *, skip: int, limit: int

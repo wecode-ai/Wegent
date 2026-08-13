@@ -16,6 +16,40 @@ from shared.models.knowledge import (
 )
 
 
+def test_apply_image_generation_params_overrides_request_size() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    model_config = {
+        "modelType": "image",
+        "imageConfig": {"size": "1024x1024", "quality": "high"},
+    }
+
+    trigger_unified._apply_image_generation_params(
+        model_config,
+        SimpleNamespace(size="1512x648"),
+    )
+
+    assert model_config["imageConfig"] == {
+        "size": "1512x648",
+        "quality": "high",
+    }
+
+
+def test_generation_config_for_log_excludes_capabilities() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    assert trigger_unified._generation_config_for_log(
+        {
+            "size": "1512x648",
+            "quality": "high",
+            "capabilities": {"size_presets": [{"size": "1512x648"}]},
+        }
+    ) == {
+        "size": "1512x648",
+        "quality": "high",
+    }
+
+
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     """Codex execution requests should carry explicit user runtime config status."""
     from app.services.chat.trigger import unified as trigger_unified
@@ -604,9 +638,19 @@ class TestBuildExecutionRequestUserSubtaskId:
             payload.additional_skills[0],
         ]
 
-    async def test_selected_kb_triggers_skill_resolution_after_context_processing(self):
-        """Selected KB contexts should be resolved into concrete skill config before dispatch."""
+    async def test_selected_knowledge_skills_resolve_together_after_context_processing(
+        self,
+        monkeypatch,
+    ):
+        """Internal and external knowledge skills should resolve in one pass."""
+        from app.services.chat import selected_knowledge
         from app.services.chat.trigger import unified as trigger_unified
+
+        monkeypatch.setitem(
+            selected_knowledge.PROVIDER_SKILLS,
+            "demo",
+            "demo-knowledge",
+        )
 
         mock_db = MagicMock()
         request_from_builder = ExecutionRequest(
@@ -615,13 +659,35 @@ class TestBuildExecutionRequestUserSubtaskId:
             skill_names=[],
             preload_skills=[],
             user_selected_skills=[],
+            external_knowledge_refs=[
+                {
+                    "provider": "demo",
+                    "mode": "explicit",
+                    "id": "demo-1",
+                    "name": "示例规范",
+                }
+            ],
         )
         resolved_request = ExecutionRequest(
             task_id=1273,
             subtask_id=1709,
-            skill_names=["wegent-knowledge"],
-            preload_skills=["wegent-knowledge"],
-            user_selected_skills=["wegent-knowledge"],
+            skill_names=["wegent-knowledge", "demo-knowledge"],
+            skill_configs=[
+                {
+                    "name": "wegent-knowledge",
+                    "mcpServers": {
+                        "wegent-knowledge": {"url": "http://backend/knowledge/mcp"}
+                    },
+                },
+                {
+                    "name": "demo-knowledge",
+                    "mcpServers": {
+                        "demo-knowledge": {"url": "http://demo/knowledge/mcp"}
+                    },
+                },
+            ],
+            preload_skills=["wegent-knowledge", "demo-knowledge"],
+            user_selected_skills=["wegent-knowledge", "demo-knowledge"],
         )
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
@@ -680,12 +746,20 @@ class TestBuildExecutionRequestUserSubtaskId:
                     )
 
         mock_builder.resolve_request_preload_skills.assert_called_once()
+        unresolved_request = (
+            mock_builder.resolve_request_preload_skills.call_args.kwargs["request"]
+        )
+        assert unresolved_request.preload_skills == [
+            "wegent-knowledge",
+            "demo-knowledge",
+        ]
         assert result is resolved_request
+        assert result.provider_native_knowledge is True
 
-    async def test_selected_kb_does_not_trigger_skill_resolution_without_device_id(
+    async def test_selected_kb_triggers_skill_resolution_for_claude_code_without_device_id(
         self,
     ):
-        """Selected KB skill resolution should stay scoped to device tasks."""
+        """ClaudeCode executors should receive selected KB MCP config."""
         from app.services.chat.trigger import unified as trigger_unified
 
         mock_db = MagicMock()
@@ -695,9 +769,38 @@ class TestBuildExecutionRequestUserSubtaskId:
             skill_names=[],
             preload_skills=[],
             user_selected_skills=[],
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+        resolved_request = ExecutionRequest(
+            task_id=1273,
+            subtask_id=1709,
+            skill_names=["wegent-knowledge"],
+            skill_configs=[
+                {
+                    "name": "wegent-knowledge",
+                    "mcpServers": {
+                        "wegent-knowledge": {"url": "http://backend/knowledge/mcp"}
+                    },
+                }
+            ],
+            preload_skills=["wegent-knowledge"],
+            user_selected_skills=["wegent-knowledge"],
+            bot=[
+                {
+                    "shell_type": "ClaudeCode",
+                    "mcp_servers": [
+                        {
+                            "name": "wegent-knowledge",
+                            "url": "http://backend/knowledge/mcp",
+                        }
+                    ],
+                }
+            ],
         )
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
+        mock_builder.resolve_request_preload_skills.return_value = resolved_request
+        mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
             db,
@@ -749,8 +852,9 @@ class TestBuildExecutionRequestUserSubtaskId:
                         user_subtask_id=1708,
                     )
 
-        mock_builder.resolve_request_preload_skills.assert_not_called()
-        assert result is request_from_builder
+        mock_builder.resolve_request_preload_skills.assert_called_once()
+        assert result is resolved_request
+        assert result.provider_native_knowledge is True
 
 
 @pytest.mark.unit
@@ -857,6 +961,48 @@ class TestProcessContextsAttachments:
         assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
 
     @pytest.mark.asyncio
+    async def test_video_generation_uses_attachment_metadata_only(self):
+        """VideoAgent resolves uploaded media itself and must not receive duplicates."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1233,
+            subtask_id=1643,
+            prompt="generate a video",
+            system_prompt="system",
+            model_config={"modelType": "video"},
+            bot=[{"shell_type": "Chat"}],
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="",
+            ),
+        )
+        prepare_mock = AsyncMock(return_value=ctx)
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=prepare_mock,
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1642,
+                    user_id=2,
+                )
+
+        assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
+
+    @pytest.mark.asyncio
     async def test_prioritizes_knowledge_skill_when_user_selected_kb_is_present(self):
         """User-selected KBs should auto-preload and prioritize the management skill."""
         from app.services.chat.trigger import unified as trigger_unified
@@ -901,6 +1047,9 @@ class TestProcessContextsAttachments:
         assert result.knowledge_base_ids == [1408]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
+        assert result.system_prompt == "system"
+        assert result.kb_meta_prompt == ""
+        assert result.provider_native_knowledge is False
 
     @pytest.mark.asyncio
     async def test_artifact_context_does_not_preload_knowledge_management_skill(self):
@@ -953,6 +1102,68 @@ class TestProcessContextsAttachments:
         assert result.knowledge_base_scopes == [scope]
         assert result.preload_skills == []
         assert result.user_selected_skills == []
+        assert result.system_prompt == "enhanced"
+        assert result.kb_meta_prompt == "meta"
+        assert result.provider_native_knowledge is False
+
+    @pytest.mark.asyncio
+    async def test_unsupported_shell_uses_unified_knowledge_context(
+        self,
+    ):
+        """Unsupported shells must not switch context processing to A2."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        scope = KnowledgeBaseScope(
+            knowledge_base_id=1408,
+            scope_restricted=True,
+            document_ids=[101],
+        )
+        request = ExecutionRequest(
+            task_id=1263,
+            subtask_id=1697,
+            prompt="answer from knowledge",
+            system_prompt="system",
+            model_config={},
+            bot=[{"shell_type": "Agno"}],
+            preload_skills=[],
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="meta",
+                knowledge_base_ids=[1408],
+                is_user_selected_kb=True,
+                knowledge_base_scopes=[scope],
+            ),
+        )
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1696,
+                    user_id=2,
+                )
+
+        assert result.system_prompt == "enhanced"
+        assert result.kb_meta_prompt == "meta"
+        assert result.knowledge_base_ids == [1408]
+        assert result.knowledge_base_scopes == [scope]
+        assert result.preload_skills == []
+        assert result.user_selected_skills == []
+        assert result.selected_knowledge_prompt == ""
+        assert result.provider_native_knowledge is False
 
     @pytest.mark.asyncio
     async def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):

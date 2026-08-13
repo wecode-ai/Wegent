@@ -729,6 +729,7 @@ export interface QuickLaunchFunction {
   cover?: string | null
   team_id: number
   name: string
+  bind_mode?: TaskType[]
   recommended_mode?: 'chat' | 'code' | 'both'
   enabled: boolean
   order: number
@@ -743,6 +744,7 @@ export interface QuickLaunchFavoriteAgent {
   title: string
   description?: string | null
   icon?: string | null
+  bind_mode?: TaskType[]
   recommended_mode?: 'chat' | 'code' | 'both'
   agent_type?: string | null
   quick_phrases: string[]

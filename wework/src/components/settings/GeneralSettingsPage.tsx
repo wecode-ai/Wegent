@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import {
   Activity,
   Bell,
@@ -28,10 +28,13 @@ import {
   type AppLanguagePreference,
   type AppPreferences,
   type AppPreferencesPatch,
+  type DefaultWorkspaceTab,
 } from '@/tauri/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -48,6 +51,10 @@ interface SwitchRowProps {
 
 const GENERAL_ROW_CLASS_NAME = 'py-4'
 const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
+const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
+const DEFAULT_MAX_CONCURRENT_TASKS = 10
+const MAX_CONCURRENT_TASKS_LIMIT = 20
+const DEFAULT_WORKSPACE_TAB_OPTIONS: DefaultWorkspaceTab[] = ['task', 'board', 'agent']
 
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
@@ -60,6 +67,8 @@ interface TrayDisplayOption {
 export function GeneralSettingsPage() {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const workbench = useContext(WorkbenchContext)
+  const runtimeWorkApi = workbench?.services?.runtimeWorkApi
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
   const [cloudQuotaName, setCloudQuotaName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -67,14 +76,23 @@ export function GeneralSettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
 
   useEffect(() => {
     let cancelled = false
 
-    getAppPreferences()
-      .then(nextPreferences => {
+    const runtimeSettings = Promise.resolve()
+      .then(() => runtimeWorkApi?.getRuntimeSettings())
+      .catch(runtimeSettingsError => {
+        console.debug('[Wework] Runtime settings are unavailable', runtimeSettingsError)
+        return null
+      })
+
+    Promise.all([getAppPreferences(), runtimeSettings])
+      .then(([nextPreferences, runtimeSettings]) => {
         if (!cancelled) {
           setPreferences(nextPreferences)
+          setMaxConcurrentTasks(runtimeSettings?.maxConcurrentTasks ?? DEFAULT_MAX_CONCURRENT_TASKS)
           setError(null)
         }
       })
@@ -93,7 +111,7 @@ export function GeneralSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [t])
+  }, [runtimeWorkApi, t])
 
   useEffect(() => {
     if (!cloudConnection.isConnected) return
@@ -258,6 +276,92 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const handleDefaultWorkspaceTabChange = async (defaultWorkspaceTab: DefaultWorkspaceTab) => {
+    if (defaultWorkspaceTab === preferences.defaultWorkspaceTab) return
+
+    const previousDefaultWorkspaceTab = preferences.defaultWorkspaceTab
+    setPreferences(current => ({ ...current, defaultWorkspaceTab }))
+    setSaving(true)
+    setError(null)
+    try {
+      setPreferences(await updateAppPreferences({ defaultWorkspaceTab }))
+    } catch (saveError) {
+      console.error('[Wework] Failed to update default workspace tab', saveError)
+      setPreferences(current => ({
+        ...current,
+        defaultWorkspaceTab: previousDefaultWorkspaceTab,
+      }))
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveFriendlyTaskTitles = async (
+    enabled: boolean,
+    modelKey = FRIENDLY_TITLE_TASK_MODEL_VALUE
+  ) => {
+    const useTaskModel = modelKey === FRIENDLY_TITLE_TASK_MODEL_VALUE
+    const [modelType, ...nameParts] = modelKey.split(':')
+    const modelName = nameParts.join(':')
+    const selectedModel = workbench?.projectChat?.models.find(
+      model => `${model.type}:${model.name}` === `${modelType ?? ''}:${modelName}`
+    )
+    const execution = selectedModel ? selectedModelExecutionFields(selectedModel, {}) : null
+    const patch: AppPreferencesPatch = {
+      friendlyTaskTitlesEnabled: enabled && (useTaskModel || Boolean(selectedModel)),
+      friendlyTaskTitleModel: useTaskModel
+        ? null
+        : selectedModel
+          ? {
+              modelName: selectedModel.name,
+              modelType: selectedModel.type,
+              executionModelId: execution?.modelId ?? '',
+              executionModelType: execution?.modelType ?? null,
+              options: execution?.modelOptions,
+            }
+          : null,
+    }
+    const previousPreferences = preferences
+    setSaving(true)
+    setError(null)
+    try {
+      setPreferences(current => ({ ...current, ...patch }))
+      setPreferences(await updateAppPreferences(patch))
+    } catch (saveError) {
+      console.error('[Wework] Failed to update friendly task title preferences', saveError)
+      setPreferences(previousPreferences)
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveMaxConcurrentTasks = async (value: number) => {
+    const previousValue = maxConcurrentTasks
+    setMaxConcurrentTasks(value)
+    setSaving(true)
+    setError(null)
+    try {
+      const settings = await runtimeWorkApi?.updateRuntimeSettings({
+        maxConcurrentTasks: value,
+      })
+      setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
+    } catch (saveError) {
+      console.error('[Wework] Failed to update runtime concurrency settings', saveError)
+      setMaxConcurrentTasks(previousValue)
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const friendlyTitleModel = preferences.friendlyTaskTitleModel
+  const friendlyTitleModels = workbench?.projectChat?.models ?? []
+  const friendlyTitleModelKey = friendlyTitleModel
+    ? `${friendlyTitleModel.modelType ?? ''}:${friendlyTitleModel.modelName}`
+    : FRIENDLY_TITLE_TASK_MODEL_VALUE
+
   return (
     <SettingsPage data-testid="general-settings-page">
       <SettingsPageHeader
@@ -302,6 +406,39 @@ export function GeneralSettingsPage() {
               </div>
             }
           />
+          <SettingsRow
+            label={t('workbench.general_settings_default_workspace_tab')}
+            description={t('workbench.general_settings_default_workspace_tab_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {DEFAULT_WORKSPACE_TAB_OPTIONS.map(tabKind => {
+                  const active = preferences.defaultWorkspaceTab === tabKind
+                  return (
+                    <button
+                      key={tabKind}
+                      type="button"
+                      data-testid={`general-default-workspace-tab-${tabKind}-button`}
+                      disabled={loading || saving}
+                      aria-pressed={active}
+                      onClick={() => void handleDefaultWorkspaceTabChange(tabKind)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">
+                        {t(`workbench.general_settings_default_workspace_tab_${tabKind}`)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
           {renderSwitchRow({
             preferenceKey: 'showMainWindowOnLaunch',
             testId: 'general-show-main-window-on-launch-toggle',
@@ -338,6 +475,32 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_runtime_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
+          <SettingsRow
+            label={t('workbench.general_settings_max_concurrent_tasks')}
+            description={t('workbench.general_settings_max_concurrent_tasks_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <select
+                data-testid="general-max-concurrent-tasks-select"
+                value={maxConcurrentTasks}
+                disabled={loading || saving}
+                aria-label={t('workbench.general_settings_max_concurrent_tasks')}
+                onChange={event => {
+                  void saveMaxConcurrentTasks(Number(event.target.value))
+                }}
+                className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm text-text-primary"
+              >
+                {Array.from({ length: MAX_CONCURRENT_TASKS_LIMIT }, (_, index) => index + 1).map(
+                  value => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  )
+                )}
+              </select>
+            }
+          />
           {renderSwitchRow({
             preferenceKey: 'closeToTrayEnabled',
             testId: 'general-close-to-tray-toggle',
@@ -360,6 +523,85 @@ export function GeneralSettingsPage() {
             label: t('workbench.general_settings_task_completion_notifications'),
             description: t('workbench.general_settings_task_completion_notifications_description'),
           })}
+          <SettingsRow
+            label={t('workbench.friendly_task_titles_title', '使用友好标题')}
+            description={t(
+              'workbench.friendly_task_titles_desc',
+              '创建任务后，用你选择的模型异步生成简洁标题。'
+            )}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <SettingsSwitch
+                data-testid="friendly-task-titles-toggle"
+                checked={preferences.friendlyTaskTitlesEnabled}
+                disabled={
+                  loading ||
+                  saving ||
+                  (!friendlyTitleModel?.modelName && !workbench?.projectChat?.selectedModel)
+                }
+                onCheckedChange={checked => {
+                  void saveFriendlyTaskTitles(checked, friendlyTitleModelKey)
+                }}
+                aria-label={t('workbench.friendly_task_titles_title', '使用友好标题')}
+              />
+            }
+          />
+          {preferences.friendlyTaskTitlesEnabled && (
+            <div data-testid="friendly-task-title-model-row" className="px-4 pb-3">
+              <div className="ml-3 flex items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-2.5 max-sm:ml-0 max-sm:flex-col max-sm:items-stretch">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-text-primary">
+                    {t('workbench.friendly_task_titles_model', '标题模型')}
+                  </div>
+                  <p className="mt-0.5 text-xs text-text-secondary">
+                    {t(
+                      'workbench.friendly_task_titles_model_desc',
+                      '仅用于生成任务标题，不影响当前任务使用的模型。'
+                    )}
+                  </p>
+                </div>
+                <select
+                  data-testid="friendly-task-title-model-select"
+                  value={friendlyTitleModelKey}
+                  disabled={loading || saving}
+                  onChange={event => {
+                    void saveFriendlyTaskTitles(
+                      preferences.friendlyTaskTitlesEnabled,
+                      event.target.value
+                    )
+                  }}
+                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:w-[220px]"
+                >
+                  <option value={FRIENDLY_TITLE_TASK_MODEL_VALUE}>
+                    {t('workbench.friendly_task_titles_model_task', '与任务相同')}
+                  </option>
+                  {friendlyTitleModel &&
+                    !friendlyTitleModels.some(
+                      model =>
+                        model.name === friendlyTitleModel.modelName &&
+                        model.type === friendlyTitleModel.modelType
+                    ) && (
+                      <option value={friendlyTitleModelKey}>
+                        {t(
+                          'workbench.friendly_task_titles_model_unavailable',
+                          `${friendlyTitleModel.modelName}（不可用）`,
+                          { modelName: friendlyTitleModel.modelName }
+                        )}
+                      </option>
+                    )}
+                  {friendlyTitleModels.map(model => (
+                    <option
+                      key={`${model.type}:${model.name}`}
+                      value={`${model.type}:${model.name}`}
+                    >
+                      {model.displayName || model.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
           <SettingsRow
             label={
               <span className="flex items-center gap-2">

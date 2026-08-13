@@ -52,6 +52,7 @@ import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
+import { pluginNameInitial } from '@/components/plugins/plugin-assets'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
@@ -1175,6 +1176,7 @@ function UserMessage({
       {!editing && (
         <MessageHoverActions
           message={message}
+          copyContent={displayContent}
           align="right"
           visible={areHoverActionsVisible}
           onEdit={editable ? onStartEdit : undefined}
@@ -1509,12 +1511,14 @@ function MessageImageAttachmentPreview({
 
 function MessageHoverActions({
   message,
+  copyContent = message.content,
   align,
   visible,
   onEdit,
   onFork,
 }: {
   message: WorkbenchMessage
+  copyContent?: string
   align: 'left' | 'right'
   visible: boolean
   onEdit?: () => void
@@ -1536,7 +1540,7 @@ function MessageHoverActions({
     if (event.detail > 0) {
       event.currentTarget.blur()
     }
-    void copyText(message.content).then(() => {
+    void copyText(copyContent).then(() => {
       setCopied(true)
       resetCopiedAfterHideRef.current = false
     })
@@ -1694,7 +1698,7 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\((https?:\/\/[^\s)\]]+)\)/g
+const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1804,6 +1808,13 @@ function renderUserContent(
             alt=""
             className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
           />
+        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+          <span
+            data-testid={iconTestId}
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+          >
+            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+          </span>
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
@@ -2225,59 +2236,22 @@ function generatedImageAttachment(image: GeneratedImageArtifact, index: number):
 
 function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
   return blocks.flatMap(block => {
-    if (block.type !== 'tool') return []
-    if (block.toolName === 'image_generation') {
-      const payload = block.renderPayload
-      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
-      const imageBase64 = Reflect.get(payload, 'imageBase64')
-      if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
-      const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
-      return [
-        {
-          id: block.id,
-          src: imageBase64.startsWith('data:')
-            ? imageBase64
-            : `data:image/png;base64,${imageBase64}`,
-          alt:
-            typeof revisedPrompt === 'string' && revisedPrompt.trim()
-              ? revisedPrompt
-              : 'Generated image',
-        },
-      ]
-    }
-
-    if (block.toolName !== 'view_image') return []
+    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
     const payload = block.renderPayload
-    const toolInput =
-      typeof Reflect.get(block, 'toolInput') === 'object' && Reflect.get(block, 'toolInput')
-        ? (Reflect.get(block, 'toolInput') as Record<string, unknown>)
-        : null
-    const candidates: Array<unknown> = [
-      payload && typeof payload === 'object' ? Reflect.get(payload, 'dataUrl') : null,
-      payload && typeof payload === 'object' ? Reflect.get(payload, 'imageBase64') : null,
-      payload && typeof payload === 'object' ? Reflect.get(payload, 'src') : null,
-      toolInput?.dataUrl,
-      toolInput?.imageBase64,
-      toolInput?.path,
-      toolInput?.file_path,
-      toolInput?.image_path,
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+    const imageBase64 = Reflect.get(payload, 'imageBase64')
+    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
+    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    return [
+      {
+        id: block.id,
+        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
+        alt:
+          typeof revisedPrompt === 'string' && revisedPrompt.trim()
+            ? revisedPrompt
+            : 'Generated image',
+      },
     ]
-    for (const candidate of candidates) {
-      if (typeof candidate !== 'string' || !candidate.trim()) continue
-      const src = candidate.startsWith('data:')
-        ? candidate
-        : candidate.startsWith('/') || candidate.includes('://')
-          ? candidate
-          : `data:image/png;base64,${candidate}`
-      return [
-        {
-          id: block.id,
-          src,
-          alt: 'Viewed image',
-        },
-      ]
-    }
-    return []
   })
 }
 

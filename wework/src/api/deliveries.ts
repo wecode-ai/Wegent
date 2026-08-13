@@ -52,6 +52,56 @@ export interface CloudLoopItem {
   can_edit?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
+  assignee_agent_id?: string | null
+  assignee_agent_name?: string | null
+  execution_id?: number | null
+  execution_state?: string | null
+  can_approve?: boolean
+  assignment_history?: Array<{
+    by_user_id: number
+    to_type: 'user' | 'agent' | null
+    to_id: string | null
+    to_name?: string | null
+    action: 'assign' | 'reassign' | 'unassign'
+    at: string
+  }>
+  approval?: {
+    status: 'pending' | 'approved' | 'rejected'
+    requested_at?: string
+    approved_by_user_id?: number
+    approved_at?: string
+    rejected_by_user_id?: number
+    rejected_at?: string
+    reason?: string | null
+  } | null
+  queued_at?: string | null
+  execution_note?: string | null
+  execution_error?: string | null
+  automation?: {
+    rule_id?: string
+    run_id?: string
+    trigger?: 'scheduled' | 'manual' | string
+    scheduled_for?: string | null
+    bug_key?: string
+  } | null
+  ai_state?: {
+    run_id?: string
+    status?: string
+    agent_id?: string | null
+    agent_name?: string | null
+    trigger_message_id?: string | null
+    project_chat_message_id?: string | null
+    runtime_device_id?: string | null
+    runtime_task_id?: string | null
+    started_at?: string | null
+    heartbeat_at?: string | null
+    lease_expires_at?: string | null
+    completed_at?: string | null
+    updated_at?: string | null
+    last_error?: string | null
+    auto_retry?: boolean
+    auto_retry_count?: number
+  } | null
   title: string
   description: string
   status: string
@@ -67,6 +117,37 @@ export interface CloudLoopItem {
   source_status?: string | null
   source_record_id?: string | null
   source_cells?: Record<string, unknown>
+}
+
+export interface CloudLoopItemExecution {
+  id: number
+  loop_item_id: string
+  cloud_project_id: string
+  task_title: string
+  task_status?: string | null
+  task_priority?: string | null
+  agent_id: string
+  assigner_user_id: number
+  execution_environment: string
+  execution_device_id?: string | null
+  status: string
+  priority_weight: number
+  queued_at?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  lease_expires_at?: string | null
+  heartbeat_at?: string | null
+  retry_attempt: number
+  error_message?: string | null
+  execution_note?: string | null
+  approval_status?: string | null
+  approved_by_user_id?: number | null
+  rejected_reason?: string | null
+  runtime_device_id?: string | null
+  runtime_task_id?: string | null
+  version: number
+  created_at: string
+  updated_at: string
 }
 
 export interface CloudLoopItemAttachment {
@@ -119,6 +200,10 @@ export interface CloudProject {
       name: string
       color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
     }>
+  }
+  ai_automation?: {
+    auto_retry_on_failure: boolean
+    max_retry_count: number
   }
   created_by_user_id: number
   current_user_id?: number
@@ -317,8 +402,74 @@ export function createDeliveryApi(client: HttpClient) {
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')
     },
-    listLoopItems(projectId: CloudProjectIdInput): Promise<{ items: CloudLoopItem[] }> {
-      return client.get(`/v1/cloud-projects/${projectId}/loop-items`)
+    listLoopItems(
+      projectId: CloudProjectIdInput,
+      filters?: {
+        assigneeType?: 'user' | 'agent'
+        assigneeId?: string | number
+        executionState?: string
+      }
+    ): Promise<{ items: CloudLoopItem[] }> {
+      const query = new URLSearchParams()
+      if (filters?.assigneeType) query.set('assignee_type', filters.assigneeType)
+      if (filters?.assigneeId !== undefined && filters.assigneeId !== null) {
+        query.set('assignee_id', String(filters.assigneeId))
+      }
+      if (filters?.executionState) query.set('execution_state', filters.executionState)
+      const suffix = query.toString() ? `?${query.toString()}` : ''
+      return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
+    },
+    listLoopItemExecutions(
+      projectId: CloudProjectIdInput,
+      options: { agent_id?: string; status?: string } = {}
+    ): Promise<{ items: CloudLoopItemExecution[] }> {
+      const query = new URLSearchParams()
+      if (options.agent_id) query.set('agent_id', options.agent_id)
+      if (options.status) query.set('status', options.status)
+      const suffix = query.toString() ? `?${query.toString()}` : ''
+      return client
+        .get<{
+          items: Array<Record<string, unknown>>
+        }>(`/v1/cloud-projects/${projectId}/executions${suffix}`)
+        .then(response => ({
+          items: response.items.map(row => ({
+            id: Number(row.id),
+            loop_item_id: String(row.loopItemId ?? ''),
+            cloud_project_id: String(row.cloudProjectId ?? ''),
+            task_title: String(row.taskTitle ?? ''),
+            task_status: row.taskStatus == null ? null : String(row.taskStatus),
+            task_priority: row.taskPriority == null ? null : String(row.taskPriority),
+            agent_id: String(row.agentId ?? ''),
+            assigner_user_id: Number(row.assignerUserId ?? 0),
+            execution_environment: String(row.executionEnvironment ?? ''),
+            execution_device_id:
+              row.executionDeviceId == null ? null : String(row.executionDeviceId),
+            status: String(row.status ?? ''),
+            priority_weight: Number(row.priorityWeight ?? 0),
+            queued_at: row.queuedAt == null ? null : String(row.queuedAt),
+            started_at: row.startedAt == null ? null : String(row.startedAt),
+            completed_at: row.completedAt == null ? null : String(row.completedAt),
+            lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
+            heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
+            retry_attempt: Number(row.retryAttempt ?? 0),
+            error_message: row.errorMessage == null ? null : String(row.errorMessage),
+            execution_note: row.executionNote == null ? null : String(row.executionNote),
+            approval_status: row.approvalStatus == null ? null : String(row.approvalStatus),
+            approved_by_user_id: row.approvedByUserId == null ? null : Number(row.approvedByUserId),
+            rejected_reason: row.rejectedReason == null ? null : String(row.rejectedReason),
+            runtime_device_id: row.runtimeDeviceId == null ? null : String(row.runtimeDeviceId),
+            runtime_task_id: row.runtimeTaskId == null ? null : String(row.runtimeTaskId),
+            version: Number(row.version ?? 1),
+            created_at: String(row.createdAt ?? ''),
+            updated_at: String(row.updatedAt ?? ''),
+          })),
+        }))
+    },
+    stopExecution(
+      projectId: CloudProjectIdInput,
+      executionId: number
+    ): Promise<{ id: number; status: string }> {
+      return client.post(`/v1/cloud-projects/${projectId}/executions/${executionId}/stop`)
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
@@ -356,6 +507,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'priority'
           | 'parent_id'
           | 'assignee_user_id'
+          | 'assignee_agent_id'
           | 'due_at'
           | 'tags'
         >
@@ -364,6 +516,41 @@ export function createDeliveryApi(client: HttpClient) {
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
+    },
+    assignLoopItem(
+      projectId: CloudProjectIdInput,
+      itemId: string,
+      data: {
+        version: number
+        assigneeType: 'user' | 'agent'
+        assigneeId: string
+      }
+    ): Promise<CloudLoopItem> {
+      return client.post(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/assign`,
+        data
+      )
+    },
+    approveLoopItemRun(
+      projectId: CloudProjectIdInput,
+      itemId: string,
+      version: number
+    ): Promise<CloudLoopItem> {
+      return client.post(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/approve`,
+        { version }
+      )
+    },
+    rejectLoopItemRun(
+      projectId: CloudProjectIdInput,
+      itemId: string,
+      version: number,
+      reason?: string
+    ): Promise<CloudLoopItem> {
+      return client.post(
+        `/v1/cloud-projects/${projectId}/loop-items/${encodeURIComponent(itemId)}/reject`,
+        { version, reason: reason ?? null }
+      )
     },
     archiveLoopItem(itemId: string): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}`)
@@ -507,6 +694,26 @@ export function createDeliveryApi(client: HttpClient) {
             status: nextStatus,
           })
         : item
+    },
+    async updateTaskTrackingTitle(
+      task: RuntimeTaskAddress,
+      title: string
+    ): Promise<CloudLoopItem | null> {
+      let context: CloudTaskContext
+      try {
+        context = await api.findCloudContextForTask(task)
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null
+        throw error
+      }
+      if (!context.loop_item_id) return null
+      const item = await api.getLoopItem(context.loop_item_id)
+      return item.title === title
+        ? item
+        : api.updateLoopItem(item.id, {
+            version: item.version,
+            title,
+          })
     },
     unbindCloudContext(task: RuntimeTaskAddress): Promise<void> {
       return client.delete('/v1/runtime-tasks/cloud-context', task)
