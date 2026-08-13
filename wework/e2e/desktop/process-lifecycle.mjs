@@ -1,6 +1,9 @@
+import { readdirSync, readFileSync } from 'node:fs'
+
 const PROCESS_STOP_TIMEOUT_MS = 10_000
 const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
+const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
 
 function withTimeout(promise, timeoutMs, message) {
   let timeout
@@ -19,9 +22,48 @@ function waitForProcessExit(child, timeoutMs) {
   )
 }
 
+export function processGroupHasLiveMembersFromLinuxStats(stats, processGroupId) {
+  let foundProcessGroupMember = false
+  for (const stat of stats) {
+    const commandEnd = stat.lastIndexOf(')')
+    if (commandEnd === -1) continue
+    const fields = stat.slice(commandEnd + 1).trim().split(/\s+/)
+    const state = fields[0]
+    const statProcessGroupId = Number.parseInt(fields[2], 10)
+    if (statProcessGroupId !== processGroupId) continue
+    foundProcessGroupMember = true
+    if (!DEAD_LINUX_PROCESS_STATES.has(state)) return true
+  }
+  return foundProcessGroupMember ? false : null
+}
+
+function inspectLinuxProcessGroup(processGroupId) {
+  let processEntries
+  try {
+    processEntries = readdirSync('/proc', { withFileTypes: true })
+  } catch {
+    return null
+  }
+
+  const stats = []
+  for (const entry of processEntries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
+    try {
+      stats.push(readFileSync(`/proc/${entry.name}/stat`, 'utf8'))
+    } catch {
+      // Processes can exit while /proc is being inspected.
+    }
+  }
+  return processGroupHasLiveMembersFromLinuxStats(stats, processGroupId)
+}
+
 function isProcessGroupRunning(processGroupId) {
   try {
     process.kill(-processGroupId, 0)
+    if (process.platform === 'linux') {
+      const hasLiveMembers = inspectLinuxProcessGroup(processGroupId)
+      if (hasLiveMembers !== null) return hasLiveMembers
+    }
     return true
   } catch (error) {
     // A reaped descendant can briefly retain the group ID under a process we
