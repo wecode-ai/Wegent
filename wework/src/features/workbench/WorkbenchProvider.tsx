@@ -282,6 +282,7 @@ export function WorkbenchProvider({
     }
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
+  const remoteProjectSyncRevisionRef = useRef(0)
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
@@ -844,7 +845,6 @@ export function WorkbenchProvider({
     cloudWorkStatus,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshRuntimeTask,
     refreshDevices,
@@ -878,6 +878,11 @@ export function WorkbenchProvider({
     []
   )
 
+  const invalidateRemoteProjectSync = useCallback(() => {
+    remoteProjectSyncRevisionRef.current += 1
+    remoteProjectSyncSignatureRef.current = ''
+  }, [])
+
   useEffect(() => {
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
@@ -890,10 +895,14 @@ export function WorkbenchProvider({
     const signature = JSON.stringify({ deviceId: localRuntimeStateDeviceId, projects })
     if (remoteProjectSyncSignatureRef.current === signature) return
     remoteProjectSyncSignatureRef.current = signature
+    const revision = remoteProjectSyncRevisionRef.current
     void enqueueRemoteProjectStateMutation(() =>
-      executorClient.runtime
-        .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
-        .then(() => refreshWorkLists())
+      revision !== remoteProjectSyncRevisionRef.current ||
+      remoteProjectSyncSignatureRef.current !== signature
+        ? Promise.resolve()
+        : executorClient.runtime
+            .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+            .then(() => refreshWorkLists())
     ).catch(error => {
       if (remoteProjectSyncSignatureRef.current === signature) {
         remoteProjectSyncSignatureRef.current = ''
@@ -1151,9 +1160,6 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
-        response.roots.forEach(workspacePath =>
-          clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
-        )
         rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
@@ -1184,10 +1190,6 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
-      clearRuntimeProjectRemoval({
-        deviceId: openedDeviceId,
-        workspacePath: openedWorkspacePath,
-      })
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
@@ -1198,14 +1200,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [
-      clearRuntimeProjectRemoval,
-      executorClient,
-      refreshWorkLists,
-      rememberExecutionDevice,
-      state.devices,
-      user.id,
-    ]
+    [executorClient, refreshWorkLists, rememberExecutionDevice, state.devices, user.id]
   )
 
   const startNewChat = useCallback(() => {
@@ -1480,7 +1475,7 @@ export function WorkbenchProvider({
     services: resolvedServices,
     refreshWorkLists,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
+    invalidateRemoteProjectSync,
     rememberExecutionDevice,
     enqueueRemoteProjectStateMutation,
   })
