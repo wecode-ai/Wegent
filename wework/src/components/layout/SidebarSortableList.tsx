@@ -20,6 +20,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { SidebarPointerSensor } from './sidebarDragActivator'
+import { getSidebarAutoScrollConfiguration } from './sidebarSortableAutoScroll'
 import {
   dispatchWorkbenchSidebarPaneDragCancel,
   dispatchWorkbenchSidebarPaneDragEnd,
@@ -275,6 +276,7 @@ export function SidebarSortableList<T>({
   return (
     <DndContext
       sensors={sensors}
+      autoScroll={getSidebarAutoScrollConfiguration(Boolean(getExternalDragData))}
       collisionDetection={getExternalDragData ? sidebarCollisionDetection : closestCenter}
       onDragStart={handleDragStart}
       onDragCancel={() => {

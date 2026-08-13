@@ -4,6 +4,7 @@ import {
   WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
   type WorkbenchSidebarPaneDragEndData,
 } from './workbenchPaneDrag'
+import { getSidebarAutoScrollConfiguration } from './sidebarSortableAutoScroll'
 import { SidebarSortableList } from './SidebarSortableList'
 
 interface Item {
@@ -41,6 +42,14 @@ afterEach(() => {
 })
 
 describe('SidebarSortableList', () => {
+  it('disables both dnd-kit scroll paths for task drags that can leave the sidebar', () => {
+    expect(getSidebarAutoScrollConfiguration(true)).toEqual({
+      enabled: false,
+      layoutShiftCompensation: false,
+    })
+    expect(getSidebarAutoScrollConfiguration(false)).toEqual({ enabled: true })
+  })
+
   it('stops sidebar sorting and reports the real pointer position outside the sidebar', async () => {
     const onMove = vi.fn().mockResolvedValue(undefined)
     const dragEndDetails: WorkbenchSidebarPaneDragEndData[] = []
@@ -51,25 +60,47 @@ describe('SidebarSortableList', () => {
     window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleExternalDragEnd)
 
     render(
-      <SidebarSortableList
-        items={items}
-        getId={item => item.id}
-        getLabel={item => item.label}
-        getExternalDragData={item => ({ paneKey: `pane:${item.id}`, title: item.label })}
-        onMove={onMove}
-        testId="sortable-list"
-        renderItem={item => (
-          <div data-testid={`item-${item.id}`}>
-            <span data-testid={`activator-${item.id}`} data-sidebar-drag-activator>
-              {item.label}
-            </span>
-          </div>
-        )}
-      />
+      <div data-testid="scroll-container" className="overflow-y-auto">
+        <SidebarSortableList
+          items={items}
+          getId={item => item.id}
+          getLabel={item => item.label}
+          getExternalDragData={item => ({ paneKey: `pane:${item.id}`, title: item.label })}
+          onMove={onMove}
+          testId="sortable-list"
+          renderItem={item => (
+            <div data-testid={`item-${item.id}`}>
+              <span data-testid={`activator-${item.id}`} data-sidebar-drag-activator>
+                {item.label}
+              </span>
+            </div>
+          )}
+        />
+      </div>
     )
 
+    const scrollContainer = screen.getByTestId('scroll-container')
     const firstSortable = screen.getByTestId('item-first').parentElement as HTMLElement
     const secondSortable = screen.getByTestId('item-second').parentElement as HTMLElement
+    const scrollBy = vi.fn()
+    Object.defineProperties(scrollContainer, {
+      clientHeight: { configurable: true, value: 60 },
+      clientWidth: { configurable: true, value: 240 },
+      scrollHeight: { configurable: true, value: 200 },
+      scrollWidth: { configurable: true, value: 240 },
+      scrollBy: { configurable: true, value: scrollBy },
+    })
+    vi.spyOn(scrollContainer, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 240,
+      bottom: 60,
+      width: 240,
+      height: 60,
+      toJSON: () => ({}),
+    } as DOMRect)
     mockRect(firstSortable, 0)
     mockRect(secondSortable, 30)
 
@@ -93,7 +124,7 @@ describe('SidebarSortableList', () => {
     fireEvent.pointerMove(document, {
       buttons: 1,
       clientX: 640,
-      clientY: 45,
+      clientY: 59,
       isPrimary: true,
       pointerId: 1,
     })
@@ -102,12 +133,16 @@ describe('SidebarSortableList', () => {
       expect(firstSortable.style.transform).toBe('')
       expect(secondSortable.style.transform).toBe('')
     })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 30))
+    })
+    expect(scrollBy).not.toHaveBeenCalled()
 
     fireEvent.pointerUp(document, {
       button: 0,
       buttons: 0,
       clientX: 640,
-      clientY: 45,
+      clientY: 59,
       isPrimary: true,
       pointerId: 1,
     })
@@ -116,7 +151,7 @@ describe('SidebarSortableList', () => {
     expect(dragEndDetails[0]).toMatchObject({
       paneKey: 'pane:first',
       clientX: 640,
-      clientY: 45,
+      clientY: 59,
     })
     expect(onMove).not.toHaveBeenCalled()
 
