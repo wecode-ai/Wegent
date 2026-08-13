@@ -1324,15 +1324,19 @@ async def remove_runtime_workspace(
     device_id = request.device_id.strip()
     workspace_path = normalize_workspace_path(request.workspace_path)
     _ensure_owned_device(db, user_id, device_id)
+    payload = {
+        "runtime": request.runtime,
+        "workspacePath": workspace_path,
+    }
+    project_key = request.project_key.strip() if request.project_key else ""
+    if project_key:
+        payload["projectKey"] = project_key
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
             device_id=device_id,
             method="runtime.workspaces.remove",
-            payload={
-                "runtime": request.runtime,
-                "workspacePath": workspace_path,
-            },
+            payload=payload,
             timeout_seconds=RUNTIME_WORKSPACE_OPEN_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:

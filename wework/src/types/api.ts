@@ -251,6 +251,7 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 export interface RuntimeTaskAddress {
   deviceId: string
   taskId: string
+  runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -403,7 +404,7 @@ export interface RuntimeSupervisorState {
   mode: RuntimeSupervisorMode
   status: RuntimeSupervisorStatus
   instructions: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds?: number
   lastEvaluatedAt?: number | null
   lastError?: string | null
@@ -780,7 +781,7 @@ export interface RuntimeSupervisorSetRequest {
   address: RuntimeTaskAddress
   mode: RuntimeSupervisorMode
   instructions?: string
-  modelId?: string | null
+  modelSelection?: ModelSelectionConfig | null
   intervalSeconds: number
 }
 
@@ -1180,12 +1181,16 @@ export interface RuntimeTaskCreateRequest {
   taskId?: string
   teamId: number
   runtime: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
   message: string
+  bot?: Array<Record<string, unknown>>
   clientUserMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
+  modelConfig?: Record<string, unknown>
   modelSelection?: ModelSelectionConfig | null
   friendlyTitle?: RuntimeTaskFriendlyTitleConfig | null
   additionalSkills?: SkillRef[]
@@ -1195,10 +1200,15 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
-  continuable?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
+  origin?: {
+    type: 'board_comment' | 'board_task'
+    cloudProjectId: string
+    loopItemId: string
+    rootCommentId?: string
+  }
   additionalContext?: RuntimeAdditionalContext
 }
 
@@ -1347,6 +1357,7 @@ export interface LocalDeviceSkill {
 export interface LocalDeviceApp {
   id: string
   name: string
+  pluginKey?: string | null
   description?: string | null
   logoUrl?: string | null
   logoUrlDark?: string | null

@@ -3,7 +3,9 @@ export const DESKTOP_CHECKPOINTS = [
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
+  'project-automation',
   'model-routing',
+  'permission-modes',
   'core-task-flow',
   'window-lifecycle',
   'goal-lifecycle',
@@ -18,6 +20,7 @@ export const DESKTOP_CHECKPOINTS = [
 ]
 
 export const PLUGIN_SEGMENTS = [
+  'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',
   'sites-plugin-auto-install',

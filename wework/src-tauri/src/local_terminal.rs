@@ -167,6 +167,8 @@ pub struct LocalHarnessSessionDescriptor {
     #[serde(default)]
     active: bool,
     #[serde(default)]
+    archived_at: Option<u64>,
+    #[serde(default)]
     model_key: Option<String>,
     #[serde(default)]
     native_session_id: Option<String>,
@@ -348,6 +350,7 @@ fn upsert_persisted_harness_session(
     sessions.retain(|session| session.session_id != descriptor.session_id);
     sessions.push(LocalHarnessSessionDescriptor {
         active: false,
+        archived_at: None,
         proxy_token: None,
         ..descriptor
     });
@@ -640,6 +643,7 @@ pub fn list_local_harness_sessions(
                 is_primary: harness.is_primary,
                 project_id: harness.project_id,
                 active: true,
+                archived_at: None,
                 model_key: harness.model_key.clone(),
                 native_session_id: harness.native_session_id.clone(),
                 plugin_roots: harness.plugin_roots.clone(),
@@ -649,7 +653,10 @@ pub fn list_local_harness_sessions(
         .collect::<Vec<_>>();
     drop(sessions);
 
-    let mut descriptors = read_persisted_harness_sessions(&app)?;
+    let mut descriptors = read_persisted_harness_sessions(&app)?
+        .into_iter()
+        .filter(|descriptor| descriptor.archived_at.is_none())
+        .collect::<Vec<_>>();
     for active in active_descriptors {
         if let Some(existing) = descriptors
             .iter_mut()
@@ -662,6 +669,87 @@ pub fn list_local_harness_sessions(
     }
     descriptors.sort_by(|left, right| right.created_at.cmp(&left.created_at));
     Ok(descriptors)
+}
+
+#[tauri::command]
+pub fn list_archived_local_harness_sessions(
+    app: tauri::AppHandle,
+) -> Result<Vec<LocalHarnessSessionDescriptor>, String> {
+    let mut sessions = read_persisted_harness_sessions(&app)?
+        .into_iter()
+        .filter(|descriptor| descriptor.archived_at.is_some())
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| right.archived_at.cmp(&left.archived_at));
+    Ok(sessions)
+}
+
+fn set_harness_session_archived(
+    app: &tauri::AppHandle,
+    session_id: &str,
+    archived_at: Option<u64>,
+) -> Result<(), String> {
+    let _store_guard = harness_session_store_lock()
+        .lock()
+        .map_err(|_| "Failed to lock Harness session storage".to_string())?;
+    let mut persisted = read_persisted_harness_sessions_unlocked(app)?;
+    let session = persisted
+        .iter_mut()
+        .find(|session| session.session_id == session_id)
+        .ok_or_else(|| format!("Harness session not found: {session_id}"))?;
+    if session.harness_id != OPEN_CODE_HARNESS_ID {
+        return Err(format!(
+            "Archiving is unsupported for Harness: {}",
+            session.harness_id
+        ));
+    }
+    session.active = false;
+    session.archived_at = archived_at;
+    session.proxy_token = None;
+    write_persisted_harness_sessions_unlocked(app, &persisted)
+}
+
+#[tauri::command]
+pub fn archive_local_harness_session(
+    app: tauri::AppHandle,
+    state: State<'_, LocalTerminalState>,
+    session_id: String,
+) -> Result<(), String> {
+    set_harness_session_archived(&app, &session_id, Some(current_timestamp_millis()))?;
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "Failed to lock local terminal state".to_string())?;
+    if let Some(mut session) = sessions.remove(&session_id) {
+        if let Err(error) = session.child.kill() {
+            log::warn!(
+                "Tauri local Harness archive kill failed: session_id={}, error={error}",
+                session_id
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unarchive_local_harness_session(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), String> {
+    set_harness_session_archived(&app, &session_id, None)
+}
+
+#[tauri::command]
+pub fn delete_archived_local_harness_session(
+    app: tauri::AppHandle,
+    session_id: String,
+) -> Result<(), String> {
+    let archived = read_persisted_harness_sessions(&app)?
+        .into_iter()
+        .any(|session| session.session_id == session_id && session.archived_at.is_some());
+    if !archived {
+        return Err(format!("Archived Harness session not found: {session_id}"));
+    }
+    remove_persisted_harness_session(&app, &session_id)
 }
 
 #[tauri::command]
@@ -1078,6 +1166,7 @@ pub fn start_local_harness(
         is_primary,
         project_id,
         active: false,
+        archived_at: None,
         model_key,
         native_session_id: (!native_session_id.is_empty()).then_some(native_session_id),
         plugin_roots,

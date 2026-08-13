@@ -1,6 +1,7 @@
 import { normalizeRuntimeWorkspacePath, runtimeProjectWorkKey } from '@/lib/runtime-project'
 import type {
   ModelOptions,
+  RuntimeGoalCreateInput,
   RuntimeProjectWork,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
@@ -39,6 +40,7 @@ export interface AutomationDraft {
   workspacePath: string
   conversationMode: AutomationConversationMode
   continuationAddress: RuntimeTaskAddress | null
+  goalEnabled: boolean
   notificationPolicy: AutomationNotificationPolicy
   modelId: string
   modelType: string
@@ -178,6 +180,7 @@ export function emptyAutomationDraft(
     workspacePath,
     conversationMode: 'independent',
     continuationAddress: null,
+    goalEnabled: false,
     notificationPolicy: 'all_runs',
     modelId: selectedModel?.modelId ?? selectedModel?.name ?? '',
     modelType: selectedModel?.type ?? '',
@@ -243,6 +246,8 @@ export function automationDraftFromAutomation(automation: Automation): Automatio
   draft.timezone = automation.timezone
   draft.conversationMode = automation.conversationMode
   draft.continuationAddress = continuationAddressFromAutomation(automation)
+  const initialGoal = initialGoalFromAutomation(automation)
+  draft.goalEnabled = initialGoal !== null
   draft.notificationPolicy = automation.notificationPolicy ?? 'all_runs'
   draft.scheduleType = automation.schedule.type
   draft.modelId = String(payload.modelId ?? '')
@@ -268,6 +273,45 @@ export function automationDraftFromAutomation(automation: Automation): Automatio
     draft.executeAt = toDateTimeLocal(new Date(automation.schedule.executeAt))
   }
   return draft
+}
+
+export function initialGoalFromAutomationDraft(
+  draft: AutomationDraft
+): RuntimeGoalCreateInput | null {
+  if (!draft.goalEnabled) return null
+  const objective = draft.prompt.trim()
+  return objective ? { objective, status: 'active', tokenBudget: null } : null
+}
+
+function initialGoalFromAutomation(automation: Automation): RuntimeGoalCreateInput | null {
+  const taskPayload = (automation.taskRequest ?? automation.taskPayload ?? {}) as unknown as Record<
+    string,
+    unknown
+  >
+  const continuationPayload =
+    automation.continuationPayload && typeof automation.continuationPayload === 'object'
+      ? automation.continuationPayload
+      : null
+  return runtimeGoalCreateInput(
+    continuationPayload?.initialGoal ??
+      continuationPayload?.initial_goal ??
+      taskPayload.initialGoal ??
+      taskPayload.initial_goal
+  )
+}
+
+function runtimeGoalCreateInput(value: unknown): RuntimeGoalCreateInput | null {
+  if (!value || typeof value !== 'object') return null
+  const goal = value as Record<string, unknown>
+  const objective = typeof goal.objective === 'string' ? goal.objective.trim() : ''
+  if (!objective) return null
+  const tokenBudget = goal.tokenBudget ?? goal.token_budget
+  return {
+    objective,
+    status:
+      typeof goal.status === 'string' ? (goal.status as RuntimeGoalCreateInput['status']) : null,
+    tokenBudget: typeof tokenBudget === 'number' ? tokenBudget : null,
+  }
 }
 
 function continuationAddressFromAutomation(automation: Automation): RuntimeTaskAddress | null {

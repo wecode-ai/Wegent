@@ -633,11 +633,20 @@ export function normalizeModelOptions(
   options: ModelOptions
 ): ModelOptions {
   if (!model) return {}
-  return Object.fromEntries(
+  const normalized = Object.fromEntries(
     getControlsForModel(model)
       .filter(control => control.persistDefault !== false || options[control.id] !== undefined)
       .map(control => [control.id, selectedControlValue(control, options)])
   )
+  const permissionMode = options.permissionMode
+  if (
+    permissionMode === 'read-only' ||
+    permissionMode === 'workspace-write' ||
+    permissionMode === 'full-access'
+  ) {
+    normalized.permissionMode = permissionMode
+  }
+  return normalized
 }
 
 function regionPriority(region?: string): number {

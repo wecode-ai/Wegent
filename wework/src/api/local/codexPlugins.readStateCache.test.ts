@@ -350,6 +350,161 @@ describe('local codex plugin readState cache', () => {
     })
   })
 
+  test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
+    const openAiMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'gmail',
+          name: 'gmail',
+          version: '1.0.0',
+          description: 'Gmail',
+          interface: { displayName: 'Gmail' },
+        },
+      ],
+    }
+    let listMarketplaces = [openAiMarketplace]
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') return { marketplaces: listMarketplaces }
+        if (params.method === 'plugin/installed') return { marketplaces: [] }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+
+    // A just-resumed app-server can return a successful but partial list before
+    // its remote OpenAI marketplace has been restored.
+    listMarketplaces = []
+    const refreshed = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+
+    expect(refreshed.marketplaceItems.map(item => item.name)).toEqual(['gmail'])
+    expect(refreshed.marketplaces.map(marketplace => marketplace.id)).toContain(
+      'openai-curated-remote'
+    )
+    expect(
+      peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.marketplaceItems.map(
+        item => item.name
+      )
+    ).toEqual(['gmail'])
+  })
+
+  test('retains the cached OpenAI catalog when the refreshed marketplace is temporarily empty', async () => {
+    const openAiMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'gmail',
+          name: 'gmail',
+          version: '1.0.0',
+          description: 'Gmail',
+          interface: { displayName: 'Gmail' },
+        },
+      ],
+    }
+    let listMarketplaces = [openAiMarketplace]
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') return { marketplaces: listMarketplaces }
+        if (params.method === 'plugin/installed') return { marketplaces: [] }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+
+    listMarketplaces = [{ ...openAiMarketplace, plugins: [] }]
+    const refreshed = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+
+    expect(refreshed.marketplaceItems.map(item => item.name)).toEqual(['gmail'])
+    expect(
+      peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.marketplaceItems.map(
+        item => item.name
+      )
+    ).toEqual(['gmail'])
+  })
+
+  test('keeps the durable OpenAI catalog after an idempotent personal plugin reconcile', async () => {
+    const openAiMarketplace = {
+      name: 'openai-curated-remote',
+      path: 'openai-curated-remote',
+      interface: { displayName: 'OpenAI' },
+      plugins: [
+        {
+          id: 'gmail',
+          name: 'gmail',
+          installed: false,
+          enabled: false,
+          interface: { displayName: 'Gmail' },
+        },
+      ],
+    }
+    const codexPersonalMarketplace = {
+      name: 'personal',
+      path: '/tmp/personal',
+      interface: { displayName: 'Personal' },
+      plugins: [
+        {
+          id: 'dev-tools',
+          name: 'dev-tools',
+          installed: true,
+          enabled: true,
+          interface: { displayName: 'Dev Tools' },
+        },
+      ],
+    }
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          return {
+            marketplaces: [openAiMarketplace, codexPersonalMarketplace, personalMarketplace],
+          }
+        }
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [codexPersonalMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const state = await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+
+    expect(state.marketplaceItems.map(item => item.name)).toContain('gmail')
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'local_executor_ensure_personal_plugin',
+      expect.any(Object)
+    )
+    const durable = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    expect(durable).toBeTruthy()
+    expect(durable).toContain('gmail')
+  })
+
   test('peekLocalCodexPluginsReadState hydrates from localStorage after memory clear', async () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
@@ -357,14 +512,163 @@ describe('local codex plugin readState cache', () => {
     expect(warmed?.deviceId).toBe('local-device')
 
     // Simulate an app restart that loses module memory but keeps localStorage.
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v1')
+    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
     expect(raw).toBeTruthy()
     clearLocalCodexPluginsReadStateCache()
-    window.localStorage.setItem('wework.plugins.codexReadState.v1', raw!)
+    window.localStorage.setItem('wework.plugins.codexReadState.v2', raw!)
 
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
       'local-device'
     )
+  })
+
+  test('migrates yesterday durable v1 peek into v2 without forcing a cold plugin/list', async () => {
+    clearLocalCodexPluginsReadStateCache()
+    const legacy = {
+      version: 1,
+      entries: {
+        '|all': {
+          paramsKey: '|all',
+          cachedAt: Date.now(),
+          state: {
+            marketplaceItems: [
+              {
+                id: 'gmail',
+                name: 'gmail',
+                displayName: 'Gmail',
+                description: 'mail',
+                marketplaceId: 'openai-curated-remote',
+                components: {
+                  skills: [],
+                  commands: [],
+                  agents: [],
+                  apps: [],
+                  hooks: [],
+                  mcps: [],
+                  connectors: [],
+                  lsps: [],
+                  monitors: [],
+                  bins: [],
+                },
+              },
+            ],
+            installedPlugins: [],
+            marketplaces: [
+              { id: 'openai-curated-remote', name: 'OpenAI', path: 'openai-curated-remote' },
+            ],
+            selectedMarketplaceId: 'openai-curated-remote',
+            marketplacePath: '',
+            installRegistryPath: '',
+            deviceId: 'local-device',
+          },
+        },
+      },
+    }
+    window.localStorage.setItem('wework.plugins.codexReadState.v1', JSON.stringify(legacy))
+
+    const peeked = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
+    expect(peeked?.marketplaceItems.map(item => item.name)).toEqual(['gmail'])
+    expect(peeked?.deviceId).toBe('local-device')
+    expect(window.localStorage.getItem('wework.plugins.codexReadState.v2')).toBeTruthy()
+    expect(window.localStorage.getItem('wework.plugins.codexReadState.v1')).toBeNull()
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+  })
+
+  test('plugin detail writes connector stubs into durable peek for later send preflight', async () => {
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          return {
+            marketplaces: [
+              {
+                name: 'wegent',
+                path: '/tmp/wegent',
+                interface: { displayName: 'Wegent' },
+                plugins: [
+                  {
+                    id: 'dingtalk',
+                    name: 'dingtalk',
+                    installed: true,
+                    enabled: true,
+                    interface: { displayName: 'DingTalk' },
+                  },
+                ],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/installed') {
+          return {
+            marketplaces: [
+              {
+                name: 'wegent',
+                path: '/tmp/wegent',
+                interface: { displayName: 'Wegent' },
+                plugins: [
+                  {
+                    id: 'dingtalk',
+                    name: 'dingtalk',
+                    installed: true,
+                    enabled: true,
+                  },
+                ],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/read') {
+          return {
+            plugin: {
+              name: 'dingtalk',
+              version: '1.0.0',
+              description: 'DingTalk',
+              connectors: [
+                {
+                  slug: 'dingtalk',
+                  authPolicy: 'on_install',
+                  localAuth: {
+                    kind: 'browser_oauth',
+                    health: ['auth', 'health'],
+                    start: ['auth', 'login'],
+                  },
+                },
+              ],
+              skills: [{ name: 'dingtalk', description: 'skill', path: 'skills/dingtalk' }],
+            },
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    await api.readInstalledPluginForTrial('dingtalk')
+
+    const durable = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    expect(durable).toBeTruthy()
+    // Simulate app restart: drop memory, keep durable localStorage.
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem('wework.plugins.codexReadState.v2', durable!)
+
+    const peeked = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
+    expect(peeked?.installedPlugins[0]?.spec.components.connectors?.[0]?.localAuth).toEqual(
+      expect.objectContaining({
+        kind: 'browser_oauth',
+        health: ['auth', 'health'],
+        start: ['auth', 'login'],
+      })
+    )
+    // Heavy skill payloads stay out of durable storage.
+    expect(peeked?.installedPlugins[0]?.spec.components.skills).toEqual([])
   })
 
   test('durable localStorage snapshot strips heavy component payloads', async () => {
@@ -414,7 +718,7 @@ describe('local codex plugin readState cache', () => {
 
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v1')
+    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
     expect(raw).toBeTruthy()
     const persisted = JSON.parse(raw!) as {
       entries: Record<string, { state: { marketplaceItems: Array<Record<string, unknown>> } }>
@@ -438,20 +742,169 @@ describe('local codex plugin readState cache', () => {
     expect((item?.interface as { screenshots?: string[] } | null)?.screenshots).toBeFalsy()
   })
 
+  test('durable localStorage snapshot drops oversized inlined plugin artwork', async () => {
+    const oversizedLogo = `data:image/png;base64,${'a'.repeat(4097)}`
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          return {
+            marketplaces: [
+              {
+                name: 'openai-curated-remote',
+                path: null,
+                interface: { displayName: 'OpenAI' },
+                plugins: [
+                  {
+                    id: 'gmail',
+                    name: 'gmail',
+                    interface: {
+                      displayName: 'Gmail',
+                      logo: oversizedLogo,
+                      logoDark: oversizedLogo,
+                      composerIcon: oversizedLogo,
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/installed') return { marketplaces: [] }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+
+    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    const persisted = JSON.parse(raw!) as {
+      entries: Record<
+        string,
+        { state: { marketplaceItems: Array<{ interface: Record<string, unknown> | null }> } }
+      >
+    }
+    const interfaceData = Object.values(persisted.entries)[0]?.state.marketplaceItems[0]?.interface
+    expect(interfaceData).toMatchObject({ displayName: 'Gmail' })
+    expect(interfaceData?.logo).toBeNull()
+    expect(interfaceData?.logoDark).toBeNull()
+    expect(interfaceData?.composerIcon).toBeFalsy()
+  })
+
+  test('compacts an existing heavy v2 catalog before hydrating first paint', async () => {
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list') {
+          return {
+            marketplaces: [
+              {
+                name: 'openai-curated-remote',
+                path: null,
+                interface: { displayName: 'OpenAI' },
+                plugins: [
+                  {
+                    id: 'gmail',
+                    name: 'gmail',
+                    interface: { displayName: 'Gmail' },
+                  },
+                ],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/installed') return { marketplaces: [] }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const storageKey = 'wework.plugins.codexReadState.v2'
+    const raw = window.localStorage.getItem(storageKey)
+    expect(raw).toBeTruthy()
+    const heavy = JSON.parse(raw!) as {
+      entries: Record<
+        string,
+        {
+          state: {
+            marketplaceItems: Array<{
+              interface: Record<string, unknown> | null
+            }>
+          }
+        }
+      >
+    }
+    const item = heavy.entries['|all']?.state.marketplaceItems[0]
+    expect(item).toBeTruthy()
+    item!.interface = {
+      displayName: 'Heavy plugin',
+      shortDescription: 'Still needed for the card',
+      longDescription: 'L'.repeat(100_000),
+      logo: `data:image/png;base64,${'A'.repeat(100_000)}`,
+    }
+    const heavyRaw = JSON.stringify(heavy)
+
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem(storageKey, heavyRaw)
+    const peeked = peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })
+    const compactedRaw = window.localStorage.getItem(storageKey) ?? ''
+
+    expect(peeked?.marketplaceItems[0]?.interface).toMatchObject({
+      displayName: 'Heavy plugin',
+      shortDescription: 'Still needed for the card',
+      logo: null,
+    })
+    expect(peeked?.marketplaceItems[0]?.interface?.longDescription).toBeUndefined()
+    expect(compactedRaw.length).toBeLessThan(heavyRaw.length / 10)
+  })
+
+  test('quota fallback preserves the merged catalog used by first paint', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    const storageKey = 'wework.plugins.codexReadState.v2'
+    const nativeSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+      if (key === storageKey) {
+        const parsed = JSON.parse(value) as { entries?: Record<string, unknown> }
+        if (Object.keys(parsed.entries ?? {}).length > 1) {
+          throw new DOMException('Quota exceeded', 'QuotaExceededError')
+        }
+      }
+      nativeSetItem.call(this, key, value)
+    })
+
+    await api.readState({ refresh: true })
+
+    const persisted = JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as {
+      entries?: Record<string, unknown>
+    }
+    expect(persisted.entries?.['|all']).toBeTruthy()
+    expect(persisted.entries?.['|selected']).toBeUndefined()
+  })
+
   test('migrates a legacy sessionStorage snapshot into localStorage', async () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v1')
+    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
     expect(raw).toBeTruthy()
 
     clearLocalCodexPluginsReadStateCache()
-    window.sessionStorage.setItem('wework.plugins.codexReadState.v1', raw!)
+    window.sessionStorage.setItem('wework.plugins.codexReadState.v2', raw!)
 
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
       'local-device'
     )
-    expect(window.localStorage.getItem('wework.plugins.codexReadState.v1')).toBeTruthy()
-    expect(window.sessionStorage.getItem('wework.plugins.codexReadState.v1')).toBeNull()
+    expect(window.localStorage.getItem('wework.plugins.codexReadState.v2')).toBeTruthy()
+    expect(window.sessionStorage.getItem('wework.plugins.codexReadState.v2')).toBeNull()
   })
 
   test('warmLocalCodexPluginsReadState shares the same plugin/list inflight as readState', async () => {
@@ -702,7 +1155,7 @@ describe('local codex plugin readState cache', () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
 
-    const durableKey = 'wework.plugins.codexReadState.v1'
+    const durableKey = 'wework.plugins.codexReadState.v2'
     const durableBefore = window.localStorage.getItem(durableKey)
     expect(durableBefore).toBeTruthy()
 
@@ -813,6 +1266,227 @@ describe('local codex plugin readState cache', () => {
         }),
       }),
     ])
+  })
+
+  test('maps DISABLED_BY_ADMIN availability and disabledReason onto marketplace items', async () => {
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return {
+            marketplaces: [
+              {
+                name: 'openai-curated-remote',
+                path: null,
+                interface: { displayName: 'OpenAI' },
+                plugins:
+                  params.method === 'plugin/installed'
+                    ? []
+                    : [
+                        {
+                          id: 'gmail@openai-curated-remote',
+                          remotePluginId: 'plugin_connector_1p_95d39881713c8191931482a62d6edff9',
+                          name: 'gmail',
+                          installed: false,
+                          enabled: false,
+                          availability: 'DISABLED_BY_ADMIN',
+                          disabledReason: 'plan_not_eligible',
+                          installPolicy: 'NOT_AVAILABLE',
+                          source: { type: 'remote' },
+                          interface: { displayName: 'Gmail' },
+                        },
+                      ],
+              },
+            ],
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const state = await api.readState({ mergeAllMarketplaces: true })
+    expect(state.marketplaceItems).toEqual([
+      expect.objectContaining({
+        name: 'gmail',
+        manifest: expect.objectContaining({
+          availability: 'DISABLED_BY_ADMIN',
+          disabledReason: 'plan_not_eligible',
+          installPolicy: 'NOT_AVAILABLE',
+        }),
+      }),
+    ])
+  })
+
+  test('installs OpenAI remote Gmail with connector-style remotePluginId from plugin/read', async () => {
+    const installCalls: Array<Record<string, unknown>> = []
+    const remotePluginId = 'plugin_connector_1p_95d39881713c8191931482a62d6edff9'
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+          params?: Record<string, unknown>
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          const installed = installCalls.length > 0
+          const plugin = {
+            id: 'gmail@openai-curated-remote',
+            name: 'gmail',
+            installed,
+            enabled: installed,
+            source: { type: 'remote' },
+            interface: { displayName: 'Gmail' },
+          }
+          return {
+            marketplaces: [
+              {
+                name: 'openai-curated-remote',
+                path: null,
+                interface: { displayName: 'OpenAI' },
+                plugins:
+                  params.method === 'plugin/installed' ? (installed ? [plugin] : []) : [plugin],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/install') {
+          const pluginName = String(params.params?.pluginName ?? '')
+          installCalls.push(params.params ?? {})
+          if (pluginName !== remotePluginId) {
+            throw new Error(`unexpected plugin id ${pluginName}`)
+          }
+          return {}
+        }
+        if (params.method === 'plugin/read') {
+          return {
+            plugin: {
+              marketplaceName: 'openai-curated-remote',
+              marketplacePath: null,
+              summary: {
+                id: 'gmail@openai-curated-remote',
+                remotePluginId,
+                name: 'gmail',
+                installed: installCalls.length > 0,
+                enabled: installCalls.length > 0,
+                source: { type: 'remote' },
+                interface: { displayName: 'Gmail' },
+              },
+              description: '',
+              skills: [],
+              hooks: [],
+              apps: [],
+              agents: [],
+              mcps: [],
+              connectors: [],
+            },
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const state = await api.readState({ mergeAllMarketplaces: true })
+    const gmail = state.marketplaceItems.find(item => item.name === 'gmail')
+    expect(gmail?.remotePluginId).toBe('')
+    await api.installAvailablePlugin(String(gmail?.id), 'openai-curated-remote')
+
+    expect(installCalls).toEqual([
+      {
+        marketplacePath: null,
+        remoteMarketplaceName: 'openai-curated-remote',
+        pluginName: remotePluginId,
+      },
+    ])
+  })
+
+  test('installs OpenAI remote plugins using list remotePluginId without bare-name fallback first', async () => {
+    const installCalls: string[] = []
+    const remotePluginId = 'plugin_connector_1p_1a69035c238881919c4190932b2df699'
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+          params?: Record<string, unknown>
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          const installed = installCalls.length > 0
+          const plugin = {
+            id: 'github@openai-curated-remote',
+            remotePluginId,
+            name: 'github',
+            installed,
+            enabled: installed,
+            source: { type: 'remote' },
+            interface: { displayName: 'GitHub' },
+          }
+          return {
+            marketplaces: [
+              {
+                name: 'openai-curated-remote',
+                path: null,
+                interface: { displayName: 'OpenAI' },
+                plugins:
+                  params.method === 'plugin/installed' ? (installed ? [plugin] : []) : [plugin],
+              },
+            ],
+          }
+        }
+        if (params.method === 'plugin/install') {
+          installCalls.push(String(params.params?.pluginName ?? ''))
+          return {}
+        }
+        if (params.method === 'plugin/read') {
+          return {
+            plugin: {
+              marketplaceName: 'openai-curated-remote',
+              marketplacePath: null,
+              summary: {
+                id: 'github@openai-curated-remote',
+                remotePluginId,
+                name: 'github',
+                installed: true,
+                enabled: true,
+                source: { type: 'remote' },
+                interface: { displayName: 'GitHub' },
+              },
+              description: '',
+              skills: [],
+              hooks: [],
+              apps: [],
+              agents: [],
+              mcps: [],
+              connectors: [],
+            },
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const state = await api.readState({ mergeAllMarketplaces: true })
+    const github = state.marketplaceItems.find(item => item.name === 'github')
+    expect(github?.remotePluginId).toBe(remotePluginId)
+    await api.installAvailablePlugin(String(github?.id), 'openai-curated-remote')
+    expect(installCalls).toEqual([remotePluginId])
   })
 
   test('uninstalls remote OpenAI plugins by remotePluginId as well as catalog id', async () => {

@@ -74,6 +74,22 @@ describe('local harness settings', () => {
     ).toEqual(['--permission-mode', 'plan', '--model', 'sonnet'])
   })
 
+  test.each(['acceptEdits', 'auto'] as const)(
+    'passes the Claude Code %s permission mode through to the CLI',
+    permissionMode => {
+      expect(
+        buildLocalHarnessLaunchArgs({
+          id: 'claude_code',
+          enabled: true,
+          executablePath: null,
+          args: ['--verbose'],
+          env: {},
+          permissionMode,
+        })
+      ).toEqual(['--permission-mode', permissionMode, '--verbose'])
+    }
+  )
+
   test('replaces configured model arguments with the selected OpenCode model', () => {
     expect(
       buildLocalHarnessLaunchArgs(

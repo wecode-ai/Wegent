@@ -14,12 +14,14 @@ function createWorkbench() {
   const setSelectedSkills = vi.fn()
   const handleFileSelect = vi.fn().mockResolvedValue(undefined)
   const resetAttachments = vi.fn()
+  const startNewChat = vi.fn()
 
   return {
     sendCurrentInput,
     setSelectedSkills,
     handleFileSelect,
     resetAttachments,
+    startNewChat,
     value: {
       state: {
         projects: [],
@@ -75,6 +77,7 @@ function createWorkbench() {
       selectProjectWorkspace: vi.fn(),
       selectStandaloneDevice: vi.fn(),
       sendCurrentInput,
+      startNewChat,
     } as unknown as ReturnType<typeof useWorkbench>,
   }
 }
@@ -84,20 +87,38 @@ describe('PluginCreateWorkspace', () => {
     window.history.replaceState({}, '', '/plugins/create')
   })
 
-  test('reuses the desktop chat composer and its interactive controls', async () => {
+  test('reuses the empty task launcher layout with a dismissible Plugin Creator chip', async () => {
     const workbench = createWorkbench()
     vi.mocked(useWorkbench).mockReturnValue(workbench.value)
 
     render(<PluginCreateWorkspace />)
 
+    expect(screen.getByTestId('plugin-create-workspace')).toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '我们该做什么？' })).toBeInTheDocument()
+    expect(screen.getByTestId('task-suggestion-categories')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
     expect(screen.getByTestId('composer-toolbar')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-create-prompt-input')).toBeInTheDocument()
+
     const creatorContext = screen.getByTestId('plugin-creator-context')
     expect(creatorContext).toHaveTextContent('Plugin Creator')
     expect(creatorContext).toHaveClass('text-focus')
     expect(screen.getByTestId('composer-input-leading-context')).toContainElement(creatorContext)
     expect(screen.getByTestId('composer-toolbar')).not.toContainElement(creatorContext)
     expect(screen.getByTestId('plugin-create-submit-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('plugin-creator-context-dismiss'))
+    expect(workbench.startNewChat).toHaveBeenCalled()
+    expect(workbench.setSelectedSkills).toHaveBeenCalledWith([])
+    expect(window.location.pathname).toBe('/')
+  })
+
+  test('keeps desktop composer attachment and model controls', async () => {
+    const workbench = createWorkbench()
+    vi.mocked(useWorkbench).mockReturnValue(workbench.value)
+
+    render(<PluginCreateWorkspace />)
 
     const attachment = new File(['context'], 'requirements.txt', { type: 'text/plain' })
     fireEvent.change(screen.getByTestId('attachment-file-input'), {
@@ -109,16 +130,29 @@ describe('PluginCreateWorkspace', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
+  test('dismisses plugin creator with backspace on an empty composer back to new task', async () => {
+    const workbench = createWorkbench()
+    vi.mocked(useWorkbench).mockReturnValue(workbench.value)
+
+    render(<PluginCreateWorkspace />)
+
+    const editor = screen.getByTestId('plugin-create-prompt-input')
+    editor.focus()
+    fireEvent.keyDown(editor, { key: 'Backspace' })
+
+    expect(workbench.startNewChat).toHaveBeenCalled()
+    expect(window.location.pathname).toBe('/')
+  })
+
   test('starts a new plugin creator task instead of continuing the active conversation', async () => {
     const workbench = createWorkbench()
     vi.mocked(useWorkbench).mockReturnValue(workbench.value)
 
     render(<PluginCreateWorkspace />)
 
-    await userEvent.type(
-      screen.getByTestId('plugin-create-prompt-input'),
-      'Create a release-notes plugin'
-    )
+    fireEvent.change(screen.getByTestId('plugin-create-prompt-input'), {
+      target: { value: 'Create a release-notes plugin' },
+    })
     await userEvent.click(screen.getByTestId('plugin-create-submit-button'))
 
     expect(workbench.setSelectedSkills).toHaveBeenCalledWith([

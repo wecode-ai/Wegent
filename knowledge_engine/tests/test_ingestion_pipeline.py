@@ -118,6 +118,67 @@ def test_build_ingestion_result_without_splitter_config_uses_flat_file_aware_def
     assert "Useful body paragraph with enough detail." in result.index_nodes[0].text
 
 
+def test_build_ingestion_result_preserves_video_chapter_time_metadata() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# Overview\n\nGeneral summary.\n\n"
+                    "### Chapter 1 [00:00:12 - 00:01:05]\n\nRelevant transcript."
+                ),
+                metadata={"filename": "123.video"},
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    timed_nodes = [
+        node for node in result.index_nodes if "video_start_sec" in node.metadata
+    ]
+    assert len(timed_nodes) == 1
+    assert timed_nodes[0].metadata["video_start_sec"] == 12
+    assert timed_nodes[0].metadata["video_end_sec"] == 65
+
+
+def test_short_video_chapters_keep_distinct_time_metadata() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "### 预告片演员真名 ([00:00:00 - 00:00:06])\n"
+                    "> **本段摘要**：介绍演员真名。\n正文。\n\n---\n\n"
+                    "### 张凌赫误机趣事 ([00:00:06 - 00:00:15])\n"
+                    "> **本段摘要**：介绍机场广播趣事。\n正文。\n\n---\n\n"
+                    "### 林允使用本名 ([00:00:15 - 00:00:37])\n"
+                    "> **本段摘要**：介绍林允本名。\n正文。"
+                ),
+                metadata={"filename": "811.video"},
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    timed_nodes = [
+        node for node in result.index_nodes if "video_start_sec" in node.metadata
+    ]
+    assert [
+        (
+            node.metadata["video_start_sec"],
+            node.metadata["video_end_sec"],
+            node.metadata["video_segment_title"],
+        )
+        for node in timed_nodes
+    ] == [
+        (0, 6, "预告片演员真名"),
+        (6, 15, "张凌赫误机趣事"),
+        (15, 37, "林允使用本名"),
+    ]
+
+
 @pytest.mark.parametrize("file_extension", [".md", ".txt"])
 def test_build_ingestion_result_auto_unitizes_qa_documents(
     file_extension: str,

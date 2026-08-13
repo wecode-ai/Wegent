@@ -380,6 +380,17 @@ class ChatStartPayload(BaseModel):
     bot_name: Optional[str] = None
 
 
+class VideoSegmentReference(BaseModel):
+    """Time-addressable range in a referenced video document."""
+
+    id: Optional[str] = Field(None, description="Stable video segment ID")
+    start_sec: int = Field(..., ge=0, description="Segment start in seconds")
+    end_sec: int = Field(..., gt=0, description="Segment end in seconds")
+    score: Optional[float] = Field(None, description="Retrieval relevance score")
+    title: Optional[str] = Field(None, description="Video chapter title")
+    description: Optional[str] = Field(None, description="Video chapter summary")
+
+
 class SourceReference(BaseModel):
     """Reference to a knowledge base source document."""
 
@@ -390,6 +401,12 @@ class SourceReference(BaseModel):
     source_type: Optional[str] = Field(None, description="Provider source type")
     source_uri: Optional[str] = Field(None, description="Provider source URI")
     source_name: Optional[str] = Field(None, description="Provider source name")
+    document_id: Optional[int] = Field(
+        None, description="Internal document ID for media playback"
+    )
+    segments: Optional[List[VideoSegmentReference]] = Field(
+        None, description="Retrieved time ranges for a video source"
+    )
 
 
 class RetrievalSummaryPayload(BaseModel):

@@ -2354,6 +2354,7 @@ async def test_remove_runtime_workspace_dispatches_to_owned_device(
         user_id=test_user.id,
         request=RuntimeWorkspaceRemoveRequest(
             deviceId="device-1",
+            projectKey=" remote-project-id ",
             workspacePath="/Users/crystal/Documents/hello-0/",
             runtime="codex",
         ),
@@ -2367,6 +2368,7 @@ async def test_remove_runtime_workspace_dispatches_to_owned_device(
         method="runtime.workspaces.remove",
         payload={
             "runtime": "codex",
+            "projectKey": "remote-project-id",
             "workspacePath": "/Users/crystal/Documents/hello-0",
         },
         timeout_seconds=60,

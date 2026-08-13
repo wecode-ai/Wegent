@@ -90,6 +90,7 @@ import type {
   AutomationMutation,
   AutomationRun,
   AutomationRunListResponse,
+  AutomationSource,
 } from '@/types/automation'
 import type {
   WorkspaceFileEntry,
@@ -106,6 +107,10 @@ import {
 } from '@/tauri/localExecutor'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
+import {
+  runtimePermissionMode,
+  runtimePermissionProfile,
+} from '@/features/workbench/runtimePermissionMode'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
   codexModelPickerLabel,
@@ -1429,13 +1434,17 @@ function executionWithWorkspace(
 interface BuildLocalRuntimeExecutionRequestInput {
   taskId?: string | null
   runtime: string
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: RuntimeTaskCreateRequest['runtimePermissionMode']
   teamId: number
   title: string
   message: string
+  bot?: Array<Record<string, unknown>>
   turnSeed: number
   modelId?: string
   modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
@@ -1487,16 +1496,28 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
-  const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(
-      input.runtime,
-      input.modelId,
-      input.modelType,
-      input.modelOptions,
-      input.cloudModelGateway
-    ),
-    input.modelOptions
+  // The backend resolves gateway routing for cloud/public models in the claim
+  // payload; when present that config is authoritative and must not be
+  // rebuilt from the catalog entry (which would fall back to the local Codex
+  // account and route to chatgpt.com).
+  const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
+    input.runtime.trim().toLowerCase()
   )
+  const modelConfig =
+    input.modelConfig ??
+    (claudeRuntime && !input.modelId
+      ? {}
+      : applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            input.runtime,
+            input.modelId,
+            input.modelType,
+            input.modelOptions,
+            input.cloudModelGateway,
+            !claudeRuntime
+          ),
+          input.modelOptions
+        ))
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1533,7 +1554,11 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot: [],
+    bot: input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }],
+    ...(input.runtimeExecutablePath
+      ? { runtime_executable_path: input.runtimeExecutablePath }
+      : {}),
+    ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
@@ -1570,6 +1595,7 @@ function buildLocalRuntimeExecutionRequest(
     task_mode: 'code',
     attachments: localRuntimeAttachments(input.attachments, subtaskId),
     reasoning_config: reasoning,
+    runtime_permission_profile: runtimePermissionProfile(runtimePermissionMode(input.modelOptions)),
   }
 }
 
@@ -1719,13 +1745,17 @@ async function createLocalRuntimeTaskPayload(
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId: normalizedData.taskId,
       runtime: normalizedData.runtime,
+      runtimeExecutablePath: normalizedData.runtimeExecutablePath,
+      runtimePermissionMode: normalizedData.runtimePermissionMode,
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
+      bot: normalizedData.bot,
       turnSeed,
       modelId: normalizedData.modelId,
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       additionalContext: normalizedData.additionalContext,
@@ -1776,6 +1806,10 @@ function createLocalRuntimeSendPayload(
     taskId,
     ...(workspacePath ? { workspacePath } : {}),
   }
+  const runtime =
+    stringValue(normalizedAddress.runtime) ??
+    stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
+    'codex'
 
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
@@ -1788,7 +1822,7 @@ function createLocalRuntimeSendPayload(
       ...(collaborationMode ? { collaborationMode } : {}),
       executionRequest: buildLocalRuntimeExecutionRequest({
         taskId,
-        runtime: 'codex',
+        runtime,
         teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
         message: normalizedData.message,
@@ -1829,7 +1863,7 @@ function createLocalRuntimeSendPayload(
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
-      runtime: 'codex',
+      runtime,
       teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
       message: normalizedData.message,
@@ -2749,24 +2783,30 @@ function serializeLocalAutomationSchedule(
   return { type: 'one_time', execute_at: schedule.executeAt }
 }
 
-function withLocalAutomationSource(automation: Automation): Automation {
+function withAutomationSource(automation: Automation, source: AutomationSource): Automation {
   return {
     ...automation,
-    source: 'local',
+    source,
     schedule: normalizeLocalAutomationSchedule(
       automation.schedule as Automation['schedule'] | { type: 'one_time'; execute_at: string }
     ),
   }
 }
 
-function withLocalAutomationRunSource(run: AutomationRun): AutomationRun {
-  return { ...run, source: 'local', deviceId: run.deviceId ?? LOCAL_DEVICE_ID }
+function withAutomationRunSource(
+  run: AutomationRun,
+  source: AutomationSource,
+  deviceId: string
+): AutomationRun {
+  return { ...run, source, deviceId: run.deviceId ?? deviceId }
 }
 
-function createLocalAutomationApi(
+export function createAutomationApiFromIpc(
   request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
   requestWithLocalDevice: RequestWithLocalDevice,
-  options: RuntimeWorkIpcOptions
+  options: RuntimeWorkIpcOptions,
+  automationDeviceId = LOCAL_DEVICE_ID,
+  source: AutomationSource = 'local'
 ): NonNullable<WorkbenchServices['automationApi']> {
   const user = options.user ?? LOCAL_USER
   const resolveDeviceId =
@@ -2813,68 +2853,74 @@ function createLocalAutomationApi(
       const response = await request<{ items?: Automation[] }>(
         'runtime.automations.list',
         {},
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
-      return { items: (response.items ?? []).map(withLocalAutomationSource) }
+      return { items: (response.items ?? []).map(item => withAutomationSource(item, source)) }
     },
     async getAutomation(automationId: string) {
       const response = await request<{ automation: Automation }>(
         'runtime.automations.get',
         { automationId },
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
-      return { automation: withLocalAutomationSource(response.automation) }
+      return { automation: withAutomationSource(response.automation, source) }
     },
     async createAutomation(data: AutomationMutation) {
       const automation = await prepareAutomation(data)
       const response = await request<{ automation: Automation }>(
         'runtime.automations.create',
         { automation },
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
-      return { automation: withLocalAutomationSource(response.automation) }
+      return { automation: withAutomationSource(response.automation, source) }
     },
     async updateAutomation(_automationId: string, data: AutomationMutation) {
       const automation = await prepareAutomation(data)
       const response = await request<{ automation: Automation }>(
         'runtime.automations.update',
         { automation },
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
-      return { automation: withLocalAutomationSource(response.automation) }
+      return { automation: withAutomationSource(response.automation, source) }
     },
     deleteAutomation(automationId: string) {
       return request<{ deleted: boolean }>(
         'runtime.automations.delete',
         { automationId },
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
     },
     async toggleAutomation(automationId: string, enabled: boolean) {
       const response = await request<{ automation: Automation }>(
         'runtime.automations.toggle',
         { automationId, enabled },
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
-      return { automation: withLocalAutomationSource(response.automation) }
+      return { automation: withAutomationSource(response.automation, source) }
     },
     async runAutomationNow(automationId: string) {
       const response = await request<{ run: AutomationRun | null }>(
         'runtime.automations.run_now',
         { automationId },
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
       return {
-        run: response.run ? withLocalAutomationRunSource(response.run) : null,
+        run: response.run
+          ? withAutomationRunSource(response.run, source, automationDeviceId)
+          : null,
       }
     },
     async listAutomationRuns(automationId?: string): Promise<AutomationRunListResponse> {
       const response = await request<{ items?: AutomationRun[] }>(
         'runtime.automation_runs.list',
         automationId ? { automationId } : {},
-        LOCAL_DEVICE_ID
+        automationDeviceId
       )
-      return { items: (response.items ?? []).map(withLocalAutomationRunSource) }
+      return {
+        items: (response.items ?? []).map(item =>
+          withAutomationRunSource(item, source, automationDeviceId)
+        ),
+      }
     },
   }
 }
@@ -3061,7 +3107,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
-  const automationApi = createLocalAutomationApi(
+  const automationApi = createAutomationApiFromIpc(
     request,
     (method, params) => request(method, params as Record<string, unknown>),
     {

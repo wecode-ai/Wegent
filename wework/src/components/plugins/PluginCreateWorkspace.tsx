@@ -1,7 +1,7 @@
-import { Boxes, Plus } from 'lucide-react'
+import { Boxes, X } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
 import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -16,10 +16,7 @@ interface PluginCreateWorkspaceProps {
   topBarLeftActions?: ReactNode
 }
 
-export function PluginCreateWorkspace({
-  sidebarCollapsed = false,
-  topBarLeftActions,
-}: PluginCreateWorkspaceProps) {
+export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
   const createType =
@@ -43,6 +40,7 @@ export function PluginCreateWorkspace({
     selectProjectWorkspace,
     selectStandaloneDevice,
     sendCurrentInput,
+    startNewChat,
   } = useWorkbench()
   const [prompt, setPrompt] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -112,6 +110,15 @@ export function PluginCreateWorkspace({
     ]
   )
 
+  const dismissPluginCreator = () => {
+    setPrompt('')
+    setSubmitError(null)
+    projectChat.resetAttachments()
+    projectChat.setSelectedSkills([])
+    startNewChat()
+    navigateTo('/')
+  }
+
   useEffect(() => {
     focusComposerAtEnd(
       workspaceRef.current?.querySelector<HTMLElement>('[data-testid="plugin-create-prompt-input"]')
@@ -166,62 +173,31 @@ export function PluginCreateWorkspace({
 
   return (
     <main
+      ref={workspaceRef}
       data-testid="plugin-create-workspace"
-      className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-text-primary"
     >
-      <DesktopTopBar
-        testId="plugin-create-topbar"
-        className={[
-          'sticky top-0 z-30 h-12 bg-background/94 pl-20 pr-4 backdrop-blur-xl md:h-[52px] md:pr-7',
-          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
-        ].join(' ')}
-        left={
-          <>
-            {topBarLeftActions}
-            <button
-              type="button"
-              className="rounded-lg px-2 py-1 text-sm font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-              onClick={() => navigateTo('/plugins')}
-            >
-              {t('workbench.plugins_tab', '插件')}
-            </button>
-          </>
-        }
-        right={
-          <button
-            type="button"
-            data-testid="plugin-create-new-button"
-            aria-label={t('workbench.plugins_create', '创建')}
-            className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-            onClick={() => {
-              setPrompt('')
-              setSubmitError(null)
-              projectChat.resetAttachments()
-              navigateTo('/plugins/create')
-            }}
-          >
-            <Plus />
-          </button>
-        }
-      />
-      <section
-        ref={workspaceRef}
-        className="flex min-h-[calc(100vh-52px)] min-w-0 flex-col px-6 pb-2 pt-8"
-      >
-        <div className="flex min-h-0 flex-1 items-center justify-center pb-8">
-          <div className="mx-auto flex w-[min(46rem,calc(100%_-_2rem))] min-w-0 flex-col items-center">
-            <Boxes className="mb-5 h-9 w-9 text-text-muted/55" aria-hidden="true" />
-            <h1 className="mb-9 max-w-full text-center text-xl font-normal leading-9 tracking-normal text-text-primary/95">
-              {editPluginName
-                ? t('workbench.plugins_edit_prompt_title', '你想怎样修改这个插件？')
-                : createType === 'skill'
-                  ? t('workbench.plugins_create_skill_prompt_title', '你想创建一个什么技能？')
-                  : t('workbench.plugins_create_prompt_title', '我们应该在 Wegent 中构建什么？')}
-            </h1>
-          </div>
+      {topBarLeftActions ? (
+        <div className="pointer-events-none absolute left-4 top-1.5 z-chrome flex items-center gap-1">
+          <div className="pointer-events-auto">{topBarLeftActions}</div>
         </div>
+      ) : null}
 
-        <div className="mx-auto w-[min(46rem,calc(100%_-_2rem))] min-w-0 shrink-0">
+      <DesktopEmptyTaskLauncher
+        projectName={state.currentProject?.name}
+        onOpenProjectSelector={anchorElement => {
+          const projectButton = workspaceRef.current?.querySelector<HTMLButtonElement>(
+            '[data-testid="project-work-button"]'
+          )
+          if (projectButton) {
+            projectButton.click()
+            return
+          }
+          anchorElement.blur()
+        }}
+        onSelectSuggestion={setPrompt}
+        composerInputTestId="plugin-create-prompt-input"
+        composer={
           <ChatInput
             value={prompt}
             onChange={setPrompt}
@@ -229,13 +205,7 @@ export function PluginCreateWorkspace({
             disabled={isSubmitting}
             submitDisabled={!prompt.trim() || isSubmitting}
             error={submitError}
-            placeholder={
-              editPluginName
-                ? t('workbench.plugins_edit_prompt_placeholder', '描述要修改或新增的能力')
-                : createType === 'skill'
-                  ? t('workbench.plugins_create_skill_prompt_placeholder', '描述技能要完成的工作')
-                  : t('workbench.plugins_create_prompt_placeholder', '描述你想创建的插件')
-            }
+            placeholder={t('workbench.input_placeholder', '随心输入')}
             inputTestId="plugin-create-prompt-input"
             submitButtonTestId="plugin-create-submit-button"
             variant={isMobile ? 'compact' : 'desktop'}
@@ -247,15 +217,25 @@ export function PluginCreateWorkspace({
             inputLeadingContext={
               <span
                 data-testid="plugin-creator-context"
-                className="inline-flex shrink-0 items-center gap-1 text-sm font-normal text-focus"
+                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-focus/25 bg-focus/10 px-2 text-sm font-normal text-focus"
               >
                 <Boxes className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span>Plugin Creator</span>
+                <button
+                  type="button"
+                  data-testid="plugin-creator-context-dismiss"
+                  aria-label={t('workbench.cancel', '取消')}
+                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-sm text-focus/80 transition-colors hover:bg-focus/15 hover:text-focus"
+                  onClick={dismissPluginCreator}
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
               </span>
             }
+            onDismissInputLeadingContext={dismissPluginCreator}
           />
-        </div>
-      </section>
+        }
+      />
     </main>
   )
 }

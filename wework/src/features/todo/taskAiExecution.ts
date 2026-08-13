@@ -8,9 +8,9 @@ import type {
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { ModelOptions, ModelSelectionConfig, ModelType, UnifiedModel } from '@/types/api'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
 
 export interface TaskAiRuntimeBridge {
@@ -21,8 +21,12 @@ export interface TaskAiRuntimeBridge {
       modelId?: string | null
       collaborationMode?: 'default' | 'plan'
       cloudProjectId?: string
-      hiddenFromSidebar?: boolean
-      continuable?: boolean
+      origin?: {
+        type: 'board_comment'
+        cloudProjectId: string
+        loopItemId: string
+        rootCommentId?: string
+      }
       executionModel?: {
         modelId?: string | null
         modelType?: string | null
@@ -58,9 +62,18 @@ export interface TaskAiRuntimeBridge {
   ) => Promise<boolean>
 }
 
+function sessionDefinitelyUnavailable(error: string | null): boolean {
+  if (!error) return false
+  return /(?:thread|task|session).*(?:not found|不存在|已删除|不可用)|(?:not found|不存在).*(?:thread|task|session)/i.test(
+    error
+  )
+}
+
 export interface StartTaskAiRunInput {
   client: ProjectChatClient
-  services: Pick<WorkbenchServices, 'deliveryApi'>
+  services: Pick<WorkbenchServices, 'deliveryApi'> & {
+    chatStream?: WorkbenchServices['chatStream']
+  }
   runtime: TaskAiRuntimeBridge
   project: CloudProject
   task: CloudLoopItem
@@ -162,6 +175,40 @@ export async function startTaskAiRun({
   startFailedText,
 }: StartTaskAiRunInput): Promise<boolean> {
   const responseRef: { current: ProjectChatMessage | null } = { current: null }
+  // The executor can fail a turn asynchronously (lost thread, no model
+  // progress). The backend event relay is not guaranteed to close the
+  // streaming comment, so surface the failure from the sender's own runtime
+  // stream: fail the comment and raise the error instead of leaving the reply
+  // stuck at "正在处理" with no feedback.
+  const watchRuntimeFailure = (deviceId: string, runtimeTaskId: string) => {
+    if (!services.chatStream?.subscribe) return
+    let finished = false
+    const unsubscribe = services.chatStream.subscribe({
+      scope: { deviceId, taskId: runtimeTaskId },
+      onChatError: payload => {
+        if (finished || payload.taskId !== runtimeTaskId) return
+        finished = true
+        unsubscribe()
+        const message = responseRef.current
+        if (message) {
+          void client
+            .failAgentResponse({
+              projectId: project.id,
+              taskId: task.id,
+              messageId: message.messageId,
+              error: payload.error,
+            })
+            .catch(() => undefined)
+        }
+        onError(payload.error)
+      },
+      onChatDone: payload => {
+        if (finished || payload.taskId !== runtimeTaskId) return
+        finished = true
+        unsubscribe()
+      },
+    })
+  }
   const commentModel = selectedModel ?? null
   const resolvedAgentModel = agent.model
     ? (models?.find(model => model.name === agent.model) ?? null)
@@ -221,6 +268,44 @@ export async function startTaskAiRun({
     let continuationRejectedReason: string | null = null
     const continuationAttachmentIds = remoteAttachmentIds(attachments ?? [])
     const continuationAttachments = localRuntimeAttachments(attachments ?? [])
+    // Open the activity before the executor can emit events. An instant
+    // terminal failure (for example the bound session was destroyed and the
+    // turn fails with "thread not found") must find a streaming message to
+    // close; otherwise the reply is left "processing" forever because the
+    // failure event races ahead of the comment row.
+    let pendingMessage: ProjectChatMessage | null = null
+    try {
+      pendingMessage = await startTaskAiResponse(client, {
+        projectId: project.id,
+        taskId: task.id,
+        triggerMessageId: trigger?.messageId,
+        agentId: agent.id,
+        runtimeDeviceId: replyTo.runtimeDeviceId,
+        runtimeTaskId: replyTo.runtimeTaskId,
+        prompt,
+        autoRetry,
+        model: usedModel,
+      })
+    } catch (cause) {
+      // Without an activity row the terminal event would be dropped; surface
+      // the failure instead of sending into an un-tracked session.
+      onError(cause instanceof Error ? cause.message : startFailedText)
+      return false
+    }
+    responseRef.current = pendingMessage
+    const closePendingMessage = async (error: string) => {
+      if (!pendingMessage) return
+      try {
+        await client.failAgentResponse({
+          projectId: project.id,
+          taskId: task.id,
+          messageId: pendingMessage.messageId,
+          error,
+        })
+      } catch {
+        // The send itself failed; closing the placeholder is best-effort.
+      }
+    }
     const continued = await runtime.sendRuntimePaneMessage(
       {
         address: {
@@ -249,36 +334,30 @@ export async function startTaskAiRun({
       }
     )
     if (continued) {
-      try {
-        responseRef.current = await startTaskAiResponse(client, {
-          projectId: project.id,
-          taskId: task.id,
-          triggerMessageId: trigger?.messageId,
-          agentId: agent.id,
-          runtimeDeviceId: replyTo.runtimeDeviceId,
-          runtimeTaskId: replyTo.runtimeTaskId,
-          prompt,
-          autoRetry,
-          model: usedModel,
-        })
-        onMessages(responseRef.current ? [responseRef.current] : [])
-        await refreshTask(services, task.id, onTaskUpdated)
-        return true
-      } catch (cause) {
-        // The runtime accepted the follow-up turn; the reply row may already be
-        // attached, so surface the failure and let the running turn write back.
-        onError(cause instanceof Error ? cause.message : startFailedText)
-        return false
-      }
+      watchRuntimeFailure(replyTo.runtimeDeviceId, replyTo.runtimeTaskId)
+      onMessages(responseRef.current ? [responseRef.current] : [])
+      await refreshTask(services, task.id, onTaskUpdated)
+      return true
     }
     if (continuationRejectedReason && /running|执行中/i.test(continuationRejectedReason)) {
       // The bound turn is still active; starting a fresh run would double
       // execute the same reply.
+      await closePendingMessage(continuationRejectedReason)
       onError(continuationRejectedReason)
       return false
     }
+    const rejection = continuationRejectedReason ?? startFailedText
+    await closePendingMessage(rejection)
+    if (!sessionDefinitelyUnavailable(continuationRejectedReason)) {
+      // A transport failure is ambiguous: the executor may have accepted the
+      // turn before the acknowledgement was lost. Starting another session
+      // here could execute the same comment twice. Rebuild only when the
+      // runtime explicitly confirms that the old session no longer exists.
+      onError(rejection)
+      return false
+    }
     // Fall through silently: the bound session is gone or its device is
-    // unavailable, so start a fresh hidden run for this new floor below.
+    // unavailable, so start a fresh persistent run for this new floor below.
   }
 
   const address = await runtime.createProjectRuntimeTask(prompt, {
@@ -287,8 +366,14 @@ export async function startTaskAiRun({
     ...(modelSelection ? { modelSelection } : {}),
     collaborationMode: 'default',
     cloudProjectId: String(project.id),
-    hiddenFromSidebar: true,
-    continuable: true,
+    origin: {
+      type: 'board_comment',
+      cloudProjectId: String(project.id),
+      loopItemId: String(task.id),
+      ...(threadRootId || trigger?.messageId
+        ? { rootCommentId: threadRootId ?? trigger?.messageId }
+        : {}),
+    },
     ...(deviceId ? { deviceId } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
     // When a lost session is rebuilt for a reply, attach only the owning
@@ -321,6 +406,9 @@ export async function startTaskAiRun({
       await refreshTask(services, task.id, onTaskUpdated)
     },
   })
+  if (address) {
+    watchRuntimeFailure(address.deviceId, address.taskId)
+  }
   if (!address) {
     if (responseRef.current) {
       try {

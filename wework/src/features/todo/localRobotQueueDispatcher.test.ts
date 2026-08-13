@@ -51,6 +51,9 @@ function services(
     fail?: ReturnType<typeof vi.fn>
     recoverStale?: ReturnType<typeof vi.fn>
     createRuntimeTask?: ReturnType<typeof vi.fn>
+    cloudClaimNext?: ReturnType<typeof vi.fn>
+    runtimeStart?: ReturnType<typeof vi.fn>
+    runtimeWork?: Array<Record<string, unknown>>
     devices?: Array<{ device_id: string; device_type?: string }>
     listDevices?: ReturnType<typeof vi.fn>
   } = {}
@@ -64,12 +67,15 @@ function services(
     vi.fn(async () => ({
       accepted: true,
       deviceId: 'local-device',
-      taskId: 'codex-queue-1-123',
+      taskId: 'codex-queue-1',
       workspacePath: '/tmp/workspace',
     }))
   const listDevices =
     overrides.listDevices ??
     vi.fn(async () => overrides.devices ?? [{ device_id: 'local-device', device_type: 'local' }])
+  const cloudClaimNext = overrides.cloudClaimNext ?? vi.fn(async () => null)
+  const runtimeStart = overrides.runtimeStart ?? vi.fn(async () => execution({ status: 'running' }))
+  const getHomeDirectory = vi.fn(async () => '/home/wework')
   return {
     services: {
       localLoopItemExecutionApi: {
@@ -82,16 +88,38 @@ function services(
         fail,
         recoverStale,
       },
+      projectAutomationApi: {
+        claimNext: cloudClaimNext,
+        heartbeat,
+        runtimeStart,
+        complete: vi.fn(),
+        fail,
+      },
       runtimeWorkApi: {
         createRuntimeTask,
+        listRuntimeWork: vi.fn(async () => ({
+          projects: overrides.runtimeWork ?? [],
+          chats: [],
+          totalTasks: 0,
+        })),
       },
       deviceApi: {
         listDevices,
-        getHomeDirectory: vi.fn(async () => '/home/wework'),
+        getHomeDirectory,
         createDirectory: vi.fn(async () => undefined),
       },
     } as unknown as WorkbenchServices,
-    mocks: { claimNext, heartbeat, fail, recoverStale, createRuntimeTask, listDevices },
+    mocks: {
+      claimNext,
+      heartbeat,
+      fail,
+      recoverStale,
+      createRuntimeTask,
+      listDevices,
+      cloudClaimNext,
+      runtimeStart,
+      getHomeDirectory,
+    },
   }
 }
 
@@ -156,11 +184,142 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.advanceTimersByTimeAsync(0)
     // Initial heartbeat after createRuntimeTask.
-    expect(heartbeat).toHaveBeenCalledWith(1, 'local-device', 'codex-queue-1-123', 300)
+    expect(heartbeat).toHaveBeenCalledWith(1, 'local-device', 'codex-queue-1', 300)
     const initialCalls = heartbeat.mock.calls.length
     // 60s later the keeper heartbeats again.
     await vi.advanceTimersByTimeAsync(60_000)
     expect(heartbeat.mock.calls.length).toBeGreaterThan(initialCalls)
+    stop()
+  })
+
+  it('uses the backend runtime identity and reports the cloud runtime start', async () => {
+    const cloudClaimNext = vi
+      .fn()
+      .mockResolvedValueOnce(
+        execution({
+          runtime_task_id: 'codex-queue-7',
+          execution_payload: {
+            message: 'backend robot prompt',
+            teamId: 3,
+            additionalContext: {
+              projectChat: { kind: 'application', value: 'backend bound-task context' },
+            },
+            executionRequest: {
+              bot: [{ id: 'LA-1', name: 'Bot', shell_type: 'codex' }],
+              model_config: {
+                base_url: 'https://gateway.example/proxy',
+                api_key: 'token',
+              },
+            },
+          },
+        })
+      )
+      .mockResolvedValue(null)
+    const runtimeStart = vi.fn(async () => execution({ status: 'running' }))
+    const createRuntimeTask = vi.fn(async () => ({
+      accepted: true,
+      deviceId: 'local-device',
+      taskId: 'codex-queue-7',
+      workspacePath: '/tmp/workspace',
+    }))
+    const { services: svc, mocks } = services({
+      cloudClaimNext,
+      runtimeStart,
+      createRuntimeTask,
+      claimNext: vi.fn(async () => null),
+    })
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
+    expect(call.taskId).toBe('codex-queue-7')
+    expect(call.message).toBe('backend robot prompt')
+    expect(call.teamId).toBe(3)
+    expect(call.bot).toEqual([{ id: 'LA-1', name: 'Bot', shell_type: 'codex' }])
+    expect(call.modelConfig).toEqual({
+      base_url: 'https://gateway.example/proxy',
+      api_key: 'token',
+    })
+    expect(call.ephemeral).toBeUndefined()
+    expect(call.origin).toEqual({
+      type: 'board_task',
+      cloudProjectId: 'P-1',
+      loopItemId: 'T-1',
+    })
+    const context = call.additionalContext as Record<string, { kind: string; value: string }>
+    expect(context.projectChat.value).toBe('backend bound-task context')
+    expect(runtimeStart).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, cloud_project_id: 'P-1' }),
+      'local-device',
+      'codex-queue-7',
+      'backend robot prompt',
+      null
+    )
+    stop()
+  })
+
+  it('runs in the bound project workspace instead of a fresh conversation directory', async () => {
+    const claimNext = vi
+      .fn()
+      .mockResolvedValueOnce(execution({ execution_payload: { local_project_id: 7 } }))
+      .mockResolvedValue(null)
+    const runtimeWork = [
+      {
+        project: {
+          key: 'a2a',
+          id: 7,
+          name: 'A2A',
+          kind: 'local',
+          source: 'local_project',
+          roots: [{ path: '/Users/me/A2A' }],
+        },
+        deviceWorkspaces: [
+          { deviceId: 'local-device', available: true, workspacePath: '/Users/me/A2A', tasks: [] },
+        ],
+        totalTasks: 0,
+      },
+    ]
+    const createRuntimeTask = vi.fn(async () => ({
+      accepted: true,
+      deviceId: 'local-device',
+      taskId: 'codex-queue-1',
+      workspacePath: '/Users/me/A2A',
+      runtime: 'codex',
+    }))
+    const { services: svc, mocks } = services({
+      claimNext,
+      createRuntimeTask,
+      runtimeWork,
+    })
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
+    expect(call.workspacePath).toBe('/Users/me/A2A')
+    expect(call.projectId).toBe(7)
+    expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('fails instead of falling back when the bound project is unavailable', async () => {
+    const claimNext = vi
+      .fn()
+      .mockResolvedValueOnce(execution({ execution_payload: { local_project_id: 7 } }))
+      .mockResolvedValue(null)
+    const fail = vi.fn(async () => execution({ status: 'failed' }))
+    const { services: svc, mocks } = services({ claimNext, fail, runtimeWork: [] })
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    expect(mocks.createRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
+    expect(fail).toHaveBeenCalledWith(
+      1,
+      expect.stringContaining('Bound local project 7 is unavailable')
+    )
     stop()
   })
 

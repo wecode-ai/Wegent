@@ -52,6 +52,7 @@ import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
+import { pluginNameInitial } from '@/components/plugins/plugin-assets'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
@@ -1697,7 +1698,7 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
-const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\((https?:\/\/[^\s)\]]+)\)/g
+const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\(([a-z][a-z0-9+.-]*:\/\/[^\s)\]]+)\)/gi
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1807,6 +1808,13 @@ function renderUserContent(
             alt=""
             className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
           />
+        ) : mentionKind === 'plugin' || mentionKind === 'app' ? (
+          <span
+            data-testid={iconTestId}
+            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-blue-600/10 text-xs font-medium leading-none text-blue-600"
+          >
+            <span className="scale-75">{pluginNameInitial(mentionName)}</span>
+          </span>
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}

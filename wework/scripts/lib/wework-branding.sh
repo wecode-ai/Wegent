@@ -6,9 +6,11 @@ wework_prepare_brand_config() {
   local enable_devtools="$3"
   local output_config="$4"
   local input_config="${5:-}"
+  local platform_config="${6:-}"
 
   BRAND_CONFIG="$brand_config" \
   BASE_CONFIG="$wework_dir/src-tauri/tauri.conf.json" \
+  PLATFORM_CONFIG="$platform_config" \
   ENABLE_DEVTOOLS="$enable_devtools" \
   OUTPUT_CONFIG="$output_config" \
   INPUT_CONFIG="$input_config" \
@@ -54,6 +56,14 @@ if brand:
         raise SystemExit("identifier may only contain letters, numbers, '.', '_' and '-'")
 
 windows = base_config.get("app", {}).get("windows", [])
+platform_config_path = os.environ["PLATFORM_CONFIG"]
+if platform_config_path:
+    with open(platform_config_path, "r", encoding="utf-8") as handle:
+        platform_config = json.load(handle)
+    platform_windows = platform_config.get("app", {}).get("windows", [])
+    # Tauri merges the platform config over base by replacing the window array wholesale.
+    if platform_windows:
+        windows = platform_windows
 if brand:
     config.update(
         {

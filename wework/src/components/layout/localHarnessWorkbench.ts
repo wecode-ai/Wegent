@@ -13,3 +13,7 @@ export interface LocalHarnessWorkbenchSession {
   pluginRoots?: string[]
   proxyToken?: string
 }
+
+export interface LocalHarnessSessionRegistrationOptions {
+  activate?: boolean
+}

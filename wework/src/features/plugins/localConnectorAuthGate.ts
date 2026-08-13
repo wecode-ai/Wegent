@@ -102,6 +102,21 @@ export function messageNeedsConnectorPreflight(text: string | null | undefined):
   return text.match(PLUGIN_URI_PATTERN) !== null || resolveLocalConnectorAuthHint(text) !== null
 }
 
+/** Plugin names referenced by explicit `plugin://` mentions in composer text. */
+export function listMentionedPluginNames(text: string | null | undefined): string[] {
+  if (!text) return []
+  const names = new Set<string>()
+  for (const uri of text.match(PLUGIN_URI_PATTERN) ?? []) {
+    const parsed = parsePluginUri(uri)
+    if (parsed?.pluginName) names.add(parsed.pluginName)
+  }
+  return Array.from(names)
+}
+
+export function installedPluginMatchesName(plugin: InstalledPlugin, pluginName: string): boolean {
+  return pluginMatchesName(plugin, pluginName)
+}
+
 export function toLocalConnectorAuthTarget(
   requirement: LocalConnectorRequirement
 ): LocalConnectorAuthTarget {
@@ -189,14 +204,21 @@ function pluginHasLocalConnector(plugin: InstalledPlugin): boolean {
 /**
  * `plugin/installed` summaries omit connector localAuth. Enrich from plugin/read
  * so mid-task QR resume can resolve health/start/poll commands.
+ *
+ * Callers on the send path must pass `shouldEnrich` so only mentioned plugins are
+ * detailed — never fan out `plugin/read` (or worse, `plugin/list`) across the
+ * whole install set before a conversation can open.
  */
 export async function enrichInstalledPluginsForLocalAuth(
   plugins: InstalledPlugin[],
-  readDetail: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
+  readDetail: (plugin: InstalledPlugin) => Promise<InstalledPlugin>,
+  options?: { shouldEnrich?: (plugin: InstalledPlugin) => boolean }
 ): Promise<InstalledPlugin[]> {
+  const shouldEnrich = options?.shouldEnrich
   return Promise.all(
     plugins.map(async plugin => {
       if (pluginHasLocalConnector(plugin)) return plugin
+      if (shouldEnrich && !shouldEnrich(plugin)) return plugin
       try {
         const detailed = await readDetail(plugin)
         return pluginHasLocalConnector(detailed) ? detailed : plugin

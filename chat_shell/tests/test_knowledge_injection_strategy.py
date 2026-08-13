@@ -436,6 +436,41 @@ class TestKnowledgeBaseTool:
         assert result_dict["chunks_used"] == 1
 
     @pytest.mark.asyncio
+    async def test_format_direct_injection_result_keeps_plain_source(self):
+        tool = KnowledgeBaseTool()
+        injection_result = {
+            "injected_content": "Video content",
+            "chunks_used": [
+                {
+                    "content": (
+                        "### 章节 1：开场 ([00:00:06 - 00:00:15])\n"
+                        "> **本段摘要**：视频开场内容。"
+                    ),
+                    "source": "811.video.md",
+                    "score": 0.9,
+                    "knowledge_base_id": 211,
+                    "document_id": "llama-index-uuid",
+                    "metadata": {
+                        "doc_ref": "811",
+                        "video_segment_id": "segment_6_15",
+                        "video_start_sec": 6,
+                        "video_end_sec": 15,
+                    },
+                }
+            ],
+            "decision_details": {"strategy": "all_or_nothing"},
+        }
+
+        result = json.loads(
+            await tool._format_direct_injection_result(injection_result, "query")
+        )
+
+        source = result["sources"][0]
+        assert source["source_type"] is None
+        assert source["document_id"] == "llama-index-uuid"
+        assert "segments" not in source
+
+    @pytest.mark.asyncio
     async def test_format_rag_result(self):
         """Test _format_rag_result."""
         tool = KnowledgeBaseTool()
@@ -453,6 +488,119 @@ class TestKnowledgeBaseTool:
         assert result_dict["mode"] == "rag_retrieval"
         assert result_dict["count"] == 2
         assert len(result_dict["sources"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_format_rag_result_adds_video_segments_after_top_k(self):
+        tool = KnowledgeBaseTool()
+        kb_chunks = {
+            1: [
+                {
+                    "content": (
+                        "### 章节 2：张凌赫的机场广播趣事 ([00:00:10 - 00:00:20])\n"
+                        "> **本段摘要**：回顾机场广播催促登机的经典事件。"
+                    ),
+                    "source": "123.video.md",
+                    "score": 0.9,
+                    "document_id": 123,
+                    "metadata": {
+                        "video_segment_id": "segment_10_20",
+                        "video_start_sec": 10,
+                        "video_end_sec": 20,
+                        "video_segment_title": "元数据中的片段标题",
+                        "video_segment_description": "元数据中的片段摘要。",
+                    },
+                },
+                {
+                    "content": "Ordinary chapter",
+                    "source": "notes.md",
+                    "score": 0.8,
+                    "document_id": 124,
+                    "metadata": {},
+                },
+            ]
+        }
+
+        result = json.loads(await tool._format_rag_result(kb_chunks, "query", 1))
+
+        assert len(result["sources"]) == 1
+        assert result["sources"][0]["source_type"] == "wegent_video_segment"
+        assert result["sources"][0]["document_id"] == 123
+        assert result["sources"][0]["segments"][0]["start_sec"] == 10
+        assert result["sources"][0]["segments"][0]["title"] == "元数据中的片段标题"
+        assert result["sources"][0]["segments"][0]["description"] == (
+            "元数据中的片段摘要。"
+        )
+
+    @pytest.mark.asyncio
+    async def test_format_rag_result_keeps_same_name_documents_separate(self):
+        tool = KnowledgeBaseTool()
+        kb_chunks = {
+            211: [
+                {
+                    "content": "First video chapter",
+                    "source": "chapter.video.md",
+                    "score": 0.9,
+                    "document_id": "uuid-a",
+                    "knowledge_base_id": 211,
+                    "metadata": {
+                        "doc_ref": "811",
+                        "video_start_sec": 0,
+                        "video_end_sec": 10,
+                    },
+                },
+                {
+                    "content": "Second video chapter",
+                    "source": "chapter.video.md",
+                    "score": 0.8,
+                    "document_id": "uuid-b",
+                    "knowledge_base_id": 211,
+                    "metadata": {
+                        "doc_ref": "812",
+                        "video_start_sec": 10,
+                        "video_end_sec": 20,
+                    },
+                },
+            ]
+        }
+
+        result = json.loads(await tool._format_rag_result(kb_chunks, "query", 10))
+
+        assert len(result["sources"]) == 2
+        assert {source["document_id"] for source in result["sources"]} == {811, 812}
+        assert all(
+            source["source_type"] == "wegent_video_segment"
+            for source in result["sources"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_format_rag_result_does_not_upgrade_non_integer_document_id(self):
+        tool = KnowledgeBaseTool()
+        uuid_doc_id = "fa6d3616-a5a6-4b9b-8cec-a0a4171ae13e"
+        kb_chunks = {
+            1: [
+                {
+                    "content": (
+                        "### 章节 1：开场 (00:00 - 00:06)\n"
+                        "> **本段摘要**：短视频开场内容。"
+                    ),
+                    "source": "811.video.md",
+                    "score": 0.9,
+                    "document_id": uuid_doc_id,
+                    "metadata": {
+                        "video_segment_id": "segment_0_6",
+                        "video_start_sec": 0,
+                        "video_end_sec": 6,
+                    },
+                },
+            ]
+        }
+
+        result = json.loads(await tool._format_rag_result(kb_chunks, "query", 1))
+
+        assert len(result["sources"]) == 1
+        assert result["sources"][0]["source_type"] is None
+        assert result["sources"][0]["document_id"] == uuid_doc_id
+        assert "segments" not in result["sources"][0]
 
     @pytest.mark.asyncio
     async def test_restricted_mode_no_rag_does_not_recommend_document_tools(self):

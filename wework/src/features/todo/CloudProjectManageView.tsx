@@ -9,11 +9,14 @@ import type {
   CloudUserSearchItem,
 } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
+import { waitForDwsAuthentication } from './dwsAuth'
 import {
   parseDingTalkAITableLink,
   repositoryAddress,
@@ -22,9 +25,6 @@ import {
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 type BoardStatuses = NonNullable<CloudProject['board_config']>['statuses']
-
-const DWS_AUTH_POLL_INTERVAL_MS = 750
-const DWS_AUTH_POLL_ATTEMPTS = 160
 
 function configText(project: CloudProject, key: string): string {
   const value = (project.provider_config as Record<string, unknown>)[key]
@@ -45,15 +45,6 @@ function initialDisplay(
   )
 }
 
-async function waitForDwsAuthentication(dwsApi: DwsApi): Promise<DwsAuthStatus> {
-  for (let attempt = 0; attempt < DWS_AUTH_POLL_ATTEMPTS; attempt += 1) {
-    await new Promise(resolve => window.setTimeout(resolve, DWS_AUTH_POLL_INTERVAL_MS))
-    const status = await dwsApi.authStatus()
-    if (status.authenticated && status.token_valid !== false) return status
-  }
-  throw new Error('钉钉授权等待超时，请重试。')
-}
-
 export function CloudProjectManageView({
   api,
   aitableApi,
@@ -69,6 +60,7 @@ export function CloudProjectManageView({
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
 }) {
+  const { t } = useTranslation('common')
   const [version, setVersion] = useState(project.version)
   const [error, setError] = useState<string | null>(null)
   const [members, setMembers] = useState<CloudProjectMember[]>([])
@@ -481,15 +473,24 @@ export function CloudProjectManageView({
                         <option value="Developer">Developer</option>
                         <option value="Reporter">Reporter</option>
                       </select>
-                      <button
-                        type="button"
-                        data-testid={`cloud-project-member-remove-${member.user_id}`}
-                        onClick={() => void removeMember(member)}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-red-600"
-                        aria-label={`移除 ${member.user_name}`}
+                      <Tooltip
+                        label={t('todo.remove_member', '移除 {{name}}', {
+                          name: member.user_name,
+                        })}
+                        align="end"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                        <button
+                          type="button"
+                          data-testid={`cloud-project-member-remove-${member.user_id}`}
+                          onClick={() => void removeMember(member)}
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-background hover:text-red-600"
+                          aria-label={t('todo.remove_member', '移除 {{name}}', {
+                            name: member.user_name,
+                          })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </Tooltip>
                     </>
                   )}
                 </div>
@@ -601,16 +602,24 @@ export function CloudProjectManageView({
                     onKeyDown={event => event.key === 'Enter' && void renameTag(tag)}
                     className="h-6 w-28 bg-transparent px-1 text-sm outline-none"
                   />
-                  <button type="button" onClick={() => void renameTag(tag)} aria-label="确认重命名">
-                    <Check className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRenamingTag(null)}
-                    aria-label="取消重命名"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <Tooltip label={t('todo.confirm_rename', '确认重命名')}>
+                    <button
+                      type="button"
+                      onClick={() => void renameTag(tag)}
+                      aria-label={t('todo.confirm_rename', '确认重命名')}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label={t('todo.cancel_rename', '取消重命名')}>
+                    <button
+                      type="button"
+                      onClick={() => setRenamingTag(null)}
+                      aria-label={t('todo.cancel_rename', '取消重命名')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </Tooltip>
                 </span>
               ) : (
                 <span

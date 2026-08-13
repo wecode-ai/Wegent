@@ -216,6 +216,77 @@ async function verifyWorkspaceDocumentTabs(control) {
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
 }
 
+async function reloadMainWindow(control, errorMessage) {
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    errorMessage
+  )
+}
+
+async function verifyDefaultWorkspaceStartupTab(control) {
+  await control.command('navigate', 'body', { value: '/settings' })
+  await control.command('waitFor', '[data-testid="general-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="general-default-workspace-tab-board-button"]'
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="general-default-workspace-tab-board-button"][aria-pressed="true"]',
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(control, 'workspace-startup-tab-01-board-selected.png')
+
+  await control.command('navigate', 'body', { value: '/' })
+  await reloadMainWindow(
+    control,
+    'The Wework WebView did not reconnect after selecting Project space as the startup tab'
+  )
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    text: '项目空间',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-startup-tab-02-board-active.png')
+
+  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('navigate', 'body', { value: '/settings' })
+  await control.command('waitFor', '[data-testid="general-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="general-default-workspace-tab-task-button"]'
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="general-default-workspace-tab-task-button"][aria-pressed="true"]',
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await reloadMainWindow(
+    control,
+    'The Wework WebView did not reconnect after restoring Tasks as the startup tab'
+  )
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-startup-tab-03-task-restored.png')
+}
+
 async function configureDefaultProjectSpaceAssociation(control, localProjectId) {
   await ensureExperimentalFeaturesEnabled(control)
   const taskTabTestId = await control.command(
@@ -268,7 +339,7 @@ async function configureDefaultProjectSpaceAssociation(control, localProjectId) 
     WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
-    text: '加入看板 · Task Follow-up Board',
+    text: 'Task Follow-up Board',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="add-context-button"]')
@@ -709,6 +780,7 @@ export {
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
   verifyWorkspaceDocumentTabs,
+  verifyDefaultWorkspaceStartupTab,
   configureDefaultProjectSpaceAssociation,
   verifyExplicitlyTrackedTask,
   workspaceTabIds,

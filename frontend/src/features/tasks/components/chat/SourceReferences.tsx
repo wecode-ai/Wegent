@@ -11,7 +11,7 @@
  * Shows document titles with index numbers (e.g., [1], [2], [3]).
  */
 
-import React from 'react'
+import React, { useSyncExternalStore } from 'react'
 import { ExternalLink, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RetrievalSummaryPayload, SourceReference } from '@/types/socket'
@@ -19,6 +19,8 @@ import type { RetrievalSummaryPayload, SourceReference } from '@/types/socket'
 export type ExternalSourceOpener = (source: SourceReference) => React.ReactNode
 
 const externalSourceOpeners = new Map<string, ExternalSourceOpener>()
+const externalSourceOpenerListeners = new Set<() => void>()
+let externalSourceOpenerVersion = 0
 
 export function registerExternalSourceOpener(
   sourceType: string,
@@ -26,10 +28,21 @@ export function registerExternalSourceOpener(
 ): void {
   if (!sourceType || typeof opener !== 'function') return
   externalSourceOpeners.set(sourceType, opener)
+  externalSourceOpenerVersion += 1
+  externalSourceOpenerListeners.forEach(listener => listener())
 }
 
 export function getExternalSourceOpener(sourceType: string): ExternalSourceOpener | undefined {
   return externalSourceOpeners.get(sourceType)
+}
+
+function subscribeExternalSourceOpeners(listener: () => void): () => void {
+  externalSourceOpenerListeners.add(listener)
+  return () => externalSourceOpenerListeners.delete(listener)
+}
+
+function getExternalSourceOpenerVersion(): number {
+  return externalSourceOpenerVersion
 }
 
 interface SourceReferencesProps {
@@ -68,6 +81,11 @@ function SourceReferenceItem({
   openLabel: string
   unavailableLabel: string
 }) {
+  useSyncExternalStore(
+    subscribeExternalSourceOpeners,
+    getExternalSourceOpenerVersion,
+    getExternalSourceOpenerVersion
+  )
   const label = source.title || source.source_name || source.source_id || String(source.index)
   const sourceUri = source.source_uri
   const opener = source.source_type ? getExternalSourceOpener(source.source_type) : undefined
@@ -200,9 +218,15 @@ export function SourceReferences({
                 {sources.map((source, position) => (
                   <div
                     key={getSourceReferenceKey(source, position)}
-                    className="flex items-baseline gap-1 min-w-0"
+                    className={
+                      source.source_type === 'wegent_video_segment'
+                        ? 'w-full min-w-0'
+                        : 'flex min-w-0 items-baseline gap-1'
+                    }
                   >
-                    <span className="font-mono text-primary">[{source.index}]</span>
+                    {source.source_type !== 'wegent_video_segment' && (
+                      <span className="font-mono text-primary">[{source.index}]</span>
+                    )}
                     <SourceReferenceItem
                       source={source}
                       openLabel={t('sourceReferences.openSource')}

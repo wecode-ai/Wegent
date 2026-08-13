@@ -874,10 +874,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             logoDark: candidate.app.logoUrlDark,
             appearanceMode,
           })
-          registerComposerMentionIcon(candidate.reference, {
-            url: logo.url,
-            contrastPad: logo.contrastPad,
-          })
+          if (logo.source === 'provided' && logo.url) {
+            registerComposerMentionIcon(candidate.reference, {
+              url: logo.url,
+              contrastPad: logo.contrastPad,
+            })
+          }
         }
         const replacement = replaceComposerMentionTrigger(
           snapshot.value,
@@ -888,7 +890,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
         commitEditorValue(replacement.value, replacement.cursor)
         if (candidate.kind === 'app') {
-          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
+          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates, candidate.app)
         }
         closeAutocompleteMenu()
         textareaRef.current?.focus()
@@ -1135,22 +1137,40 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       }
     }, [])
 
+    const pendingTrialFocusExpectedRef = useRef<string | null>(null)
+
+    const focusTrialComposer = useCallback(() => {
+      const editor = editorRef.current
+      if (!editor) return
+      editor.setValue(valueRef.current, valueRef.current.length)
+      editor.focus()
+      closeAutocompleteMenu()
+    }, [closeAutocompleteMenu])
+
     useEffect(() => {
       const handleFocusRequest = (event: Event) => {
         const detail = (event as CustomEvent<{ expectedValue?: string }>).detail
-        if (detail?.expectedValue && detail.expectedValue !== valueRef.current) return
-        const editor = editorRef.current
-        if (!editor) return
-        editor.setValue(valueRef.current, valueRef.current.length)
-        editor.focus()
-        closeAutocompleteMenu()
+        const expectedValue = detail?.expectedValue
+        if (expectedValue && expectedValue !== valueRef.current) {
+          pendingTrialFocusExpectedRef.current = expectedValue
+          return
+        }
+        pendingTrialFocusExpectedRef.current = null
+        focusTrialComposer()
       }
 
       window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
       return () => {
         window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
       }
-    }, [closeAutocompleteMenu])
+    }, [focusTrialComposer])
+
+    useEffect(() => {
+      const expectedValue = pendingTrialFocusExpectedRef.current
+      if (!expectedValue || expectedValue !== value) return
+      pendingTrialFocusExpectedRef.current = null
+      focusTrialComposer()
+    }, [focusTrialComposer, value])
 
     useEffect(() => {
       let focusFrame: number | null = null

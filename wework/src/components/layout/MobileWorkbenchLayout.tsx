@@ -173,6 +173,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const paneIsBusy = paneSession.status.isBusy
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
+  const currentRuntimeUsesCodex =
+    (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
+    'codex'
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
     paneSession.status.sendPhase
@@ -233,6 +236,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
   const canEditLastUserMessage = Boolean(
     currentRuntimeTask &&
+    currentRuntimeUsesCodex &&
     (activeDevice?.device_type === 'local' || activeDeviceId === 'local-device') &&
     !paneSession.status.isBusy
   )
@@ -357,15 +361,17 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     availableWidth={0}
                     compact
                   />
-                  <button
-                    type="button"
-                    data-testid="mobile-fork-runtime-task-button"
-                    className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
-                    aria-label={t('workbench.task_fork_title', '复制任务')}
-                    onClick={() => setForkDialogOpen(true)}
-                  >
-                    <ArrowLeftRight className="h-5 w-5" />
-                  </button>
+                  {currentRuntimeUsesCodex && (
+                    <button
+                      type="button"
+                      data-testid="mobile-fork-runtime-task-button"
+                      className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                      aria-label={t('workbench.task_fork_title', '复制任务')}
+                      onClick={() => setForkDialogOpen(true)}
+                    >
+                      <ArrowLeftRight className="h-5 w-5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     data-testid="mobile-continue-in-im-button"
@@ -498,7 +504,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       codeComments={paneSession.codeCommentContexts}
                       isStreaming={paneIsBusy}
                       onPause={() => void paneSession.pauseCurrentResponse()}
-                      onCompactContext={() => void paneSession.compactContext()}
+                      onCompactContext={
+                        currentRuntimeUsesCodex
+                          ? () => void paneSession.compactContext()
+                          : undefined
+                      }
                       taskPlan={paneSession.taskPlan}
                       onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                       onReorderQueuedMessages={paneSession.reorderQueuedMessages}
@@ -506,7 +516,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                       onResumeQueue={paneSession.resumeQueuedMessages}
                       onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                       onClearQueue={paneSession.clearQueuedMessages}
-                      onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                      onSendQueuedAsGuidance={
+                        currentRuntimeUsesCodex ? paneSession.sendQueuedAsGuidance : undefined
+                      }
                       onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                       onEditQueuedMessage={paneSession.editQueuedMessage}
                       onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
@@ -606,7 +618,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsBusy}
                 onPause={() => void paneSession.pauseCurrentResponse()}
-                onCompactContext={() => void paneSession.compactContext()}
+                onCompactContext={
+                  currentRuntimeUsesCodex ? () => void paneSession.compactContext() : undefined
+                }
                 taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onReorderQueuedMessages={paneSession.reorderQueuedMessages}
@@ -614,7 +628,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 onResumeQueue={paneSession.resumeQueuedMessages}
                 onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                 onClearQueue={paneSession.clearQueuedMessages}
-                onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                onSendQueuedAsGuidance={
+                  currentRuntimeUsesCodex ? paneSession.sendQueuedAsGuidance : undefined
+                }
                 onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
                 onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}

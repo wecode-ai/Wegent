@@ -193,8 +193,8 @@ echo "  WINDOWS_BUILD_TARGET=$WINDOWS_BUILD_TARGET"
 echo "  TAURI_BUNDLES=${TAURI_BUNDLES:-<default>}"
 echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
 echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
-echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
-echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "  VITE_API_BASE_URL=${VITE_API_BASE_URL:-}"
+echo "  VITE_SOCKET_BASE_URL=${VITE_SOCKET_BASE_URL:-}"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "  VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
@@ -243,7 +243,13 @@ if [ "$BUILD_PROFILE" = "dev" ]; then
 fi
 if [ -n "$BRAND_CONFIG" ] || [ "$RELEASE_DEVTOOLS" = "1" ] || [ -n "$TAURI_CONFIG_PATH" ]; then
   CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.json.XXXXXX")"
-  wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "${RELEASE_DEVTOOLS:-0}" "$CONFIG_OVERRIDE" "$TAURI_CONFIG_PATH"
+  wework_prepare_brand_config \
+    "$WEWORK_DIR" \
+    "$BRAND_CONFIG" \
+    "${RELEASE_DEVTOOLS:-0}" \
+    "$CONFIG_OVERRIDE" \
+    "$TAURI_CONFIG_PATH" \
+    "$WEWORK_DIR/src-tauri/tauri.windows.conf.json"
   if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
     export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"
     rm -f "$CONFIG_OVERRIDE.namespace"

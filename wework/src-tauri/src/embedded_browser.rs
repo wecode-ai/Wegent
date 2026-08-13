@@ -123,6 +123,7 @@ struct EmbeddedBrowserEntry {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    loaded_url: Option<String>,
     opened_at_unix_ms: u128,
     phase: EmbeddedBrowserPhase,
 }
@@ -633,6 +634,31 @@ fn wait_for_browser_ready_with_observer(
     Err("Timed out waiting for Wework to open the embedded browser tab".to_string())
 }
 
+fn wait_for_browser_navigation(
+    state: &EmbeddedBrowserState,
+    label: &str,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    loop {
+        let loaded_url = state
+            .webviews
+            .lock()
+            .map_err(|_| "Embedded browser state lock poisoned".to_string())?
+            .get(label)
+            .ok_or_else(|| "Embedded browser is not open".to_string())?
+            .loaded_url
+            .clone();
+        if loaded_url.is_some() {
+            return Ok(());
+        }
+        if started.elapsed() >= Duration::from_millis(timeout_ms) {
+            return Err("Timed out waiting for embedded browser navigation".to_string());
+        }
+        thread::sleep(Duration::from_millis(BRIDGE_OPEN_WAIT_INTERVAL_MS));
+    }
+}
+
 fn should_replay_browser_open_request(
     attempt: u64,
     readiness: Option<EmbeddedBrowserReadiness>,
@@ -980,6 +1006,7 @@ fn embedded_browser_entry_snapshot(state: &EmbeddedBrowserState, label: &str) ->
         "nativeLabel": &entry.native_label,
         "title": &entry.title,
         "url": &entry.url,
+        "loadedUrl": &entry.loaded_url,
         "readiness": readiness,
         "openedAtUnixMs": entry.opened_at_unix_ms,
         "ageMs": current_unix_millis().saturating_sub(entry.opened_at_unix_ms),
@@ -1091,6 +1118,10 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
             "displayUrl": display_url_string,
         }),
     );
+    update_entry_for_native_label(state, &entry.native_label, |entry| {
+        entry.url = Some(url.clone());
+        entry.loaded_url = None;
+    })?;
     if let Err(error) = entry.ready_webview()?.navigate(display_url) {
         let message = format!("Failed to navigate embedded browser: {error}");
         log_embedded_browser_diagnostic(
@@ -1104,7 +1135,6 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
         );
         return Err(message);
     }
-    set_entry_url_for_native_label(state, &entry.native_label, url.clone())?;
     log_embedded_browser_diagnostic(
         state,
         label,
@@ -1353,7 +1383,9 @@ fn handle_bridge_request(
                     request.browser_session_id.as_deref(),
                 )?;
             }
-            navigate_label(state, &label, url)?;
+            let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
+            navigate_label(state, &label, url.clone())?;
+            wait_for_browser_navigation(state, &label, timeout_ms)?;
             Ok(json!({ "ok": true }))
         }
         "reload" => {
@@ -1668,6 +1700,7 @@ pub async fn embedded_browser_open(
         native_label: native_label.clone(),
         title: initial_title.clone(),
         url: Some(url.clone()),
+        loaded_url: None,
         opened_at_unix_ms: current_unix_millis(),
         phase: EmbeddedBrowserPhase::Opening,
     };
@@ -1823,7 +1856,10 @@ pub async fn embedded_browser_open(
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
-                        |entry| entry.url = Some(loaded_url),
+                        |entry| {
+                            entry.url = Some(loaded_url.clone());
+                            entry.loaded_url = Some(loaded_url);
+                        },
                     );
                     emit_page_state_change(
                         &app_for_load,

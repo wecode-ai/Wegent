@@ -94,20 +94,10 @@ export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) 
   return `${deviceLabel} ${workspace.workspacePath}`
 }
 
-function isRuntimeWorktreeWorkspace(workspace: RuntimeDeviceWorkspace) {
-  return (
-    workspace.workspaceKind === 'worktree' ||
-    Boolean(workspace.worktreeId) ||
-    Boolean(getWorktreeIdFromPath(workspace.workspacePath))
-  )
-}
-
 export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ) {
-  if (!isRuntimeWorktreeTask(task) && task.workspacePath) return task.workspacePath
-  if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
   return task.workspacePath || workspace.workspacePath
 }
 
@@ -118,6 +108,7 @@ export function getRuntimeTaskAddress(
   return {
     deviceId: workspace.deviceId,
     taskId: task.taskId,
+    ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     ...(task.taskId ? { taskId: task.taskId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
@@ -145,13 +136,6 @@ function isRuntimeChatPath(path: string) {
     return previous === '.wework'
   }
   return parts[0] === 'workspace' && parts[1] === 'chats'
-}
-
-function getWorktreeIdFromPath(path: string) {
-  const parts = path.split('/').filter(Boolean)
-  const index = parts.indexOf('worktrees')
-  if (index < 0 || index + 1 >= parts.length) return null
-  return parts[index + 1] || null
 }
 
 function partitionRuntimeSidebarTaskItems(items: RuntimeSidebarTaskItem[]) {

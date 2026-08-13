@@ -1756,7 +1756,14 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                 "initialSupervisor": {
                     "mode": "auto",
                     "instructions": "Keep the task focused",
-                    "modelId": "supervisor-model",
+                    "modelSelection": {
+                        "modelName": "supervisor-model",
+                        "modelType": "public",
+                        "options": {
+                            "weworkCloudModelNamespace": "default",
+                            "weworkCloudModelResourceUserId": "0"
+                        }
+                    },
                     "intervalSeconds": 10
                 },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
@@ -1795,10 +1802,63 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
         .expect("initial supervisor should be stored with the task");
     assert_eq!(supervisor.mode, "auto");
     assert_eq!(supervisor.instructions, "Keep the task focused");
-    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(
+        supervisor.model_selection,
+        Some(json!({
+            "modelName": "supervisor-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0"
+            }
+        }))
+    );
     assert_eq!(supervisor.interval_seconds, 10);
     assert_eq!(supervisor.status, "active");
     assert!(supervisor.last_error.is_none());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
+    let index_path = temp_runtime_work_index_path("create-board-comment-task");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "board-comment-task-1",
+                "workspacePath": "/tmp/project",
+                "title": "Board task",
+                "cloudProjectId": "project-1",
+                "origin": {
+                    "type": "board_comment",
+                    "cloudProjectId": "project-1",
+                    "loopItemId": "item-1",
+                    "rootCommentId": "comment-1"
+                },
+                "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+            }
+        }))
+        .await
+        .expect("board comment runtime task should be created");
+
+    let reloaded = RuntimeWorkStore::new(index_path.clone())
+        .get_task("board-comment-task-1")
+        .expect("board comment runtime task should survive store reload");
+    assert!(!reloaded.ephemeral);
+    assert_eq!(
+        reloaded.runtime_handle["origin"],
+        json!({
+            "type": "board_comment",
+            "cloudProjectId": "project-1",
+            "loopItemId": "item-1",
+            "rootCommentId": "comment-1"
+        })
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -2078,9 +2138,20 @@ fn thread_read_repairs_legacy_activity_time_pollution() {
 
 #[test]
 fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-managed-root").with_extension("directory");
+    let managed_root = root.join("workspace/worktrees");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    manager
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree_path = managed_root.join("task-1/Wegent");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
-        "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
+        worktree_path.display().to_string(),
         "Task".to_owned(),
     );
     link.runtime_handle = json!({
@@ -2095,17 +2166,17 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         ]
     });
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
         .collect::<Vec<_>>();
 
-    assert!(target_paths
-        .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+    assert!(target_paths.contains(&worktree_path.display().to_string()));
     assert!(target_paths.contains(
         &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
     ));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2173,13 +2244,16 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/Users/me/project".to_owned(),
         "Task".to_owned(),
     );
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
@@ -2188,6 +2262,7 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
+    let _ = fs::remove_dir_all(root);
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {

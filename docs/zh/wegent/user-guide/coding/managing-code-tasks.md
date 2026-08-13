@@ -251,10 +251,10 @@ graph LR
 
 当 Codex 在任务工作区中生成 HTML 可视化文件并在回复中引用它时，Wework 会在该回复内直接显示图表或交互页面，无需复制文件路径或另开浏览器。
 
-- 仅加载当前回复文件变更中创建或修改的 HTML 文件；删除、回滚或未在变更摘要中的文件不会被内联加载。
+- Wework 支持最新的 visualize 内容引用，例如 `visualize{"path":"/绝对路径/visualizations/chart.html"}`。该绝对路径无需出现在当前回复的文件变更摘要中，但必须指向 `visualizations` 目录内的 HTML 文件。
+- 旧版 `::codex-inline-vis{file="chart.html"}` 指令仍然可用。旧版指令只会从当前回复创建或修改的文件中解析相对路径或唯一同名文件，包括 `.codex/visualizations/` 下按日期和会话组织的片段。
 - 可视化在脚本隔离的 iframe 中运行，无法访问 Wework 页面。
-- 只接受工作区内的相对 `.html`、`.htm` 或 `.xhtml` 文件路径；带父目录跳转、绝对路径或位于代码块内的指令按普通文本显示。
-- Codex 可视化指令可以只引用文件名。Wework 会在当前回复的文件变更中解析唯一同名文件，因此可以加载 `.codex/visualizations/` 下按日期和会话组织的可视化片段。
+- 只接受 `.html`、`.htm` 或 `.xhtml` 文件。格式错误、包含父目录跳转的路径，以及位于代码块内的指令按普通文本显示。
 - Wework 使用 UTF-8 的可视化宿主包装 HTML 片段，提供 Codex 可视化主题变量，并根据片段内容自动调整 iframe 高度。
 
 ## 清理过期运行时

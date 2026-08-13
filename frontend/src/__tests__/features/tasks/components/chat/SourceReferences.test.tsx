@@ -3,9 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 
-import { SourceReferences } from '@/features/tasks/components/chat/SourceReferences'
+import {
+  registerExternalSourceOpener,
+  SourceReferences,
+} from '@/features/tasks/components/chat/SourceReferences'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -44,5 +47,31 @@ describe('SourceReferences', () => {
 
     expect(screen.getByText('searched 1')).toBeInTheDocument()
     expect(screen.queryByText('skipped 1')).not.toBeInTheDocument()
+  })
+
+  it('rerenders when an internal source opener registers asynchronously', () => {
+    render(
+      <SourceReferences
+        sources={[
+          {
+            index: 1,
+            title: '811.video.md',
+            source_type: 'test_video_segment',
+            document_id: 811,
+            segments: [{ start_sec: 6, end_sec: 15 }],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('811.video.md')).toBeInTheDocument()
+
+    act(() => {
+      registerExternalSourceOpener('test_video_segment', source => (
+        <button type="button">play-{source.segments?.[0].start_sec}</button>
+      ))
+    })
+
+    expect(screen.getByRole('button', { name: 'play-6' })).toBeInTheDocument()
   })
 })

@@ -3,7 +3,7 @@ import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
-import type { SiteAppType } from '@/api/sites'
+import type { Site, SiteAppType } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -22,7 +22,11 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { managedMarketplaceName } from '@/features/plugins/pluginMarketplaceIdentity'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import {
+  notifyLocalPluginSkillsChanged,
+  queuePluginInputTrial,
+  queuePluginTrial,
+} from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -35,6 +39,34 @@ import type {
 } from '@/types/api'
 
 class ApplicationPluginSyncConfirmationError extends Error {}
+
+interface PreparedApplicationPlugin {
+  plugin: InstalledPlugin
+  pluginName: string
+  marketplaceName: string
+}
+
+function sanitizeMarkdownLinkLabel(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\[/g, ' ')
+    .replace(/]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildSiteContinueDevelopmentInput(
+  site: Pick<Site, 'name' | 'project_id' | 'siteid'>,
+  suffix: string
+): string | null {
+  const projectId = String(site.project_id || site.siteid || '').trim()
+  if (!projectId) return null
+  const label = sanitizeMarkdownLinkLabel(site.name) || projectId
+  const normalizedSuffix = suffix.trim()
+  return `[${label}](wegent-sites-project://${encodeURIComponent(projectId)})${
+    normalizedSuffix ? ` ${normalizedSuffix}` : ''
+  }`
+}
 
 function installedPluginId(plugin: InstalledPlugin): string | null {
   const labels =
@@ -189,6 +221,7 @@ export function SitesPage() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [createNotice, setCreateNotice] = useState<string | null>(null)
   const [creatingType, setCreatingType] = useState<SiteAppType | null>(null)
+  const [continuingSiteId, setContinuingSiteId] = useState<string | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -291,6 +324,92 @@ export function SitesPage() {
     startNewProjectChat(projectId)
   }
 
+  const prepareApplicationPlugin = async (
+    createStrategy: ApplicationCreateStrategy
+  ): Promise<PreparedApplicationPlugin | null> => {
+    if (!createStrategy.pluginName || !createStrategy.marketplaceName) {
+      setCreateError(
+        t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
+      )
+      return null
+    }
+    if (!pluginApi) {
+      setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
+      return null
+    }
+    const targetDeviceId = getPreferredStandaloneDeviceId(
+      state.devices,
+      state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+    )
+    if (!targetDeviceId) {
+      setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建应用'))
+      return null
+    }
+
+    const installedPlugins = await pluginApi.listInstalledPlugins(targetDeviceId).catch(error => {
+      console.warn('[Wework Applications] failed to inspect local plugin installation', error)
+      return { items: [] }
+    })
+    const locallyInstalledPlugin = findInstalledApplicationPlugin(
+      installedPlugins.items,
+      createStrategy.pluginName,
+      createStrategy.marketplaceName,
+      targetDeviceId
+    )
+    const plugin = locallyInstalledPlugin
+    if (!plugin) {
+      setCreateNotice(t('plugin_installing', '正在安装应用插件，完成后将进入会话...'))
+    }
+    const prepared = plugin
+      ? { plugin, sync: null }
+      : await pluginApi.ensureBuiltinPluginInstalled(createStrategy.pluginName, {
+          deviceId: targetDeviceId,
+        })
+    const syncConfirmed =
+      locallyInstalledPlugin !== null ||
+      isPluginInstalledOnDevice(prepared.plugin, targetDeviceId) ||
+      isApplicationPluginSyncConfirmed(
+        prepared.sync,
+        prepared.plugin,
+        createStrategy.pluginName,
+        targetDeviceId
+      )
+    if (!syncConfirmed) {
+      throw new ApplicationPluginSyncConfirmationError(
+        'The Backend did not confirm application plugin synchronization to the target device'
+      )
+    }
+    return {
+      plugin: prepared.plugin,
+      pluginName: createStrategy.pluginName,
+      marketplaceName: createStrategy.marketplaceName,
+    }
+  }
+
+  const handleApplicationPluginError = (error: unknown) => {
+    console.error('[Wework Applications] cloud plugin preparation failed', error)
+    if (error instanceof ApiError && error.status === 404) {
+      setCreateError(
+        t(
+          'plugin_backend_upgrade_required',
+          '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
+        )
+      )
+    } else if (error instanceof ApiError && error.status === 503) {
+      setCreateError(
+        t('plugin_not_published', '云端市场尚未发布对应的应用插件，请检查内置插件打包配置')
+      )
+    } else if (error instanceof ApiError && error.status === 409) {
+      setCreateError(t('plugin_device_unavailable', '目标设备当前离线，请连接设备后重试'))
+    } else if (error instanceof ApiError && error.status === 502) {
+      setCreateError(t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试'))
+    } else if (error instanceof ApplicationPluginSyncConfirmationError) {
+      setCreateError(t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试'))
+    } else {
+      setCreateError(t('plugin_install_failed', '应用插件安装失败，请重试'))
+    }
+  }
+
   const handleCreate = async (appType: SiteAppType, createStrategy: ApplicationCreateStrategy) => {
     if (creatingType) return
     setCreatingType(appType)
@@ -301,63 +420,14 @@ export function SitesPage() {
         setCreateError(t('unsupported_application_type', '当前版本不支持该应用类型'))
         return
       }
-      if (!createStrategy.pluginName || !createStrategy.marketplaceName) {
-        setCreateError(
-          t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
-        )
-        return
-      }
-      if (!pluginApi) {
-        setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
-        return
-      }
-      const targetDeviceId = getPreferredStandaloneDeviceId(
-        state.devices,
-        state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-      )
-      if (!targetDeviceId) {
-        setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建应用'))
-        return
-      }
-
-      const installedPlugins = await pluginApi.listInstalledPlugins(targetDeviceId).catch(error => {
-        console.warn('[Wework Applications] failed to inspect local plugin installation', error)
-        return { items: [] }
-      })
-      const locallyInstalledPlugin = findInstalledApplicationPlugin(
-        installedPlugins.items,
-        createStrategy.pluginName,
-        createStrategy.marketplaceName,
-        targetDeviceId
-      )
-      const plugin = locallyInstalledPlugin
-      if (!plugin) {
-        setCreateNotice(t('plugin_installing', '正在安装应用插件，完成后将进入会话...'))
-      }
-      const prepared = plugin
-        ? { plugin, sync: null }
-        : await pluginApi.ensureBuiltinPluginInstalled(createStrategy.pluginName, {
-            deviceId: targetDeviceId,
-          })
-      const syncConfirmed =
-        locallyInstalledPlugin !== null ||
-        isPluginInstalledOnDevice(prepared.plugin, targetDeviceId) ||
-        isApplicationPluginSyncConfirmed(
-          prepared.sync,
-          prepared.plugin,
-          createStrategy.pluginName,
-          targetDeviceId
-        )
-      if (!syncConfirmed) {
-        throw new ApplicationPluginSyncConfirmationError(
-          'The Backend did not confirm application plugin synchronization to the target device'
-        )
-      }
+      const prepared = await prepareApplicationPlugin(createStrategy)
+      if (!prepared) return
       const queued = queuePluginTrial(prepared.plugin, {
+        openInNewChat: true,
         reference: {
-          pluginName: createStrategy.pluginName,
-          marketplaceName: createStrategy.marketplaceName,
-          displayName: applicationPluginReferenceName(prepared.plugin, createStrategy.pluginName),
+          pluginName: prepared.pluginName,
+          marketplaceName: prepared.marketplaceName,
+          displayName: applicationPluginReferenceName(prepared.plugin, prepared.pluginName),
         },
       })
       if (!queued) {
@@ -369,34 +439,48 @@ export function SitesPage() {
       setCreateNotice(null)
       navigateTo('/')
     } catch (error) {
-      console.error('[Wework Applications] cloud plugin preparation failed', error)
-      if (error instanceof ApiError && error.status === 404) {
-        setCreateError(
-          t(
-            'plugin_backend_upgrade_required',
-            '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
-          )
-        )
-      } else if (error instanceof ApiError && error.status === 503) {
-        setCreateError(
-          t('plugin_not_published', '云端市场尚未发布对应的应用插件，请检查内置插件打包配置')
-        )
-      } else if (error instanceof ApiError && error.status === 409) {
-        setCreateError(t('plugin_device_unavailable', '目标设备当前离线，请连接设备后重试'))
-      } else if (error instanceof ApiError && error.status === 502) {
-        setCreateError(
-          t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试')
-        )
-      } else if (error instanceof ApplicationPluginSyncConfirmationError) {
-        setCreateError(
-          t('plugin_device_sync_failed', '应用插件未能同步到目标设备，请检查设备后重试')
-        )
-      } else {
-        setCreateError(t('plugin_install_failed', '应用插件安装失败，请重试'))
-      }
+      handleApplicationPluginError(error)
     } finally {
       setCreateNotice(null)
       setCreatingType(null)
+    }
+  }
+
+  const handleContinueDevelopment = async (
+    site: Site,
+    createStrategy: ApplicationCreateStrategy
+  ) => {
+    if (continuingSiteId) return
+    setContinuingSiteId(site.siteid)
+    setCreateError(null)
+    try {
+      const prepared = await prepareApplicationPlugin(createStrategy)
+      if (!prepared) return
+      const suffix = t('continue_development_prompt_suffix', '请说出你要做的改动')
+      const input = buildSiteContinueDevelopmentInput(site, suffix)
+      if (!input) {
+        setCreateError(
+          t('plugin_create_configuration_missing', '应用创建插件配置尚未同步，请刷新后重试')
+        )
+        return
+      }
+      const queued = queuePluginInputTrial(prepared.plugin, input, {
+        openInNewChat: true,
+        prompt: `${site.name} ${suffix}`,
+      })
+      if (!queued) {
+        throw new Error('The installed application plugin cannot be referenced in chat')
+      }
+
+      notifyLocalPluginSkillsChanged()
+      setCreateError(null)
+      setCreateNotice(null)
+      navigateTo('/')
+    } catch (error) {
+      handleApplicationPluginError(error)
+    } finally {
+      setCreateNotice(null)
+      setContinuingSiteId(null)
     }
   }
 
@@ -531,7 +615,9 @@ export function SitesPage() {
         <SitesWorkspace
           api={sitesApi}
           onCreate={handleCreate}
+          onContinueDevelopment={handleContinueDevelopment}
           creatingType={creatingType}
+          continuingSiteId={continuingSiteId}
           createError={createError}
           createNotice={createNotice}
           onOpenPlugins={() => navigateTo('/plugins')}

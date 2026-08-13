@@ -10,6 +10,7 @@ between direct injection and RAG retrieval based on context window capacity.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -34,6 +35,42 @@ TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
 # Default configuration values (used when KB spec doesn't specify)
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
+
+VIDEO_CHAPTER_TITLE_PATTERN = re.compile(
+    r"^#{1,6}\s+(.*?)\s*\(\[\d{1,2}:\d{2}:\d{2}\s*-\s*" r"\d{1,2}:\d{2}:\d{2}\]\)\s*$",
+    re.MULTILINE,
+)
+VIDEO_CHAPTER_SUMMARY_PATTERN = re.compile(
+    r"^>\s*\*\*本段摘要\*\*[：:]\s*(.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _extract_video_segment_copy(content: str) -> tuple[str | None, str | None]:
+    """Extract display copy from one generated video chapter."""
+    title_match = VIDEO_CHAPTER_TITLE_PATTERN.search(content)
+    summary_match = VIDEO_CHAPTER_SUMMARY_PATTERN.search(content)
+    title = title_match.group(1).strip() if title_match else None
+    if title:
+        title = re.sub(r"^章节\s*\d+\s*[：:]\s*", "", title)
+    summary = summary_match.group(1).strip() if summary_match else None
+    return title, summary
+
+
+def _chunk_source_identity(
+    chunk: dict[str, Any],
+    *,
+    kb_id: Any,
+    source_file: str,
+) -> tuple[str, str, str]:
+    """Return a stable citation identity without merging same-name KB documents."""
+    source_id = chunk.get("source_id")
+    if source_id is not None:
+        return "external", str(source_id), source_file
+    doc_ref = (chunk.get("metadata") or {}).get("doc_ref")
+    if doc_ref is not None:
+        return "internal-document", str(kb_id), str(doc_ref)
+    return "internal-title", str(kb_id), source_file
 
 
 def _retrieval_source_entry(provider: Any, source_id: Any) -> dict[str, str] | None:
@@ -901,6 +938,7 @@ class KnowledgeBaseTool(BaseTool):
                     "source_id": source_id,
                     "source_uri": record.get("source_uri"),
                     "source_name": record.get("source_name"),
+                    "metadata": record.get("metadata") or {},
                 }
             )
         return kb_chunks
@@ -1745,6 +1783,75 @@ class KnowledgeBaseTool(BaseTool):
             ensure_ascii=False,
         )
 
+    def _upgrade_video_source_references(
+        self,
+        source_references: list[dict[str, Any]],
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        """Upgrade video-document sources to wegent_video_segment with time ranges.
+
+        For each final RAG chunk whose metadata carries
+        ``video_start_sec``/``video_end_sec``, find its source reference (matched
+        by document_id) and set ``source_type`` plus a ``segments`` list so the
+        frontend renders a video segment player instead of a plain text card.
+        """
+        sources_by_document_id: dict[Any, dict[str, Any]] = {}
+        for source in source_references:
+            doc_id = source.get("document_id")
+            if doc_id is not None and doc_id not in sources_by_document_id:
+                sources_by_document_id[doc_id] = source
+
+        seen_segments: set[tuple[int, int, int]] = set()
+        for chunk in chunks:
+            metadata = chunk.get("metadata") or {}
+            start_sec = metadata.get("video_start_sec")
+            end_sec = metadata.get("video_end_sec")
+            # The chunk "document_id" is LlamaIndex's internal ref_doc_id (a
+            # UUID string). The business-level KnowledgeDocument ID is stored in
+            # metadata.doc_ref (e.g. "811"). Use doc_ref so it matches the
+            # source reference and the frontend play-url endpoint (which expects
+            # an integer document ID). Fall back to document_id if doc_ref is
+            # absent (non-ES backends or test fixtures with int IDs).
+            doc_ref = metadata.get("doc_ref")
+            if doc_ref is None:
+                doc_ref = chunk.get("document_id")
+            try:
+                document_id = int(doc_ref)
+            except (TypeError, ValueError):
+                continue
+            if not (isinstance(start_sec, int) and isinstance(end_sec, int)):
+                continue
+            if isinstance(document_id, bool) or document_id <= 0:
+                continue
+            if start_sec < 0 or end_sec <= start_sec:
+                continue
+            source = sources_by_document_id.get(document_id)
+            if source is None:
+                continue
+            segment_key = (document_id, start_sec, end_sec)
+            if segment_key in seen_segments:
+                continue
+            seen_segments.add(segment_key)
+            source["source_type"] = "wegent_video_segment"
+            source["document_id"] = document_id
+            fallback_title, fallback_description = _extract_video_segment_copy(
+                chunk.get("content", "")
+            )
+            segment_title = metadata.get("video_segment_title") or fallback_title
+            segment_description = (
+                metadata.get("video_segment_description") or fallback_description
+            )
+            source.setdefault("segments", []).append(
+                {
+                    "id": metadata.get("video_segment_id"),
+                    "start_sec": start_sec,
+                    "end_sec": end_sec,
+                    "score": chunk.get("score"),
+                    "title": segment_title,
+                    "description": segment_description,
+                }
+            )
+
     async def _format_rag_result(
         self,
         kb_chunks: Dict[Any, List[Dict[str, Any]]],
@@ -1769,14 +1876,18 @@ class KnowledgeBaseTool(BaseTool):
         all_chunks = []
         source_references = []
         source_index = 1
-        seen_sources: dict[tuple[Any, str], int] = {}
+        seen_sources: dict[tuple[str, str, str], int] = {}
 
         for kb_id, chunks in kb_chunks.items():
             for chunk in chunks:
                 source_file = chunk.get("source", "Unknown")
                 source_id = chunk.get("source_id")
                 internal_kb_id = chunk.get("knowledge_base_id")
-                source_key = (source_id or internal_kb_id or kb_id, source_file)
+                source_key = _chunk_source_identity(
+                    chunk,
+                    kb_id=internal_kb_id or kb_id,
+                    source_file=source_file,
+                )
                 source_title = (
                     self._display_source_title(source_file, source_index)
                     if redact_source_titles
@@ -1785,11 +1896,26 @@ class KnowledgeBaseTool(BaseTool):
 
                 if source_key not in seen_sources:
                     seen_sources[source_key] = source_index
+                    # Use the business-level doc_ref (e.g. "811") as document_id
+                    # instead of the LlamaIndex UUID, so the video-segment upgrade
+                    # and the frontend play-url endpoint receive an integer ID.
+                    # Fall back to the raw document_id if doc_ref is absent (e.g.
+                    # non-ES backends or test fixtures that use int IDs directly).
+                    raw_doc_ref = (chunk.get("metadata") or {}).get("doc_ref")
+                    if raw_doc_ref is None:
+                        raw_doc_ref = chunk.get("document_id")
+                    try:
+                        doc_id_int = int(raw_doc_ref)
+                    except (TypeError, ValueError):
+                        # Keep the original value (e.g. UUID string) if it can't
+                        # be converted to int — non-ES backends or external sources.
+                        doc_id_int = raw_doc_ref
                     source_references.append(
                         {
                             "index": source_index,
                             "title": source_title,
                             "kb_id": internal_kb_id,
+                            "document_id": doc_id_int,
                             "source_id": source_id,
                             "source_type": chunk.get("source_type"),
                             "source_uri": chunk.get("source_uri"),
@@ -1816,6 +1942,7 @@ class KnowledgeBaseTool(BaseTool):
                         "source_type": chunk.get("source_type"),
                         "source_uri": chunk.get("source_uri"),
                         "source_name": chunk.get("source_name"),
+                        "metadata": chunk.get("metadata") or {},
                     }
                 )
 
@@ -1834,6 +1961,9 @@ class KnowledgeBaseTool(BaseTool):
             for source in source_references
             if source.get("index") in referenced_indexes
         ]
+        self._upgrade_video_source_references(source_references, all_chunks)
+        for chunk in all_chunks:
+            chunk.pop("metadata", None)
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
         )

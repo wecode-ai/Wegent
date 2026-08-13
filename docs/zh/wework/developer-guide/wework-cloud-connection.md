@@ -55,6 +55,8 @@ Backend 使用 `WEWORK_AUTHORIZE_BASE_URL` 生成授权页地址；未配置时�
 
 未连接时，Wework 继续只使用本地服务。已连接时，模型、设备和 runtime work 列表合并展示；执行和流式订阅按设备或来源路由到本地 IPC 或 Backend relay。
 
+输入框的新会话偏好也遵循连接状态归属。未连接时，模型、推理强度、协作模式以及每个项目的本地工作区/工作树模式写入 Wework 本机用户配置；连接云端后，这些选择通过 Backend 用户 API 写入当前云端账号，重启后从同一账号恢复。Backend 使用 `wework_new_chat_model_selection` 保存模型及其 `options`，使用 `wework_project_work_preferences` 按 `project:<id>` 保存 `executionMode` 和 `worktreeBranch`。混合服务不得继续把已连接账号的偏好写入本机用户存储，否则当前窗口虽然会显示新选择，重启后仍会回到云端账号中的旧值或默认值。
+
 ## 云端 Runtime IPC 中继
 
 Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前端连接 Backend 的 `/wework-runtime` Socket.IO namespace，把 `runtime.*` 请求包装成 `{ id, method, params, device_id }` 帧；Backend 只负责鉴权、校验在线设备和转发到对应 executor，不把这条链路翻译成 `chat:*` 事件。
