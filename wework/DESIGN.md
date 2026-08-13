@@ -703,6 +703,8 @@ semantics for all three.
   active task and unsent composer input.
 - Opening the bottom workspace panel starts or restores its Terminal directly;
   it must not show an IDE launcher or require an intermediate tool choice.
+- 底部工作区面板可缩小到仅显示一行终端；最小高度必须根据当前代码
+  字号、面板控件高度和终端内边距计算，不得使用较大的固定像素下限。
 - The bottom workspace panel may be resized down to one visible terminal row.
   Its minimum height must derive from the current code font size plus the panel
   chrome and terminal padding instead of using a fixed large pixel minimum.

@@ -151,7 +151,7 @@ export function useResizableRightSplitChat({
   return { width, resizing, handleResizeStart }
 }
 
-export function getBottomPanelMinHeight(codeFontSize: number) {
+function getBottomPanelMinHeight(codeFontSize: number) {
   return (
     BOTTOM_PANEL_BORDER_HEIGHT +
     BOTTOM_PANEL_TAB_BAR_HEIGHT +

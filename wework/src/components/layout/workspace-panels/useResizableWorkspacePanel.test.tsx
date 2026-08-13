@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { getBottomPanelMinHeight, useResizableBottomPanel } from './useResizableWorkspacePanel'
+import { useResizableBottomPanel } from './useResizableWorkspacePanel'
 
 describe('useResizableBottomPanel', () => {
   test('resizes the panel imperatively without rerendering terminal content while dragging', () => {
@@ -69,7 +69,28 @@ describe('useResizableBottomPanel', () => {
     fireEvent.pointerUp(document)
 
     expect(screen.getByTestId('panel')).toHaveStyle({
-      height: `${getBottomPanelMinHeight(12)}px`,
+      height: '80px',
+    })
+  })
+
+  test('tracks the one-row minimum when the code font size changes', () => {
+    function Harness() {
+      const { height, panelRef, handleResizeStart } = useResizableBottomPanel(24)
+
+      return (
+        <section ref={panelRef} data-testid="panel" style={{ height }}>
+          <div data-testid="handle" onPointerDown={handleResizeStart} />
+        </section>
+      )
+    }
+
+    render(<Harness />)
+    fireEvent.pointerDown(screen.getByTestId('handle'), { clientY: 700 })
+    fireEvent.pointerMove(document, { clientY: 1000 })
+    fireEvent.pointerUp(document)
+
+    expect(screen.getByTestId('panel')).toHaveStyle({
+      height: '94px',
     })
   })
 })
