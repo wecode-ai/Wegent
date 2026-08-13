@@ -1094,6 +1094,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 request=RuntimeSendRequest(
                     address=address,
                     message=message,
+                    modelSelection=(
+                        runtime_task.get("modelSelection")
+                        or runtime_task.get("model_selection")
+                    ),
                     source=RuntimeMessageSource(
                         source="im",
                         external_id=str(
