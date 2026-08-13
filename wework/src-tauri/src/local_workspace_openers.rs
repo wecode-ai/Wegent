@@ -443,12 +443,6 @@ fn detect_windows(def: &OpenerDef, app: &tauri::AppHandle) -> Option<PathBuf> {
         }
     }
 
-    if let Some(cli) = windows.cli {
-        if let Some(found) = find_on_path(cli) {
-            return Some(found);
-        }
-    }
-
     for dir in windows.common_dirs {
         let dir_path = PathBuf::from(expand_windows_dir(dir));
         if let Some(exe) = find_exe_in_dir(&dir_path, windows.exe_candidates) {
@@ -462,6 +456,18 @@ fn detect_windows(def: &OpenerDef, app: &tauri::AppHandle) -> Option<PathBuf> {
     for candidate in windows.exe_candidates {
         if let Some(exe) = shortcut_targets().get(&candidate.to_lowercase()) {
             return Some(exe.clone());
+        }
+    }
+
+    // The PATH scan is a last resort: on Windows the bare CLI name in an
+    // editor's `bin` folder is often a POSIX shell script that CreateProcess
+    // cannot run directly (e.g. VS Code's `bin\code`). Preferring a resolved
+    // .exe from a shortcut or well-known install dir keeps the launch on a real
+    // executable, and the extensions-first candidate ordering below makes the
+    // PATH fallback return a launchable launcher (.cmd) instead of the script.
+    if let Some(cli) = windows.cli {
+        if let Some(found) = find_on_path(cli) {
+            return Some(found);
         }
     }
 
@@ -569,12 +575,16 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn command_candidates(dir: &std::path::Path, name: &str) -> Vec<PathBuf> {
-    let mut candidates = vec![dir.join(name)];
+    let mut candidates = Vec::new();
+    // Windows first: bare CLI names in editor `bin` folders are usually POSIX
+    // shell scripts that CreateProcess cannot run. Extensions-first means a
+    // launchable launcher (.exe/.cmd/.bat/.com) is preferred over the script.
     if cfg!(windows) {
         for extension in ["exe", "cmd", "bat", "com"] {
             candidates.push(dir.join(format!("{name}.{extension}")));
         }
     }
+    candidates.push(dir.join(name));
     candidates
 }
 
