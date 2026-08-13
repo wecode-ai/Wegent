@@ -148,6 +148,25 @@ def test_an_unchanged_repository_starts_nothing(
     assert RunMode(started.decision.mode) is RunMode.SKIP
 
 
+def test_an_explicit_full_rebuild_starts_at_the_same_commit(
+    test_db: Session, knowledge_base: Kind, test_user: User, effects: FakeEffects
+):
+    _publish_a_first_wiki(test_db, knowledge_base, test_user, effects)
+
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        force_full=True,
+        now=NOW,
+    )
+
+    assert started.started
+    assert RunMode(started.decision.mode) is RunMode.FULL
+    assert started.seeded_pages == 0
+
+
 def test_an_incremental_run_is_seeded_before_the_agent_sees_it(
     test_db: Session, knowledge_base: Kind, test_user: User, effects: FakeEffects
 ):

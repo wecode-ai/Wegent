@@ -89,6 +89,22 @@ def test_the_incremental_prompt_lists_the_pages_that_exist():
     assert "arch/api" in prompt
 
 
+def test_an_incremental_update_keeps_related_diagrams_current():
+    prompt = build_incremental_prompt(_context())
+
+    assert "diagram" in prompt
+    assert "affected flow" in prompt
+    assert "accurate diagram unchanged" in prompt
+
+
+def test_the_submit_skill_remains_the_only_command_authority():
+    prompt = build_incremental_prompt(_context())
+
+    assert "wiki_submit skill" in prompt
+    assert "node wiki_submit.js" not in prompt
+    assert "--generation-id" not in prompt
+
+
 def test_an_empty_change_list_is_stated_rather_than_left_blank():
     prompt = build_incremental_prompt(_context())
 

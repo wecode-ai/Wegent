@@ -5,11 +5,11 @@
 """What changes from one code wiki run to the next.
 
 **The standing instructions are not here.** Coverage, grounding, discovery, planning,
-use of git history, what to leave out and how to hand pages back live in the
-``code-wiki-ghost`` system prompt (``init_data/02-public-resources.yaml``). They are
-identical on every run and describe the agent rather than the request, so repeating
-them in each message bought nothing — and left the same rules written twice, since
-that prompt already covered submitting and removal in its own words.
+use of git history and what to leave out live in the ``code-wiki-ghost`` system prompt
+(``init_data/02-public-resources.yaml``). Page-write commands live in the
+``wiki_submit`` skill. They are identical on every run and describe the agent or its
+tool rather than the request, so repeating them in each message buys nothing and lets
+the copies drift.
 
 What remains is the part that genuinely differs: which repository, which version,
 what changed since the published one, which pages exist, and which of the two modes
@@ -86,11 +86,13 @@ Between `{context.previous_commit or "the last documented commit"}` and
 
 - Revise only the pages the changes actually affect. Leave the rest untouched — an
   unchanged page costs nothing to keep and is expensive to rewrite.
+- When a changed page contains or should contain a diagram of the affected flow,
+  lifecycle or data model, update that diagram with the surrounding prose. Leave an
+  accurate diagram unchanged.
 - **Read a page before you revise it.** Your version already holds every published
   page, and what you send replaces the whole page, so revising one without reading it
-  first silently discards whatever it said:
-  `node wiki_submit.js read --generation-id <id> --path <path>`
-  It exits with no output when the page does not exist yet, which means it is new.
+  first silently discards whatever it said. Use the read operation documented by the
+  wiki_submit skill; a missing page means it is new.
 - Refresh the `index` overview if the set of pages changed.
 - If a change makes a page's subject disappear, remove that page explicitly.
 - Add pages only where the changes introduced something the wiki has no place for.

@@ -300,6 +300,29 @@ def test_an_unchanged_repository_starts_no_task_at_all(
     assert len(tasks.created) == 1
 
 
+def test_an_explicit_full_rebuild_starts_a_new_task_at_the_same_commit(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects: FakeEffects,
+):
+    _publish_a_first_wiki(test_db, knowledge_base, test_user, tasks)
+
+    started = start_run(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        force_full=True,
+    )
+
+    assert started.started
+    assert started.mode == "full"
+    assert len(tasks.created) == 2
+    assert "begins empty" in tasks.prompt
+
+
 def test_an_incremental_run_tells_the_agent_which_pages_already_exist(
     test_db: Session,
     knowledge_base: Kind,
