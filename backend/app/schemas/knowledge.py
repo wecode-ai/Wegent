@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PositiveInt, field_validator, model_validator
 
 from app.models.knowledge import ContentOrigin
 from app.schemas.base_role import BaseRole
@@ -1567,18 +1567,35 @@ class KnowledgeBaseMigrateResponse(BaseModel):
 
 # ============== Document Transfer Schemas ==============
 
+MAX_TRANSFER_RESOURCE_COUNT = 200
+
 
 class TransferDocumentsRequest(BaseModel):
     """Schema for transferring documents/folders to another knowledge base."""
 
-    document_ids: list[int] = Field(
-        default_factory=list, description="List of document IDs to transfer"
-    )
-    folder_ids: list[int] = Field(
+    document_ids: list[PositiveInt] = Field(
         default_factory=list,
+        max_length=MAX_TRANSFER_RESOURCE_COUNT,
+        description="List of document IDs to transfer",
+    )
+    folder_ids: list[PositiveInt] = Field(
+        default_factory=list,
+        max_length=MAX_TRANSFER_RESOURCE_COUNT,
         description="List of folder IDs to transfer with their contents",
     )
-    target_kb_id: int = Field(..., description="Target knowledge base ID")
+    target_kb_id: PositiveInt = Field(..., description="Target knowledge base ID")
+
+    @model_validator(mode="after")
+    def validate_selection_size(self) -> "TransferDocumentsRequest":
+        """Require one bounded selection before expanding folder contents."""
+        selected_count = len(set(self.document_ids)) + len(set(self.folder_ids))
+        if selected_count == 0:
+            raise ValueError("At least one document or folder must be selected")
+        if selected_count > MAX_TRANSFER_RESOURCE_COUNT:
+            raise ValueError(
+                f"Transfer selection cannot exceed {MAX_TRANSFER_RESOURCE_COUNT} items"
+            )
+        return self
 
 
 class TransferDocumentsResponse(BaseModel):

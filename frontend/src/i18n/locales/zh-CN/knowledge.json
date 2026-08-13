@@ -427,6 +427,7 @@
         "transferSuccessFolders": "已成功转移 {{folderCount}} 个文件夹",
         "transferSuccessMixed": "已成功转移 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "transferFailed": "转移失败",
+        "transferSelectionLimit": "每次最多选择 {{count}} 个文档和文件夹",
         "noOtherKbs": "没有符合转移规则的目标知识库",
         "errors": {
           "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
@@ -435,6 +436,7 @@
           "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
           "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
           "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "每次最多转移 200 个文档和文件夹",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }

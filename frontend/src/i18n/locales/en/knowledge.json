@@ -427,6 +427,7 @@
         "transferSuccessFolders": "Transferred {{folderCount}} folder(s) successfully",
         "transferSuccessMixed": "Transferred {{folderCount}} folder(s) and {{docCount}} document(s) successfully",
         "transferFailed": "Transfer failed",
+        "transferSelectionLimit": "Select at most {{count}} documents and folders per transfer",
         "noOtherKbs": "No target knowledge bases match the transfer rules",
         "errors": {
           "SOURCE_TARGET_SAME": "Source and target knowledge bases must be different",
@@ -435,6 +436,7 @@
           "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
           "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "A transfer can include at most 200 documents and folders",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }

@@ -45,6 +45,7 @@ import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { TransferToKbDialog } from './transfer-to-kb-dialog'
 import {
+  MAX_TRANSFER_SELECTION_COUNT,
   useKnowledgeResourceSelection,
   shouldDisableDocumentBatchActions,
 } from '../hooks/useKnowledgeResourceSelection'
@@ -1377,17 +1378,39 @@ export function DocumentList({
                   )}
                 </Tooltip>
               </TooltipProvider>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowTransfer(true)}
-                disabled={batchLoading || isBatchMoving || isTransferring}
-                data-testid="batch-transfer-button"
-                aria-label={t('document.document.batch.transfer')}
-              >
-                <ArrowRightLeft className="w-4 h-4 mr-1" />
-                {compact ? '' : t('document.document.batch.transfer')}
-              </Button>
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowTransfer(true)}
+                        disabled={
+                          selectionSummary.transferLimitExceeded ||
+                          batchLoading ||
+                          isBatchMoving ||
+                          isTransferring
+                        }
+                        data-testid="batch-transfer-button"
+                        aria-label={t('document.document.batch.transfer')}
+                      >
+                        <ArrowRightLeft className="w-4 h-4 mr-1" />
+                        {compact ? '' : t('document.document.batch.transfer')}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {selectionSummary.transferLimitExceeded && (
+                    <TooltipContent>
+                      <p>
+                        {t('document.document.batch.transferSelectionLimit', {
+                          count: MAX_TRANSFER_SELECTION_COUNT,
+                        })}
+                      </p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>

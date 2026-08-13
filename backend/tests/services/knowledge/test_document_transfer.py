@@ -32,11 +32,13 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.knowledge import (
+    MAX_TRANSFER_RESOURCE_COUNT,
     DocumentSourceType,
     KnowledgeBaseCreate,
     KnowledgeDocumentCreate,
     KnowledgeFolderCreate,
     KnowledgeFolderUpdate,
+    TransferDocumentsRequest,
     TransferDocumentsResponse,
 )
 from app.schemas.namespace import GroupRole
@@ -44,6 +46,35 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.knowledge_transfer import KnowledgeTransferService
 
 # Rewritten preserving original tests plus targeted review-coverage additions.
+
+
+@pytest.mark.unit
+def test_transfer_request_rejects_an_empty_selection() -> None:
+    with pytest.raises(ValueError, match="At least one document or folder"):
+        TransferDocumentsRequest(target_kb_id=1)
+
+
+@pytest.mark.unit
+def test_transfer_request_rejects_too_many_direct_selections() -> None:
+    with pytest.raises(ValueError, match="cannot exceed 200 items"):
+        TransferDocumentsRequest(
+            document_ids=list(range(1, MAX_TRANSFER_RESOURCE_COUNT + 1)),
+            folder_ids=[MAX_TRANSFER_RESOURCE_COUNT + 1],
+            target_kb_id=1,
+        )
+
+
+@pytest.mark.unit
+def test_transfer_rejects_an_oversized_expanded_workload() -> None:
+    document_ids = set(range(1, MAX_TRANSFER_RESOURCE_COUNT + 1))
+    folder_ids = {MAX_TRANSFER_RESOURCE_COUNT + 1}
+
+    with pytest.raises(CustomHTTPException) as exc_info:
+        KnowledgeTransferService.validate_transfer_resource_count(
+            document_ids, folder_ids
+        )
+
+    assert exc_info.value.error_code == "TRANSFER_SELECTION_LIMIT_EXCEEDED"
 
 
 def _create_user(test_db: Session, username: str, role: str = "user") -> User:

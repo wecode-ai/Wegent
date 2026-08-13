@@ -15,7 +15,7 @@ from app.core.exceptions import CustomHTTPException, StructuredValidationExcepti
 from app.models.kind import Kind
 from app.models.knowledge import ContentOrigin, KnowledgeDocument, KnowledgeFolder
 from app.models.user import User
-from app.schemas.knowledge import TransferDocumentsResponse
+from app.schemas.knowledge import MAX_TRANSFER_RESOURCE_COUNT, TransferDocumentsResponse
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
 from app.services.knowledge.knowledge_service import (
@@ -45,6 +45,7 @@ FOLDERS_NOT_FOUND = "FOLDERS_NOT_FOUND"
 DOCS_NOT_FOUND = "DOCS_NOT_FOUND"
 NOTEBOOK_DOC_LIMIT_EXCEEDED = "NOTEBOOK_DOC_LIMIT_EXCEEDED"
 GENERATED_CONTENT_READ_ONLY = "GENERATED_CONTENT_READ_ONLY"
+TRANSFER_SELECTION_LIMIT_EXCEEDED = "TRANSFER_SELECTION_LIMIT_EXCEEDED"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,22 @@ class TransferSelection:
 
 class KnowledgeTransferService:
     """Service for knowledge base migration and document transfer operations."""
+
+    @staticmethod
+    def validate_transfer_resource_count(
+        document_ids: set[int], folder_ids: set[int]
+    ) -> None:
+        """Reject transfers whose expanded workload is too large for one request."""
+        resource_count = len(document_ids) + len(folder_ids)
+        if resource_count > MAX_TRANSFER_RESOURCE_COUNT:
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Transfer cannot exceed "
+                    f"{MAX_TRANSFER_RESOURCE_COUNT} documents and folders"
+                ),
+                error_code=TRANSFER_SELECTION_LIMIT_EXCEEDED,
+            )
 
     # ============== Knowledge Base Migration ==============
 
@@ -753,6 +770,9 @@ class KnowledgeTransferService:
                 document_ids=document_ids,
                 folder_ids=folder_ids,
             )
+        )
+        KnowledgeTransferService.validate_transfer_resource_count(
+            all_doc_ids, descendant_folder_ids
         )
 
         if not all_doc_ids:
