@@ -83,6 +83,7 @@ import sys
 
 
 tool = sys.argv[1]
+timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
 executable = shutil.which(tool)
 if not executable:
     print(
@@ -93,6 +94,7 @@ if not executable:
                 "authenticated": False,
                 "executablePath": None,
                 "version": None,
+                "detectionError": None,
             }
         )
     )
@@ -105,21 +107,37 @@ def run(*args):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=10,
+        timeout=timeout_seconds,
         check=False,
     )
 
 
-version_result = run("--version")
-version = next(
-    (
-        line.strip()
-        for line in version_result.stdout.splitlines()
-        if line.strip()
-    ),
-    None,
-)
-auth_result = run("auth", "status")
+try:
+    version_result = run("--version")
+    version = next(
+        (
+            line.strip()
+            for line in version_result.stdout.splitlines()
+            if line.strip()
+        ),
+        None,
+    )
+    auth_result = run("auth", "status")
+except subprocess.TimeoutExpired:
+    print(
+        json.dumps(
+            {
+                "tool": tool,
+                "installed": True,
+                "authenticated": False,
+                "executablePath": executable,
+                "version": None,
+                "detectionError": "timeout",
+            }
+        )
+    )
+    raise SystemExit(0)
+
 print(
     json.dumps(
         {
@@ -128,6 +146,7 @@ print(
             "authenticated": auth_result.returncode == 0,
             "executablePath": executable,
             "version": version,
+            "detectionError": None,
         }
     )
 )

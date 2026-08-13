@@ -25,6 +25,7 @@ describe('getGitHostingCliStatus', () => {
         authenticated: true,
         executablePath: '/opt/homebrew/bin/gh',
         version: 'gh version 2.80.0',
+        detectionError: null,
       },
     })
 
@@ -35,6 +36,7 @@ describe('getGitHostingCliStatus', () => {
       authenticated: true,
       executablePath: '/opt/homebrew/bin/gh',
       version: 'gh version 2.80.0',
+      detectionError: null,
     })
     expect(requestLocalExecutor).toHaveBeenCalledWith('device.execute_command', {
       command_key: 'git_github_cli_status',
@@ -60,6 +62,26 @@ describe('getGitHostingCliStatus', () => {
       tool: 'glab',
       installed: false,
       authenticated: false,
+    })
+  })
+
+  test('preserves a transient CLI timeout', async () => {
+    requestLocalExecutor.mockResolvedValue({
+      success: true,
+      stdout: {
+        tool: 'gh',
+        installed: true,
+        authenticated: false,
+        executablePath: '/opt/homebrew/bin/gh',
+        version: null,
+        detectionError: 'timeout',
+      },
+    })
+
+    await expect(getGitHostingCliStatus('github')).resolves.toMatchObject({
+      provider: 'github',
+      installed: true,
+      detectionError: 'timeout',
     })
   })
 

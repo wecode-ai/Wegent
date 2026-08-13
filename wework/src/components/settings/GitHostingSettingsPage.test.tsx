@@ -50,6 +50,7 @@ describe('GitHostingSettingsPage', () => {
             authenticated: false,
             executablePath: '/opt/homebrew/bin/gh',
             version: 'gh version 2.80.0',
+            detectionError: null,
           }
         : {
             provider,
@@ -58,6 +59,7 @@ describe('GitHostingSettingsPage', () => {
             authenticated: false,
             executablePath: null,
             version: null,
+            detectionError: null,
           }
     )
   })
@@ -89,5 +91,31 @@ describe('GitHostingSettingsPage', () => {
     await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2))
     await userEvent.click(screen.getByTestId('git-hosting-cli-refresh'))
     await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(4))
+  })
+
+  test('does not offer remediation when CLI detection fails', async () => {
+    getGitHostingCliStatus.mockImplementation(async provider => {
+      if (provider === 'github') {
+        throw new Error('executor unavailable')
+      }
+      return {
+        provider,
+        tool: 'glab',
+        installed: true,
+        authenticated: false,
+        executablePath: '/usr/local/bin/glab',
+        version: null,
+        detectionError: 'timeout',
+      }
+    })
+
+    render(<GitHostingSettingsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('检测失败')
+      expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('检测失败')
+    })
+    expect(screen.queryByTestId('git-hosting-cli-github-install')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('git-hosting-cli-gitlab-copy-login')).not.toBeInTheDocument()
   })
 })

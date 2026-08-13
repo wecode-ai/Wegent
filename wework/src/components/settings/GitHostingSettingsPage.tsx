@@ -39,6 +39,9 @@ function statusLabel(
 ) {
   if (loading) return t('workbench.git_hosting_cli_detecting', '检测中…')
   if (!status) return t('workbench.git_hosting_cli_detection_failed', '检测失败')
+  if (status.detectionError) {
+    return t('workbench.git_hosting_cli_detection_failed', '检测失败')
+  }
   if (!status.installed) return t('workbench.git_hosting_cli_not_installed', '未安装')
   if (!status.authenticated) return t('workbench.git_hosting_cli_not_authenticated', '未登录')
   return t('workbench.git_hosting_cli_ready', '已就绪')
@@ -149,7 +152,7 @@ export function GitHostingSettingsPage() {
         {PROVIDERS.map(provider => {
           const config = PROVIDER_CONFIG[provider]
           const status = statuses[provider]
-          const ready = status?.installed && status.authenticated
+          const ready = !status?.detectionError && status?.installed && status.authenticated
           return (
             <section
               key={provider}
@@ -185,9 +188,9 @@ export function GitHostingSettingsPage() {
                 </div>
               </div>
 
-              {!loading && !ready ? (
+              {!loading && status && !status.detectionError && !ready ? (
                 <div className="mt-4 flex flex-wrap gap-2 pl-8">
-                  {!status?.installed ? (
+                  {!status.installed ? (
                     <button
                       type="button"
                       data-testid={`git-hosting-cli-${provider}-install`}
@@ -198,7 +201,7 @@ export function GitHostingSettingsPage() {
                       {t('workbench.git_hosting_cli_install', '安装指引')}
                     </button>
                   ) : null}
-                  {status?.installed && !status.authenticated ? (
+                  {status.installed && !status.authenticated ? (
                     <button
                       type="button"
                       data-testid={`git-hosting-cli-${provider}-copy-login`}

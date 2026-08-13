@@ -224,6 +224,18 @@ export async function createDesktopScenario({
         'false',
         'Disabling PR/MR status lookup was not persisted'
       )
+      await control.command('click', '[data-testid="settings-nav-general"]')
+      await control.command('click', '[data-testid="settings-nav-git-hosting"]')
+      await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForAttribute(
+        control,
+        '[data-testid="change-request-status-switch"]',
+        'aria-checked',
+        'false',
+        'Disabled PR/MR status lookup should remain disabled after reopening settings'
+      )
       await capture(control, 'change-request-status-06-settings-disabled.png', 'body')
 
       await control.command('click', '[data-testid="change-request-status-switch"]')

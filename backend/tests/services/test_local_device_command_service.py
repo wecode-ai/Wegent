@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -168,7 +169,7 @@ def test_turn_file_changes_commands_are_registered():
     assert revert.post_processor == "json"
 
 
-def test_git_hosting_cli_status_commands_are_registered():
+def test_git_hosting_cli_status_commands_are_registered() -> None:
     from app.services.device.command_registry import resolve_local_device_command
 
     github = resolve_local_device_command("git_github_cli_status", {})
@@ -183,7 +184,7 @@ def test_git_hosting_cli_status_commands_are_registered():
     assert gitlab.post_processor == "json"
 
 
-def test_git_hosting_cli_status_reports_missing_tool(tmp_path):
+def test_git_hosting_cli_status_reports_missing_tool(tmp_path: Path) -> None:
     from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
 
     result = subprocess.run(
@@ -201,6 +202,39 @@ def test_git_hosting_cli_status_reports_missing_tool(tmp_path):
         "authenticated": False,
         "executablePath": None,
         "version": None,
+        "detectionError": None,
+    }
+
+
+def test_git_hosting_cli_status_reports_timeout(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "gh"
+    executable.write_text("#!/bin/sh\nsleep 1\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            GIT_HOSTING_CLI_STATUS_SCRIPT,
+            "gh",
+            "0.01",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "gh",
+        "installed": True,
+        "authenticated": False,
+        "executablePath": str(executable),
+        "version": None,
+        "detectionError": "timeout",
     }
 
 

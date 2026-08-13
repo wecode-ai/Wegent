@@ -97,6 +97,7 @@ import subprocess
 import sys
 
 tool = sys.argv[1]
+timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
 executable = shutil.which(tool)
 if not executable:
     print(json.dumps({
@@ -105,6 +106,7 @@ if not executable:
         "authenticated": False,
         "executablePath": None,
         "version": None,
+        "detectionError": None,
     }))
     raise SystemExit(0)
 
@@ -114,22 +116,35 @@ def run(*args):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=10,
+        timeout=timeout_seconds,
         check=False,
     )
 
-version_result = run("--version")
-version = next(
-    (line.strip() for line in version_result.stdout.splitlines() if line.strip()),
-    None,
-)
-auth_result = run("auth", "status")
+try:
+    version_result = run("--version")
+    version = next(
+        (line.strip() for line in version_result.stdout.splitlines() if line.strip()),
+        None,
+    )
+    auth_result = run("auth", "status")
+except subprocess.TimeoutExpired:
+    print(json.dumps({
+        "tool": tool,
+        "installed": True,
+        "authenticated": False,
+        "executablePath": executable,
+        "version": None,
+        "detectionError": "timeout",
+    }))
+    raise SystemExit(0)
+
 print(json.dumps({
     "tool": tool,
     "installed": True,
     "authenticated": auth_result.returncode == 0,
     "executablePath": executable,
     "version": version,
+    "detectionError": None,
 }))
 "#;
 const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
