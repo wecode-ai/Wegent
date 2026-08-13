@@ -1,7 +1,9 @@
 import {
   Check,
   ChevronDown,
+  CircleCheck,
   CircleDot,
+  CircleX,
   Cloud,
   Copy,
   FolderOpen,
@@ -12,6 +14,7 @@ import {
   Link2,
   Laptop,
   LoaderCircle,
+  Clock3,
   Square,
   Upload,
   CornerDownLeft,
@@ -30,6 +33,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import { navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getExecutorOfflineDeviceId,
@@ -147,11 +151,24 @@ export function EnvironmentInfoPopover({
       : info.workspacePath
         ? [info.workspacePath]
         : []
+  const changeRequest = info.changeRequest?.changeRequest
+  const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
+  const changeRequestStateLabel = changeRequest
+    ? changeRequest.draft
+      ? t('workbench.environment_change_request_draft', '草稿')
+      : t(`workbench.environment_change_request_${changeRequest.state}`, changeRequest.state)
+    : ''
+
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
     }
     void openExternalUrl(info.createPullRequestUrl)
+  }
+
+  function handleOpenChangeRequest() {
+    if (!changeRequest?.url) return
+    void openExternalUrl(changeRequest.url)
   }
 
   function handleOpenChangesReview() {
@@ -487,20 +504,110 @@ export function EnvironmentInfoPopover({
                           )}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        data-testid="create-pull-request-button"
-                        disabled={!info.createPullRequestUrl}
-                        onClick={handleCreatePullRequest}
-                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                      >
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                          <GitPullRequest className="h-[18px] w-[18px]" />
-                        </span>
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                          {t('workbench.environment_create_pr', '创建拉取请求')}
-                        </span>
-                      </button>
+                      {changeRequest ? (
+                        <button
+                          type="button"
+                          data-testid="change-request-button"
+                          onClick={handleOpenChangeRequest}
+                          title={changeRequest.title}
+                          className="flex min-h-11 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                        >
+                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                            <GitPullRequest className="h-[18px] w-[18px]" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span
+                                data-testid="change-request-number"
+                                className="shrink-0 font-medium"
+                              >
+                                {changeRequestPrefix}
+                                {changeRequest.number}
+                              </span>
+                              <span
+                                data-testid="change-request-title"
+                                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                              >
+                                {changeRequest.title}
+                              </span>
+                            </span>
+                            <span className="mt-0.5 flex items-center gap-2 text-xs text-text-muted">
+                              <span data-testid="change-request-state">
+                                {changeRequestStateLabel}
+                              </span>
+                              {changeRequest.checks !== 'unknown' && (
+                                <span
+                                  data-testid="change-request-checks"
+                                  className={cn(
+                                    'inline-flex items-center gap-1',
+                                    changeRequest.checks === 'success' && 'text-green-500',
+                                    changeRequest.checks === 'failure' && 'text-red-500'
+                                  )}
+                                >
+                                  {changeRequest.checks === 'success' ? (
+                                    <CircleCheck className="h-3.5 w-3.5" />
+                                  ) : changeRequest.checks === 'failure' ? (
+                                    <CircleX className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Clock3 className="h-3.5 w-3.5" />
+                                  )}
+                                  {t(
+                                    `workbench.environment_change_request_checks_${changeRequest.checks}`,
+                                    changeRequest.checks
+                                  )}
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid="create-pull-request-button"
+                          disabled={!info.createPullRequestUrl}
+                          onClick={handleCreatePullRequest}
+                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+                        >
+                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                            <GitPullRequest className="h-[18px] w-[18px]" />
+                          </span>
+                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                            {info.changeRequest?.provider === 'gitlab'
+                              ? t('workbench.environment_create_mr', '创建合并请求')
+                              : t('workbench.environment_create_pr', '创建拉取请求')}
+                          </span>
+                        </button>
+                      )}
+                      {info.changeRequest &&
+                        ['unavailable', 'unauthenticated', 'error'].includes(
+                          info.changeRequest.state
+                        ) && (
+                          <div className="px-7 pb-1">
+                            <p
+                              data-testid="change-request-lookup-hint"
+                              className="text-xs leading-4 text-text-muted"
+                            >
+                              {t(
+                                `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
+                                ''
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              data-testid="change-request-open-settings"
+                              onClick={() => {
+                                onOpenChange(false)
+                                navigateTo('/settings/git-hosting')
+                              }}
+                              className="mt-1 text-xs text-blue-500 hover:underline"
+                            >
+                              {t(
+                                'workbench.environment_change_request_configure',
+                                '配置代码托管工具'
+                              )}
+                            </button>
+                          </div>
+                        )}
                     </>
                   )}
                 </section>

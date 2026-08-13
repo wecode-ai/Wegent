@@ -650,6 +650,8 @@ struct AppPreferences {
     friendly_task_titles_enabled: bool,
     #[serde(default)]
     friendly_task_title_model: Option<serde_json::Value>,
+    #[serde(default = "default_true")]
+    change_request_status_enabled: bool,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
     #[serde(default = "default_local_harness_preferences")]
@@ -847,6 +849,7 @@ impl Default for AppPreferences {
             popout_window_projectless_default_enabled: false,
             friendly_task_titles_enabled: false,
             friendly_task_title_model: None,
+            change_request_status_enabled: true,
             quick_phrases: default_quick_phrases(),
             local_harnesses: default_local_harness_preferences(),
         }
@@ -907,6 +910,7 @@ struct AppPreferencesPatch {
     friendly_task_titles_enabled: Option<bool>,
     #[serde(default)]
     friendly_task_title_model: PatchField<serde_json::Value>,
+    change_request_status_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
     local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
@@ -1553,6 +1557,9 @@ fn update_app_preferences(
     if let PatchField::Value(value) = patch.friendly_task_title_model {
         preferences.friendly_task_title_model = value;
     }
+    if let Some(value) = patch.change_request_status_enabled {
+        preferences.change_request_status_enabled = value;
+    }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
     }
@@ -1600,6 +1607,7 @@ struct AppPreferences {
     popout_window_projectless_default_enabled: bool,
     friendly_task_titles_enabled: bool,
     friendly_task_title_model: Option<serde_json::Value>,
+    change_request_status_enabled: bool,
     quick_phrases: Vec<QuickPhrase>,
     local_harnesses: Vec<LocalHarnessPreference>,
 }
@@ -1635,6 +1643,7 @@ struct AppPreferencesPatch {
     popout_window_projectless_default_enabled: Option<bool>,
     friendly_task_titles_enabled: Option<bool>,
     friendly_task_title_model: Option<serde_json::Value>,
+    change_request_status_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
     local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
@@ -1670,6 +1679,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         popout_window_projectless_default_enabled: false,
         friendly_task_titles_enabled: false,
         friendly_task_title_model: None,
+        change_request_status_enabled: true,
         quick_phrases: default_quick_phrases(),
         local_harnesses: default_local_harness_preferences(),
     })
@@ -1732,6 +1742,7 @@ fn update_app_preferences(
             .unwrap_or(false),
         friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
         friendly_task_title_model: patch.friendly_task_title_model,
+        change_request_status_enabled: patch.change_request_status_enabled.unwrap_or(true),
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
         local_harnesses: normalize_local_harness_preferences(
             patch
@@ -4347,7 +4358,7 @@ mod tests {
     #[cfg(desktop)]
     use super::{
         close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
-        AppPreferencesPatch, PatchField,
+        AppPreferences, AppPreferencesPatch, PatchField,
     };
     use std::collections::HashSet;
     #[cfg(desktop)]
@@ -4439,6 +4450,16 @@ mod tests {
             cleared.popout_window_shortcut,
             PatchField::Value(None)
         ));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn defaults_missing_change_request_status_preference_to_enabled() {
+        let preferences: AppPreferences =
+            serde_json::from_value(serde_json::json!({ "supervisorPrinciples": "" }))
+                .expect("preferences should parse");
+
+        assert!(preferences.change_request_status_enabled);
     }
 
     #[test]

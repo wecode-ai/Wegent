@@ -247,4 +247,83 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.queryByText('+0')).not.toBeInTheDocument()
     expect(screen.queryByText('-0')).not.toBeInTheDocument()
   })
+
+  test('renders the pull request associated with the current branch', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+2',
+          deletions: '-1',
+          executionTarget: 'local',
+          branchName: 'feature/change-request-status',
+          createPullRequestUrl:
+            'https://github.com/wecode-ai/Wegent/compare/feature%2Fchange-request-status?expand=1',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2631,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+              title: 'feat(wework): show pull request status',
+              state: 'open',
+              draft: false,
+              checks: 'success',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('change-request-number')).toHaveTextContent('#2631')
+    expect(screen.getByTestId('change-request-title')).toHaveTextContent(
+      'feat(wework): show pull request status'
+    )
+    expect(screen.getByTestId('change-request-state')).toHaveTextContent('进行中')
+    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+  })
+
+  test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+    const onOpenChange = vi.fn()
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+0',
+          deletions: '-0',
+          executionTarget: 'local',
+          branchName: 'feature/change-request-status',
+          createPullRequestUrl:
+            'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fchange-request-status',
+          changeRequest: {
+            provider: 'gitlab',
+            state: 'unavailable',
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={onOpenChange}
+      />
+    )
+
+    expect(screen.getByTestId('create-pull-request-button')).toBeEnabled()
+    expect(screen.getByTestId('create-pull-request-button')).toHaveTextContent('创建合并请求')
+    expect(screen.getByTestId('change-request-lookup-hint')).toHaveTextContent(
+      '安装 GitLab CLI（glab）后可查询合并请求状态'
+    )
+    await userEvent.click(screen.getByTestId('change-request-open-settings'))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(window.location.pathname).toBe('/settings/git-hosting')
+  })
 })
