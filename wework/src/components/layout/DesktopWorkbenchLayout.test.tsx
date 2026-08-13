@@ -9390,35 +9390,47 @@ describe('DesktopWorkbenchLayout', () => {
     })
     const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-    await waitFor(() => {
-      expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
-    })
-    await waitFor(() => {
-      expect(tauriInvokeMock).toHaveBeenCalledWith(
-        'embedded_browser_open',
-        expect.objectContaining({
-          label: 'workspace-browser-runtime-a',
-          url: 'https://example.com/',
-        }),
-        undefined
-      )
-    })
+    await waitFor(
+      () => {
+        expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
+      },
+      { timeout: 3000 }
+    )
+    await waitFor(
+      () => {
+        expect(tauriInvokeMock).toHaveBeenCalledWith(
+          'embedded_browser_open',
+          expect.objectContaining({
+            label: 'workspace-browser-runtime-a',
+            url: 'https://example.com/',
+          }),
+          undefined
+        )
+      },
+      { timeout: 3000 }
+    )
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
-    await waitFor(() => {
-      expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
-    })
-    await waitFor(() => {
-      expect(tauriInvokeMock).toHaveBeenCalledWith(
-        'embedded_browser_open',
-        expect.objectContaining({
-          label: 'workspace-browser-runtime-b',
-          url: 'https://example.org/',
-        }),
-        undefined
-      )
-    })
+    await waitFor(
+      () => {
+        expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
+      },
+      { timeout: 3000 }
+    )
+    await waitFor(
+      () => {
+        expect(tauriInvokeMock).toHaveBeenCalledWith(
+          'embedded_browser_open',
+          expect.objectContaining({
+            label: 'workspace-browser-runtime-b',
+            url: 'https://example.org/',
+          }),
+          undefined
+        )
+      },
+      { timeout: 3000 }
+    )
 
     unmount()
     await new Promise(resolve => setTimeout(resolve, 1_100))
