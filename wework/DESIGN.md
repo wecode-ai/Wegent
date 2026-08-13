@@ -532,6 +532,8 @@ recipe closely:
 - desktop project, quick-phrase, model, execution-mode, and branch selectors
   use the same `text-sm` role at regular weight; mobile variants may retain
   their larger touch-oriented typography;
+- selecting a model is a terminal menu action and closes the model selector;
+  reasoning and speed adjustments keep it open for consecutive changes;
 - on the home screen only, render the project selector as a separate background
   layer above the input surface, with the foreground Composer overlapping its
   lower edge; do not merge the selector into an internal top toolbar;
@@ -629,6 +631,13 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
+- Use the shared `Tooltip` component for compact controls instead of the native
+  HTML `title` attribute. Icon-only controls must keep a localized
+  `aria-label`; controls that currently have neither a visible label nor a
+  tooltip must add both where applicable.
+- Tooltips inside clipped sidebars, cards, tables, and panels must render
+  through the shared portal-based layer so ancestor `overflow` rules cannot
+  hide them.
 
 ### 6.7 Cards and empty states
 

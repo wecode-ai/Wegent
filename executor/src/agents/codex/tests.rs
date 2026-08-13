@@ -7,6 +7,36 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn codex_request_preparation_stops_when_cancelled() {
+    let (cancel_tx, mut cancellation) = oneshot::channel();
+    cancel_tx
+        .send(())
+        .expect("cancellation receiver should remain available");
+
+    let result =
+        prepare_codex_execution_request(ExecutionRequest::default(), Some(&mut cancellation)).await;
+
+    assert!(matches!(
+        result,
+        Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED
+    ));
+}
+
+#[test]
+fn codex_turn_start_rejects_completed_cancellation() {
+    let (cancel_tx, cancellation) = oneshot::channel();
+    cancel_tx
+        .send(())
+        .expect("cancellation receiver should remain available");
+    let mut cancellation = Some(cancellation);
+
+    assert_eq!(
+        ensure_codex_turn_not_cancelled(&mut cancellation).unwrap_err(),
+        CODEX_APP_SERVER_TURN_CANCELLED
+    );
+}
+
+#[tokio::test]
 async fn active_thread_tracking_counts_each_thread_independently() {
     let client = CodexAppServerClient::new("codex-active-thread-test");
 
@@ -2005,7 +2035,7 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
 }
 
 #[test]
-fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
+fn codex_full_access_permission_profile_is_applied_by_default() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
     let thread_start = thread_start_params(&request, &launch_config);
@@ -2018,9 +2048,29 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
+        assert_eq!(params["approvalPolicy"], "never");
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_workspace_permission_profile_is_applied_when_requested() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "runtime_permission_profile".to_owned(),
+        Value::String(CODEX_WORKSPACE_PERMISSION_PROFILE.to_owned()),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
+        assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
+        assert_eq!(params["approvalPolicy"], "on-request");
     }
 }
 
@@ -2040,7 +2090,254 @@ fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
         turn_start_params("thread-1", &request, &launch_config, Vec::new()),
     ] {
         assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
-        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
+        assert_eq!(params["approvalPolicy"], "on-request");
+    }
+}
+
+#[test]
+fn codex_command_approval_response_preserves_user_decision() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {"itemId": "command-1"}
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_once"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "accept"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_session"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "acceptForSession"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["cancel"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "cancel"})
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["unknown"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({"decision": "decline"})
+    );
+    assert_eq!(
+        codex_approval_result(&message, &json!({})).unwrap(),
+        json!({"decision": "decline"})
+    );
+}
+
+#[test]
+fn codex_command_approval_response_preserves_structured_decisions() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {
+            "itemId": "command-1",
+            "proposedExecpolicyAmendment": ["git", "push"],
+            "availableDecisions": [
+                "accept",
+                {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["git", "push"]
+                    }
+                },
+                {
+                    "acceptWithExecpolicyAmendment": {
+                        "execpolicy_amendment": ["cargo", "publish"]
+                    }
+                },
+                {
+                    "applyNetworkPolicyAmendment": {
+                        "network_policy_amendment": {
+                            "host": "github.com",
+                            "action": "allow"
+                        }
+                    }
+                }
+            ]
+        }
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_execpolicy:2"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "decision": {
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": ["cargo", "publish"]
+                }
+            }
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {
+                        "answers": ["apply_network_policy:3"]
+                    }
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "decision": {
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": {
+                        "host": "github.com",
+                        "action": "allow"
+                    }
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn codex_command_approval_rejects_missing_structured_decision_payloads() {
+    let message = json!({
+        "method": "item/commandExecution/requestApproval",
+        "params": {"itemId": "command-1"}
+    });
+
+    for answer in ["allow_execpolicy", "apply_network_policy:0"] {
+        assert_eq!(
+            codex_approval_result(
+                &message,
+                &json!({
+                    "answers": {
+                        CODEX_APPROVAL_QUESTION_ID: {"answers": [answer]}
+                    }
+                }),
+            )
+            .unwrap(),
+            json!({"decision": "decline"})
+        );
+    }
+}
+
+#[test]
+fn codex_permissions_approval_returns_requested_profile_and_scope() {
+    let message = json!({
+        "method": "item/permissions/requestApproval",
+        "params": {
+            "itemId": "permissions-1",
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            }
+        }
+    });
+
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["allow_session"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            },
+            "scope": "session",
+            "strictAutoReview": false
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {
+                        "answers": ["allow_turn_strict_review"]
+                    }
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {
+                "network": {"enabled": true},
+                "fileSystem": null
+            },
+            "scope": "turn",
+            "strictAutoReview": true
+        })
+    );
+    assert_eq!(
+        codex_approval_result(
+            &message,
+            &json!({
+                "answers": {
+                    CODEX_APPROVAL_QUESTION_ID: {"answers": ["decline"]}
+                }
+            }),
+        )
+        .unwrap(),
+        json!({
+            "permissions": {},
+            "scope": "turn",
+            "strictAutoReview": false
+        })
+    );
+    for answer in ["cancel", "unknown"] {
+        assert_eq!(
+            codex_approval_result(
+                &message,
+                &json!({
+                    "answers": {
+                        CODEX_APPROVAL_QUESTION_ID: {"answers": [answer]}
+                    }
+                }),
+            )
+            .unwrap(),
+            json!({
+                "permissions": {},
+                "scope": "turn",
+                "strictAutoReview": false
+            })
+        );
     }
 }
 
@@ -2061,10 +2358,7 @@ fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
             params["config"]["features.tool_call_mcp_elicitation"],
             false
         );
-        assert_eq!(
-            params["approvalPolicy"]["granular"]["mcp_elicitations"],
-            true
-        );
+        assert_eq!(params["approvalPolicy"], "never");
     }
 }
 

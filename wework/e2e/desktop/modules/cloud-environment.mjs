@@ -3,6 +3,8 @@ import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.
 import {
   CLOUD_DEVICE_ID,
   CLOUD_MODEL_CASES,
+  CLOUD_MULTIMODAL_VISION_CASE,
+  CLOUD_PUBLIC_MODEL_NAME,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
@@ -25,9 +27,10 @@ import {
 } from './shared.mjs'
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, workspacePath }) {
+  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
+    this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
   }
 
@@ -59,6 +62,9 @@ class RealCloudEnvironment {
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
+      FRONTEND_URL: this.modelServerUrl,
+      CHAT_SHELL_URL: this.modelServerUrl,
+      CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
@@ -100,7 +106,7 @@ class RealCloudEnvironment {
   async startRemoteExecutor(executorBinary) {
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl)
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     const remoteEnv = {
       ...process.env,
       CODEX_BIN: this.codexBinary,
@@ -139,28 +145,43 @@ class RealCloudEnvironment {
   }
 
   async seedCloudProtocolModels() {
-    const items = CLOUD_MODEL_CASES.map(model => ({
-      name: model.optionIds[0],
-      env: {
-        model: model.protocol === 'anthropic' ? 'claude' : 'openai',
-        model_id: model.modelId,
-        base_url: `${this.modelServerUrl}/v1`,
-        api_key: MODEL_API_KEY,
-      },
-      is_active: true,
-      wework_available: true,
-      protocol:
-        model.protocol === 'responses'
-          ? 'openai-responses'
+    const items = [
+      ...CLOUD_MODEL_CASES.map(model => ({
+        name: model.optionIds[0],
+        env: {
+          model: model.protocol === 'anthropic' ? 'claude' : 'openai',
+          model_id: model.modelId,
+          base_url: `${this.modelServerUrl}/v1`,
+          api_key: MODEL_API_KEY,
+        },
+        is_active: true,
+        wework_available: true,
+        protocol:
+          model.protocol === 'responses'
+            ? 'openai-responses'
+            : model.protocol === 'chat'
+              ? 'openai'
+              : 'anthropic-messages',
+        ...(model.protocol === 'responses'
+          ? { api_format: 'responses' }
           : model.protocol === 'chat'
-            ? 'openai'
-            : 'anthropic-messages',
-      ...(model.protocol === 'responses'
-        ? { api_format: 'responses' }
-        : model.protocol === 'chat'
-          ? { api_format: 'chat/completions' }
-          : {}),
-    }))
+            ? { api_format: 'chat/completions' }
+            : {}),
+      })),
+      {
+        name: CLOUD_PUBLIC_MODEL_NAME,
+        env: {
+          model: 'openai',
+          model_id: 'desktop-e2e-public-upstream-model',
+          base_url: `${this.modelServerUrl}/v1`,
+          api_key: MODEL_API_KEY,
+        },
+        is_active: true,
+        wework_available: true,
+        protocol: 'openai-responses',
+        api_format: 'responses',
+      },
+    ]
     await fetchJson(`${this.backendUrl}/api/models/batch`, {
       method: 'POST',
       headers: {
@@ -252,6 +273,33 @@ class RealCloudEnvironment {
         apiFormat: 'responses',
         modelType: 'llm',
         isWeworkAvailable: true,
+      },
+    })
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: CLOUD_MULTIMODAL_VISION_CASE.mainOptionId,
+        namespace: 'default',
+        displayName: CLOUD_MULTIMODAL_VISION_CASE.mainLabel,
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_MULTIMODAL_VISION_CASE.mainModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+        },
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+        modelCapabilities: {
+          supportsImage: true,
+        },
       },
     })
   }

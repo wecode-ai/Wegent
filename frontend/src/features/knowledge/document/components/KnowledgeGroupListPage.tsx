@@ -13,7 +13,7 @@
 
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
   ArrowLeft,
@@ -27,8 +27,14 @@ import {
   FolderOutput,
 } from 'lucide-react'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
+import {
+  isInKnowledgeBaseCategory,
+  KnowledgeBaseCategoryFilter,
+  type KnowledgeBaseCategory,
+} from './KnowledgeBaseCategoryFilter'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   Table,
   TableHeader,
@@ -181,6 +187,7 @@ export function KnowledgeGroupListPage({
   const { t } = useTranslation('knowledge')
   const [sortBy, setSortBy] = useState<SortBy>('created')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
 
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
@@ -190,6 +197,30 @@ export function KnowledgeGroupListPage({
     }
     return knowledgeBases
   }, [knowledgeBasesWithGroupInfo, knowledgeBases])
+
+  const showCodeCategory = useMemo(
+    () =>
+      getRuntimeConfigSync().enableCodeWiki ||
+      [
+        ...dataSource,
+        ...personalCreatedByMe,
+        ...personalSharedWithMe,
+        ...groupNativeKbs,
+        ...groupSharedKbs,
+      ].some(kb => kb.kb_type === 'code_wiki'),
+    [dataSource, personalCreatedByMe, personalSharedWithMe, groupNativeKbs, groupSharedKbs]
+  )
+
+  useEffect(() => {
+    if (!showCodeCategory && category === 'code') {
+      setCategory('all')
+    }
+  }, [category, showCodeCategory])
+
+  const filterByCategory = useCallback(
+    (kbs: KbDataItem[]) => kbs.filter(kb => isInKnowledgeBaseCategory(kb.kb_type, category)),
+    [category]
+  )
 
   // Helper function to get my_role from KB
   const getKbRole = useCallback((kb: KbDataItem): string | null | undefined => {
@@ -257,6 +288,8 @@ export function KnowledgeGroupListPage({
       })
     }
 
+    result = filterByCategory(result)
+
     // Dedup by ID as a safety measure against duplicate data
     const seen = new Set<number>()
     result = result.filter(kb => {
@@ -266,22 +299,28 @@ export function KnowledgeGroupListPage({
     })
 
     return sortKbs(result)
-  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, sortKbs])
+  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, filterByCategory, sortKbs])
 
   // Determine whether to show the "from" column
   const showFromColumn = !isPersonalMode && !isAllMode
 
   // Sorted personal KBs for personal mode
   const sortedCreatedByMe = useMemo(
-    () => sortKbs(personalCreatedByMe),
-    [personalCreatedByMe, sortKbs]
+    () => sortKbs(filterByCategory(personalCreatedByMe)),
+    [personalCreatedByMe, filterByCategory, sortKbs]
   )
   const sortedSharedWithMe = useMemo(
-    () => sortKbs(personalSharedWithMe),
-    [personalSharedWithMe, sortKbs]
+    () => sortKbs(filterByCategory(personalSharedWithMe)),
+    [personalSharedWithMe, filterByCategory, sortKbs]
   )
-  const sortedNative = useMemo(() => sortKbs(groupNativeKbs), [groupNativeKbs, sortKbs])
-  const sortedShared = useMemo(() => sortKbs(groupSharedKbs), [groupSharedKbs, sortKbs])
+  const sortedNative = useMemo(
+    () => sortKbs(filterByCategory(groupNativeKbs)),
+    [groupNativeKbs, filterByCategory, sortKbs]
+  )
+  const sortedShared = useMemo(
+    () => sortKbs(filterByCategory(groupSharedKbs)),
+    [groupSharedKbs, filterByCategory, sortKbs]
+  )
 
   const handleToggleFavorite = useCallback(
     (e: React.MouseEvent, kb: KbDataItem) => {
@@ -401,23 +440,34 @@ export function KnowledgeGroupListPage({
     </TableBody>
   )
 
+  const renderEmptyState = () => {
+    const emptyTitle =
+      category === 'code'
+        ? t('document.knowledgeBase.categoryFilter.emptyCode')
+        : category === 'document'
+          ? t('document.knowledgeBase.categoryFilter.emptyDocument')
+          : t('document.knowledgeBase.empty', '暂无知识库')
+
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
+        <h3 className="text-lg font-medium text-text-primary mb-2">{emptyTitle}</h3>
+        {category === 'all' && (
+          <p className="text-sm text-text-muted mb-4">
+            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
+          </p>
+        )}
+      </div>
+    )
+  }
+
   // Render personal mode content with separate sections
   const renderPersonalModeContent = () => {
     const hasCreated = sortedCreatedByMe.length > 0
     const hasShared = sortedSharedWithMe.length > 0
 
     if (!hasCreated && !hasShared) {
-      return (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
-          <h3 className="text-lg font-medium text-text-primary mb-2">
-            {t('document.knowledgeBase.empty', '暂无知识库')}
-          </h3>
-          <p className="text-sm text-text-muted mb-4">
-            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
-          </p>
-        </div>
-      )
+      return renderEmptyState()
     }
 
     return (
@@ -476,17 +526,7 @@ export function KnowledgeGroupListPage({
     const hasShared = sortedShared.length > 0
 
     if (!hasNative && !hasShared) {
-      return (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
-          <h3 className="text-lg font-medium text-text-primary mb-2">
-            {t('document.knowledgeBase.empty', '暂无知识库')}
-          </h3>
-          <p className="text-sm text-text-muted mb-4">
-            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
-          </p>
-        </div>
-      )
+      return renderEmptyState()
     }
 
     return (
@@ -536,7 +576,7 @@ export function KnowledgeGroupListPage({
       data-testid="knowledge-group-list-page"
     >
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-border ml-2">
+      <div className="flex flex-wrap items-center gap-3 px-6 py-4 border-b border-border ml-2">
         {/* Back button - only show in group mode */}
         {!isAllMode && onBack && (
           <Button
@@ -549,9 +589,14 @@ export function KnowledgeGroupListPage({
             <ArrowLeft className="w-4 h-4" />
           </Button>
         )}
-        <h2 className="text-lg font-semibold flex-1 truncate">
+        <h2 className="text-lg font-semibold flex-1 min-w-[160px] truncate">
           {isAllMode ? t('document.allKnowledgeBases', '全部知识库') : groupName}
         </h2>
+        <KnowledgeBaseCategoryFilter
+          value={category}
+          onValueChange={setCategory}
+          showCode={showCodeCategory}
+        />
         {onCreateKb && (
           <Button
             variant="primary"
@@ -578,15 +623,7 @@ export function KnowledgeGroupListPage({
           // Group section mode: show native and shared sub-sections
           renderGroupSectionContent()
         ) : filteredKbs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
-            <h3 className="text-lg font-medium text-text-primary mb-2">
-              {t('document.knowledgeBase.empty', '暂无知识库')}
-            </h3>
-            <p className="text-sm text-text-muted mb-4">
-              {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
-            </p>
-          </div>
+          renderEmptyState()
         ) : (
           <Table className="w-full table-fixed min-w-0">
             {renderTableHeader(isAllMode, showFromColumn)}

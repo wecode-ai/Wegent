@@ -556,6 +556,10 @@ function emitResponseBlockUpdated(
   const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
   const toolOutputOriginalBytes =
     updates.toolOutputOriginalBytes ?? updates.tool_output_original_bytes
+  const completedAt =
+    optionalNumberField(updates, 'completedAt') ?? optionalNumberField(updates, 'completed_at')
+  const durationMs =
+    optionalNumberField(updates, 'durationMs') ?? optionalNumberField(updates, 'duration_ms')
   emitBlockUpdated(
     handlers,
     'response.block.updated',
@@ -581,6 +585,8 @@ function emitResponseBlockUpdated(
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
       }),
+      ...(completedAt !== undefined && { completedAt }),
+      ...(durationMs !== undefined && { durationMs }),
     }
   )
 }

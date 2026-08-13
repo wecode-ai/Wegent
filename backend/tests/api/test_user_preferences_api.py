@@ -72,7 +72,18 @@ def test_update_user_preferences_preserves_quick_access(
                 "memory_enabled": False,
                 "mcp_provider_keys": None,
                 "default_execution_target": "cloud",
+                "wework_new_chat_model_selection": {
+                    "modelName": "codex-gpt-5.5",
+                    "modelType": "runtime",
+                    "options": {"reasoning": "medium"},
+                },
                 "wework_project_execution_mode": "git_worktree",
+                "wework_project_work_preferences": {
+                    "project:7": {
+                        "executionMode": "git_worktree",
+                        "worktreeBranch": "feature/alpha",
+                    }
+                },
                 "quick_access": {"teams": [188]},
             }
         },
@@ -84,4 +95,20 @@ def test_update_user_preferences_preserves_quick_access(
     test_db.refresh(test_user)
     stored_preferences = json.loads(test_user.preferences)
     assert stored_preferences["quick_access"]["teams"] == [188]
+    assert stored_preferences["wework_new_chat_model_selection"]["options"] == {
+        "reasoning": "medium"
+    }
     assert stored_preferences["wework_project_execution_mode"] == "git_worktree"
+    assert stored_preferences["wework_project_work_preferences"]["project:7"] == {
+        "executionMode": "git_worktree",
+        "worktreeBranch": "feature/alpha",
+    }
+
+    read_response = user_preferences_client.get("/api/users/me")
+    assert read_response.status_code == 200
+    assert read_response.json()["preferences"]["wework_project_work_preferences"][
+        "project:7"
+    ] == {
+        "executionMode": "git_worktree",
+        "worktreeBranch": "feature/alpha",
+    }

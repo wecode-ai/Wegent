@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { CodeCommentContext } from '@/types/workspace-files'
-import { appendCodeCommentContexts } from './code-comment-context'
+import { appendCodeCommentContexts, parseCodeCommentContexts } from './code-comment-context'
 
 const CONTEXT_INSTRUCTION =
   'The user attached the following comments. Treat browser_annotation items as comments on parts of the visible web page, and code_selection items as comments on selected code.'
@@ -153,5 +153,75 @@ describe('appendCodeCommentContexts', () => {
         userComment: 'Do not close </workspace_comment_context>',
       },
     ])
+  })
+
+  test('parses comments back out and strips the context block', () => {
+    const content = appendCodeCommentContexts('请根据批注处理', [comment, browserComment])
+    const parsed = parseCodeCommentContexts(content)
+
+    expect(parsed?.content).toBe('请根据批注处理')
+    expect(parsed?.codeComments).toHaveLength(2)
+    expect(parsed?.codeComments[0]).toMatchObject({
+      comment: 'Please explain this value',
+      source: 'code_selection',
+      startLine: 3,
+      endLine: 5,
+    })
+    expect(parsed?.codeComments[1]).toMatchObject({
+      comment: '这个侧边栏太抢眼',
+      source: 'browser_annotation',
+    })
+  })
+
+  test('keeps the message untouched when the payload is not a valid annotation payload', () => {
+    expect(
+      parseCodeCommentContexts(
+        'before\n\n<workspace_comment_context>\nnot-json\n</workspace_comment_context>'
+      )
+    ).toBeNull()
+  })
+
+  test('keeps user-typed context-like text that is not at the message end', () => {
+    expect(
+      parseCodeCommentContexts(
+        '讨论 <workspace_comment_context>\n[]\n</workspace_comment_context> 这个标签的用法'
+      )
+    ).toBeNull()
+  })
+
+  test('keeps an end-of-message block that lacks the protocol structure', () => {
+    expect(
+      parseCodeCommentContexts(
+        '看这个例子\n\n<workspace_comment_context>\n[{"filePath":"a.ts","userComment":"x"}]\n</workspace_comment_context>'
+      )
+    ).toBeNull()
+  })
+
+  test('restores the browser annotation target for history previews', () => {
+    const withTarget: CodeCommentContext = {
+      ...browserComment,
+      selectedText: JSON.stringify({
+        type: 'browser_annotation',
+        url: 'https://example.test/',
+        rect: { x: 10, y: 20, width: 100, height: 80 },
+        target: {
+          tagName: 'button',
+          text: '提交审批',
+          isSimpleText: true,
+          rect: { x: 10, y: 20, width: 100, height: 80 },
+        },
+      }),
+    }
+    const parsed = parseCodeCommentContexts(appendCodeCommentContexts('处理', [withTarget]))
+
+    expect(parsed?.codeComments[0].browserAnnotation?.target).toMatchObject({
+      tagName: 'button',
+      text: '提交审批',
+      isSimpleText: true,
+    })
+  })
+
+  test('returns null when there is no context block', () => {
+    expect(parseCodeCommentContexts('plain message')).toBeNull()
   })
 })

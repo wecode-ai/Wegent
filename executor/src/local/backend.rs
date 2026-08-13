@@ -149,6 +149,40 @@ where
     T: LocalBackendTransport,
 {
     pub fn new(config: LocalBackendConfig, transport: T) -> Self {
+        let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
+        let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
+            RuntimeWorkRpcHandler::with_event_sender(
+                config.device_id.clone(),
+                resolve_codex_binary(),
+                runtime_event_tx,
+            )
+            .with_backend_connection(Arc::new(Mutex::new(
+                connection_snapshot_from_config(&config),
+            ))),
+        );
+        Self::new_with_runtime_work_handler(
+            config,
+            transport,
+            runtime_work_handler,
+            runtime_event_rx,
+        )
+    }
+
+    pub fn new_with_shared_runtime_work_handler(
+        config: LocalBackendConfig,
+        transport: T,
+        runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
+        runtime_events: broadcast::Receiver<Value>,
+    ) -> Self {
+        Self::new_with_runtime_work_handler(config, transport, runtime_work_handler, runtime_events)
+    }
+
+    fn new_with_runtime_work_handler(
+        config: LocalBackendConfig,
+        transport: T,
+        runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
+        runtime_events: broadcast::Receiver<Value>,
+    ) -> Self {
         let running_tasks = LocalRunningTaskTracker::default();
         let client = LocalBackendClient::with_capability_reporter_and_tracker(
             config,
@@ -164,18 +198,8 @@ where
         );
         let mut backend = Self::from_client_and_runner(client, runner.clone());
         backend.task_controller = Some(Arc::new(runner));
-        let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
-        backend.runtime_work_handler = Some(Arc::new(
-            RuntimeWorkRpcHandler::with_event_sender(
-                backend.client.config.device_id.clone(),
-                resolve_codex_binary(),
-                runtime_event_tx,
-            )
-            .with_backend_connection(Arc::new(Mutex::new(
-                connection_snapshot_from_config(backend.client.config.as_ref()),
-            ))),
-        ));
-        backend.start_runtime_event_forwarder(runtime_event_rx);
+        backend.runtime_work_handler = Some(runtime_work_handler);
+        backend.start_runtime_event_forwarder(runtime_events);
         backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
             backend.client.config.as_ref(),
         )));
@@ -228,24 +252,6 @@ where
         C: LocalTaskController,
     {
         self.task_controller = Some(Arc::new(controller));
-        self
-    }
-
-    pub fn with_runtime_work_handler<H>(mut self, handler: H) -> Self
-    where
-        H: RuntimeWorkHandler + 'static,
-    {
-        self.runtime_work_handler = Some(Arc::new(handler));
-        self
-    }
-
-    pub fn with_shared_runtime_work_handler(
-        mut self,
-        handler: Arc<dyn RuntimeWorkHandler>,
-        events: broadcast::Receiver<Value>,
-    ) -> Self {
-        self.runtime_work_handler = Some(handler);
-        self.start_runtime_event_forwarder(events);
         self
     }
 

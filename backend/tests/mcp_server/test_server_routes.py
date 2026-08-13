@@ -1207,6 +1207,40 @@ def test_main_app_mounts_external_knowledge_route_when_enabled():
     assert response.text == "ok"
 
 
+def test_main_app_mounts_registered_custom_mcp_app(monkeypatch):
+    fake_streamable_app = Starlette(
+        routes=[Route("/", lambda request: PlainTextResponse("ok"), methods=["GET"])]
+    )
+    fake_custom_app = Starlette(
+        routes=[
+            Route("/sse", lambda request: PlainTextResponse("custom"), methods=["GET"])
+        ]
+    )
+    spec = mcp_server_module.CustomMcpAppSpec(
+        name="demo",
+        mount_path="/mcp/demo",
+        transport_path="/sse",
+        build_app=lambda mount_path: fake_custom_app,
+    )
+    monkeypatch.setitem(mcp_server_module._custom_mcp_app_specs, spec.name, spec)
+
+    with (
+        patch.object(settings, "API_PREFIX", "/api"),
+        patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False),
+        patch(
+            "app.mcp_server.server._build_mcp_app",
+            return_value=fake_streamable_app,
+        ),
+    ):
+        app = create_app()
+
+    client = TestClient(app)
+    response = client.get("/api/mcp/demo/sse", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.text == "custom"
+
+
 def test_main_lifespan_skips_external_knowledge_mcp_by_default():
     with patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False):
         mcp_lifespan_servers = _get_mcp_lifespan_servers()

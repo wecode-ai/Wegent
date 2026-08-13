@@ -199,6 +199,22 @@ async def _dispatch_task_async(task_id: int) -> None:
 
         # Build and dispatch each subtask
         builder = TaskRequestBuilder(db)
+        task_labels = (task.json or {}).get("metadata", {}).get("labels", {})
+        if not isinstance(task_labels, dict):
+            task_labels = {}
+        model_id = task_labels.get("modelId")
+        override_model_name = model_id.strip() if isinstance(model_id, str) else None
+        force_override = task_labels.get("forceOverrideBotModel") == "true" and bool(
+            override_model_name
+        )
+
+        if force_override:
+            logger.info(
+                "[schedule_dispatch] Applying task model override: "
+                "task_id=%s, model_id=%s",
+                task_id,
+                override_model_name,
+            )
 
         for subtask in subtasks:
             try:
@@ -213,6 +229,8 @@ async def _dispatch_task_async(task_id: int) -> None:
                     user=user,
                     team=team,
                     message=message,
+                    override_model_name=override_model_name,
+                    force_override=force_override,
                 )
 
                 # Check if executor needs recovery (deleted after previous completion)

@@ -469,6 +469,13 @@ class ChatContext:
         from shared.models.knowledge import KnowledgeBaseToolsResult
 
         base_system_prompt = self._request.system_prompt or ""
+        if getattr(self._request, "provider_native_knowledge", False) is True:
+            add_span_event("provider_native_knowledge_skipped_unified_tools")
+            return KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt=base_system_prompt,
+                kb_meta_prompt="",
+            )
         external_refs = self._request.external_knowledge_refs or []
         if not self._request.knowledge_base_ids and not external_refs:
             add_span_event("no_kb_targets_skipped")

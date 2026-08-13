@@ -45,6 +45,7 @@ import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { TransferToKbDialog } from './transfer-to-kb-dialog'
 import {
+  MAX_TRANSFER_SELECTION_COUNT,
   useKnowledgeResourceSelection,
   shouldDisableDocumentBatchActions,
 } from '../hooks/useKnowledgeResourceSelection'
@@ -56,6 +57,7 @@ import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/use
 import { documentViewOf } from '@/types/knowledge'
 import type {
   KnowledgeBase,
+  KnowledgeContentOrigin,
   KnowledgeDocument,
   KnowledgeFolder,
   SplitterConfig,
@@ -219,6 +221,10 @@ interface DocumentListProps {
   isOrganization?: boolean
   /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
+  /** Limit this browser to one virtual Code Wiki content root. */
+  contentOrigin?: KnowledgeContentOrigin
+  /** Render content without ordinary document or folder mutations. */
+  readOnly?: boolean
 }
 
 /** Flatten folder tree into a flat list for select dropdowns */
@@ -254,6 +260,8 @@ export function DocumentList({
   initialDocumentId,
   isOrganization = false,
   paginationEnabled = true,
+  contentOrigin,
+  readOnly = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
@@ -274,7 +282,7 @@ export function DocumentList({
     deleteFolder,
     moveDocument,
     batchMove,
-  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+  } = useFolders({ knowledgeBaseId: knowledgeBase.id, origin: contentOrigin })
 
   // Full tree index (all folders) — used for selection scope and breadcrumb
   const fullTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
@@ -316,6 +324,7 @@ export function DocumentList({
     keyword: searchQuery,
     sortBy: sortField,
     sortOrder,
+    origin: contentOrigin,
   })
 
   // When searching, build a filtered folder tree containing only ancestors of matching documents.
@@ -620,7 +629,8 @@ export function DocumentList({
     void fetchFolders()
   }, [fetchFolders, refresh, refreshToken])
 
-  const canManageAnyDocuments = canUpload || canManageAllDocuments
+  const canUploadDocuments = !readOnly && canUpload
+  const canManageAnyDocuments = !readOnly && (canUpload || canManageAllDocuments)
   const canManageDocumentArea = canManageAnyDocuments
   const canManageFolderStructure = canManageDocumentArea && !sourceWorkspace
 
@@ -1138,7 +1148,7 @@ export function DocumentList({
 
       {sourceWorkspace && (
         <DocumentSourceWorkspaceHeader
-          canUpload={canUpload}
+          canUpload={canUploadDocuments}
           canToggleExpandAll={canToggleExpandAll}
           isExpandAllView={isExpandAllView}
           currentFolderId={currentFolderId}
@@ -1302,7 +1312,7 @@ export function DocumentList({
           )}
 
           {/* Upload button */}
-          {canUpload && (
+          {canUploadDocuments && (
             <Button variant="primary" size="sm" onClick={handleOpenUpload}>
               <Upload className="w-4 h-4 mr-1" />
               {t('document.document.upload')}
@@ -1368,17 +1378,39 @@ export function DocumentList({
                   )}
                 </Tooltip>
               </TooltipProvider>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowTransfer(true)}
-                disabled={batchLoading || isBatchMoving || isTransferring}
-                data-testid="batch-transfer-button"
-                aria-label={t('document.document.batch.transfer')}
-              >
-                <ArrowRightLeft className="w-4 h-4 mr-1" />
-                {compact ? '' : t('document.document.batch.transfer')}
-              </Button>
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowTransfer(true)}
+                        disabled={
+                          selectionSummary.transferLimitExceeded ||
+                          batchLoading ||
+                          isBatchMoving ||
+                          isTransferring
+                        }
+                        data-testid="batch-transfer-button"
+                        aria-label={t('document.document.batch.transfer')}
+                      >
+                        <ArrowRightLeft className="w-4 h-4 mr-1" />
+                        {compact ? '' : t('document.document.batch.transfer')}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {selectionSummary.transferLimitExceeded && (
+                    <TooltipContent>
+                      <p>
+                        {t('document.document.batch.transferSelectionLimit', {
+                          count: MAX_TRANSFER_SELECTION_COUNT,
+                        })}
+                      </p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -1549,7 +1581,7 @@ export function DocumentList({
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.empty')}</p>
         </div>
-      ) : canUpload ? (
+      ) : canUploadDocuments ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
           <FileUp className="w-16 h-16 mb-4 text-text-muted opacity-60" />
           <p className="text-base text-text-primary mb-2">{t('document.document.emptyHint')}</p>

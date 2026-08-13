@@ -6,6 +6,40 @@ use super::codex_config::optional_proxy_url;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn get_runtime_settings(&self) -> Result<Value, AppIpcError> {
+        let max_concurrent_tasks = self
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned")
+            .max_concurrent_tasks;
+        Ok(json!({ "maxConcurrentTasks": max_concurrent_tasks }))
+    }
+
+    pub(super) async fn update_runtime_settings(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let max_concurrent_tasks = payload
+            .get("maxConcurrentTasks")
+            .or_else(|| payload.get("max_concurrent_tasks"))
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .ok_or_else(|| AppIpcError::new("bad_request", "maxConcurrentTasks is required"))?;
+        if !(MIN_MAX_CONCURRENT_TASKS..=MAX_MAX_CONCURRENT_TASKS).contains(&max_concurrent_tasks) {
+            return Err(AppIpcError::new(
+                "bad_request",
+                format!(
+                    "maxConcurrentTasks must be between {MIN_MAX_CONCURRENT_TASKS} and {MAX_MAX_CONCURRENT_TASKS}"
+                ),
+            ));
+        }
+        write_runtime_settings(&RuntimeSettings {
+            max_concurrent_tasks,
+        })?;
+        self.update_max_concurrent_tasks(max_concurrent_tasks).await;
+        Ok(json!({ "maxConcurrentTasks": max_concurrent_tasks }))
+    }
+
     pub(super) async fn search_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {
         let root = string_field(&payload, "root")
             .ok_or_else(|| AppIpcError::new("bad_request", "root is required"))?;
@@ -347,6 +381,51 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({ "enabled": codex_stream_debug_enabled() }))
     }
 
+    pub(super) async fn register_harness_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let scope = string_field(&payload, "scope")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "scope is required"))?;
+        let upstream = payload
+            .get("upstream")
+            .cloned()
+            .ok_or_else(|| AppIpcError::new("invalid_request", "upstream is required"))
+            .and_then(|value| {
+                serde_json::from_value::<local_model_proxy::LocalModelProxyUpstream>(value).map_err(
+                    |error| {
+                        AppIpcError::new(
+                            "invalid_request",
+                            format!("Invalid harness proxy upstream: {error}"),
+                        )
+                    },
+                )
+            })?;
+        let loopback = executor_loopback_base_url().ok_or_else(|| {
+            AppIpcError::new(
+                "runtime_unavailable",
+                "Executor HTTP server is not available",
+            )
+        })?;
+        let token = local_model_proxy::register_harness(&scope, upstream);
+        Ok(json!({
+            "token": token,
+            "baseUrl": format!("{loopback}/v1/harness-router/{token}")
+        }))
+    }
+
+    pub(super) async fn unregister_harness_proxy(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let token = string_field(&payload, "token")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "token is required"))?;
+        local_model_proxy::unregister_harness(&token);
+        Ok(json!({"unregistered": true}))
+    }
+
     pub(super) async fn write_custom_codex_catalog(
         &self,
         payload: Value,
@@ -503,4 +582,66 @@ impl RuntimeWorkRpcHandler {
         })?;
         Ok(json!({ "keybindings": keybindings }))
     }
+}
+
+fn runtime_settings_path() -> PathBuf {
+    runtime_work_dir().join("settings.json")
+}
+
+pub(super) fn read_runtime_settings() -> RuntimeSettings {
+    let path = runtime_settings_path();
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return RuntimeSettings::default();
+        }
+        Err(error) => {
+            log_executor_event(
+                "runtime settings read failed",
+                &[
+                    ("path", path.display().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return RuntimeSettings::default();
+        }
+    };
+    let settings = match serde_json::from_str::<RuntimeSettings>(&content) {
+        Ok(settings) => settings,
+        Err(error) => {
+            log_executor_event(
+                "runtime settings parse failed",
+                &[
+                    ("path", path.display().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return RuntimeSettings::default();
+        }
+    };
+    RuntimeSettings {
+        max_concurrent_tasks: settings
+            .max_concurrent_tasks
+            .clamp(MIN_MAX_CONCURRENT_TASKS, MAX_MAX_CONCURRENT_TASKS),
+    }
+}
+
+fn write_runtime_settings(settings: &RuntimeSettings) -> Result<(), AppIpcError> {
+    let path = runtime_settings_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            AppIpcError::new(
+                "runtime_settings_failed",
+                format!("Failed to create {}: {error}", parent.display()),
+            )
+        })?;
+    }
+    let payload = serde_json::to_vec_pretty(settings)
+        .map_err(|error| AppIpcError::new("runtime_settings_failed", error.to_string()))?;
+    fs::write(&path, payload).map_err(|error| {
+        AppIpcError::new(
+            "runtime_settings_failed",
+            format!("Failed to write {}: {error}", path.display()),
+        )
+    })
 }

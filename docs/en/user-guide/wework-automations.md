@@ -17,6 +17,9 @@ are scheduled by the local Executor.
   Automations created from the current project or task inherit that project;
   selecting **None** gives each new task an independent workspace instead of
   grouping it under the current project.
+- When a project has Wework-managed worktrees, the project selector lists both
+  the primary workspace and each worktree. Selecting a worktree runs the
+  scheduled task directly in that worktree directory.
 - Creating, editing, disabling, and running automations works without a Wegent connection.
 - Recurring runs missed while Wework is closed are recorded as skipped instead of being replayed.
 - A missed one-time run executes once after Wework starts again.
@@ -35,6 +38,13 @@ and executed by the current device's local Executor.
   `0 9 * * 1-5` runs at 9:00 AM on weekdays.
 - **Interval** repeats in minutes, hours, or days.
 - **One time** runs at a specific time and disables itself after scheduling.
+
+## Persistent goals
+
+When **Keep pursuing a goal** is enabled, Wework uses the task instructions as
+a persistent Codex goal instead of a one-turn message. Codex can continue
+working until it explicitly marks the goal complete or blocked. The setting
+works with both conversation modes and is persisted with the automation.
 
 ## Conversation modes
 

@@ -82,4 +82,11 @@ describe('ResourceIcon', () => {
     expect(screen.getByTestId('resource-icon')).toHaveAttribute('data-icon-id', 'sparkles')
     expect(screen.getByTestId('resource-icon')).toHaveClass('rounded-xl')
   })
+
+  it('handles a null marketplace tag list from provider APIs', () => {
+    render(<ResourceIcon resourceType="mcp" name="知识检索" marketplaceTags={null} />)
+
+    expect(screen.getByTestId('resource-icon')).toHaveAttribute('data-icon-source', 'initial')
+    expect(screen.getByTestId('resource-icon')).toHaveTextContent('知')
+  })
 })

@@ -391,6 +391,80 @@ def test_runtime_cancel_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_runtime_force_start_endpoint_dispatches_address(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "taskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "force_start_runtime_task", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/force-start",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
+
+
+def test_runtime_queue_reorder_endpoint_dispatches_position(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "taskId": "codex-3",
+            "workspacePath": "/repo/Wegent",
+            "orderedTaskIds": ["codex-3", "codex-1", "codex-2"],
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "reorder_runtime_task_queue",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/queue/reorder",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-3",
+            "queuePosition": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["orderedTaskIds"] == ["codex-3", "codex-1", "codex-2"]
+    request = service_mock.await_args.kwargs["request"]
+    assert request.local_task_id == "codex-3"
+    assert request.queue_position == 1
+
+
 def test_runtime_guidance_endpoint_dispatches_request(
     test_client,
     test_token,
@@ -699,6 +773,7 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
         headers=_auth_headers(test_token),
         json={
             "deviceId": "device-1",
+            "projectKey": "remote-project-id",
             "workspacePath": "/Users/crystal/Documents/hello-0",
             "runtime": "codex",
         },
@@ -708,6 +783,7 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
     assert response.json()["accepted"] is True
     request = service_mock.await_args.kwargs["request"]
     assert request.device_id == "device-1"
+    assert request.project_key == "remote-project-id"
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
 
 
@@ -777,6 +853,33 @@ def test_runtime_global_im_notification_endpoint_dispatches_payload(
     payload = service_mock.await_args.kwargs["request"]
     assert payload.enabled is True
     assert payload.session_key == "session-1"
+
+
+def test_runtime_im_notification_presence_endpoint_dispatches_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(return_value={"away": False, "ttlSeconds": 90})
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "update_im_notification_presence",
+        service_mock,
+    )
+
+    response = test_client.put(
+        "/api/runtime-work/im-notifications/presence",
+        headers=_auth_headers(test_token),
+        json={"clientId": "desktop-client-1", "away": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"away": False, "ttlSeconds": 90}
+    request = service_mock.await_args.kwargs["request"]
+    assert request.client_id == "desktop-client-1"
+    assert request.away is False
 
 
 def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(

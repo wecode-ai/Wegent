@@ -34,7 +34,7 @@ function formatActionMenuShortcut(shortcut: string): string {
 }
 
 export interface ActionMenuItem {
-  label: string
+  label: ReactNode
   icon?: ComponentType<{ className?: string }>
   onSelect?: () => void | Promise<void>
   testId: string
@@ -56,6 +56,7 @@ interface ActionMenuProps {
   placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
   onContextMenuClose?: () => void
+  onOpenChange?: (open: boolean) => void
 }
 
 export interface MenuPosition {
@@ -75,6 +76,7 @@ export function ActionMenu({
   placement = 'side',
   contextMenuPosition,
   onContextMenuClose,
+  onOpenChange,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -134,11 +136,12 @@ export function ActionMenu({
       setSubmenuPosition(null)
       cancelSubmenuClose()
       onContextMenuClose?.()
+      onOpenChange?.(false)
       if (restoreFocus) {
         window.requestAnimationFrame(() => triggerRef.current?.focus())
       }
     },
-    [cancelSubmenuClose, onContextMenuClose]
+    [cancelSubmenuClose, onContextMenuClose, onOpenChange]
   )
   const menuOpen = open || Boolean(contextMenuPosition)
   const openSubmenuItem = items.find(item => item.testId === openSubmenuId)
@@ -153,6 +156,7 @@ export function ActionMenu({
       closeMenu()
     } else {
       setOpen(true)
+      onOpenChange?.(true)
     }
   }
 
@@ -163,6 +167,7 @@ export function ActionMenu({
     if (!menuOpen) {
       setMenuPosition(null)
       setOpen(true)
+      onOpenChange?.(true)
     }
   }
 
@@ -474,7 +479,9 @@ export function ActionMenu({
                   ].join(' ')}
                 >
                   {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
-                  <span className="truncate">{item.label}</span>
+                  <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                    {item.label}
+                  </span>
                   {item.shortcut ? (
                     <KeyboardShortcut
                       value={formatActionMenuShortcut(item.shortcut)}
@@ -540,7 +547,9 @@ export function ActionMenu({
                     ].join(' ')}
                   >
                     {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
-                    <span className="truncate">{item.label}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
+                      {item.label}
+                    </span>
                     {item.shortcut ? (
                       <KeyboardShortcut
                         value={formatActionMenuShortcut(item.shortcut)}

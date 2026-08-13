@@ -18,8 +18,10 @@ describe('WorktreeCreationStatus', () => {
   test('renders an accessible creation status', () => {
     render(<WorktreeCreationStatus />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('正在创建工作树')
-    expect(screen.getByRole('status')).toHaveTextContent('完成后，任务会自动开始')
+    expect(screen.getByRole('status')).toHaveTextContent('正在搭建你的独立工作树')
+    expect(screen.getByRole('status')).toHaveTextContent('互不打扰，放心开工')
+    expect(screen.getByTestId('worktree-creation-animation')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByText('定位当前提交…').closest('[aria-hidden="true"]')).not.toBeNull()
   })
 
   test('only matches the optimistic worktree submission phase', () => {

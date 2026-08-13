@@ -32,6 +32,7 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   getRuntimeTaskRouteKey,
+  getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
   isSameRuntimeTaskIdentity,
   projectTaskAddresses,
@@ -220,8 +221,8 @@ export function useWorkbenchRuntimeTasks({
         try {
           if (!services.runtimeWorkApi) throw new Error('Runtime work API is unavailable')
           await services.runtimeWorkApi.deleteWorktree({
-            deviceId: target.workspace.deviceId,
-            path: target.workspace.workspacePath,
+            deviceId: target.deviceId,
+            path: target.path,
             preserveSnapshot: true,
           })
         } catch (error) {
@@ -489,7 +490,7 @@ export function useWorkbenchRuntimeTasks({
   }
 }
 
-type RuntimeTaskWorktreeTarget = { workspace: RuntimeDeviceWorkspace; task: RuntimeTaskSummary }
+type RuntimeTaskWorktreeTarget = { deviceId: string; path: string }
 
 function uniqueRuntimeTaskAddresses(addresses: RuntimeTaskAddress[]): RuntimeTaskAddress[] {
   const uniqueAddresses = new Map(
@@ -510,12 +511,14 @@ function findRuntimeTaskWorktree(
 
   for (const workspace of workspaces) {
     if (workspace.deviceId !== address.deviceId) continue
-    if (address.workspacePath?.trim() && workspace.workspacePath !== address.workspacePath.trim()) {
-      continue
-    }
     const task = workspace.tasks.find(item => item.taskId === address.taskId)
     if (!task || !isRuntimeTaskWorktree(workspace, task)) continue
-    return { workspace, task }
+    const path = getRuntimeTaskWorkspacePath(workspace, task)
+    if (address.workspacePath?.trim() && path !== address.workspacePath.trim()) continue
+    return {
+      deviceId: workspace.deviceId,
+      path,
+    }
   }
 
   return null
@@ -536,7 +539,7 @@ function uniqueRuntimeTaskWorktreeTargets(
   const seen = new Set<string>()
   const uniqueTargets: RuntimeTaskWorktreeTarget[] = []
   for (const target of targets) {
-    const key = `${target.workspace.deviceId}:${target.workspace.workspacePath}`
+    const key = `${target.deviceId}:${target.path}`
     if (seen.has(key)) continue
     seen.add(key)
     uniqueTargets.push(target)

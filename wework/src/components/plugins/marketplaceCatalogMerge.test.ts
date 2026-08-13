@@ -129,6 +129,65 @@ describe('mergeMarketplaceCatalog', () => {
     expect(shouldShowInstalledMarketplaceActions(cloudPlugin(), false)).toBe(false)
   })
 
+  test('collapses legacy and canonical personal marketplace copies', () => {
+    const legacy = {
+      ...localCatalogPlugin(),
+      id: 'dev-tools@personal',
+      manifest: { marketplaceId: 'personal' },
+    }
+    const canonical = localCatalogPlugin()
+
+    const merged = mergeMarketplaceCatalog([], [legacy, canonical], [])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.name).toBe('dev-tools')
+  })
+
+  test('marks a cloud workspace row installed from a local wegent install', () => {
+    const cloudSites: PluginMarketplaceItem = {
+      ...cloudPlugin(),
+      id: 267250,
+      remotePluginId: 'wegent-sites',
+      name: 'wegent-sites',
+      displayName: '快速建站',
+      visibility: 'workspace',
+      installed: false,
+      installedPluginId: null,
+      latestReleaseId: 10,
+      sourceProvider: 'wegent',
+      manifest: {},
+    }
+    const localInstall: InstalledPlugin = {
+      ...localInstalledPlugin(),
+      metadata: {
+        name: 'wegent-sites',
+        namespace: 'wegent',
+        labels: { id: 'wegent-sites@wegent' },
+      },
+      spec: {
+        ...localInstalledPlugin().spec,
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent',
+          pluginKey: 'wegent-sites',
+          catalogItemId: 'wegent-sites@wegent',
+          marketplace: 'wegent',
+        },
+        origin: 'marketplace',
+        sourcePayload: { marketplaceName: 'wegent' },
+      },
+    }
+    const merged = mergeMarketplaceCatalog([cloudSites], [], [localInstall])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 267250,
+      installed: true,
+      installedPluginId: 'wegent-sites@wegent',
+      installedLocally: true,
+    })
+    expect(shouldShowInstalledMarketplaceActions(merged[0], false)).toBe(true)
+  })
+
   test('marks a cloud row installed from account InstalledPlugin when catalog lags', () => {
     const cloudInstalled: InstalledPlugin = {
       apiVersion: 'wegent.ai/v1',
@@ -264,6 +323,48 @@ describe('mergeMarketplaceCatalog personal dedupe', () => {
       id: 'dev-tools',
       installed: true,
       installedPluginId: 'dev-tools@wework-personal',
+    })
+  })
+
+  test('overlays a lagging OpenAI official catalog row from the installed list', () => {
+    const catalog = {
+      ...localCatalogPlugin(),
+      id: 'github@openai-curated-remote',
+      name: 'github',
+      displayName: 'GitHub',
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+      enabled: false,
+      manifest: { marketplaceId: 'openai-curated-remote' },
+    }
+    const installed: InstalledPlugin = {
+      ...localInstalledPlugin(),
+      metadata: {
+        name: 'github',
+        namespace: 'openai-curated-remote',
+        labels: { id: 'github@openai-curated-remote' },
+      },
+      spec: {
+        ...localInstalledPlugin().spec,
+        source: {
+          type: 'marketplace',
+          providerKey: 'openai-curated-remote',
+          pluginKey: 'github',
+          catalogItemId: 'github@openai-curated-remote',
+          marketplace: 'openai-curated-remote',
+        },
+        origin: 'marketplace',
+        sourcePayload: { marketplaceName: 'openai-curated-remote' },
+      },
+    }
+    const merged = mergeMarketplaceCatalog([], [catalog], [installed])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 'github@openai-curated-remote',
+      installed: true,
+      installedLocally: true,
+      installedPluginId: 'github@openai-curated-remote',
     })
   })
 })

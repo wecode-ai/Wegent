@@ -319,7 +319,7 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
         .arg("stream-json")
         .arg("--verbose")
         .arg("--permission-mode")
-        .arg("bypassPermissions");
+        .arg(claude_permission_mode(request));
 
     if let Some(system_prompt) = execution_system_prompt(request) {
         spec = spec.arg("--append-system-prompt").arg(system_prompt);
@@ -345,6 +345,17 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
     }
 
     spec
+}
+
+fn claude_permission_mode(request: &ExecutionRequest) -> &str {
+    match request
+        .extra
+        .get("claude_permission_mode")
+        .and_then(Value::as_str)
+    {
+        Some(mode @ ("acceptEdits" | "plan" | "auto" | "bypassPermissions")) => mode,
+        Some("default") | Some(_) | None => "bypassPermissions",
+    }
 }
 
 pub(crate) fn prompt_text(prompt: &Value) -> String {
@@ -395,6 +406,12 @@ fn claude_prompt_value(request: &ExecutionRequest) -> Value {
             )
         })
         .unwrap_or_else(|| request.prompt.clone());
+    if let Some(selected_knowledge_prompt) = selected_knowledge_prompt(request) {
+        prompt = crate::prompt_enrichment::inject_selected_knowledge_prompt(
+            &prompt,
+            selected_knowledge_prompt,
+        );
+    }
     let emphasis = crate::services::skill_deployer::build_skill_emphasis_prompt(
         &user_selected_skills(request),
     );
@@ -402,6 +419,16 @@ fn claude_prompt_value(request: &ExecutionRequest) -> Value {
         prompt = append_text_to_vision_prompt(&prompt, &emphasis, true);
     }
     prompt
+}
+
+fn selected_knowledge_prompt(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("selected_knowledge_prompt")
+        .or_else(|| request.extra.get("selectedKnowledgePrompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn interactive_form_answer_query(request: &ExecutionRequest) -> Option<String> {
@@ -1193,6 +1220,69 @@ mod tests {
             task_backend_url(&request),
             Some("http://env-backend.local:8000".to_owned())
         );
+    }
+
+    #[test]
+    fn claude_command_uses_configured_desktop_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("plan".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "plan");
+    }
+
+    #[test]
+    fn claude_command_uses_non_interactive_default_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("default".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
+    }
+
+    #[test]
+    fn claude_command_rejects_unknown_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("unsafe-custom-mode".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
     }
 
     #[test]

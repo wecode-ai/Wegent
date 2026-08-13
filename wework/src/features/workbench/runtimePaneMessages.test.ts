@@ -91,6 +91,60 @@ describe('runtime transcript status', () => {
     )
   })
 
+  test('restores tool lifecycle timing from the runtime transcript', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'block-item-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              timestamp: 1_780_000_001_250,
+              completedAt: 1_780_000_004_750,
+            },
+          },
+          {
+            id: 'block-item-2',
+            type: 'block',
+            block: {
+              id: 'tool-2',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              timestamp: 1_780_000_010_000,
+              durationMs: 2_500,
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toEqual([
+      expect.objectContaining({
+        id: 'block-item-1',
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt: 1_780_000_001_250,
+          completedAt: 1_780_000_004_750,
+        }),
+      }),
+      expect.objectContaining({
+        id: 'block-item-2',
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt: 1_780_000_010_000,
+          completedAt: 1_780_000_012_500,
+        }),
+      }),
+    ])
+  })
+
   test('does not infer streaming from an active conversation status', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
@@ -303,6 +357,103 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     expect(calls).toEqual(['assistant_done', 'lifecycle_settled'])
+  })
+
+  test('settles a provider-renamed terminal event against its provisional start', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onAssistantSettled,
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'provisional-turn',
+      deviceId: 'device-1',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'canonical-turn',
+      deviceId: 'device-1',
+      result: {},
+    })
+
+    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'succeeded')
+  })
+
+  test('settles renamed overlapping turns in their start order', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onAssistantSettled,
+    })
+
+    for (const subtaskId of ['provisional-turn-1', 'provisional-turn-2']) {
+      handlers.onChatStart?.({
+        taskId: 'runtime-task-1',
+        subtaskId,
+        deviceId: 'device-1',
+      })
+    }
+    for (const subtaskId of ['canonical-turn-1', 'canonical-turn-2']) {
+      handlers.onChatDone?.({
+        taskId: 'runtime-task-1',
+        subtaskId,
+        deviceId: 'device-1',
+        result: {},
+      })
+    }
+
+    expect(onAssistantSettled.mock.calls).toEqual([
+      ['provisional-turn-1', 'succeeded'],
+      ['provisional-turn-2', 'succeeded'],
+    ])
+  })
+
+  test('does not settle a newer turn from a repeated old terminal event', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onAssistantSettled,
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      result: {},
+    })
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-2',
+      deviceId: 'device-1',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      result: {},
+    })
+
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'succeeded')
   })
 
   test('maps a Codex failure to an identified canonical error item action', () => {
@@ -1018,7 +1169,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
       deviceId: 'device-1',
       blockId: 'text-local-task-1-0-1',
       content: 'partial',
-      status: 'streaming',
+      status: 'done',
+      completedAt: 1_780_000_004_750,
+      durationMs: 3_500,
     })
 
     expect(actions).toHaveLength(1)
@@ -1028,7 +1181,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
       blockId: 'text-local-task-1-0-1',
       updates: {
         content: 'partial',
-        status: 'streaming',
+        status: 'done',
+        completedAt: 1_780_000_004_750,
+        durationMs: 3_500,
       },
     })
     expect(warn).not.toHaveBeenCalled()

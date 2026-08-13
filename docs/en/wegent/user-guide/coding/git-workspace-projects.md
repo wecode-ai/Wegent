@@ -56,7 +56,7 @@ In the new-conversation input area for a local workspace project, you can choose
 - “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user. When the directory is a Git repository, the composer shows the current branch dropdown; selecting another branch runs `git checkout <branch>` in the project directory. If Git rejects the checkout because of uncommitted changes, untracked-file overwrite risk, or another conflict, the current branch and local changes stay unchanged, and the menu shows the error.
 - “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task. After you select “New worktree”, the composer shows a “Source branch” dropdown. It defaults to the current branch, and you can choose another branch from the same repository as the source used to create the worktree.
 
-After a task using “New worktree” is sent, Wework shows a **Creating worktree** status page and temporarily hides the conversation composer so the user cannot continue before the isolated directory is ready. When creation finishes, the task starts automatically and the normal conversation view appears without another send action.
+After a task using “New worktree” is sent, Wework keeps the sent user message visible and shows a worktree-building animation: commit nodes branch away from the main line and unfold into an isolated code workspace. Phase labels describe locating the commit, creating the branch, expanding the workspace, and arranging files. The conversation composer is temporarily hidden so the user cannot continue before the isolated directory is ready. The creation phase does not show a premature **Thinking** indicator. When creation finishes, the task starts automatically and the normal conversation view appears without another send action. When the operating system requests reduced motion, the animation becomes a static status.
 
 Wework refreshes repository environment details in the background while a task is running. A refresh keeps the resolved current branch visible in the composer; the loading state appears only during the initial workspace read.
 
@@ -151,6 +151,8 @@ Code comment context is not uploaded as a normal file and does not use `attachme
 In the macOS desktop app, choosing “Using existing folder” for a local device opens the native Finder directory picker. If the target is a remote or cloud device, Wework keeps the in-app remote directory picker so the selected path belongs to that execution device.
 
 The project appears in the sidebar immediately after it is added and can also be removed from its project menu immediately, without waiting for the local Executor to finish subsequent synchronization. Removing a local-folder project only removes its Wework project entry; it does not delete the directory from disk.
+
+After removal succeeds, Wework invalidates cloud refreshes and remote-project synchronizations that started before the removal completed. This prevents stale requests from writing the deleted project back into the sidebar; later lists use the current project state returned by the Executor and cloud.
 
 When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
 

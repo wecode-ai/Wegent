@@ -7,6 +7,7 @@ core_segments=(
   priority-filter
   automation-lifecycle
   model-routing
+  permission-modes
   core-task-flow
   window-lifecycle
   goal-lifecycle
@@ -15,12 +16,22 @@ core_segments=(
   conversation-state
   workspace-attachments
   rendering-extensions
+  local-harness
   embedded-browser
 )
 plugin_segments=(
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
+)
+# Group checkpoints by observed Cloud CI duration and order each shard from
+# longest to shortest so the five serial workers finish at similar times.
+cloud_shards=(
+  core-task-flow
+  model-routing,embedded-browser,telemetry-consent
+  window-lifecycle,conversation-state,browser-multi-tabs
+  resilience,goal-lifecycle,supervisor-lifecycle
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle
 )
 
 declare -A selected=()
@@ -175,6 +186,19 @@ classify_wework_path() {
       return
       ;;
 
+    # Local PTY-backed coding harnesses have a dedicated real-Tauri scenario.
+    wework/src-tauri/src/local_terminal* | \
+      wework/src/lib/local-harness* | \
+      wework/src/lib/local-terminal* | \
+      wework/src/components/layout/CentralHarnessTerminal* | \
+      wework/src/components/layout/WorkbenchHarnessSelector* | \
+      wework/src/components/layout/localHarnessWorkbench* | \
+      wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:local-harness"
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
@@ -211,6 +235,7 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \
+      docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
@@ -243,6 +268,7 @@ append_matrix_entry() {
 
 build_matrix() {
   core_matrix_entries=()
+  cloud_matrix_entries=()
   other_matrix_entries=()
 
   local segment
@@ -272,7 +298,14 @@ build_matrix() {
   fi
 
   if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
-    append_matrix_entry cloud Cloud e2e:desktop:cloud
+    local shard
+    for shard in "${!cloud_shards[@]}"; do
+      local entry
+      printf -v entry \
+        '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
+        "$((shard + 1))" "$((shard + 1))" "${cloud_shards[$shard]}"
+      cloud_matrix_entries+=("$entry")
+    done
   fi
 }
 
@@ -297,8 +330,10 @@ build_matrix
 core_matrix_json='{"include":[]}'
 other_matrix_json='{"include":[]}'
 run_core=false
+run_cloud=false
 run_other=false
 run_desktop=false
+cloud_matrix_json='{"include":[]}'
 
 if ((${#core_matrix_entries[@]} > 0)); then
   joined_core_entries="$(IFS=,; printf '%s' "${core_matrix_entries[*]}")"
@@ -312,12 +347,20 @@ if ((${#other_matrix_entries[@]} > 0)); then
   run_other=true
   run_desktop=true
 fi
+if ((${#cloud_matrix_entries[@]} > 0)); then
+  joined_cloud_entries="$(IFS=,; printf '%s' "${cloud_matrix_entries[*]}")"
+  cloud_matrix_json="{\"include\":[$joined_cloud_entries]}"
+  run_cloud=true
+  run_desktop=true
+fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
 {
   printf 'wework_desktop_e2e=%s\n' "$run_desktop"
   printf 'wework_desktop_core_e2e=%s\n' "$run_core"
   printf 'wework_desktop_core_e2e_matrix=%s\n' "$core_matrix_json"
+  printf 'wework_desktop_cloud_e2e=%s\n' "$run_cloud"
+  printf 'wework_desktop_cloud_e2e_matrix=%s\n' "$cloud_matrix_json"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
 } >> "$output_file"

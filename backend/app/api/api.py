@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    external_tasks,
     feedback,
     groups,
     health,
@@ -33,6 +34,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     pet,
+    project_automations,
     projects,
     prompt_optimization,
     quota,
@@ -146,6 +148,11 @@ api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(
     cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(
+    project_automations.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-automations"],
 )
 api_router.include_router(
     loop_item_executions.router,
@@ -264,6 +271,11 @@ api_router.include_router(
     knowledge_open.router,
     prefix="/knowledge",
     tags=["knowledge-open"],
+)
+api_router.include_router(
+    external_tasks.router,
+    prefix="/external/tasks",
+    tags=["external-tasks"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])

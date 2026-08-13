@@ -163,13 +163,7 @@ class MCPProviderRegistry:
         if cls._initialized:
             return
 
-        # 1. Load legacy built-in providers (backward compatible)
-        from app.services.mcp_providers.core.config import BUILTIN_PROVIDERS
-
-        for provider_config in BUILTIN_PROVIDERS:
-            cls.register(provider_config)
-
-        # 2. Auto-discover config-based providers from providers/ directory
+        # 1. Auto-discover config-based providers from providers/ directory
         try:
             from app.services.mcp_providers.providers import PROVIDER_CONFIGS
 
@@ -184,7 +178,7 @@ class MCPProviderRegistry:
         except ImportError as e:
             logger.warning("Could not auto-discover config providers: %s", e)
 
-        # 3. Auto-discover plugin-based providers from providers/ directory
+        # 2. Auto-discover plugin-based providers from providers/ directory
         try:
             from app.services.mcp_providers.providers import PROVIDER_PLUGINS
 
@@ -200,7 +194,7 @@ class MCPProviderRegistry:
         except ImportError as e:
             logger.warning("Could not auto-discover plugin providers: %s", e)
 
-        # 4. Register custom providers (for internal/external extensions)
+        # 3. Register custom providers (for internal/external extensions)
         for config, override in cls._custom_providers:
             cls.register(config, override=override)
 

@@ -27,11 +27,14 @@ import {
   WEWORK_PERSONAL_MARKETPLACE_ID,
 } from '@/features/plugins/builtinPlugins'
 import {
+  INTERNAL_DEVICE_MARKETPLACE_ID,
   isBuiltInMarketplaceId,
   isInternalDeviceMarketplaceId,
   isOpenAiOfficialMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
+import { rankMarketplaceSearchResults } from '@/features/plugins/marketplaceSearch'
 import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
+import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -144,6 +147,11 @@ export interface LocalCodexPluginApi {
   }): Promise<PluginMarketplaceListResponse>
   selectMarketplace(id: string): Promise<LocalCodexPluginsState>
   readInstalledPluginForTrial(id: string | number): Promise<InstalledPlugin>
+  /**
+   * Enrich one installed summary via `plugin/read` only. Never calls `plugin/list`
+   * / full `readState` — safe for composer send preflight.
+   */
+  readInstalledPluginDetail(plugin: InstalledPlugin): Promise<InstalledPlugin>
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
@@ -187,7 +195,11 @@ export interface CodexPluginSummary {
   enabled: boolean
   installPolicy?: string
   authPolicy?: string
+  /** Codex PluginAvailability: AVAILABLE | DISABLED_BY_ADMIN */
   availability?: string
+  /** Remote catalog reason, e.g. plan_not_eligible */
+  disabledReason?: string | null
+  eligiblePlanTypes?: string[] | null
   interface?: PluginInterface | null
   keywords?: string[]
 }
@@ -238,7 +250,13 @@ interface CodexPluginDetail {
     enabled: boolean
   }>
   hooks?: Array<{ key: string; eventName?: string }>
-  apps?: Array<{ id: string; name: string; description?: string | null }>
+  apps?: Array<{
+    id: string
+    name: string
+    slug?: string | null
+    required?: boolean | null
+    description?: string | null
+  }>
   appTemplates?: Array<{
     templateId: string
     name: string
@@ -292,14 +310,24 @@ interface CodexSkillsListEntry {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
-/** Durable across app restarts so OpenAI/local tabs can paint before plugin/list (~10s). */
-const READ_STATE_LOCAL_STORAGE_KEY = 'wework.plugins.codexReadState.v1'
-/** Legacy same-session key; migrated once into localStorage then removed. */
-const READ_STATE_SESSION_STORAGE_KEY = 'wework.plugins.codexReadState.v1'
+/**
+ * Durable across app restarts so OpenAI/local tabs can paint before plugin/list (~10s).
+ * v2 keeps installed connector/localAuth stubs so composer send preflight can skip
+ * plugin/read after a cache hit (v1 stripped all components and forced a cold detail).
+ */
+const READ_STATE_LOCAL_STORAGE_KEY = 'wework.plugins.codexReadState.v2'
+/** Same-session fallback for the current durable key. */
+const READ_STATE_SESSION_STORAGE_KEY = 'wework.plugins.codexReadState.v2'
+/** Previous durable keys — read once for migration, then remove. */
+const READ_STATE_LEGACY_STORAGE_KEYS = ['wework.plugins.codexReadState.v1'] as const
 /** Serve memory/local cache without hitting Codex while fresher than this. */
 const READ_STATE_FRESH_TTL_MS = 60_000
 /** Keep a durable snapshot so cold app launches can paint before plugin/list (~10s). */
 const READ_STATE_DURABLE_TTL_MS = 7 * 24 * 60 * 60_000
+/** Keep package artwork from exhausting the shared WebView localStorage quota. */
+const MAX_DURABLE_DATA_URL_CHARS = 4096
+/** A marketplace switch can produce several equivalent snapshots; bound their disk footprint. */
+const MAX_DURABLE_READ_STATE_ENTRIES = 4
 let cachedState: LocalCodexPluginsState | null = null
 let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
@@ -316,7 +344,7 @@ type PersistedReadStateEntry = {
 }
 
 type PersistedReadStateStore = {
-  version: 1
+  version: 2
   entries: Record<string, PersistedReadStateEntry>
 }
 
@@ -332,6 +360,10 @@ export function clearLocalCodexPluginsReadStateCache(): void {
   if (typeof window !== 'undefined') {
     window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
     window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
+    for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
+      window.localStorage.removeItem(legacyKey)
+      window.sessionStorage.removeItem(legacyKey)
+    }
   }
 }
 
@@ -350,45 +382,294 @@ function readStateParamsKey(params: {
 function parsePersistedReadStateStore(raw: string | null): PersistedReadStateStore | null {
   if (!raw) return null
   try {
-    const parsed = JSON.parse(raw) as PersistedReadStateStore
-    if (parsed?.version !== 1 || !parsed.entries || typeof parsed.entries !== 'object') {
+    const parsed = JSON.parse(raw) as {
+      version?: number
+      entries?: Record<string, PersistedReadStateEntry>
+    }
+    if (
+      (parsed?.version !== 1 && parsed?.version !== 2) ||
+      !parsed.entries ||
+      typeof parsed.entries !== 'object'
+    ) {
       return null
     }
-    return parsed
+    // Accept v1 snapshots written before connector stubs were kept in durable cache.
+    return { version: 2, entries: parsed.entries }
   } catch {
     return null
   }
 }
 
-function readPersistedReadStateStore(): PersistedReadStateStore {
-  if (typeof window === 'undefined') return { version: 1, entries: {} }
-  const fromLocal = parsePersistedReadStateStore(
-    window.localStorage.getItem(READ_STATE_LOCAL_STORAGE_KEY)
+function preferredPersistedReadStateEntry(
+  store: PersistedReadStateStore
+): PersistedReadStateEntry | undefined {
+  // PluginsWorkspace always peeks the merged catalog for first paint. Preserve
+  // that canonical entry ahead of a newer single-market snapshot under quota.
+  return (
+    store.entries[readStateParamsKey({ mergeAllMarketplaces: true })] ??
+    Object.values(store.entries).sort((left, right) => right.cachedAt - left.cachedAt)[0]
   )
-  if (fromLocal) return fromLocal
+}
+
+function readPersistedReadStateStore(): PersistedReadStateStore {
+  if (typeof window === 'undefined') return { version: 2, entries: {} }
+  const localRaw = window.localStorage.getItem(READ_STATE_LOCAL_STORAGE_KEY)
+  const fromLocal = parsePersistedReadStateStore(localRaw)
+  if (fromLocal) {
+    const compacted: PersistedReadStateStore = {
+      version: 2,
+      entries: Object.fromEntries(
+        Object.entries(fromLocal.entries).map(([key, entry]) => [
+          key,
+          { ...entry, state: toDurableReadState(entry.state) },
+        ])
+      ),
+    }
+    const compactedRaw = JSON.stringify(compacted)
+    if (localRaw && compactedRaw.length < localRaw.length) {
+      // Early v2 builds stored complete plugin details. Compact them before any
+      // network refresh so an old snapshot cannot keep the shared quota full.
+      try {
+        window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, compactedRaw)
+      } catch {
+        // The compact in-memory value is still usable for this session.
+      }
+    }
+    return compacted
+  }
+
+  // Migrate yesterday's v1 durable peek / session snapshot into v2 once.
+  for (const legacyKey of READ_STATE_LEGACY_STORAGE_KEYS) {
+    const migrated = parsePersistedReadStateStore(window.localStorage.getItem(legacyKey))
+    if (migrated) {
+      writePersistedReadStateStore(migrated)
+      try {
+        window.localStorage.removeItem(legacyKey)
+        window.sessionStorage.removeItem(legacyKey)
+      } catch {
+        // Ignore storage failures; memory cache still works for the session.
+      }
+      return migrated
+    }
+    const migratedSession = parsePersistedReadStateStore(window.sessionStorage.getItem(legacyKey))
+    if (migratedSession) {
+      writePersistedReadStateStore(migratedSession)
+      try {
+        window.sessionStorage.removeItem(legacyKey)
+      } catch {
+        // Ignore storage failures; memory cache still works for the session.
+      }
+      return migratedSession
+    }
+  }
 
   // One-time migration from the previous same-session snapshot.
   const fromSession = parsePersistedReadStateStore(
     window.sessionStorage.getItem(READ_STATE_SESSION_STORAGE_KEY)
   )
   if (fromSession) {
-    writePersistedReadStateStore(fromSession)
-    try {
-      window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
-    } catch {
-      // Ignore storage failures; memory cache still works for the session.
+    const persisted = writePersistedReadStateStore(fromSession)
+    if (persisted) {
+      try {
+        window.sessionStorage.removeItem(READ_STATE_SESSION_STORAGE_KEY)
+      } catch {
+        // Ignore storage failures; memory cache still works for the session.
+      }
     }
     return fromSession
   }
-  return { version: 1, entries: {} }
+  return { version: 2, entries: {} }
 }
 
-function writePersistedReadStateStore(store: PersistedReadStateStore): void {
-  if (typeof window === 'undefined') return
+function writePersistedReadStateStore(store: PersistedReadStateStore): boolean {
+  if (typeof window === 'undefined') return false
+  const previousRaw = window.localStorage.getItem(READ_STATE_LOCAL_STORAGE_KEY)
   try {
     window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, JSON.stringify(store))
-  } catch {
-    // Ignore quota / private-mode failures; memory cache still works for the session.
+    return true
+  } catch (error) {
+    console.warn(
+      '[Wework] durable Codex plugin cache write failed; retrying with latest entry only',
+      error
+    )
+  }
+  // Quota / private-mode: keep a single latest snapshot so cold launches still paint.
+  try {
+    const latest = preferredPersistedReadStateEntry(store)
+    if (!latest) return false
+    const latestRaw = JSON.stringify({
+      version: 2 as const,
+      entries: { [latest.paramsKey]: latest },
+    })
+    try {
+      window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, latestRaw)
+      return true
+    } catch {
+      // WebKit can reject replacement while the old value still occupies quota.
+      // Free this exact cache key, retry the compact active snapshot, and restore
+      // the previous atomic value if the retry still cannot be stored.
+      window.localStorage.removeItem(READ_STATE_LOCAL_STORAGE_KEY)
+      try {
+        window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, latestRaw)
+        return true
+      } catch (retryError) {
+        if (previousRaw) {
+          try {
+            window.localStorage.setItem(READ_STATE_LOCAL_STORAGE_KEY, previousRaw)
+          } catch {
+            // Keep the newest snapshot in sessionStorage below.
+          }
+        }
+        throw retryError
+      }
+    }
+  } catch (error) {
+    console.warn('[Wework] durable Codex plugin cache write failed', error)
+    try {
+      const latest = preferredPersistedReadStateEntry(store)
+      if (latest) {
+        window.sessionStorage.setItem(
+          READ_STATE_SESSION_STORAGE_KEY,
+          JSON.stringify({ version: 2 as const, entries: { [latest.paramsKey]: latest } })
+        )
+      }
+    } catch {
+      // Memory cache remains available until the WebView is destroyed.
+    }
+    return false
+  }
+}
+
+function slimDurableAssetUrl(value?: string | null): string | null {
+  if (!value) return null
+  return value.startsWith('data:') && value.length > MAX_DURABLE_DATA_URL_CHARS ? null : value
+}
+
+function slimPluginInterfaceForDurableCache(
+  value: PluginInterface | null | undefined
+): PluginInterface | null {
+  if (!value) return null
+  // Remote OpenAI summaries often stash HTTPS icons on logo/logoDark after normalize.
+  // Drop longDescription / screenshots / policy URLs to keep localStorage under quota.
+  return {
+    displayName: value.displayName ?? null,
+    shortDescription: value.shortDescription ?? null,
+    developerName: value.developerName ?? null,
+    category: value.category ?? null,
+    logo: slimDurableAssetUrl(value.logo),
+    logoDark: slimDurableAssetUrl(value.logoDark),
+    brandColor: value.brandColor ?? null,
+  }
+}
+
+function slimPluginManifestForDurableCache(
+  manifest: Record<string, unknown> | null | undefined
+): Record<string, unknown> {
+  if (!manifest) return {}
+  const keys = [
+    'name',
+    'id',
+    'marketplaceId',
+    'source',
+    'installPolicy',
+    'authPolicy',
+    'availability',
+    'disabledReason',
+    'eligiblePlanTypes',
+  ] as const
+  return Object.fromEntries(
+    keys.flatMap(key => (manifest[key] === undefined ? [] : [[key, manifest[key]]]))
+  )
+}
+
+function slimConnectorsForDurableCache(
+  plugin: InstalledPlugin
+): InstalledPlugin['spec']['components'] {
+  return {
+    ...emptyComponents(),
+    // Keep localAuth stubs so send-time connector preflight can reuse the peek
+    // without waiting on plugin/read for every mentioned plugin.
+    connectors: (plugin.spec.components.connectors ?? []).map(connector => ({
+      slug: connector.slug,
+      authPolicy: connector.authPolicy,
+      localAuth: connector.localAuth ?? null,
+    })),
+  }
+}
+
+/**
+ * Persist a compact catalog snapshot so cold launches can paint OpenAI/local tabs
+ * before plugin/list (~10s). Drop heavy skill/agent payloads and screenshots to
+ * avoid localStorage quota failures, but keep installed connector/localAuth stubs
+ * for composer send preflight.
+ */
+function toDurableReadState(state: LocalCodexPluginsState): LocalCodexPluginsState {
+  return {
+    ...state,
+    marketplaceItems: state.marketplaceItems.map(item => ({
+      ...item,
+      description:
+        item.interface?.shortDescription?.trim() ||
+        (item.description.length > 240 ? `${item.description.slice(0, 240)}…` : item.description),
+      components: emptyComponents(),
+      interface: slimPluginInterfaceForDurableCache(item.interface),
+      manifest: slimPluginManifestForDurableCache(item.manifest),
+    })),
+    installedPlugins: state.installedPlugins.map(plugin => ({
+      ...plugin,
+      spec: {
+        ...plugin.spec,
+        description:
+          typeof plugin.spec.description === 'string' && plugin.spec.description.length > 240
+            ? `${plugin.spec.description.slice(0, 240)}…`
+            : plugin.spec.description,
+        components: slimConnectorsForDurableCache(plugin),
+        interface: slimPluginInterfaceForDurableCache(plugin.spec.interface),
+        manifest: slimPluginManifestForDurableCache(plugin.spec.manifest),
+      },
+    })),
+  }
+}
+
+function isOpenAiOfficialMarketplaceItem(item: PluginMarketplaceItem): boolean {
+  const marketplaceId = item.manifest?.marketplaceId
+  return typeof marketplaceId === 'string' && isOpenAiOfficialMarketplaceId(marketplaceId)
+}
+
+/**
+ * An app-server reconnection can briefly return a successful but incomplete
+ * plugin/list response after the desktop app resumes. Treat a missing OpenAI
+ * marketplace as incomplete when the durable snapshot still has one: otherwise
+ * that transient response permanently replaces the cache with an empty official
+ * catalog and every later open looks like a first sync.
+ */
+function retainOpenAiOfficialCatalog(
+  previous: LocalCodexPluginsState | null,
+  next: LocalCodexPluginsState
+): LocalCodexPluginsState {
+  const previousOfficialMarketplaces = (previous?.marketplaces ?? []).filter(
+    marketplace =>
+      isOpenAiOfficialMarketplaceId(marketplace.id) ||
+      isOpenAiOfficialMarketplaceId(marketplace.name)
+  )
+  const hasCurrentOfficialItems = next.marketplaceItems.some(isOpenAiOfficialMarketplaceItem)
+  if (previousOfficialMarketplaces.length === 0 || hasCurrentOfficialItems) return next
+
+  const existingItemIds = new Set(next.marketplaceItems.map(item => String(item.id)))
+  const retainedItems = (previous?.marketplaceItems ?? []).filter(
+    item => isOpenAiOfficialMarketplaceItem(item) && !existingItemIds.has(String(item.id))
+  )
+  const existingMarketplaceIds = new Set(next.marketplaces.map(marketplace => marketplace.id))
+  const retainedMarketplaces = previousOfficialMarketplaces.filter(
+    marketplace => !existingMarketplaceIds.has(marketplace.id)
+  )
+  console.warn(
+    '[Wework] Codex plugin/list returned an incomplete OpenAI marketplace after resume; retaining cached catalog'
+  )
+  return {
+    ...next,
+    marketplaceItems: [...next.marketplaceItems, ...retainedItems],
+    marketplaces: [...next.marketplaces, ...retainedMarketplaces],
   }
 }
 
@@ -398,7 +679,15 @@ function persistReadStateSnapshot(
   cachedAt: number
 ) {
   const store = readPersistedReadStateStore()
-  store.entries[paramsKey] = { paramsKey, cachedAt, state }
+  store.entries[paramsKey] = {
+    paramsKey,
+    cachedAt,
+    state: toDurableReadState(state),
+  }
+  const retainedEntries = Object.entries(store.entries)
+    .sort(([, left], [, right]) => right.cachedAt - left.cachedAt)
+    .slice(0, MAX_DURABLE_READ_STATE_ENTRIES)
+  store.entries = Object.fromEntries(retainedEntries)
   writePersistedReadStateStore(store)
 }
 
@@ -650,8 +939,10 @@ async function ensurePluginInWeworkPersonal(options: {
       console.warn('[Wework] Failed to install migrated personal plugin', error)
     }
   }
-  // Disk / App Server may have changed even when migrated=false (idempotent ensure).
-  clearLocalCodexPluginsReadStateCache()
+  // `migrated: false` is a read-only idempotent hit in the Tauri command. Do not
+  // erase the just-written OpenAI catalog on every personal-plugin reconciliation.
+  // A real migration reloads and persists a fresh snapshot in readState below.
+  if (ensured.migrated) clearLocalCodexPluginsReadStateCache()
   return ensured
 }
 
@@ -693,9 +984,88 @@ async function reconcileCodexPersonalPlugins(state: LocalCodexPluginsState): Pro
   return changed
 }
 
+function isCodexRemoteInstallPluginName(pluginId: string, pluginName?: string): boolean {
+  const trimmed = pluginId.trim()
+  // Reject catalog-qualified ids (gmail@openai-curated-remote) and namespaced
+  // ids. Also reject bare catalog names equal to plugin.name — Codex remote
+  // install needs connector-style ids like plugin_connector_1p_*.
+  if (!trimmed || trimmed.includes('@') || trimmed.includes(':')) return false
+  if (!/^[A-Za-z0-9_~-]+$/.test(trimmed)) return false
+  const bareName = pluginName?.trim().toLowerCase() || ''
+  if (bareName && trimmed.toLowerCase() === bareName) return false
+  return true
+}
+
 function pluginInstallName(item: PluginMarketplaceItem, localMarketplace: boolean): string {
   if (localMarketplace) return item.name
-  return item.remotePluginId || String(item.id)
+  const remoteId = item.remotePluginId?.trim() || ''
+  if (remoteId && isCodexRemoteInstallPluginName(remoteId, item.name)) return remoteId
+  const bareName = item.name.trim()
+  if (bareName) return bareName
+  const catalogId = String(item.id).trim()
+  const at = catalogId.lastIndexOf('@')
+  if (at > 0) return catalogId.slice(0, at)
+  const colon = catalogId.indexOf(':')
+  if (colon >= 0 && colon < catalogId.length - 1) return catalogId.slice(colon + 1)
+  return catalogId
+}
+
+function isRetriablePluginInstallCandidateError(message: string): boolean {
+  return (
+    /not found|unknown plugin|unexpected plugin id|invalid remote plugin id/i.test(message) ||
+    /invalid plugin(?: name| id)?/i.test(message)
+  )
+}
+
+function pushUniqueInstallCandidate(candidates: string[], value: string | null | undefined) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed || candidates.includes(trimmed)) return
+  candidates.push(trimmed)
+}
+
+async function resolveRemoteInstallPluginNames(
+  marketplace: LocalCodexMarketplace,
+  item: PluginMarketplaceItem
+): Promise<string[]> {
+  const candidates: string[] = []
+  pushUniqueInstallCandidate(
+    candidates,
+    item.remotePluginId && isCodexRemoteInstallPluginName(item.remotePluginId, item.name)
+      ? item.remotePluginId
+      : ''
+  )
+  const catalogId = String(item.id).trim()
+  if (isCodexRemoteInstallPluginName(catalogId, item.name)) {
+    pushUniqueInstallCandidate(candidates, catalogId)
+  }
+
+  // plugin/list often omits remotePluginId and only returns gmail@marketplace /
+  // bare gmail. plugin/read carries the connector-style id needed for install.
+  if (candidates.length === 0) {
+    try {
+      const detail = await readPluginDetail(marketplace, item.name)
+      const summary = detail.summary
+      pushUniqueInstallCandidate(
+        candidates,
+        summary?.remotePluginId && isCodexRemoteInstallPluginName(summary.remotePluginId, item.name)
+          ? summary.remotePluginId
+          : ''
+      )
+      pushUniqueInstallCandidate(
+        candidates,
+        summary?.id && isCodexRemoteInstallPluginName(summary.id, item.name) ? summary.id : ''
+      )
+    } catch (error) {
+      console.warn('[Wework plugins] failed to resolve remote install plugin id', {
+        marketplaceId: marketplace.id,
+        pluginName: item.name,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  pushUniqueInstallCandidate(candidates, item.name)
+  return candidates
 }
 
 function rememberSelectedMarketplaceId(id: string) {
@@ -847,6 +1217,34 @@ function catalogItemId(
   return `${marketplace.name}:${plugin.id}`
 }
 
+function featuredPluginIdSet(featuredPluginIds: string[] | null | undefined): Set<string> {
+  const ids = new Set<string>()
+  for (const value of featuredPluginIds ?? []) {
+    const trimmed = String(value || '').trim()
+    if (trimmed) ids.add(trimmed)
+  }
+  return ids
+}
+
+function isFeaturedMarketplacePlugin(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  featuredIds: Set<string>
+): boolean {
+  if (featuredIds.size === 0) return false
+  const candidates = [
+    plugin.id,
+    plugin.remotePluginId,
+    plugin.name,
+    catalogItemId(marketplace, plugin),
+    `${plugin.name}@${marketplace.name}`,
+  ]
+  return candidates.some(candidate => {
+    const value = String(candidate || '').trim()
+    return value !== '' && featuredIds.has(value)
+  })
+}
+
 function localMarketplaceSource(marketplace: CodexPluginMarketplaceEntry): {
   sourceProvider: 'wegent' | 'codex' | 'user'
   sourceLabel: string
@@ -927,7 +1325,25 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     })),
   ]
   components.templates = components.commands
-  components.connectors = (detail.connectors ?? []).map(connector => {
+  const declaredConnectors = detail.connectors ?? []
+  const inferredConnectors: CodexPluginConnector[] =
+    declaredConnectors.length === 0 &&
+    detail.summary.authPolicy?.trim().toLowerCase() === 'on_install'
+      ? (detail.apps ?? [])
+          .filter(app => app.required !== false)
+          .map(app => ({
+            slug:
+              app.slug?.trim() ||
+              app.name
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '') ||
+              detail.summary.name,
+            authPolicy: 'on_install' as const,
+          }))
+      : []
+  components.connectors = [...declaredConnectors, ...inferredConnectors].map(connector => {
     const localAuth = connector.localAuth
     return {
       slug: connector.slug,
@@ -1005,28 +1421,146 @@ function toLocalDeviceSkill(skill: CodexSkillMetadata): LocalDeviceSkill {
   }
 }
 
-function toMarketplaceItem(
+function safeRelativePluginAssetPath(value: string): string | null {
+  const segments = value.replace(/\\/g, '/').split('/')
+  const safeSegments: string[] = []
+  for (const segment of segments) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') return null
+    safeSegments.push(segment)
+  }
+  return safeSegments.length > 0 ? safeSegments.join('/') : null
+}
+
+function isRelativePluginAssetPath(value: string): boolean {
+  if (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)) return false
+  return !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(value)
+}
+
+function localPluginRoot(
   marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary,
   detail?: CodexPluginDetail | null
+): string | null {
+  if (marketplace.path && isLocalMarketplacePath(marketplace.path)) {
+    const sourcePath =
+      plugin.source && typeof plugin.source.path === 'string' ? plugin.source.path.trim() : ''
+    if (sourcePath) {
+      if (isLocalMarketplacePath(sourcePath)) return sourcePath.replace(/[\\/]+$/, '')
+      const relativeSourcePath = safeRelativePluginAssetPath(sourcePath)
+      if (relativeSourcePath) {
+        return `${normalizeMarketplaceSource(marketplace.path).replace(/[\\/]+$/, '')}/${relativeSourcePath}`
+      }
+    }
+  }
+
+  for (const path of (detail?.skills ?? []).map(skill => skill.path)) {
+    if (!path || !isLocalMarketplacePath(path)) continue
+    const normalized = path.replace(/\\/g, '/')
+    const skillsIndex = normalized.lastIndexOf('/skills/')
+    if (skillsIndex > 0) return normalized.slice(0, skillsIndex)
+  }
+  return null
+}
+
+type CodexPluginInterfaceAssets = PluginInterface & {
+  logoUrl?: string | null
+  logoUrlDark?: string | null
+  composerIconUrl?: string | null
+  screenshotUrls?: string[] | null
+}
+
+function firstPluginAssetUrl(...candidates: Array<string | null | undefined>): string | null {
+  for (const candidate of candidates) {
+    const value = candidate?.trim()
+    if (value) return value
+  }
+  return null
+}
+
+function normalizePluginInterfaceAssets(interfaceData: PluginInterface): PluginInterface {
+  const raw = interfaceData as CodexPluginInterfaceAssets
+  const screenshots =
+    raw.screenshots && raw.screenshots.length > 0
+      ? raw.screenshots
+      : raw.screenshotUrls && raw.screenshotUrls.length > 0
+        ? raw.screenshotUrls
+        : raw.screenshots
+  return {
+    ...interfaceData,
+    composerIcon: firstPluginAssetUrl(raw.composerIcon, raw.composerIconUrl),
+    logo: firstPluginAssetUrl(raw.logo, raw.logoUrl),
+    logoDark: firstPluginAssetUrl(raw.logoDark, raw.logoUrlDark),
+    screenshots,
+  }
+}
+
+function resolvePluginInterfaceAssets(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null
+): PluginInterface | null {
+  const interfaceData = plugin.interface
+  if (!interfaceData) return null
+  const normalized = normalizePluginInterfaceAssets(interfaceData)
+  const root = localPluginRoot(marketplace, plugin, detail)
+  if (!root) return normalized
+  const resolve = (value?: string | null): string | null | undefined => {
+    const source = value?.trim()
+    if (!source || !isRelativePluginAssetPath(source)) return value
+    const relativePath = safeRelativePluginAssetPath(source)
+    return relativePath ? `${root}/${relativePath}` : null
+  }
+  return {
+    ...normalized,
+    composerIcon: resolve(normalized.composerIcon),
+    logo: resolve(normalized.logo),
+    logoDark: resolve(normalized.logoDark),
+    screenshots: normalized.screenshots?.map(screenshot => resolve(screenshot) || screenshot),
+  }
+}
+
+function toMarketplaceItem(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary,
+  detail?: CodexPluginDetail | null,
+  featuredIds: Set<string> = new Set()
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
   const source = localMarketplaceSource(marketplace)
+  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
+  const pluginInterface = resolvedInterface as
+    | (PluginInterface & {
+        tags?: string[]
+        keywords?: string[]
+        categories?: string[]
+      })
+    | null
+    | undefined
+  const remotePluginId =
+    (typeof plugin.remotePluginId === 'string' &&
+    isCodexRemoteInstallPluginName(plugin.remotePluginId, plugin.name)
+      ? plugin.remotePluginId.trim()
+      : '') ||
+    (typeof plugin.id === 'string' && isCodexRemoteInstallPluginName(plugin.id, plugin.name)
+      ? plugin.id.trim()
+      : '') ||
+    ''
   return {
     id: catalogItemId(marketplace, plugin),
-    remotePluginId: plugin.remotePluginId ?? plugin.id,
+    remotePluginId,
     name: plugin.name,
     displayName: pluginDisplayName(plugin),
     description: pluginDescription(plugin, detail),
     version: plugin.localVersion ?? null,
-    author: plugin.interface?.developerName ?? null,
+    author: resolvedInterface?.developerName ?? null,
     visibility: source.visibility,
-    featured: false,
+    featured: isFeaturedMarketplacePlugin(marketplace, plugin, featuredIds),
     installed: plugin.installed,
     installedPluginId: plugin.installed ? plugin.id : null,
     enabled: plugin.enabled,
     sourceType: 'marketplace',
-    interface: plugin.interface ?? null,
+    interface: resolvedInterface,
     components,
     manifest: {
       name: plugin.name,
@@ -1036,6 +1570,11 @@ function toMarketplaceItem(
       installPolicy: plugin.installPolicy ?? null,
       authPolicy: plugin.authPolicy ?? null,
       availability: plugin.availability ?? null,
+      disabledReason: plugin.disabledReason ?? null,
+      eligiblePlanTypes: plugin.eligiblePlanTypes ?? null,
+      tags: pluginInterface?.tags ?? [],
+      keywords: [...(plugin.keywords ?? []), ...(pluginInterface?.keywords ?? [])],
+      categories: pluginInterface?.categories ?? [],
     },
     ownerUserId: 0,
     sourceProvider: source.sourceProvider,
@@ -1095,6 +1634,7 @@ function toInstalledPlugin(
   detail?: CodexPluginDetail | null
 ): InstalledPlugin {
   const components = pluginComponents(detail)
+  const resolvedInterface = resolvePluginInterfaceAssets(marketplace, plugin, detail)
   const isCreated = isPersonalMarketplaceId(marketplace.name)
   const source = localMarketplaceSource(marketplace)
   const skillStates = Object.fromEntries(
@@ -1124,7 +1664,7 @@ function toInstalledPlugin(
       displayName: pluginDisplayName(plugin),
       description: pluginDescription(plugin, detail),
       version: plugin.localVersion ?? null,
-      author: plugin.interface?.developerName ?? null,
+      author: resolvedInterface?.developerName ?? null,
       installState: plugin.installed ? 'installed' : 'not_installed',
       enabled: plugin.enabled !== false,
       componentStates: skillStates,
@@ -1135,9 +1675,11 @@ function toInstalledPlugin(
         installPolicy: plugin.installPolicy ?? null,
         authPolicy: plugin.authPolicy ?? null,
         availability: plugin.availability ?? null,
+        disabledReason: plugin.disabledReason ?? null,
+        eligiblePlanTypes: plugin.eligiblePlanTypes ?? null,
       },
       components,
-      interface: plugin.interface ?? null,
+      interface: resolvedInterface,
       packageRef: null,
       sourcePayload: {
         ...sourcePayload(marketplace, plugin),
@@ -1215,11 +1757,7 @@ function filterPluginItems(
   items: PluginMarketplaceItem[],
   query?: string
 ): PluginMarketplaceItem[] {
-  const normalizedQuery = query?.trim().toLowerCase()
-  if (!normalizedQuery) return items
-  return items.filter(item =>
-    `${item.name} ${item.displayName} ${item.description}`.toLowerCase().includes(normalizedQuery)
-  )
+  return rankMarketplaceSearchResults(items, query ?? '')
 }
 
 export function applyPluginCloudLinks(
@@ -1256,10 +1794,173 @@ export function applyPluginCloudLinks(
 
 function pluginMarketplaceIdentity(pluginName: string, marketplaceName: string): string {
   const plugin = pluginName.trim().toLowerCase()
-  const marketplace = isPersonalMarketplaceId(marketplaceName)
+  const rawMarketplace = marketplaceName.trim().toLowerCase()
+  const marketplace = isPersonalMarketplaceId(rawMarketplace)
     ? WEWORK_PERSONAL_MARKETPLACE_ID
-    : marketplaceName.trim().toLowerCase()
+    : isWegentCloudMarketplace(rawMarketplace)
+      ? INTERNAL_DEVICE_MARKETPLACE_ID
+      : rawMarketplace
   return plugin && marketplace ? `${plugin}@${marketplace}` : ''
+}
+
+/** UI catalog rows for user-added markets use `${marketplace}:${codexPluginId}`. */
+function splitNamespacedCatalogPluginId(
+  pluginId: string
+): { marketplaceName: string; innerId: string } | null {
+  const trimmedId = pluginId.trim()
+  const separator = trimmedId.indexOf(':')
+  if (separator <= 0 || separator >= trimmedId.length - 1) return null
+  const marketplaceName = trimmedId.slice(0, separator).trim()
+  const innerId = trimmedId.slice(separator + 1).trim()
+  // Marketplace ids are slug-like; skip Windows paths / URLs.
+  if (!marketplaceName || !innerId) return null
+  if (/[\\/]/.test(marketplaceName) || marketplaceName.includes('://')) return null
+  return { marketplaceName, innerId }
+}
+
+function denamespacedCatalogPluginId(pluginId: string, marketplaceName: string): string {
+  const trimmedMarketplace = marketplaceName.trim()
+  if (!trimmedMarketplace) return splitNamespacedCatalogPluginId(pluginId)?.innerId ?? ''
+  const split = splitNamespacedCatalogPluginId(pluginId)
+  if (!split || split.marketplaceName !== trimmedMarketplace) return ''
+  return split.innerId
+}
+
+/**
+ * Codex treats ids matching `[A-Za-z0-9_-~]+` as remote ChatGPT plugin ids.
+ * Bare local plugin names (e.g. `desktop-e2e-plugin`) match and incorrectly
+ * require remote-catalog auth during uninstall.
+ */
+function looksLikeCodexRemotePluginId(pluginId: string): boolean {
+  const trimmed = pluginId.trim()
+  return trimmed.length > 0 && /^[A-Za-z0-9_~-]+$/.test(trimmed)
+}
+
+function isRetriablePluginUninstallCandidateError(message: string): boolean {
+  return (
+    /not found|not installed|unknown plugin|unexpected plugin id/i.test(message) ||
+    /invalid remote plugin id/i.test(message) ||
+    // After unrestricted plugin/list syncs openai-curated-remote, Codex may try to
+    // resolve the remote catalog while probing a bare/namespaced uninstall id.
+    /chatgpt authentication required for remote plugin catalog/i.test(message) ||
+    /resolve remote plugin before uninstall/i.test(message)
+  )
+}
+
+function resolveLocalUninstallIdentity(input: {
+  requestedId: string
+  pluginName: string
+  marketplaceName: string
+  remotePluginId: string
+  marketplaceItemId: string
+  installedId: string
+}): { pluginName: string; marketplaceName: string; qualifiedId: string } {
+  let marketplaceName = input.marketplaceName.trim()
+  let pluginName = input.pluginName.trim()
+
+  for (const candidate of [
+    input.requestedId,
+    input.marketplaceItemId,
+    input.installedId,
+    input.remotePluginId,
+  ]) {
+    const namespaced = splitNamespacedCatalogPluginId(candidate)
+    if (namespaced) {
+      if (!marketplaceName) marketplaceName = namespaced.marketplaceName
+      const at = namespaced.innerId.indexOf('@')
+      const innerName = at > 0 ? namespaced.innerId.slice(0, at) : namespaced.innerId
+      if (!pluginName || looksLikeCodexRemotePluginId(pluginName) || pluginName.includes(':')) {
+        pluginName = innerName
+      }
+      if (!marketplaceName && at > 0) {
+        marketplaceName = namespaced.innerId.slice(at + 1)
+      }
+      continue
+    }
+    const at = candidate.trim().indexOf('@')
+    if (at <= 0) continue
+    if (!pluginName || looksLikeCodexRemotePluginId(pluginName)) {
+      pluginName = candidate.trim().slice(0, at)
+    }
+    if (!marketplaceName) marketplaceName = candidate.trim().slice(at + 1)
+  }
+
+  const qualifiedId =
+    pluginName && marketplaceName && !pluginName.includes('@')
+      ? `${pluginName}@${marketplaceName}`
+      : pluginName.includes('@')
+        ? pluginName
+        : ''
+  return { pluginName, marketplaceName, qualifiedId }
+}
+
+/**
+ * Build uninstall id probes for Codex plugin/uninstall.
+ * Local markets must use `name@marketplace`. Bare alphanumeric ids are remote
+ * ChatGPT plugin ids and must not be probed for local uninstalls.
+ */
+function buildPluginUninstallCandidateIds(input: {
+  requestedId: string
+  pluginName: string
+  marketplaceName: string
+  remotePluginId: string
+  marketplaceItemId: string
+  installedId: string
+}): string[] {
+  const resolved = resolveLocalUninstallIdentity(input)
+  const denamespacedRequested = denamespacedCatalogPluginId(
+    input.requestedId,
+    resolved.marketplaceName
+  )
+  const denamespacedItem = denamespacedCatalogPluginId(
+    input.marketplaceItemId,
+    resolved.marketplaceName
+  )
+  const remoteOpenAi = isOpenAiOfficialMarketplaceId(resolved.marketplaceName)
+  const localNativeIds = [
+    resolved.qualifiedId,
+    denamespacedRequested.includes('@') ? denamespacedRequested : '',
+    denamespacedItem.includes('@') ? denamespacedItem : '',
+    input.installedId.includes('@') ? input.installedId : '',
+    input.requestedId.includes('@') && !input.requestedId.includes(':') ? input.requestedId : '',
+    // If denamespaced inner id is bare, rebuild the qualified local id.
+    denamespacedRequested && !denamespacedRequested.includes('@') && resolved.marketplaceName
+      ? `${denamespacedRequested}@${resolved.marketplaceName}`
+      : '',
+    denamespacedItem && !denamespacedItem.includes('@') && resolved.marketplaceName
+      ? `${denamespacedItem}@${resolved.marketplaceName}`
+      : '',
+  ]
+  const ordered = remoteOpenAi
+    ? [
+        // Remote OpenAI installs often require the connector-style remotePluginId.
+        input.remotePluginId,
+        ...localNativeIds,
+        input.requestedId,
+        input.pluginName,
+        input.marketplaceItemId,
+        input.installedId,
+      ]
+    : [
+        ...localNativeIds,
+        // Keep non-remote-shaped leftovers last; never probe bare remote-shaped
+        // local names — they force ChatGPT remote-catalog auth.
+        !looksLikeCodexRemotePluginId(input.remotePluginId) ? input.remotePluginId : '',
+        !looksLikeCodexRemotePluginId(input.requestedId) && !input.requestedId.includes(':')
+          ? input.requestedId
+          : '',
+      ]
+  return Array.from(new Set(ordered.filter(value => Boolean(value && String(value).trim()))))
+}
+
+function marketplaceItemInstallIdentity(item: PluginMarketplaceItem): string {
+  const marketplaceId =
+    typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
+  // Cloud Wework listings often omit marketplaceId; treat release-backed rows as wegent
+  // so local wegent installs (快速建站 etc.) overlay onto the catalog card immediately.
+  const marketplaceName =
+    marketplaceId || (item.latestReleaseId != null ? INTERNAL_DEVICE_MARKETPLACE_ID : '')
+  return pluginMarketplaceIdentity(item.name, marketplaceName)
 }
 
 export function applyInstalledPluginsToMarketplaceItems(
@@ -1276,24 +1977,31 @@ export function applyInstalledPluginsToMarketplaceItems(
         : plugin.metadata.namespace)
     const marketplaceName = typeof marketplace === 'string' ? marketplace : ''
     const identity = pluginMarketplaceIdentity(
-      String(plugin.spec.source.pluginKey),
+      String(plugin.spec.source.pluginKey || plugin.metadata.name || ''),
       marketplaceName
     )
     if (identity) installedByIdentity.set(identity, plugin)
   }
 
   return items.map(item => {
-    const marketplaceName =
-      typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
-    const installed = installedByIdentity.get(pluginMarketplaceIdentity(item.name, marketplaceName))
+    const installed = installedByIdentity.get(marketplaceItemInstallIdentity(item))
     if (!installed) return item
     const id = installedPluginId(installed)
+    const installedLocally = typeof installed.spec.pluginId !== 'number'
+    if (
+      item.installed &&
+      item.installedPluginId != null &&
+      !installedLocally &&
+      item.enabled === installed.spec.enabled
+    ) {
+      return item
+    }
     return {
       ...item,
       installed: true,
       installedPluginId:
         typeof id === 'string' || typeof id === 'number' ? id : item.installedPluginId,
-      installedLocally: true,
+      installedLocally: item.installedLocally || installedLocally,
       enabled: installed.spec.enabled,
     }
   })
@@ -1373,16 +2081,19 @@ async function loadReadStateSnapshot(
   const requestedMarketplaceId = params.mergeAllMarketplaces
     ? ''
     : params.marketplaceId?.trim() || selectedMarketplaceId()
-  // Restrict to local marketplace kinds so Codex skips remote GitHub refresh
-  // (often ~10s timeout). Cached OpenAI curated plugins under the local Codex
-  // home still appear; cloud Wework catalog is loaded separately by the UI.
+  // Do not restrict marketplaceKinds: Codex must sync the OpenAI curated
+  // marketplace (github.com/openai/plugins) so the OpenAI官方 tab can populate
+  // on a cold Codex home. This path is only used from the Plugins page; chat /
+  // composer use loadInstalledPluginsOnly and must never call plugin/list.
+  // Durable peek + personal disk paint keep first paint responsive while this
+  // request may take several seconds on first sync. Cloud Wework catalog is
+  // loaded separately by the UI.
   const [availableResponse, installedResponse] = await Promise.all([
     codexAppServerRequest<{
       marketplaces: CodexPluginMarketplaceEntry[]
       featuredPluginIds?: string[]
     }>('plugin/list', {
       cwds: null,
-      marketplaceKinds: ['local'],
     }),
     codexAppServerRequest<{ marketplaces: CodexPluginMarketplaceEntry[] }>('plugin/installed', {
       cwds: null,
@@ -1390,6 +2101,7 @@ async function loadReadStateSnapshot(
     }),
   ])
   const availableMarketplaces = withInitializedBundledMarketplace(availableResponse.marketplaces)
+  const featuredIds = featuredPluginIdSet(availableResponse.featuredPluginIds)
   const requestedSelectedId = requestedMarketplaceId || availableMarketplaces[0]?.name || ''
   const selectedId = availableMarketplaces.some(
     marketplace => marketplace.name === requestedSelectedId
@@ -1411,7 +2123,7 @@ async function loadReadStateSnapshot(
       }).catch(() => [] as LocalPluginCloudLink[])
     : []
   const availableMarketplaceItems = selectedMarketplaces.flatMap(marketplace =>
-    marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin))
+    marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin, null, featuredIds))
   )
   // plugin/installed is authoritative for membership; summaries sometimes omit
   // `installed`/`enabled`. Also fold in plugin/list rows marked installed so a
@@ -1427,7 +2139,7 @@ async function loadReadStateSnapshot(
     installedPlugins
   )
   const marketplaces = availableMarketplaces.map(marketplaceInfo)
-  const state: LocalCodexPluginsState = {
+  const loadedState: LocalCodexPluginsState = {
     marketplaceItems,
     installedPlugins,
     marketplaces,
@@ -1438,6 +2150,10 @@ async function loadReadStateSnapshot(
     installRegistryPath: '',
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
+  const state = retainOpenAiOfficialCatalog(
+    cachedStateParamsKey === paramsKey ? cachedState : null,
+    loadedState
+  )
   if (generation >= cachedStateGeneration) {
     // Always cache the unfiltered catalog so search queries can reuse it.
     rememberReadStateSnapshot(paramsKey, state, generation)
@@ -1453,6 +2169,122 @@ async function loadReadStateSnapshot(
     }
   }
   return state
+}
+
+function marketplaceEntryFromInstalledPlugin(plugin: InstalledPlugin): CodexPluginMarketplaceEntry {
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : null
+  const marketplaceName =
+    (typeof payload?.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
+    (typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace.trim()) ||
+    (typeof plugin.spec.source.marketplace === 'string' && plugin.spec.source.marketplace.trim()) ||
+    plugin.spec.source.providerKey ||
+    ''
+  const marketplacePath =
+    (typeof payload?.marketplacePath === 'string' && payload.marketplacePath.trim()) ||
+    marketplaceName
+  return {
+    name: marketplaceName,
+    path: marketplacePath,
+    interface: {
+      displayName: marketplaceName,
+    },
+    plugins: [],
+  }
+}
+
+function pluginNameFromInstalledPlugin(plugin: InstalledPlugin): string {
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : null
+  if (typeof payload?.pluginName === 'string' && payload.pluginName.trim()) {
+    return payload.pluginName.trim()
+  }
+  if (plugin.spec.source.pluginKey.trim()) return plugin.spec.source.pluginKey.trim()
+  return typeof plugin.metadata.name === 'string' ? plugin.metadata.name.trim() : ''
+}
+
+function rememberInstalledPluginDetail(detailed: InstalledPlugin): void {
+  if (!cachedState) return
+  const detailedId = String(installedPluginId(detailed) ?? '')
+  const detailedKey = detailed.spec.source.pluginKey.trim().toLowerCase()
+  let changed = false
+  const installedPlugins = cachedState.installedPlugins.map(plugin => {
+    const sameId = detailedId.length > 0 && String(installedPluginId(plugin) ?? '') === detailedId
+    const sameKey =
+      !sameId &&
+      detailedKey.length > 0 &&
+      plugin.spec.source.pluginKey.trim().toLowerCase() === detailedKey
+    if (!sameId && !sameKey) return plugin
+    changed = true
+    return detailed
+  })
+  if (!changed) return
+  cachedState = { ...cachedState, installedPlugins }
+  cachedStateAt = Date.now()
+  if (cachedStateParamsKey) {
+    persistReadStateSnapshot(cachedStateParamsKey, cachedState, cachedStateAt)
+  }
+}
+
+/**
+ * Expand one installed membership summary with `plugin/read` (+ local manifest
+ * connectors). Does not call `plugin/list` / full marketplace `readState`.
+ */
+async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<InstalledPlugin> {
+  const marketplace = marketplaceEntryFromInstalledPlugin(plugin)
+  const pluginName = pluginNameFromInstalledPlugin(plugin)
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : null
+  const id = installedPluginId(plugin) ?? pluginName
+  const detail = await readPluginDetail(
+    {
+      id: marketplace.name,
+      name: marketplace.name,
+      path: marketplace.path ?? marketplace.name,
+    },
+    pluginName
+  )
+  const detailed = toInstalledPlugin(
+    marketplace,
+    {
+      id: String(id),
+      remotePluginId:
+        typeof payload?.remotePluginId === 'string' ? payload.remotePluginId : String(id),
+      localVersion: plugin.spec.version ?? null,
+      name: pluginName,
+      source:
+        plugin.spec.manifest && typeof plugin.spec.manifest === 'object'
+          ? (plugin.spec.manifest.source as Record<string, unknown> | undefined)
+          : undefined,
+      installed: true,
+      enabled: plugin.spec.enabled,
+      installPolicy:
+        typeof plugin.spec.manifest?.installPolicy === 'string'
+          ? plugin.spec.manifest.installPolicy
+          : undefined,
+      authPolicy:
+        typeof plugin.spec.manifest?.authPolicy === 'string'
+          ? plugin.spec.manifest.authPolicy
+          : undefined,
+      availability:
+        typeof plugin.spec.manifest?.availability === 'string'
+          ? plugin.spec.manifest.availability
+          : undefined,
+      interface: plugin.spec.interface ?? null,
+      keywords: [],
+    },
+    detail
+  )
+  // Write connector/localAuth stubs back into the durable peek so the next send
+  // can skip plugin/read (v1 durable cache always emptied components).
+  rememberInstalledPluginDetail(detailed)
+  return detailed
 }
 
 async function loadInstalledPluginsOnly(): Promise<{
@@ -1795,83 +2627,28 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       rememberSelectedMarketplaceId(id)
       return readState({ marketplaceId: id })
     },
+    async readInstalledPluginDetail(plugin) {
+      return readDetailForInstalledPlugin(plugin)
+    },
     async readInstalledPluginForTrial(id) {
-      const findInstalled = (state: LocalCodexPluginsState) =>
-        state.installedPlugins.find(plugin => String(installedPluginId(plugin)) === String(id))
+      const findInstalled = (plugins: InstalledPlugin[]) =>
+        plugins.find(plugin => String(installedPluginId(plugin)) === String(id))
 
-      let currentState = cachedState ?? (await readState())
-      let installed = findInstalled(currentState)
+      // Prefer membership-only sources. Chat/composer must never wait on
+      // plugin/list (~10s) just to resolve connector localAuth for one plugin.
+      const peeked =
+        peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true }) ||
+        peekLocalCodexPluginsReadState()
+      let installed =
+        (cachedState ? findInstalled(cachedState.installedPlugins) : null) ||
+        (peeked ? findInstalled(peeked.installedPlugins) : null) ||
+        null
       if (!installed) {
-        currentState = await readState({ refresh: true })
-        installed = findInstalled(currentState)
+        const loaded = await loadInstalledPluginsOnly()
+        installed = findInstalled(loaded.installedPlugins) ?? null
       }
       if (!installed) throw new Error('Codex plugin is not installed')
-      const sourcePayload = installed.spec.sourcePayload
-      const payload =
-        sourcePayload && typeof sourcePayload === 'object'
-          ? (sourcePayload as Record<string, unknown>)
-          : null
-      const marketplaceId =
-        typeof payload?.marketplaceName === 'string'
-          ? payload.marketplaceName
-          : typeof installed.metadata.namespace === 'string'
-            ? installed.metadata.namespace
-            : installed.spec.source.marketplace || installed.spec.source.providerKey
-      const pluginName =
-        typeof payload?.pluginName === 'string'
-          ? payload.pluginName
-          : installed.spec.source.pluginKey
-      const marketplace = currentState.marketplaces.find(
-        marketplace => marketplace.id === marketplaceId
-      ) ?? {
-        id: marketplaceId,
-        name: marketplaceId,
-        path: marketplaceId,
-      }
-      const summary = currentState.marketplaceItems.find(
-        item => String(item.installedPluginId ?? item.id) === String(id)
-      )
-      const detail = await readPluginDetail(marketplace, pluginName)
-      return toInstalledPlugin(
-        {
-          name: marketplace.id,
-          path: marketplace.path,
-          interface: {
-            displayName: marketplace.name,
-          },
-          plugins: [],
-        },
-        {
-          id: String(id),
-          remotePluginId:
-            typeof payload?.remotePluginId === 'string'
-              ? payload.remotePluginId
-              : (summary?.remotePluginId ?? String(id)),
-          localVersion: installed.spec.version ?? summary?.version ?? null,
-          name: pluginName,
-          source:
-            installed.spec.manifest && typeof installed.spec.manifest === 'object'
-              ? (installed.spec.manifest.source as Record<string, unknown> | undefined)
-              : undefined,
-          installed: true,
-          enabled: installed.spec.enabled,
-          installPolicy:
-            typeof installed.spec.manifest?.installPolicy === 'string'
-              ? installed.spec.manifest.installPolicy
-              : undefined,
-          authPolicy:
-            typeof installed.spec.manifest?.authPolicy === 'string'
-              ? installed.spec.manifest.authPolicy
-              : undefined,
-          availability:
-            typeof installed.spec.manifest?.availability === 'string'
-              ? installed.spec.manifest.availability
-              : undefined,
-          interface: installed.spec.interface ?? summary?.interface ?? null,
-          keywords: [],
-        },
-        detail
-      )
+      return readDetailForInstalledPlugin(installed)
     },
     async deleteMarketplace(id) {
       await codexAppServerRequest('marketplace/remove', {
@@ -1925,11 +2702,30 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       )
       if (!marketplace) throw new Error('Codex plugin marketplace not found')
       const localMarketplace = isLocalMarketplacePath(marketplace.path)
-      await codexAppServerRequest('plugin/install', {
-        marketplacePath: localMarketplace ? marketplace.path : null,
-        remoteMarketplaceName: localMarketplace ? null : marketplace.id,
-        pluginName: pluginInstallName(item, localMarketplace),
-      })
+      const installNames = localMarketplace
+        ? [pluginInstallName(item, true)]
+        : await resolveRemoteInstallPluginNames(marketplace, item)
+      let installError: unknown = null
+      for (let index = 0; index < installNames.length; index += 1) {
+        const pluginName = installNames[index]
+        try {
+          await codexAppServerRequest('plugin/install', {
+            marketplacePath: localMarketplace ? marketplace.path : null,
+            remoteMarketplaceName: localMarketplace ? null : marketplace.id,
+            pluginName,
+          })
+          installError = null
+          break
+        } catch (error) {
+          installError = error
+          const message = error instanceof Error ? error.message : String(error)
+          const hasMore = index < installNames.length - 1
+          if (!hasMore || !isRetriablePluginInstallCandidateError(message)) {
+            throw error
+          }
+        }
+      }
+      if (installError) throw installError
       clearLocalCodexPluginsReadStateCache()
       const state = await readState({
         marketplaceId: resolvedMarketplaceId,
@@ -2001,46 +2797,117 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async uninstallInstalledPlugin(id) {
-      const currentState = cachedState ?? (await readState())
-      const installed = currentState.installedPlugins.find(
-        plugin => String(installedPluginId(plugin)) === String(id)
+      const currentState = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
+      const requestedId = String(id)
+      const marketplaceItem = currentState.marketplaceItems.find(
+        item =>
+          String(item.id) === requestedId ||
+          String(item.installedPluginId ?? '') === requestedId ||
+          String(item.remotePluginId ?? '') === requestedId
       )
+      const installed =
+        currentState.installedPlugins.find(
+          plugin => String(installedPluginId(plugin)) === requestedId
+        ) ||
+        (marketplaceItem
+          ? currentState.installedPlugins.find(plugin => {
+              const marketplaceName =
+                plugin.spec.source.marketplace ||
+                plugin.spec.source.providerKey ||
+                (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+                  ? plugin.spec.sourcePayload.marketplaceName
+                  : plugin.metadata.namespace)
+              return (
+                plugin.spec.source.pluginKey === marketplaceItem.name &&
+                pluginMarketplaceIdentity(
+                  marketplaceItem.name,
+                  typeof marketplaceName === 'string' ? marketplaceName : ''
+                ) ===
+                  pluginMarketplaceIdentity(
+                    marketplaceItem.name,
+                    typeof marketplaceItem.manifest?.marketplaceId === 'string'
+                      ? marketplaceItem.manifest.marketplaceId
+                      : ''
+                  )
+              )
+            })
+          : undefined)
+      const payload =
+        installed?.spec.sourcePayload && typeof installed.spec.sourcePayload === 'object'
+          ? (installed.spec.sourcePayload as Record<string, unknown>)
+          : {}
       const marketplace =
         installed?.spec.source.marketplace ||
         installed?.spec.source.providerKey ||
+        (typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '') ||
         installed?.metadata.namespace ||
-        ''
+        (typeof marketplaceItem?.manifest?.marketplaceId === 'string'
+          ? marketplaceItem.manifest.marketplaceId
+          : '')
       const marketplaceName = typeof marketplace === 'string' ? marketplace : ''
-      const pluginName = installed?.spec.source.pluginKey ?? String(id).split('@')[0]
-      const pluginIds = isPersonalMarketplaceId(marketplaceName)
-        ? Array.from(
-            new Set([
-              String(id),
+      const pluginName =
+        installed?.spec.source.pluginKey ||
+        marketplaceItem?.name ||
+        requestedId.split('@')[0] ||
+        requestedId
+      const remotePluginId =
+        (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
+        (typeof installed?.spec.source.catalogItemId === 'string' &&
+          installed.spec.source.catalogItemId.trim()) ||
+        (typeof marketplaceItem?.remotePluginId === 'string' &&
+          marketplaceItem.remotePluginId.trim()) ||
+        ''
+      const installedId = installed ? installedPluginId(installed) : null
+      const pluginIds = [
+        ...buildPluginUninstallCandidateIds({
+          requestedId,
+          pluginName: String(pluginName),
+          marketplaceName,
+          remotePluginId,
+          marketplaceItemId: marketplaceItem ? String(marketplaceItem.id) : '',
+          installedId:
+            typeof installedId === 'string' || typeof installedId === 'number'
+              ? String(installedId)
+              : '',
+        }),
+        ...(isPersonalMarketplaceId(marketplaceName)
+          ? [
               `${pluginName}@${CODEX_PERSONAL_MARKETPLACE_ID}`,
               `${pluginName}@${WEWORK_PERSONAL_MARKETPLACE_ID}`,
-            ])
-          )
-        : [String(id)]
+            ]
+          : []),
+      ].filter((value, index, all) => value && all.indexOf(value) === index)
+      let uninstallAccepted = false
+      let lastUninstallError: unknown = null
       for (const pluginId of pluginIds) {
         try {
           await codexAppServerRequest('plugin/uninstall', { pluginId })
+          uninstallAccepted = true
         } catch (error) {
-          if (pluginId === String(id)) {
-            throw error
-          }
+          lastUninstallError = error
           if (
-            /not found|not installed|unknown plugin/i.test(
+            isRetriablePluginUninstallCandidateError(
               getErrorMessage(error, 'Plugin uninstall failed')
             )
           ) {
             continue
           }
-          // Primary uninstall already succeeded; alias cleanup must not look like a hard fail.
+          if (!uninstallAccepted) throw error
+          // A previous candidate already uninstalled; alias cleanup must not look
+          // like a hard fail.
           throw new LocalPluginUninstallCleanupError(
             getErrorMessage(error, 'Failed to uninstall plugin alias'),
             { cause: error }
           )
         }
+      }
+      if (!uninstallAccepted) {
+        throw lastUninstallError instanceof Error
+          ? lastUninstallError
+          : new Error(
+              getErrorMessage(lastUninstallError, 'Plugin uninstall failed') ||
+                `Failed to uninstall plugin; tried ids: ${pluginIds.join(', ')}`
+            )
       }
       clearLocalCodexPluginsReadStateCache()
       if (isPersonalMarketplaceId(marketplaceName)) {
@@ -2063,6 +2930,38 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
             )
           }
         }
+      }
+      const after = await readState({ mergeAllMarketplaces: true, refresh: true })
+      const stillInstalled =
+        after.installedPlugins.some(plugin => {
+          if (plugin.spec.installState !== 'installed') return false
+          const marketplace =
+            plugin.spec.source.marketplace ||
+            plugin.spec.source.providerKey ||
+            (typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+              ? plugin.spec.sourcePayload.marketplaceName
+              : plugin.metadata.namespace)
+          return (
+            plugin.spec.source.pluginKey === pluginName &&
+            (!marketplaceName ||
+              pluginMarketplaceIdentity(pluginName, String(marketplace || '')) ===
+                pluginMarketplaceIdentity(pluginName, marketplaceName))
+          )
+        }) ||
+        after.marketplaceItems.some(
+          item =>
+            item.installed &&
+            item.name === pluginName &&
+            (!marketplaceName ||
+              pluginMarketplaceIdentity(
+                item.name,
+                typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : ''
+              ) === pluginMarketplaceIdentity(pluginName, marketplaceName))
+        )
+      if (stillInstalled) {
+        throw new Error(
+          `Plugin "${pluginName}" is still installed after uninstall; tried ids: ${pluginIds.join(', ')}`
+        )
       }
     },
   }

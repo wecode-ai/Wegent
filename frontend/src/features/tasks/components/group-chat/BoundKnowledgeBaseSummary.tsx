@@ -13,7 +13,7 @@ import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { cn } from '@/lib/utils'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { formatCompactKnowledgeScope } from '@/features/knowledge/knowledgeContextPresentation'
 
 /**
  * Props for BoundKnowledgeBaseSummary component
@@ -165,7 +165,7 @@ export default function BoundKnowledgeBaseSummary({
                       {kb.display_name}
                     </span>
                     <span className="text-xs text-text-muted bg-surface px-1.5 py-0.5 rounded flex-shrink-0">
-                      {formatDocumentCount(kb.document_count || 0, t)}
+                      {formatCompactKnowledgeScope(0, kb.document_count || 0, t)}
                     </span>
                   </div>
                   {kb.description && (

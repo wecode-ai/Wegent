@@ -5,6 +5,15 @@
 use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
+#[test]
+fn defaults_to_ten_parallel_runtime_tasks() {
+    assert_eq!(
+        RuntimeSettings::default().max_concurrent_tasks,
+        DEFAULT_MAX_CONCURRENT_TASKS
+    );
+    assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
+}
+
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();
@@ -107,6 +116,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/started",
             "params": {
                 "turnId": "turn-1",
+                "startedAtMs": 1_780_000_001_250_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -123,6 +133,7 @@ fn active_codex_items_replace_stale_paginated_items() {
             "method": "item/completed",
             "params": {
                 "turnId": "turn-1",
+                "completedAtMs": 1_780_000_004_750_i64,
                 "item": {
                     "id": "change-1",
                     "type": "fileChange",
@@ -156,6 +167,14 @@ fn active_codex_items_replace_stale_paginated_items() {
     assert_eq!(
         thread["turns"][0]["items"][0]["changes"][0]["path"],
         Value::String("/tmp/result.txt".to_owned())
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["createdAt"],
+        1_780_000_001_250_i64
+    );
+    assert_eq!(
+        thread["turns"][0]["items"][0]["completedAt"],
+        1_780_000_004_750_i64
     );
     let messages = transcript_messages(&thread, "device-1");
     assert_eq!(messages.len(), 1);
@@ -356,6 +375,8 @@ fn stale_execution_cannot_finish_its_replacement() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(handler.is_active_local_task("task-1"));
+    assert_eq!(task.status, "running");
+    assert!(task.running);
     assert_eq!(task.thread_id, None);
     assert_eq!(task.completed_at, None);
 
@@ -370,10 +391,101 @@ fn stale_execution_cannot_finish_its_replacement() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(!handler.is_active_local_task("task-1"));
+    assert_eq!(task.status, "active");
+    assert!(!task.running);
     assert_eq!(task.thread_id.as_deref(), Some("current-thread"));
     assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn claude_execution_persists_running_and_settled_state() {
+    let index_path = temp_runtime_work_index_path("claude-execution-state");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending_with_runtime(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+        "claude_code",
+    ));
+
+    let execution_id = start_test_execution(&handler, "task-1");
+    let running_task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(running_task.status, "running");
+    assert!(running_task.running);
+    assert_eq!(running_task.thread_status, "active");
+    assert_eq!(running_task.turn_status.as_deref(), Some("inProgress"));
+
+    handler.finish_local_task(
+        "task-1",
+        execution_id,
+        Some("claude-session-1".to_owned()),
+        "done",
+    );
+
+    let settled_task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(settled_task.status, "active");
+    assert!(!settled_task.running);
+    assert_eq!(settled_task.thread_status, "idle");
+    assert_eq!(settled_task.turn_status.as_deref(), Some("completed"));
+    assert_eq!(settled_task.thread_id.as_deref(), Some("claude-session-1"));
+    assert!(settled_task.completed_at.is_some());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn provider_turn_registers_when_execution_control_settles_first() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let execution_id = start_test_execution(&handler, "task-1");
+
+    assert!(handler.finish_local_task_execution("task-1", execution_id));
+    handler.record_active_codex_turn(
+        "task-1",
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-1".to_owned(),
+    );
+
+    assert!(handler.is_active_local_task("task-1"));
+
+    handler.clear_active_codex_turn("task-1", execution_id);
+    assert!(!handler.is_active_local_task("task-1"));
+}
+
+#[test]
+fn stale_provider_turn_cannot_replace_the_current_execution() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let stale_execution_id = start_test_execution(&handler, "task-1");
+    assert!(handler.finish_local_task_execution("task-1", stale_execution_id));
+    let current_execution_id = start_test_execution(&handler, "task-1");
+
+    handler.record_active_codex_turn(
+        "task-1",
+        stale_execution_id,
+        "stale-thread".to_owned(),
+        "stale-turn".to_owned(),
+    );
+    assert!(handler.active_codex_turn("task-1").is_none());
+
+    handler.record_active_codex_turn(
+        "task-1",
+        current_execution_id,
+        "current-thread".to_owned(),
+        "current-turn".to_owned(),
+    );
+    let current_turn = handler
+        .active_codex_turn("task-1")
+        .expect("current execution should register its provider turn");
+    assert_eq!(current_turn.execution_id, current_execution_id);
+    assert_eq!(current_turn.thread_id, "current-thread");
+    assert_eq!(current_turn.turn_id, "current-turn");
 }
 
 #[test]
@@ -1746,7 +1858,14 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                 "initialSupervisor": {
                     "mode": "auto",
                     "instructions": "Keep the task focused",
-                    "modelId": "supervisor-model",
+                    "modelSelection": {
+                        "modelName": "supervisor-model",
+                        "modelType": "public",
+                        "options": {
+                            "weworkCloudModelNamespace": "default",
+                            "weworkCloudModelResourceUserId": "0"
+                        }
+                    },
                     "intervalSeconds": 10
                 },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
@@ -1785,10 +1904,63 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
         .expect("initial supervisor should be stored with the task");
     assert_eq!(supervisor.mode, "auto");
     assert_eq!(supervisor.instructions, "Keep the task focused");
-    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(
+        supervisor.model_selection,
+        Some(json!({
+            "modelName": "supervisor-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0"
+            }
+        }))
+    );
     assert_eq!(supervisor.interval_seconds, 10);
     assert_eq!(supervisor.status, "active");
     assert!(supervisor.last_error.is_none());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
+    let index_path = temp_runtime_work_index_path("create-board-comment-task");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "board-comment-task-1",
+                "workspacePath": "/tmp/project",
+                "title": "Board task",
+                "cloudProjectId": "project-1",
+                "origin": {
+                    "type": "board_comment",
+                    "cloudProjectId": "project-1",
+                    "loopItemId": "item-1",
+                    "rootCommentId": "comment-1"
+                },
+                "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+            }
+        }))
+        .await
+        .expect("board comment runtime task should be created");
+
+    let reloaded = RuntimeWorkStore::new(index_path.clone())
+        .get_task("board-comment-task-1")
+        .expect("board comment runtime task should survive store reload");
+    assert!(!reloaded.ephemeral);
+    assert_eq!(
+        reloaded.runtime_handle["origin"],
+        json!({
+            "type": "board_comment",
+            "cloudProjectId": "project-1",
+            "loopItemId": "item-1",
+            "rootCommentId": "comment-1"
+        })
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -2068,9 +2240,20 @@ fn thread_read_repairs_legacy_activity_time_pollution() {
 
 #[test]
 fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-managed-root").with_extension("directory");
+    let managed_root = root.join("workspace/worktrees");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    manager
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(managed_root.display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let worktree_path = managed_root.join("task-1/Wegent");
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
-        "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
+        worktree_path.display().to_string(),
         "Task".to_owned(),
     );
     link.runtime_handle = json!({
@@ -2085,17 +2268,17 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         ]
     });
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
         .collect::<Vec<_>>();
 
-    assert!(target_paths
-        .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+    assert!(target_paths.contains(&worktree_path.display().to_string()));
     assert!(target_paths.contains(
         &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
     ));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2163,13 +2346,16 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
 
 #[test]
 fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+    let root =
+        temp_runtime_work_index_path("archived-cleanup-regular-root").with_extension("directory");
+    let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
     let link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/Users/me/project".to_owned(),
         "Task".to_owned(),
     );
 
-    let targets = cleanup_targets_for_task(&link);
+    let targets = cleanup_targets_for_task(&manager, &link);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
@@ -2178,6 +2364,7 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
     assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
     assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
+    let _ = fs::remove_dir_all(root);
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {

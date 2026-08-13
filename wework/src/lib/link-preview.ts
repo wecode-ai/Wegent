@@ -103,7 +103,40 @@ class GitHubRecognizer implements LinkRecognizer {
   }
 }
 
-const recognizers: readonly LinkRecognizer[] = [new GitHubRecognizer()]
+class WegentSitesProjectRecognizer implements LinkRecognizer {
+  readonly provider = 'wegent-sites-project'
+
+  match(url: string): RecognizedLink | undefined {
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return undefined
+    }
+    if (parsed.protocol !== 'wegent-sites-project:') return undefined
+    let projectId: string
+    try {
+      projectId = decodeURIComponent(parsed.hostname || parsed.pathname.replace(/^\/+/, ''))
+    } catch {
+      return undefined
+    }
+    if (!projectId.trim()) return undefined
+
+    return {
+      url,
+      label: projectId,
+      iconUrl: '/plugin-icons/wework.svg',
+      provider: this.provider,
+      fullUrl: url,
+      isAbbreviated: true,
+    }
+  }
+}
+
+const recognizers: readonly LinkRecognizer[] = [
+  new GitHubRecognizer(),
+  new WegentSitesProjectRecognizer(),
+]
 
 export function getRecognizedLink(url: string): RecognizedLink | undefined {
   for (const recognizer of recognizers) {

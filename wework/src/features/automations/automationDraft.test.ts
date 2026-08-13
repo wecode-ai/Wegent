@@ -7,6 +7,7 @@ import {
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
   emptyAutomationDraft,
+  initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
 } from './automationDraft'
 
@@ -51,9 +52,11 @@ describe('buildAutomationProjectOptions', () => {
 
     expect(options).toEqual([
       {
-        key: 'local-device\u0000local:wework',
+        key: 'local-device\u0000local:wework\u0000/repo/wework',
         name: 'wework',
         workspacePath: '/repo/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
       },
     ])
   })
@@ -69,9 +72,41 @@ describe('buildAutomationProjectOptions', () => {
 
     expect(buildAutomationProjectOptions([runtimeProject], 'cloud-device')).toEqual([
       {
-        key: 'local-device\u0000local:wework',
+        key: 'local-device\u0000local:wework\u0000/cloud/wework',
         name: 'wework',
         workspacePath: '/cloud/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
+      },
+    ])
+  })
+
+  test('keeps managed worktrees selectable alongside the primary project workspace', () => {
+    const runtimeProject = project('wework', ['/repo/wework'], ['/repo/wework'])
+    runtimeProject.deviceWorkspaces.push({
+      deviceId: 'local-device',
+      available: true,
+      workspacePath: '/worktrees/task-42/wework',
+      workspaceKind: 'worktree',
+      worktreeId: 'task-42',
+      label: 'feature/automation',
+      tasks: [],
+    })
+
+    expect(buildAutomationProjectOptions([runtimeProject], 'local-device')).toEqual([
+      {
+        key: 'local-device\u0000local:wework\u0000/repo/wework',
+        name: 'wework',
+        workspacePath: '/repo/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
+      },
+      {
+        key: 'local-device\u0000local:wework\u0000/worktrees/task-42/wework',
+        name: 'wework',
+        workspacePath: '/worktrees/task-42/wework',
+        workspaceKind: 'worktree',
+        workspaceLabel: 'feature/automation',
       },
     ])
   })
@@ -178,6 +213,54 @@ describe('automation schedule draft conversion', () => {
       type: 'interval',
       value: 3,
       unit: 'hours',
+    })
+  })
+})
+
+describe('automation goal draft conversion', () => {
+  test('builds an active runtime goal when goal mode is enabled', () => {
+    const draft = emptyAutomationDraft('local')
+    draft.goalEnabled = true
+    draft.prompt = '  Keep CI green  '
+
+    expect(initialGoalFromAutomationDraft(draft)).toEqual({
+      objective: 'Keep CI green',
+      status: 'active',
+      tokenBudget: null,
+    })
+  })
+
+  test('round trips a persisted automation goal', () => {
+    const automation: Automation = {
+      id: 'local:goal',
+      version: 1,
+      source: 'local',
+      name: 'CI caretaker',
+      description: '',
+      prompt: 'Inspect CI and fix failures',
+      schedule: { type: 'cron', expression: '0 9 * * 1-5' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskPayload: {
+        initialGoal: {
+          objective: 'Keep CI green',
+          status: 'active',
+          tokenBudget: null,
+        },
+      },
+      createdAt: '2026-08-12T00:00:00Z',
+      updatedAt: '2026-08-12T00:00:00Z',
+    }
+
+    const draft = automationDraftFromAutomation(automation)
+
+    expect(draft.goalEnabled).toBe(true)
+    expect(initialGoalFromAutomationDraft(draft)).toEqual({
+      objective: 'Inspect CI and fix failures',
+      status: 'active',
+      tokenBudget: null,
     })
   })
 })

@@ -15,6 +15,7 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: jest.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({

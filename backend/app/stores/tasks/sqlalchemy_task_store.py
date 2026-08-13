@@ -754,31 +754,6 @@ class SqlAlchemyTaskStore:
             query = query.limit(limit)
         return query.all()
 
-    def list_active_tasks_referencing_team(
-        self,
-        db: Session,
-        *,
-        team_name: str,
-        team_namespace: str,
-    ) -> list[TaskResource]:
-        team_name_value = func.json_extract(TaskResource.json, "$.spec.teamRef.name")
-        team_namespace_value = func.json_extract(
-            TaskResource.json, "$.spec.teamRef.namespace"
-        )
-        if db.get_bind().dialect.name == "mysql":
-            team_name_value = func.json_unquote(team_name_value)
-            team_namespace_value = func.json_unquote(team_namespace_value)
-        return (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                team_name_value == team_name,
-                team_namespace_value == team_namespace,
-            )
-            .all()
-        )
-
     def list_recent_owner_only_tasks(
         self,
         db: Session,

@@ -160,6 +160,81 @@ describe('pipeline next-step helpers', () => {
     ])
   })
 
+  it('keeps restricted scopes with different descendant inclusion values distinct', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 211,
+            context_type: 'knowledge_base',
+            name: 'Scoped KB',
+            status: 'ready',
+            knowledge_id: 21,
+            folder_ids: [8],
+            document_ids: [5],
+            include_subfolders: true,
+            scope_restricted: true,
+          },
+          {
+            id: 212,
+            context_type: 'knowledge_base',
+            name: 'Scoped KB',
+            status: 'ready',
+            knowledge_id: 21,
+            folder_ids: [8],
+            document_ids: [5],
+            include_subfolders: false,
+            scope_restricted: true,
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+
+    expect(draft.structuredItems.map(item => item.id)).toEqual([
+      'knowledge_base:21:restricted:8:5:true',
+      'knowledge_base:21:restricted:8:5:false',
+    ])
+    expect(draft.structuredItems).toHaveLength(2)
+  })
+
+  it('keeps the same external knowledge ID from different scopes distinct', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 213,
+            context_type: 'external_knowledge',
+            name: 'Organization KB',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_scope: 'organization',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+          {
+            id: 214,
+            context_type: 'external_knowledge',
+            name: 'Personal KB',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_scope: 'personal',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+
+    expect(draft.structuredItems.map(item => item.id)).toEqual([
+      'external_knowledge:demo-provider:explicit:organization:kb-1:knowledge_base:kb-1',
+      'external_knowledge:demo-provider:explicit:personal:kb-1:knowledge_base:kb-1',
+    ])
+  })
+
   it('uses timestamp as a tie-breaker for user and AI messages with the same messageId', () => {
     const draft = buildPipelineNextStepDraft(
       [
@@ -187,7 +262,7 @@ describe('pipeline next-step helpers', () => {
     })
     expect(draft.structuredItems.map(item => `${item.context.context_type}:${item.id}`)).toEqual([
       'attachment:attachment:10',
-      'knowledge_base:knowledge_base:20',
+      'knowledge_base:knowledge_base:20:all',
       'table:table:30',
     ])
   })
@@ -282,6 +357,112 @@ describe('pipeline next-step helpers', () => {
       },
     ])
     expect(payload.pendingContexts).toHaveLength(3)
+  })
+
+  it('preserves scoped internal and external knowledge contexts for the next step', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 201,
+            context_type: 'knowledge_base',
+            name: 'Scoped KB',
+            status: 'ready',
+            knowledge_id: 21,
+            document_count: 12,
+            document_ids: [5],
+            folder_ids: [8],
+            folder_names: ['Guides'],
+            include_subfolders: true,
+            scope_restricted: true,
+          },
+          {
+            id: 202,
+            context_type: 'external_knowledge',
+            name: 'External KB',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_id: 'kb-1',
+            external_scope: 'organization',
+            external_target_type: 'document',
+            external_node_id: 'doc-1',
+            external_document_id: '1',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+    const payload = buildPipelineNextStepPayload(
+      payloadInput({
+        draft,
+        editedMessage: 'Continue',
+        selectedTextItemIds: [],
+        selectedStructuredItemIds: draft.structuredItems.map(item => item.id),
+      })
+    )
+
+    expect(payload.contexts).toEqual([
+      {
+        type: 'knowledge_base',
+        data: expect.objectContaining({
+          knowledge_id: 21,
+          document_ids: [5],
+          folder_ids: [8],
+          scope_restricted: true,
+        }),
+      },
+      {
+        type: 'external_knowledge',
+        data: expect.objectContaining({
+          provider: 'demo-provider',
+          mode: 'explicit',
+          id: 'kb-1',
+          target_type: 'document',
+          node_id: 'doc-1',
+        }),
+      },
+    ])
+  })
+
+  it('ignores invalid persisted external knowledge metadata', () => {
+    const draft = buildPipelineNextStepDraft([
+      userMessage({
+        contexts: [
+          {
+            id: 203,
+            context_type: 'external_knowledge',
+            name: 'Legacy all-access source',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'all',
+            external_id: 'kb-1',
+          },
+          {
+            id: 204,
+            context_type: 'external_knowledge',
+            name: 'Missing source ID',
+            status: 'ready',
+            external_provider: 'demo-provider',
+            external_mode: 'explicit',
+            external_id: '   ',
+          },
+        ],
+      }),
+      aiMessage('Plain AI summary', { contexts: [] }),
+    ])
+
+    expect(draft.structuredItems).toEqual([])
+    expect(
+      buildPipelineNextStepPayload(
+        payloadInput({
+          draft,
+          editedMessage: 'Continue',
+          selectedTextItemIds: [],
+          selectedStructuredItemIds: [],
+        })
+      ).contexts
+    ).toEqual([])
   })
 
   it('defaults selected text items from contextPassing mode', () => {
