@@ -661,10 +661,14 @@ impl RuntimeWorkRpcHandler {
             .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned")
-            .insert(local_task_id, control)
+            .insert(local_task_id.clone(), control)
         {
             let _ = previous.cancel.send(());
         }
+        self.store.update_task(&local_task_id, |link| {
+            apply_local_execution_state(link, true, None);
+            link.completed_at = None;
+        });
         execution_id
     }
 
@@ -820,6 +824,7 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
+            apply_local_execution_state(link, false, None);
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);

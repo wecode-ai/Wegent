@@ -85,6 +85,11 @@ executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 
+desktop_image="${warmup_all_false/docker=false/docker=true}"
+desktop_image="${desktop_image/wework_target=false/wework_target=true}"
+assert_warmup_case "Wework desktop image" "$desktop_image" \
+  "docker/wework-e2e/desktop.Dockerfile"
+
 wework_lock="${warmup_all_false/wework_rust=false/wework_rust=true}"
 wework_lock="${wework_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "Wework lock" "$wework_lock" \
@@ -275,10 +280,19 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-desktop-e2e-v2-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
+wework_target_key='wework-desktop-e2e-v3-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
   fail "Wework E2E and warmup must share the desktop Cargo target cache"
+fi
+
+if ! grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
+  grep -Fq 'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}' ||
+  ! grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
+    grep -Fq 'HOME: /root' ||
+  grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
+    grep -Eq 'install-wework-tauri-system-dependencies|dtolnay/rust-toolchain'; then
+  fail "Wework desktop target warmup must build inside the E2E container"
 fi
 
 printf 'CI cache policy tests passed\n'
