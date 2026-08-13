@@ -24,14 +24,14 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
-# Keep the longest checkpoints isolated and order multi-checkpoint shards by
-# descending observed CI duration so the parallel workers stay balanced.
+# Group checkpoints by observed Cloud CI duration and order each shard from
+# longest to shortest so the five serial workers finish at similar times.
 cloud_shards=(
   core-task-flow
-  model-routing
-  window-lifecycle
-  resilience,priority-filter,conversation-state,rendering-extensions,telemetry-consent,browser-multi-tabs
-  goal-lifecycle,automation-lifecycle,workspace-tabs,embedded-browser,workspace-attachments,supervisor-lifecycle
+  model-routing,embedded-browser,telemetry-consent
+  window-lifecycle,conversation-state,browser-multi-tabs
+  resilience,goal-lifecycle,supervisor-lifecycle
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle
 )
 
 declare -A selected=()

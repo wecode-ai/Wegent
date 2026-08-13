@@ -101,6 +101,13 @@ export function AutomationDetailWorkspace({
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
     projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
+  const projectOptionLabel = (option: (typeof projectOptions)[number]) => {
+    if (option.workspaceKind !== 'worktree') return option.name
+    const worktreeLabel = t('workbench.project_workspace_kind_worktree', 'Worktree')
+    return option.workspaceLabel && option.workspaceLabel !== option.name
+      ? `${option.name} · ${worktreeLabel} · ${option.workspaceLabel}`
+      : `${option.name} · ${worktreeLabel}`
+  }
 
   return (
     <section
@@ -336,7 +343,7 @@ export function AutomationDetailWorkspace({
                     { value: '', label: t('workbench.none', '无') },
                     ...projectOptions.map(project => ({
                       value: project.key,
-                      label: project.name,
+                      label: projectOptionLabel(project),
                     })),
                   ]}
                 />
