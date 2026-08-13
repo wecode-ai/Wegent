@@ -5,6 +5,7 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
@@ -16,7 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { SidebarPointerSensor } from './sidebarDragActivator'
 import {
@@ -43,10 +44,48 @@ interface SidebarSortableListProps<T> {
 interface SortableItemProps {
   id: string
   disabled: boolean
+  sortingSuppressed: boolean
   children: ReactNode
 }
 
-function SortableItem({ id, disabled, children }: SortableItemProps) {
+interface PointerCoordinates {
+  x: number
+  y: number
+}
+
+interface HorizontalBounds {
+  left: number
+  right: number
+}
+
+function readPointerCoordinates(event: Event): PointerCoordinates | null {
+  if (!('clientX' in event) || !('clientY' in event)) return null
+  const { clientX, clientY } = event
+  return typeof clientX === 'number' && typeof clientY === 'number'
+    ? { x: clientX, y: clientY }
+    : null
+}
+
+function getHorizontalBounds(
+  rects: Iterable<{ left: number; right: number }>
+): HorizontalBounds | null {
+  let left = Number.POSITIVE_INFINITY
+  let right = Number.NEGATIVE_INFINITY
+  for (const rect of rects) {
+    left = Math.min(left, rect.left)
+    right = Math.max(right, rect.right)
+  }
+  return Number.isFinite(left) && Number.isFinite(right) ? { left, right } : null
+}
+
+function isWithinHorizontalBounds(
+  coordinates: PointerCoordinates,
+  bounds: HorizontalBounds | null
+) {
+  return !bounds || (coordinates.x >= bounds.left && coordinates.x <= bounds.right)
+}
+
+function SortableItem({ id, disabled, sortingSuppressed, children }: SortableItemProps) {
   const {
     attributes,
     listeners,
@@ -74,10 +113,14 @@ function SortableItem({ id, disabled, children }: SortableItemProps) {
         'relative touch-none',
         isDragging && 'z-[75] opacity-35',
         isOver &&
+          !sortingSuppressed &&
           !isDragging &&
           'before:absolute before:inset-x-2 before:-top-px before:z-[76] before:h-0.5 before:rounded-full before:bg-primary'
       )}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      style={{
+        transform: sortingSuppressed ? undefined : CSS.Transform.toString(transform),
+        transition: sortingSuppressed ? undefined : transition,
+      }}
       {...attributes}
       {...listeners}
     >
@@ -106,6 +149,11 @@ export function SidebarSortableList<T>({
   const orderedIds =
     optimisticOrder?.sourceSignature === sourceSignature ? optimisticOrder.ids : sourceIds
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [sortingSuppressed, setSortingSuppressed] = useState(false)
+  const pointerCoordinatesRef = useRef<PointerCoordinates | null>(null)
+  const horizontalBoundsRef = useRef<HorizontalBounds | null>(null)
+  const externalDragActiveRef = useRef(false)
+  const pointerTrackingCleanupRef = useRef<(() => void) | null>(null)
   const itemById = useMemo(
     () => new Map(items.map(item => [getId(item), item] as const)),
     [getId, items]
@@ -117,30 +165,91 @@ export function SidebarSortableList<T>({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  const handleDragStart = ({ active }: DragStartEvent) => {
+  const clearPointerListeners = useCallback(() => {
+    pointerTrackingCleanupRef.current?.()
+    pointerTrackingCleanupRef.current = null
+  }, [])
+
+  const stopPointerTracking = useCallback(() => {
+    clearPointerListeners()
+    pointerCoordinatesRef.current = null
+    externalDragActiveRef.current = false
+    setSortingSuppressed(false)
+  }, [clearPointerListeners])
+
+  useEffect(() => clearPointerListeners, [clearPointerListeners])
+
+  const startPointerTracking = useCallback(
+    (initialCoordinates: PointerCoordinates) => {
+      stopPointerTracking()
+      externalDragActiveRef.current = true
+      pointerCoordinatesRef.current = initialCoordinates
+      const trackPointer = (event: PointerEvent) => {
+        const coordinates = readPointerCoordinates(event)
+        if (!coordinates) return
+        pointerCoordinatesRef.current = coordinates
+        setSortingSuppressed(!isWithinHorizontalBounds(coordinates, horizontalBoundsRef.current))
+      }
+      window.addEventListener('pointermove', trackPointer, true)
+      window.addEventListener('pointerup', trackPointer, true)
+      window.addEventListener('pointercancel', trackPointer, true)
+      pointerTrackingCleanupRef.current = () => {
+        window.removeEventListener('pointermove', trackPointer, true)
+        window.removeEventListener('pointerup', trackPointer, true)
+        window.removeEventListener('pointercancel', trackPointer, true)
+      }
+    },
+    [stopPointerTracking]
+  )
+
+  const sidebarCollisionDetection = useCallback<CollisionDetection>(args => {
+    horizontalBoundsRef.current = getHorizontalBounds(args.droppableRects.values())
+    if (
+      args.pointerCoordinates &&
+      !isWithinHorizontalBounds(args.pointerCoordinates, horizontalBoundsRef.current)
+    ) {
+      return []
+    }
+    return closestCenter(args)
+  }, [])
+
+  const handleDragStart = ({ active, activatorEvent }: DragStartEvent) => {
     const activeId = String(active.id)
     setActiveId(activeId)
     const item = itemById.get(activeId)
     const externalData = item ? getExternalDragData?.(item) : undefined
-    if (externalData) dispatchWorkbenchSidebarPaneDragStart(externalData)
+    const pointerCoordinates = readPointerCoordinates(activatorEvent)
+    if (externalData && pointerCoordinates) {
+      const initialRect = active.rect.current.initial
+      horizontalBoundsRef.current = initialRect
+        ? { left: initialRect.left, right: initialRect.right }
+        : null
+      startPointerTracking(pointerCoordinates)
+      dispatchWorkbenchSidebarPaneDragStart(externalData)
+    }
   }
-  const handleDragEnd = async ({ active, delta, over }: DragEndEvent) => {
+  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
     setActiveId(null)
     const movedItem = itemById.get(String(active.id))
     const externalData = movedItem ? getExternalDragData?.(movedItem) : undefined
-    if (externalData) {
-      const rect = active.rect.current.initial
-      if (rect) {
+    const pointerCoordinates = pointerCoordinatesRef.current
+    const pointerOutsideSidebar =
+      pointerCoordinates !== null &&
+      !isWithinHorizontalBounds(pointerCoordinates, horizontalBoundsRef.current)
+    if (externalData && externalDragActiveRef.current) {
+      if (pointerCoordinates) {
         const dragEndData = {
           ...externalData,
-          clientX: rect.left + rect.width / 2 + delta.x,
-          clientY: rect.top + rect.height / 2 + delta.y,
+          clientX: pointerCoordinates.x,
+          clientY: pointerCoordinates.y,
           handled: false,
         }
         dispatchWorkbenchSidebarPaneDragEnd(dragEndData)
-        if (dragEndData.handled) return
+        stopPointerTracking()
+        if (dragEndData.handled || pointerOutsideSidebar) return
       } else {
         dispatchWorkbenchSidebarPaneDragCancel()
+        stopPointerTracking()
       }
     }
     if (!over || active.id === over.id) return
@@ -166,11 +275,12 @@ export function SidebarSortableList<T>({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={getExternalDragData ? sidebarCollisionDetection : closestCenter}
       onDragStart={handleDragStart}
       onDragCancel={() => {
         setActiveId(null)
-        dispatchWorkbenchSidebarPaneDragCancel()
+        if (externalDragActiveRef.current) dispatchWorkbenchSidebarPaneDragCancel()
+        stopPointerTracking()
       }}
       onDragEnd={event => void handleDragEnd(event)}
     >
@@ -184,6 +294,7 @@ export function SidebarSortableList<T>({
                 key={id}
                 id={id}
                 disabled={!canDrag(item) && !getExternalDragData?.(item)}
+                sortingSuppressed={sortingSuppressed}
               >
                 {renderItem(item)}
               </SortableItem>

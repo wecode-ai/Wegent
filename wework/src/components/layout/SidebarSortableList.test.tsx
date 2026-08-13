@@ -1,0 +1,126 @@
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
+  type WorkbenchSidebarPaneDragEndData,
+} from './workbenchPaneDrag'
+import { SidebarSortableList } from './SidebarSortableList'
+
+interface Item {
+  id: string
+  label: string
+}
+
+const items: Item[] = [
+  { id: 'first', label: 'First' },
+  { id: 'second', label: 'Second' },
+]
+
+function mockRect(element: HTMLElement, top: number) {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: top,
+    top,
+    left: 0,
+    right: 240,
+    bottom: top + 30,
+    width: 240,
+    height: 30,
+    toJSON: () => ({}),
+  } as DOMRect)
+}
+
+async function waitForPointerSensorCleanup() {
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 60))
+  })
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('SidebarSortableList', () => {
+  it('stops sidebar sorting and reports the real pointer position outside the sidebar', async () => {
+    const onMove = vi.fn().mockResolvedValue(undefined)
+    const dragEndDetails: WorkbenchSidebarPaneDragEndData[] = []
+    const handleExternalDragEnd = (event: Event) => {
+      const detail = (event as CustomEvent<WorkbenchSidebarPaneDragEndData | null>).detail
+      if (detail) dragEndDetails.push(detail)
+    }
+    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleExternalDragEnd)
+
+    render(
+      <SidebarSortableList
+        items={items}
+        getId={item => item.id}
+        getLabel={item => item.label}
+        getExternalDragData={item => ({ paneKey: `pane:${item.id}`, title: item.label })}
+        onMove={onMove}
+        testId="sortable-list"
+        renderItem={item => (
+          <div data-testid={`item-${item.id}`}>
+            <span data-testid={`activator-${item.id}`} data-sidebar-drag-activator>
+              {item.label}
+            </span>
+          </div>
+        )}
+      />
+    )
+
+    const firstSortable = screen.getByTestId('item-first').parentElement as HTMLElement
+    const secondSortable = screen.getByTestId('item-second').parentElement as HTMLElement
+    mockRect(firstSortable, 0)
+    mockRect(secondSortable, 30)
+
+    fireEvent.pointerDown(screen.getByTestId('activator-first'), {
+      button: 0,
+      buttons: 1,
+      clientX: 12,
+      clientY: 15,
+      isPrimary: true,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 12,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 1,
+    })
+    expect(firstSortable).toHaveAttribute('data-dragging', 'true')
+
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 640,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 1,
+    })
+
+    await waitFor(() => {
+      expect(firstSortable.style.transform).toBe('')
+      expect(secondSortable.style.transform).toBe('')
+    })
+
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 640,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 1,
+    })
+
+    await waitFor(() => expect(dragEndDetails).toHaveLength(1))
+    expect(dragEndDetails[0]).toMatchObject({
+      paneKey: 'pane:first',
+      clientX: 640,
+      clientY: 45,
+    })
+    expect(onMove).not.toHaveBeenCalled()
+
+    window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleExternalDragEnd)
+    await waitForPointerSensorCleanup()
+  })
+})
