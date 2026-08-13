@@ -11882,6 +11882,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
     )
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
+    expect(setRuntimeGoal).not.toHaveBeenCalled()
     expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('busy')
 
     await act(async () => {
