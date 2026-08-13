@@ -8,6 +8,7 @@ import type {
   ChangeRequestState,
   EnvironmentInfo,
 } from '@/types/environment'
+import { getAppPreferences } from '@/tauri/appPreferences'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
@@ -658,7 +659,10 @@ async function loadProjectEnvironmentUncached(
       runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(() => ''),
     ])
     const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
-    const changeRequest = await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
+    const changeRequestStatusEnabled = (await getAppPreferences()).changeRequestStatusEnabled
+    const changeRequest = changeRequestStatusEnabled
+      ? await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
+      : undefined
     const diff = parseGitShortStat(shortStat)
 
     // Count pending files from porcelain (untracked, staged, modified).

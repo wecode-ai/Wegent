@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   buildPullRequestUrl,
   checkoutProjectBranch,
@@ -13,6 +13,18 @@ import {
   removeGitWorktree,
   workspaceHasUncommittedChanges,
 } from './environment'
+
+const changeRequestStatusPreference = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/tauri/appPreferences', () => ({
+  getAppPreferences: vi.fn(async () => ({
+    changeRequestStatusEnabled: changeRequestStatusPreference.enabled,
+  })),
+}))
+
+beforeEach(() => {
+  changeRequestStatusPreference.enabled = true
+})
 
 describe('parseGitShortStat', () => {
   test('extracts additions and deletions from git shortstat output', () => {
@@ -133,6 +145,51 @@ describe('workspaceHasUncommittedChanges', () => {
 })
 
 describe('loadProjectEnvironment', () => {
+  test('does not call gh or glab when PR/MR status is disabled', async () => {
+    changeRequestStatusPreference.enabled = false
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest).toBeUndefined()
+    expect(info.createPullRequestUrl).toContain('/compare/feature%2Fchange-request-status')
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      'local-device',
+      expect.objectContaining({
+        command_key: expect.stringMatching(/^git_(github_pull_requests|gitlab_merge_requests)$/),
+      })
+    )
+  })
+
   test('loads the current GitHub pull request and check status from the local device', async () => {
     const executeCommand = vi
       .fn()

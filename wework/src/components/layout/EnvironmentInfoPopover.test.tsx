@@ -291,10 +291,11 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
   })
 
-  test('explains how to enable local GitLab merge request status', () => {
+  test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)
     portalContainers.push(popoverContainer)
+    const onOpenChange = vi.fn()
 
     render(
       <EnvironmentInfoPopover
@@ -312,7 +313,7 @@ describe('EnvironmentInfoPopover', () => {
         }}
         popoverContainer={popoverContainer}
         open
-        onOpenChange={vi.fn()}
+        onOpenChange={onOpenChange}
       />
     )
 
@@ -321,5 +322,8 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('change-request-lookup-hint')).toHaveTextContent(
       '安装 GitLab CLI（glab）后可查询合并请求状态'
     )
+    await userEvent.click(screen.getByTestId('change-request-open-settings'))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(window.location.pathname).toBe('/settings/git-hosting')
   })
 })

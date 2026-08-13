@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { waitForAttribute } from '../modules/workspace-flows.mjs'
 
 const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -142,7 +143,8 @@ export async function createDesktopScenario({
   await createGitHubCliFixture(homePath)
   const statePath = join(homePath, STATE_FILE)
   await writeFile(statePath, 'pending\n')
-  const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
+  const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
+    captureScreenshot(control, name, selector)
 
   return {
     async handleHttp(request, response, url) {
@@ -197,6 +199,46 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="create-pull-request-button"]')
       await capture(control, 'change-request-status-04-cli-unavailable.png')
 
+      await control.command('click', '[data-testid="change-request-open-settings"]')
+      await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="git-hosting-cli-github-status"]', {
+        text: '未登录',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="change-request-status-switch"]', {
+          value: 'aria-checked',
+        }),
+        'true',
+        'PR/MR status lookup should be enabled by default'
+      )
+      await capture(control, 'change-request-status-05-settings-enabled.png', 'body')
+
+      await control.command('click', '[data-testid="change-request-status-switch"]')
+      await waitForAttribute(
+        control,
+        '[data-testid="change-request-status-switch"]',
+        'aria-checked',
+        'false',
+        'Disabling PR/MR status lookup was not persisted'
+      )
+      await capture(control, 'change-request-status-06-settings-disabled.png', 'body')
+
+      await control.command('click', '[data-testid="change-request-status-switch"]')
+      await waitForAttribute(
+        control,
+        '[data-testid="change-request-status-switch"]',
+        'aria-checked',
+        'true',
+        'Re-enabling PR/MR status lookup was not persisted'
+      )
+      await control.command('click', '[data-testid="settings-back-button"]')
+      await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+      await control.command('click', ENVIRONMENT_BUTTON)
+      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+
       await writeFile(statePath, 'merged\n')
       await refreshEnvironment(control)
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
@@ -208,7 +250,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
-      await capture(control, 'change-request-status-05-recovered-merged.png')
+      await capture(control, 'change-request-status-07-recovered-merged.png')
     },
 
     diagnostics() {

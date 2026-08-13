@@ -168,6 +168,42 @@ def test_turn_file_changes_commands_are_registered():
     assert revert.post_processor == "json"
 
 
+def test_git_hosting_cli_status_commands_are_registered():
+    from app.services.device.command_registry import resolve_local_device_command
+
+    github = resolve_local_device_command("git_github_cli_status", {})
+    gitlab = resolve_local_device_command("git_gitlab_cli_status", {})
+
+    assert github is not None
+    assert gitlab is not None
+    assert "python3 -c" in github.command
+    assert github.command.endswith(" gh")
+    assert github.post_processor == "json"
+    assert gitlab.command.endswith(" glab")
+    assert gitlab.post_processor == "json"
+
+
+def test_git_hosting_cli_status_reports_missing_tool(tmp_path):
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "gh",
+        "installed": False,
+        "authenticated": False,
+        "executablePath": None,
+        "version": None,
+    }
+
+
 @pytest.mark.parametrize(
     "artifact_id",
     [

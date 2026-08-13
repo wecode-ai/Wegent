@@ -33,6 +33,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import { navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getExecutorOfflineDeviceId,
@@ -581,15 +582,31 @@ export function EnvironmentInfoPopover({
                         ['unavailable', 'unauthenticated', 'error'].includes(
                           info.changeRequest.state
                         ) && (
-                          <p
-                            data-testid="change-request-lookup-hint"
-                            className="px-7 pb-1 text-xs leading-4 text-text-muted"
-                          >
-                            {t(
-                              `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
-                              ''
-                            )}
-                          </p>
+                          <div className="px-7 pb-1">
+                            <p
+                              data-testid="change-request-lookup-hint"
+                              className="text-xs leading-4 text-text-muted"
+                            >
+                              {t(
+                                `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
+                                ''
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              data-testid="change-request-open-settings"
+                              onClick={() => {
+                                onOpenChange(false)
+                                navigateTo('/settings/git-hosting')
+                              }}
+                              className="mt-1 text-xs text-blue-500 hover:underline"
+                            >
+                              {t(
+                                'workbench.environment_change_request_configure',
+                                '配置代码托管工具'
+                              )}
+                            </button>
+                          </div>
                         )}
                     </>
                   )}
