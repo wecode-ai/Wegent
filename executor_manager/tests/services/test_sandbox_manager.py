@@ -669,7 +669,7 @@ class TestSandboxManager:
         )
 
         async def sync_before_running(base_url, task, task_skills):
-            assert sample_sandbox.status == SandboxStatus.PENDING
+            assert sample_sandbox.status == SandboxStatus.RUNNING
             assert task["required_skills"] == ["abtest-file-analyzer"]
             assert task_skills is resolved
             return {"success": True}
@@ -696,10 +696,84 @@ class TestSandboxManager:
             return_value="http://sandbox:8080",
         )
 
+        async def bind_before_running(base_url, sandbox_id):
+            assert sample_sandbox.status == SandboxStatus.PENDING
+            assert sample_sandbox.base_url is None
+            assert base_url == "http://sandbox:8080"
+            assert sandbox_id == sample_sandbox.sandbox_id
+
+        bind = mocker.patch.object(
+            manager._runtime_binder,
+            "bind",
+            new_callable=AsyncMock,
+            side_effect=bind_before_running,
+        )
+
         error = await manager._start_sandbox_container(sample_sandbox)
 
         assert error is None
         assert sample_sandbox.status == SandboxStatus.RUNNING
+        assert sample_sandbox.metadata["skill_sync_status"] == "ready"
+        assert sample_sandbox.metadata["heartbeat_monitoring"] == "active"
+        assert (
+            sample_sandbox.metadata["synced_skill_fingerprint"] == resolved.fingerprint
+        )
+        bind.assert_awaited_once_with("http://sandbox:8080", sample_sandbox.sandbox_id)
+        sync.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cold_sandbox_allows_optional_runtime_heartbeat_failure(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        """A runtime bind failure must not block a healthy sandbox."""
+        from executor_manager.models.sandbox import SandboxStatus
+        from executor_manager.services.sandbox.runtime_binding import (
+            SandboxRuntimeBindingError,
+        )
+        from executor_manager.services.sandbox.skill_sync import ResolvedTaskSkills
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.PENDING
+        sample_sandbox.base_url = None
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "resolve",
+            new_callable=AsyncMock,
+            return_value=ResolvedTaskSkills(),
+        )
+        sync = mocker.patch.object(
+            manager._skill_synchronizer,
+            "sync",
+            new_callable=AsyncMock,
+        )
+        executor = mocker.MagicMock()
+        executor.submit_executor.return_value = {
+            "status": "success",
+            "executor_name": "cold-sandbox",
+        }
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=executor,
+        )
+        mocker.patch.object(
+            manager,
+            "_wait_for_container_ready",
+            new_callable=AsyncMock,
+            return_value="http://sandbox:8080",
+        )
+        mocker.patch.object(
+            manager._runtime_binder,
+            "bind",
+            new_callable=AsyncMock,
+            side_effect=SandboxRuntimeBindingError("heartbeat not received"),
+        )
+
+        error = await manager._start_sandbox_container(sample_sandbox)
+
+        assert error is None
+        assert sample_sandbox.status == SandboxStatus.RUNNING
+        assert sample_sandbox.base_url == "http://sandbox:8080"
+        assert sample_sandbox.metadata["heartbeat_monitoring"] == "unavailable"
         sync.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -755,9 +829,253 @@ class TestSandboxManager:
 
         assert error is None
         assert sandbox.metadata["required_skills"] == ["abtest-file-analyzer"]
+        assert sandbox.metadata["synced_skill_fingerprint"] == resolved.fingerprint
         ensure_workspace.assert_awaited_once_with(sandbox)
         sync.assert_awaited_once()
         start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reused_sandbox_skips_unchanged_skill_fingerprint(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """Repeated tool calls must not resync an unchanged Skill plan."""
+        from executor_manager.services.sandbox.skill_sync import ResolvedTaskSkills
+
+        manager = sandbox_manager_with_mock_redis
+        resolved = ResolvedTaskSkills(
+            skills=["abtest-file-analyzer"],
+            required_skills=["abtest-file-analyzer"],
+            skill_refs={
+                "abtest-file-analyzer": {
+                    "skill_id": 237510,
+                    "namespace": "default",
+                    "content_hash": "sha256:abc",
+                }
+            },
+        )
+        sample_sandbox.metadata.update(
+            {
+                "auth_token": "task-jwt",
+                "required_skills": ["abtest-file-analyzer"],
+                "synced_skill_fingerprint": resolved.fingerprint,
+            }
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "resolve",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        )
+        sync = mocker.patch.object(
+            manager._skill_synchronizer,
+            "sync",
+            new_callable=AsyncMock,
+        )
+        start = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={
+                "task_id": 12345,
+                "auth_token": "task-jwt",
+                "required_skills": ["abtest-file-analyzer"],
+            },
+        )
+
+        assert error is None
+        assert sandbox is sample_sandbox
+        assert sandbox.metadata["skill_sync_status"] == "ready"
+        sync.assert_not_awaited()
+        start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reused_sandbox_skill_sync_failure_preserves_runtime(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """Skill activation failure must not mark a healthy runtime as failed."""
+        from executor_manager.models.sandbox import SandboxStatus
+        from executor_manager.services.sandbox.skill_sync import (
+            ResolvedTaskSkills,
+            SandboxSkillSyncError,
+        )
+
+        manager = sandbox_manager_with_mock_redis
+        resolved = ResolvedTaskSkills(
+            skills=["abtest-file-analyzer"],
+            required_skills=["abtest-file-analyzer"],
+        )
+        sample_sandbox.metadata["auth_token"] = "task-jwt"
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        save = mocker.patch.object(
+            manager._repository, "save_sandbox", return_value=True
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "resolve",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "sync",
+            new_callable=AsyncMock,
+            side_effect=SandboxSkillSyncError("connection reset"),
+        )
+        start = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            metadata={
+                "task_id": 12345,
+                "auth_token": "task-jwt",
+                "required_skills": ["abtest-file-analyzer"],
+            },
+        )
+
+        assert error == "connection reset"
+        assert sandbox is sample_sandbox
+        assert sandbox.status == SandboxStatus.RUNNING
+        assert sandbox.metadata["skill_sync_status"] == "failed"
+        assert sandbox.metadata["last_skill_sync_error"] == "connection reset"
+        save.assert_called_with(sample_sandbox)
+        start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_expired_healthy_sandbox_is_reused_and_renewed(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """A logical lease expiry must not discard a healthy task workspace."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.expires_at = time.time() - 1
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        mocker.patch.object(
+            manager._health_checker, "check_health_sync", return_value=True
+        )
+        mocker.patch.object(
+            manager,
+            "_ensure_sandbox_workspace",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        mocker.patch.object(
+            manager,
+            "_prepare_sandbox_skills",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        start = mocker.patch.object(manager, "_start_sandbox_container")
+
+        sandbox, error = await manager.create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=100,
+            user_name="testuser",
+            timeout=1800,
+            metadata={"task_id": 12345},
+        )
+
+        assert error is None
+        assert sandbox is sample_sandbox
+        assert sandbox.expires_at > time.time()
+        start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cold_sync_failure_keeps_healthy_container_for_retry(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """A post-start Skill failure must preserve the new healthy container."""
+        from executor_manager.models.sandbox import SandboxStatus
+        from executor_manager.services.sandbox.skill_sync import (
+            ResolvedTaskSkills,
+            SandboxSkillSyncError,
+        )
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.PENDING
+        sample_sandbox.base_url = None
+        resolved = ResolvedTaskSkills(
+            skills=["abtest-file-analyzer"],
+            required_skills=["abtest-file-analyzer"],
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "resolve",
+            new_callable=AsyncMock,
+            return_value=resolved,
+        )
+        mocker.patch.object(
+            manager._skill_synchronizer,
+            "sync",
+            new_callable=AsyncMock,
+            side_effect=SandboxSkillSyncError("sync timeout"),
+        )
+        executor = mocker.MagicMock()
+        executor.submit_executor.return_value = {
+            "status": "success",
+            "executor_name": "cold-sandbox",
+        }
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=executor,
+        )
+        mocker.patch.object(
+            manager,
+            "_wait_for_container_ready",
+            new_callable=AsyncMock,
+            return_value="http://sandbox:8080",
+        )
+        mocker.patch.object(
+            manager._runtime_binder,
+            "bind",
+            new_callable=AsyncMock,
+        )
+
+        error = await manager._start_sandbox_container(sample_sandbox)
+
+        assert error == "sync timeout"
+        assert sample_sandbox.status == SandboxStatus.RUNNING
+        assert sample_sandbox.base_url == "http://sandbox:8080"
+        assert sample_sandbox.metadata["skill_sync_status"] == "failed"
 
     # ----- get_sandbox Tests -----
 
@@ -1329,14 +1647,13 @@ class TestSandboxManager:
             return_value=mock_heartbeat,
         )
 
-        # Mock _handle_executor_dead
-        mock_handle_dead = mocker.patch.object(
-            manager, "_handle_executor_dead", new_callable=AsyncMock
+        handle_timeout = mocker.patch.object(
+            manager, "_handle_heartbeat_timeout", new_callable=AsyncMock
         )
 
         await manager._check_heartbeats()
 
-        mock_handle_dead.assert_called_once_with("12345", 1704067000.0)
+        handle_timeout.assert_awaited_once_with("12345")
 
     @pytest.mark.asyncio
     async def test_check_heartbeats_detects_dead_with_expired_heartbeat_key(
@@ -1392,18 +1709,13 @@ class TestSandboxManager:
             return_value=mock_heartbeat,
         )
 
-        # Mock _handle_executor_dead
-        mock_handle_dead = mocker.patch.object(
-            manager, "_handle_executor_dead", new_callable=AsyncMock
+        handle_timeout = mocker.patch.object(
+            manager, "_handle_heartbeat_timeout", new_callable=AsyncMock
         )
 
         await manager._check_heartbeats()
 
-        # Should still detect dead executor using sandbox.last_activity_at as fallback
-        mock_handle_dead.assert_called_once()
-        call_args = mock_handle_dead.call_args[0]
-        assert call_args[0] == "12345"
-        assert call_args[1] == last_activity  # Uses last_activity_at as fallback
+        handle_timeout.assert_awaited_once_with("12345")
 
     @pytest.mark.asyncio
     async def test_check_heartbeats_respects_grace_period(
@@ -1456,6 +1768,238 @@ class TestSandboxManager:
 
         # Should NOT detect dead executor - within grace period
         mock_handle_dead.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_check_heartbeats_skips_optional_unavailable_monitoring(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """A sandbox that could not bind heartbeat relies on request-time health."""
+        from executor_manager.models.sandbox import SandboxStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.RUNNING
+        sample_sandbox.metadata["heartbeat_monitoring"] = "unavailable"
+        mocker.patch.object(
+            manager._repository,
+            "get_active_sandbox_ids_async",
+            new_callable=AsyncMock,
+            return_value=["12345"],
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox_async",
+            new_callable=AsyncMock,
+            return_value=sample_sandbox,
+        )
+        heartbeat = MagicMock()
+        heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_heartbeat_manager",
+            return_value=heartbeat,
+        )
+        timeout = mocker.patch.object(
+            manager,
+            "_handle_heartbeat_timeout",
+            new_callable=AsyncMock,
+        )
+
+        await manager._check_heartbeats()
+
+        heartbeat.check_heartbeat.assert_not_awaited()
+        timeout.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_timeout_preserves_healthy_runtime(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """A missing heartbeat alone must not delete a healthy runtime."""
+        from executor_manager.models.sandbox import SandboxStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.RUNNING
+        sample_sandbox.base_url = "http://sandbox:8080"
+        lease = MagicMock()
+        mocker.patch.object(
+            manager,
+            "_try_acquire_task_lifecycle_lease",
+            new_callable=AsyncMock,
+            return_value=lease,
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox_async",
+            new_callable=AsyncMock,
+            return_value=sample_sandbox,
+        )
+        heartbeat = MagicMock()
+        heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        heartbeat.get_last_heartbeat = AsyncMock(return_value=None)
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_heartbeat_manager",
+            return_value=heartbeat,
+        )
+        mocker.patch.object(
+            manager,
+            "_check_container_health",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        handle_dead = mocker.patch.object(
+            manager,
+            "_handle_executor_dead",
+            new_callable=AsyncMock,
+        )
+        release = mocker.patch.object(
+            manager,
+            "_release_task_lifecycle_lease",
+            new_callable=AsyncMock,
+        )
+
+        await manager._handle_heartbeat_timeout("12345")
+
+        handle_dead.assert_not_awaited()
+        release.assert_awaited_once_with(lease)
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_timeout_rechecks_unavailable_monitoring_under_lease(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """An in-flight heartbeat check must honor the latest monitoring state."""
+        from executor_manager.models.sandbox import SandboxStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.RUNNING
+        sample_sandbox.metadata["heartbeat_monitoring"] = "unavailable"
+        lease = MagicMock()
+        mocker.patch.object(
+            manager,
+            "_try_acquire_task_lifecycle_lease",
+            new_callable=AsyncMock,
+            return_value=lease,
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox_async",
+            new_callable=AsyncMock,
+            return_value=sample_sandbox,
+        )
+        heartbeat = MagicMock()
+        heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_heartbeat_manager",
+            return_value=heartbeat,
+        )
+        check_health = mocker.patch.object(
+            manager,
+            "_check_container_health",
+            new_callable=AsyncMock,
+        )
+        handle_dead = mocker.patch.object(
+            manager,
+            "_handle_executor_dead",
+            new_callable=AsyncMock,
+        )
+        release = mocker.patch.object(
+            manager,
+            "_release_task_lifecycle_lease",
+            new_callable=AsyncMock,
+        )
+
+        await manager._handle_heartbeat_timeout("12345")
+
+        heartbeat.check_heartbeat.assert_not_awaited()
+        check_health.assert_not_awaited()
+        handle_dead.assert_not_awaited()
+        release.assert_awaited_once_with(lease)
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_timeout_deletes_only_unhealthy_runtime(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+        mocker,
+    ):
+        """A runtime is deleted only after heartbeat and health both fail."""
+        from executor_manager.models.sandbox import SandboxStatus
+
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.status = SandboxStatus.RUNNING
+        sample_sandbox.base_url = "http://sandbox:8080"
+        sample_sandbox.last_activity_at = 1704067000.0
+        lease = MagicMock()
+        mocker.patch.object(
+            manager,
+            "_try_acquire_task_lifecycle_lease",
+            new_callable=AsyncMock,
+            return_value=lease,
+        )
+        mocker.patch.object(
+            manager._repository,
+            "load_sandbox_async",
+            new_callable=AsyncMock,
+            return_value=sample_sandbox,
+        )
+        heartbeat = MagicMock()
+        heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        heartbeat.get_last_heartbeat = AsyncMock(return_value=None)
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.get_heartbeat_manager",
+            return_value=heartbeat,
+        )
+        mocker.patch.object(
+            manager,
+            "_check_container_health",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
+        handle_dead = mocker.patch.object(
+            manager,
+            "_handle_executor_dead",
+            new_callable=AsyncMock,
+        )
+        release = mocker.patch.object(
+            manager,
+            "_release_task_lifecycle_lease",
+            new_callable=AsyncMock,
+        )
+
+        await manager._handle_heartbeat_timeout("12345")
+
+        handle_dead.assert_awaited_once_with("12345", 1704067000.0)
+        release.assert_awaited_once_with(lease)
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_timeout_skips_when_lifecycle_lock_is_busy(
+        self,
+        sandbox_manager_with_mock_redis,
+        mocker,
+    ):
+        """Another replica's lifecycle operation blocks destructive cleanup."""
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(
+            manager,
+            "_try_acquire_task_lifecycle_lease",
+            new_callable=AsyncMock,
+            return_value=None,
+        )
+        load = mocker.patch.object(
+            manager._repository,
+            "load_sandbox_async",
+            new_callable=AsyncMock,
+        )
+
+        await manager._handle_heartbeat_timeout("12345")
+
+        load.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_handle_executor_dead_terminates_sandbox(

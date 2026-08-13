@@ -1,7 +1,7 @@
 ---
 description: "Provides read_file/write_file/exec/list_files/read_file/write_file for running process and managing filesystems in the sandbox. Ideal for code testing, file management, and command execution. The sub_claude_agent tool is available for advanced use cases. You MUST load this skill BEFORE use sandbox tools."
 displayName: "沙箱环境"
-version: "2.1.1"
+version: "2.1.2"
 author: "Wegent Team"
 tags: ["sandbox", "code-execution", "filesystem", "automation"]
 bindShells: ["Chat"]
@@ -280,8 +280,11 @@ Download a file from Wegent attachment URL to sandbox for processing.
 
 **Parameters:**
 - `attachment_url` (required): Wegent attachment URL (e.g., `/api/attachments/123/download`)
-- `save_path` (required): Path to save the file in sandbox
 - `timeout_seconds` (optional): Download timeout in seconds (default: 300)
+
+The tool resolves the attachment filename and owning subtask from Wegent, then
+saves it to the canonical task attachment directory:
+`/home/user/{task_id}:executor:attachments/{subtask_id}/{filename}`.
 
 **Returns:**
 - `success`: Whether the download succeeded
@@ -293,8 +296,7 @@ Download a file from Wegent attachment URL to sandbox for processing.
 {
   "name": "download_attachment",
   "arguments": {
-    "attachment_url": "/api/attachments/123/download",
-    "save_path": "/home/user/downloads/document.pdf"
+    "attachment_url": "/api/attachments/123/download"
   }
 }
 ```

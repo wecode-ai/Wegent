@@ -39,10 +39,7 @@ use crate::{
     envd::archive::{
         create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
     },
-    heartbeat::{
-        executor_warm_pool_mode_enabled, start_heartbeat_from_env, TaskHeartbeatActivationError,
-        TaskHeartbeatController,
-    },
+    heartbeat::{RuntimeHeartbeatActivationError, RuntimeHeartbeatController},
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     process_environment,
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
@@ -75,27 +72,43 @@ impl RunnerResult {
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
     runner: R,
-    task_heartbeat: Option<TaskHeartbeatController>,
+    runtime_heartbeat: Option<RuntimeHeartbeatController>,
 }
 
 impl<R> AppState<R> {
     pub fn new(runner: R) -> Self {
         Self {
             runner,
-            task_heartbeat: None,
+            runtime_heartbeat: None,
         }
     }
 
-    pub fn with_dynamic_task_heartbeat(mut self) -> Self {
-        self.task_heartbeat = Some(TaskHeartbeatController::default());
+    pub fn with_runtime_heartbeat(mut self, controller: RuntimeHeartbeatController) -> Self {
+        self.runtime_heartbeat = Some(controller);
         self
     }
 
     fn activate_task_heartbeat(&self, task_id: &str) -> Result<(), HttpError> {
-        let Some(controller) = &self.task_heartbeat else {
+        let Some(controller) = &self.runtime_heartbeat else {
             return Ok(());
         };
-        controller.activate(task_id).map_err(HttpError::from)
+        controller
+            .activate(task_id, "task")
+            .map_err(HttpError::from)
+    }
+
+    fn bind_runtime_heartbeat(
+        &self,
+        heartbeat_id: &str,
+        heartbeat_type: &str,
+    ) -> Result<(), HttpError> {
+        let controller = self.runtime_heartbeat.as_ref().ok_or_else(|| HttpError {
+            status: StatusCode::CONFLICT,
+            detail: "runtime heartbeat binding is not enabled".to_owned(),
+        })?;
+        controller
+            .activate(heartbeat_id, heartbeat_type)
+            .map_err(HttpError::from)
     }
 }
 
@@ -122,6 +135,7 @@ where
         )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/v1/skills/sync", post(sync_skills))
+        .route("/v1/runtime/bind", post(bind_runtime::<R>))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
         .route(
@@ -140,6 +154,28 @@ where
         .route("/api/archive", post(archive_workspace))
         .route("/api/restore", post(restore_workspace))
         .with_state(state)
+}
+
+async fn bind_runtime<R>(
+    State(state): State<AppState<R>>,
+    Json(request): Json<RuntimeBindRequest>,
+) -> Result<Json<RuntimeBindResponse>, HttpError>
+where
+    R: TaskRunner,
+{
+    state.bind_runtime_heartbeat(&request.heartbeat_id, &request.heartbeat_type)?;
+    log_executor_event(
+        "runtime heartbeat bound",
+        &[
+            ("heartbeat_id", request.heartbeat_id.clone()),
+            ("heartbeat_type", request.heartbeat_type.clone()),
+        ],
+    );
+    Ok(Json(RuntimeBindResponse {
+        success: true,
+        heartbeat_id: request.heartbeat_id,
+        heartbeat_type: request.heartbeat_type,
+    }))
 }
 
 async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<Value>, HttpError> {
@@ -198,8 +234,8 @@ pub fn create_docker_router_from_env() -> Result<Router, String> {
     let engine = AgentProcessEngine::new(AgentCommandPlanner::from_env());
     let sink = CallbackSink::new(env::var("CALLBACK_URL").unwrap_or_default())?;
     let state = AppState::new(BackgroundTaskRunner::new(engine, sink));
-    let state = if executor_warm_pool_mode_enabled() {
-        state.with_dynamic_task_heartbeat()
+    let state = if let Some(controller) = RuntimeHeartbeatController::from_env() {
+        state.with_runtime_heartbeat(controller)
     } else {
         state
     };
@@ -216,8 +252,6 @@ pub async fn serve(config: ServerConfig) -> Result<(), String> {
         .map_err(|error| format!("failed to read executor server local address: {error}"))?;
     set_executor_http_addr(local_addr);
     write_executor_log_line(&startup_log_line(local_addr));
-    let _heartbeat = start_heartbeat_from_env();
-
     axum::serve(listener, create_docker_router_from_env()?)
         .await
         .map_err(|error| format!("executor server failed: {error}"))
@@ -920,6 +954,19 @@ struct OpenAIBackgroundResponse {
     id: String,
     status: String,
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeBindRequest {
+    heartbeat_id: String,
+    heartbeat_type: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeBindResponse {
+    success: bool,
+    heartbeat_id: String,
+    heartbeat_type: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1886,13 +1933,16 @@ impl From<ProtocolError> for HttpError {
     }
 }
 
-impl From<TaskHeartbeatActivationError> for HttpError {
-    fn from(error: TaskHeartbeatActivationError) -> Self {
+impl From<RuntimeHeartbeatActivationError> for HttpError {
+    fn from(error: RuntimeHeartbeatActivationError) -> Self {
         let status = match &error {
-            TaskHeartbeatActivationError::EmptyTaskId => StatusCode::BAD_REQUEST,
-            TaskHeartbeatActivationError::TaskConflict { .. } => StatusCode::CONFLICT,
-            TaskHeartbeatActivationError::MissingEndpoint
-            | TaskHeartbeatActivationError::StateUnavailable => StatusCode::INTERNAL_SERVER_ERROR,
+            RuntimeHeartbeatActivationError::EmptyHeartbeatId
+            | RuntimeHeartbeatActivationError::InvalidHeartbeatType(_) => StatusCode::BAD_REQUEST,
+            RuntimeHeartbeatActivationError::BindingConflict { .. } => StatusCode::CONFLICT,
+            RuntimeHeartbeatActivationError::MissingEndpoint
+            | RuntimeHeartbeatActivationError::StateUnavailable => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         Self {
             status,

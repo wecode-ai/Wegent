@@ -16,8 +16,11 @@ import time
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 from langchain_core.callbacks import CallbackManagerForToolRun
 from pydantic import BaseModel, Field
+
+from shared.utils.attachment_block import build_sandbox_path
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,14 @@ _ATTACHMENT_DOWNLOAD_PATH = re.compile(
 
 def _build_download_url(attachment_url: str, api_base_url: str) -> str:
     """Build a URL that accepts the task token available to sandbox tools."""
+    attachment_id = _attachment_id_from_url(attachment_url)
+    backend = urlsplit(api_base_url.rstrip("/"))
+    executor_path = f"/api/attachments/{attachment_id}/executor-download"
+    return urlunsplit((backend.scheme, backend.netloc, executor_path, "", ""))
+
+
+def _attachment_id_from_url(attachment_url: str) -> int:
+    """Extract an attachment ID from a supported Wegent download URL."""
     relative_url = (
         attachment_url if attachment_url.startswith("/") else f"/{attachment_url}"
     )
@@ -41,10 +52,58 @@ def _build_download_url(attachment_url: str, api_base_url: str) -> str:
     match = _ATTACHMENT_DOWNLOAD_PATH.fullmatch(parsed.path)
     if not match:
         raise ValueError("Only Wegent attachment download URLs are supported")
+    return int(match.group("attachment_id"))
 
+
+def _build_task_attachments_url(task_id: int, api_base_url: str) -> str:
+    """Build the task-scoped metadata URL used to resolve the canonical path."""
     backend = urlsplit(api_base_url.rstrip("/"))
-    executor_path = f"/api/attachments/{match.group('attachment_id')}/executor-download"
-    return urlunsplit((backend.scheme, backend.netloc, executor_path, "", ""))
+    path = f"/api/attachments/task/{task_id}/all"
+    return urlunsplit((backend.scheme, backend.netloc, path, "", ""))
+
+
+async def _resolve_attachment_sandbox_path(
+    *,
+    attachment_url: str,
+    api_base_url: str,
+    auth_token: str,
+    task_id: int,
+    timeout_seconds: int,
+) -> str:
+    """Resolve an attachment's canonical path from trusted Backend metadata."""
+    if task_id <= 0:
+        raise ValueError("Task ID is required to resolve the attachment path")
+
+    attachment_id = _attachment_id_from_url(attachment_url)
+    metadata_url = _build_task_attachments_url(task_id, api_base_url)
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        response = await client.get(
+            metadata_url,
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        response.raise_for_status()
+
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise ValueError("Backend returned invalid attachment metadata")
+
+    metadata = next(
+        (
+            item
+            for item in payload
+            if isinstance(item, dict) and int(item.get("id") or 0) == attachment_id
+        ),
+        None,
+    )
+    if metadata is None:
+        raise ValueError(f"Attachment {attachment_id} does not belong to this task")
+
+    filename = str(metadata.get("filename") or "attachment")
+    subtask_id = int(metadata.get("subtask_id") or 0)
+    sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
+    if not sandbox_path:
+        raise ValueError("Attachment metadata is missing its owning subtask")
+    return sandbox_path
 
 
 class SandboxDownloadAttachmentInput(BaseModel):
@@ -53,10 +112,6 @@ class SandboxDownloadAttachmentInput(BaseModel):
     attachment_url: str = Field(
         ...,
         description="Wegent attachment download URL (e.g., /api/attachments/123/download)",
-    )
-    save_path: str = Field(
-        ...,
-        description="Path to save the file in sandbox",
     )
     timeout_seconds: Optional[int] = Field(
         default=300,
@@ -97,8 +152,10 @@ for processing or editing.
 
 Parameters:
 - attachment_url (required): Wegent attachment URL (e.g., /api/attachments/123/download)
-- save_path (required): Path to save the file in sandbox
 - timeout_seconds (optional): Download timeout in seconds (default: 300)
+
+The destination is resolved from trusted attachment metadata and always uses
+/home/user/{task_id}:executor:attachments/{subtask_id}/{filename}.
 
 Returns:
 - success: Whether the download succeeded
@@ -108,8 +165,7 @@ Returns:
 
 Example:
 {
-  "attachment_url": "/api/attachments/123/download",
-  "save_path": "/home/user/downloads/report.pdf"
+  "attachment_url": "/api/attachments/123/download"
 }
 """
 
@@ -125,7 +181,6 @@ Example:
     def _run(
         self,
         attachment_url: str,
-        save_path: str,
         timeout_seconds: Optional[int] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
@@ -137,7 +192,6 @@ Example:
     async def _arun(
         self,
         attachment_url: str,
-        save_path: str,
         timeout_seconds: Optional[int] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
@@ -145,7 +199,6 @@ Example:
 
         Args:
             attachment_url: Wegent attachment URL (e.g., /api/attachments/123/download)
-            save_path: Path to save the file in sandbox
             timeout_seconds: Download timeout in seconds
             run_manager: Callback manager
 
@@ -157,7 +210,7 @@ Example:
 
         logger.info(
             "[SandboxDownloadAttachmentTool] Downloading attachment: "
-            f"save_path={save_path}, timeout={effective_timeout}s"
+            f"timeout={effective_timeout}s"
         )
 
         # Emit status update via WebSocket if available
@@ -168,7 +221,6 @@ Example:
                     tool_name=self.name,
                     tool_input={
                         "attachment_url": attachment_url,
-                        "save_path": save_path,
                     },
                     status="running",
                 )
@@ -178,6 +230,30 @@ Example:
                 )
 
         try:
+            api_base_url = self.api_base_url or os.getenv(
+                "BACKEND_API_URL", DEFAULT_API_BASE_URL
+            )
+            api_base_url = api_base_url.rstrip("/")
+
+            auth_token = self.auth_token
+            if not auth_token:
+                error_msg = "No authentication token available for download"
+                result = self._format_error(
+                    error_message=error_msg,
+                    file_path="",
+                    file_size=0,
+                )
+                await self._emit_tool_status("failed", error_msg)
+                return result
+
+            save_path = await _resolve_attachment_sandbox_path(
+                attachment_url=attachment_url,
+                api_base_url=api_base_url,
+                auth_token=auth_token,
+                task_id=self.task_id,
+                timeout_seconds=effective_timeout,
+            )
+
             # Get sandbox manager from base class
             sandbox_manager = self._get_sandbox_manager()
 
@@ -202,10 +278,6 @@ Example:
                 await self._emit_tool_status("failed", error)
                 return result
 
-            # Normalize save path
-            if not save_path.startswith("/"):
-                save_path = f"/home/user/{save_path}"
-
             # Create parent directories if needed
             parent_dir = os.path.dirname(save_path)
             if parent_dir and parent_dir != "/":
@@ -220,28 +292,10 @@ Example:
                         f"[SandboxDownloadAttachmentTool] Directory creation skipped: {e}"
                     )
 
-            # Get API base URL and auth token
-            api_base_url = self.api_base_url or os.getenv(
-                "BACKEND_API_URL", DEFAULT_API_BASE_URL
-            )
-            api_base_url = api_base_url.rstrip("/")
-
             # The attachment block exposes the browser download URL. Translate
             # that exact Wegent route to the executor route because sandbox tools
             # authenticate with a task token rather than a browser login token.
             download_url = _build_download_url(attachment_url, api_base_url)
-
-            # Get auth token
-            auth_token = self.auth_token
-            if not auth_token:
-                error_msg = "No authentication token available for download"
-                result = self._format_error(
-                    error_message=error_msg,
-                    file_path="",
-                    file_size=0,
-                )
-                await self._emit_tool_status("failed", error_msg)
-                return result
 
             # Keep credentials and user-provided paths out of the command string.
             # E2B passes these values directly as process environment variables.

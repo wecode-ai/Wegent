@@ -10,7 +10,6 @@ import {
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
@@ -221,6 +220,7 @@ export function WorkbenchProvider({
   services,
   onStartupReadyChange,
   workspaceTabId,
+  syncRemoteProjects = true,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -891,6 +891,11 @@ export function WorkbenchProvider({
   }, [])
 
   useEffect(() => {
+    if (!syncRemoteProjects) {
+      remoteProjectSyncRevisionRef.current += 1
+      remoteProjectSyncSignatureRef.current = ''
+      return
+    }
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
       localRuntimeStateDeviceId
@@ -929,6 +934,7 @@ export function WorkbenchProvider({
     localRuntimeStateDeviceId,
     refreshWorkLists,
     state.runtimeWork,
+    syncRemoteProjects,
   ])
 
   useEffect(() => {
@@ -2658,10 +2664,7 @@ export function WorkbenchProvider({
   return (
     <RuntimeTaskLifecycleProvider store={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
-        <WorkbenchPaneContext.Provider value={paneValue}>
-          <CloudModelCatalogSyncDialogHost />
-          {children}
-        </WorkbenchPaneContext.Provider>
+        <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>
     </RuntimeTaskLifecycleProvider>
   )
