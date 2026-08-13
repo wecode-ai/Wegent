@@ -6,7 +6,11 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
-import { streamingTextEvents } from '../modules/response-protocol.mjs'
+import {
+  responseCompleted,
+  responseCreated,
+  streamingTextEvents,
+} from '../modules/response-protocol.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -14,9 +18,33 @@ const CENTRAL_HARNESS_SELECTOR = '[data-testid="central-harness-terminal"]'
 const execFileAsync = promisify(execFile)
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const HARNESS_BIN_DIR = join(REPOSITORY_ROOT, '.github', 'claude-code-cli', 'node_modules', '.bin')
+const CLAUDE_PARALLEL_TOOL_PROMPT = 'Run the parallel Claude tool regression'
+const CLAUDE_PARALLEL_TOOL_COMPLETION = 'Parallel Claude tools completed'
+const CLAUDE_PARALLEL_TOOL_CALLS = [
+  {
+    id: 'call_00_wework_parallel',
+    command: "printf 'call-00'",
+    description: 'Complete the first parallel tool immediately',
+  },
+  {
+    id: 'call_01_wework_parallel',
+    command: "sleep 0.4; printf 'call-01'",
+    description: 'Complete the second parallel tool last',
+  },
+  {
+    id: 'call_02_wework_parallel',
+    command: "sleep 0.15; printf 'call-02'",
+    description: 'Complete the third parallel tool second',
+  },
+]
+const CLAUDE_PARALLEL_TOOL_RESULT_ORDER = [
+  CLAUDE_PARALLEL_TOOL_CALLS[0].id,
+  CLAUDE_PARALLEL_TOOL_CALLS[2].id,
+  CLAUDE_PARALLEL_TOOL_CALLS[1].id,
+]
 const HARNESS_PROMPT_MATCHERS = [
   { label: 'Inspect the current project', needle: 'Inspect the current project' },
-  { label: 'Review the current project', needle: 'Review the current project' },
+  { label: CLAUDE_PARALLEL_TOOL_PROMPT, needle: CLAUDE_PARALLEL_TOOL_PROMPT },
   { label: 'Inspect the project with Kimi', needle: 'Inspect the project with Kimi' },
 ]
 
@@ -65,6 +93,83 @@ function assertPromptRequest(requests, prompt, model, protocol) {
         request.prompt === prompt && request.model === model && request.protocol === protocol
     ),
     `No real ${model} ${protocol} request contained ${JSON.stringify(prompt)}: ${JSON.stringify(requests)}`
+  )
+}
+
+function responsesToolOutputIds(body) {
+  return (body.input ?? [])
+    .filter(item => item?.type === 'function_call_output')
+    .map(item => item.call_id)
+}
+
+function assertClaudeParallelToolOutputs(body) {
+  const outputIds = responsesToolOutputIds(body)
+  assert.deepEqual(
+    outputIds,
+    CLAUDE_PARALLEL_TOOL_RESULT_ORDER,
+    'Claude Code did not return split parallel tool results in completion order'
+  )
+  for (const call of CLAUDE_PARALLEL_TOOL_CALLS) {
+    assert.equal(
+      outputIds.filter(callId => callId === call.id).length,
+      1,
+      `${call.id} did not have exactly one Responses tool output`
+    )
+  }
+  assert.equal(
+    (body.input ?? []).some(
+      item =>
+        item?.type === 'function_call_output' &&
+        item?.output === 'Tool execution failed before producing a result.'
+    ),
+    false,
+    'Claude Code parallel tool history contained a synthetic failure result'
+  )
+}
+
+function writeResponsesParallelToolCalls(response) {
+  const responseId = 'claude-parallel-tools'
+  const events = [responseCreated(responseId)]
+  CLAUDE_PARALLEL_TOOL_CALLS.forEach((call, outputIndex) => {
+    const itemId = `${responseId}-${outputIndex}`
+    const argumentsText = JSON.stringify({
+      command: call.command,
+      description: call.description,
+    })
+    events.push(
+      {
+        type: 'response.output_item.added',
+        output_index: outputIndex,
+        item: {
+          id: itemId,
+          type: 'function_call',
+          call_id: call.id,
+          name: 'Bash',
+        },
+      },
+      {
+        type: 'response.function_call_arguments.delta',
+        output_index: outputIndex,
+        item_id: itemId,
+        delta: argumentsText,
+      },
+      {
+        type: 'response.output_item.done',
+        output_index: outputIndex,
+        item: {
+          id: itemId,
+          type: 'function_call',
+          call_id: call.id,
+          name: 'Bash',
+          arguments: argumentsText,
+        },
+      }
+    )
+  })
+  events.push(responseCompleted(responseId))
+  writeSse(
+    response,
+    events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
   )
 }
 
@@ -199,6 +304,9 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
     value: 'WEWORK_HARNESS_E2E=claude-settings',
   })
   await capturePage(control, 'local-harness-02-claude-settings.png')
+  await control.command('select', '[data-testid="harness-permission-mode-claude_code"]', {
+    value: 'bypass',
+  })
   await control.command('click', '[data-testid="harness-settings-toggle-kimi_code"]')
   const kimiSettingsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
@@ -241,6 +349,7 @@ async function startHarness({
   modelMenuScreenshot,
   readyScreenshot,
   presentation = 'terminal',
+  expectedAssistantText = 'Local harness CLI reply',
 }) {
   await control.command(
     'click',
@@ -302,7 +411,7 @@ async function startHarness({
       'waitFor',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
       {
-        text: 'Local harness CLI reply',
+        text: expectedAssistantText,
         timeoutMs,
       }
     )
@@ -422,12 +531,14 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         `${body.model} did not receive the configured authentication`
       )
       const serializedBody = JSON.stringify(body)
+      const toolOutputIds = responsesToolOutputIds(body)
       harnessModelRequests.push({
         model: body.model,
         protocol: expected.protocol,
         prompt:
           HARNESS_PROMPT_MATCHERS.findLast(({ needle }) => serializedBody.includes(needle))
             ?.label ?? 'auxiliary',
+        toolOutputIds,
       })
 
       if (expected.protocol === 'chat') {
@@ -450,6 +561,20 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
           })}\n\n`,
           'data: [DONE]\n\n',
         ])
+        return true
+      }
+
+      if (serializedBody.includes(CLAUDE_PARALLEL_TOOL_PROMPT)) {
+        if (toolOutputIds.length === 0) {
+          assert.ok(
+            body.tools?.some(tool => tool?.name === 'Bash'),
+            'Claude Code did not advertise the Bash tool'
+          )
+          writeResponsesParallelToolCalls(response)
+        } else {
+          assertClaudeParallelToolOutputs(body)
+          writeResponsesText(response, CLAUDE_PARALLEL_TOOL_COMPLETION)
+        }
         return true
       }
 
@@ -553,23 +678,31 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         control,
         harnessId: 'claude_code',
         model: 'Desktop E2E DeepSeek Pro Vision Main',
-        prompt: 'Review the current project',
+        prompt: CLAUDE_PARALLEL_TOOL_PROMPT,
         timeoutMs: uiTimeoutMs,
         capturePage,
         runtimeMenuScreenshot: 'local-harness-15-claude-code-runtime-menu.png',
         modelMenuScreenshot: 'local-harness-16-claude-code-model-menu.png',
         readyScreenshot: 'local-harness-17-claude-code-ready.png',
         presentation: 'conversation',
+        expectedAssistantText: CLAUDE_PARALLEL_TOOL_COMPLETION,
       })
       await waitForRequests(
         harnessModelRequests,
-        requests =>
-          assertPromptRequest(
-            requests,
-            'Review the current project',
-            'deepseek-v4-pro',
-            'responses'
-          ),
+        requests => {
+          assertPromptRequest(requests, CLAUDE_PARALLEL_TOOL_PROMPT, 'deepseek-v4-pro', 'responses')
+          assert.ok(
+            requests.some(
+              request =>
+                request.prompt === CLAUDE_PARALLEL_TOOL_PROMPT &&
+                request.model === 'deepseek-v4-pro' &&
+                request.protocol === 'responses' &&
+                JSON.stringify(request.toolOutputIds) ===
+                  JSON.stringify(CLAUDE_PARALLEL_TOOL_RESULT_ORDER)
+            ),
+            `Claude Code did not return the expected parallel tool outputs: ${JSON.stringify(requests)}`
+          )
+        },
         uiTimeoutMs
       )
       const claudeConversationSnapshot = await waitForSnapshot(
