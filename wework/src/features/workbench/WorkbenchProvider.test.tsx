@@ -8818,9 +8818,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
   })
 
-  test('shows model preparation cancellation in the active pane', async () => {
-    const prepareRuntimeModel = vi.fn().mockResolvedValue(false)
-    const sendRuntimeMessage = vi.fn()
+  test('delegates model preparation to the runtime send operation', async () => {
+    const prepareRuntimeModel = vi.fn()
+    const sendRuntimeMessage = vi.fn().mockRejectedValue(new Error('已取消模型配置同步'))
     const runtimeWorkApi = createRuntimeWorkApiMock({
       prepareRuntimeModel,
       getRuntimeTranscript: vi.fn().mockResolvedValue({
@@ -8853,7 +8853,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('pane-session-error')).toHaveTextContent('已取消模型配置同步')
     )
-    expect(sendRuntimeMessage).not.toHaveBeenCalled()
+    expect(prepareRuntimeModel).not.toHaveBeenCalled()
+    expect(sendRuntimeMessage).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('继续修')
     expect(screen.getByTestId('runtime-open-error')).toHaveTextContent('')
