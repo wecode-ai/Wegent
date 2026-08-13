@@ -192,20 +192,20 @@ class CloudProjectService:
                         .all()
                     )
                     for item in affected:
-                        metadata = (
+                        item_metadata = (
                             dict(item.metadata_json)
                             if isinstance(item.metadata_json, dict)
                             else {}
                         )
                         write_status_change(
-                            metadata,
+                            item_metadata,
                             project=project,
                             from_status=item.status,
                             to_status="",
                             trigger="status_removed",
                             by_user_id=user_id,
                         )
-                        item.metadata_json = metadata
+                        item.metadata_json = item_metadata
                         item.status = ""
                         item.completed_at = None
                         item.version += 1
