@@ -703,6 +703,9 @@ semantics for all three.
   active task and unsent composer input.
 - Opening the bottom workspace panel starts or restores its Terminal directly;
   it must not show an IDE launcher or require an intermediate tool choice.
+- The bottom workspace panel may be resized down to one visible terminal row.
+  Its minimum height must derive from the current code font size plus the panel
+  chrome and terminal padding instead of using a fixed large pixel minimum.
 - Terminal sessions may remain mounted while the bottom panel is hidden so the
   shell session and scrollback survive panel restoration. Only the active
   terminal should be fitted and resized; after activation, window focus, or
