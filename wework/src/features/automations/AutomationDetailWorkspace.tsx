@@ -60,6 +60,7 @@ interface AutomationDetailWorkspaceProps {
   dirty: boolean
   running: boolean
   onChange: <K extends keyof AutomationDraft>(key: K, value: AutomationDraft[K]) => void
+  onModelChange: (model: UnifiedModel | null) => void
   onSourceChange: (source: AutomationSource) => void
   onClose: () => void
   onSave: () => void
@@ -84,6 +85,7 @@ export function AutomationDetailWorkspace({
   dirty,
   running,
   onChange,
+  onModelChange,
   onSourceChange,
   onClose,
   onSave,
@@ -96,7 +98,9 @@ export function AutomationDetailWorkspace({
   const taskOptions = buildAutomationTaskOptions(runtimeWork, new Set(localDeviceIds))
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
   const selectedModel = models.find(
-    model => (model.modelId ?? model.name) === draft.modelId && model.type === draft.modelType
+    model =>
+      model.type === draft.modelType &&
+      (model.name === draft.modelId || (model.modelId ?? model.name) === draft.modelId)
   )
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
@@ -351,8 +355,13 @@ export function AutomationDetailWorkspace({
                   }
                   onChange={value => {
                     const [modelType, ...modelIdParts] = value.split(':')
-                    onChange('modelType', modelType)
-                    onChange('modelId', modelIdParts.join(':'))
+                    const modelId = modelIdParts.join(':')
+                    onModelChange(
+                      models.find(
+                        model =>
+                          model.type === modelType && (model.modelId ?? model.name) === modelId
+                      ) ?? null
+                    )
                   }}
                   options={[
                     { value: '', label: t('workbench.automatic', '自动') },

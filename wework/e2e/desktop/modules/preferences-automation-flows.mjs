@@ -8,6 +8,8 @@ import {
   AUTOMATION_NAME,
   AUTOMATION_PROMPT,
   AUTOMATION_SCHEDULE_TIMEOUT_MS,
+  CLOUD_PUBLIC_MODEL_LABEL,
+  CLOUD_PUBLIC_MODEL_NAME,
   COMPOSER_READY_STABILITY_MS,
   DEFAULT_STEP_TIMEOUT_MS,
   TELEMETRY_FORBIDDEN_PROPERTY_PATTERN,
@@ -225,6 +227,16 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
   await control.command('fill', '[data-testid="automation-prompt-input"]', {
     value: AUTOMATION_PROMPT,
   })
+  await control.command('click', '[data-testid="automation-model-select"]')
+  await control.command(
+    'click',
+    `[data-testid="automation-model-select-option-public:desktop-e2e-public-upstream-model"]`
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes(CLOUD_PUBLIC_MODEL_LABEL),
+    'The automation did not select the cloud model'
+  )
   await control.command('click', '[data-testid="automation-goal-switch"]')
   await waitForAttribute(
     control,
@@ -323,6 +335,36 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     storedAutomation?.taskPayload?.initialGoal?.objective,
     AUTOMATION_PROMPT,
     'The Executor did not persist the scheduled task goal in its runtime payload'
+  )
+  assert.deepEqual(
+    {
+      modelId: storedAutomation?.taskPayload?.modelId,
+      modelType: storedAutomation?.taskPayload?.modelType,
+      modelOptions: storedAutomation?.taskPayload?.modelOptions,
+    },
+    {
+      modelId: CLOUD_PUBLIC_MODEL_NAME,
+      modelType: 'public',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        reasoningEffort: 'medium',
+      },
+    },
+    'The Executor did not persist the complete cloud model identity'
+  )
+  assert.deepEqual(
+    storedAutomation?.taskPayload?.executionRequest?.model_config?.default_headers,
+    {
+      'X-Wegent-Model-Type': 'public',
+      'X-Wegent-Model-Namespace': 'default',
+      'X-Wegent-Model-User-Id': '0',
+      'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+      'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+    },
+    'The automation execution config did not route the complete cloud model identity'
   )
   await captureVerificationScreenshot(control, 'automations-02-goal-persisted.png')
 
