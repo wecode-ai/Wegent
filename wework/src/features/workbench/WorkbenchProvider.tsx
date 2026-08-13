@@ -135,7 +135,7 @@ import {
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import { defaultNewChatModelSelection } from './runtimeModelSelection'
+import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -1451,12 +1451,29 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
+      let taskModelSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
+      if (taskModelSelection && taskModel) {
+        const executionModel = selectedModelExecutionFields(
+          taskModel,
+          taskModelSelection.options ?? {}
+        )
+        taskModelSelection = {
+          modelName: executionModel.modelId ?? taskModelSelection.modelName,
+          modelType: executionModel.modelType ?? taskModelSelection.modelType,
+          options: executionModel.modelOptions ?? {},
+        }
+      }
       return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
         address,
         sessionKeys,
+        ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })
     },
-    [resolvedServices]
+    [modelSelection.models, resolvedServices, state.runtimeWork]
   )
 
   const getImNotificationSettings = useCallback(() => {

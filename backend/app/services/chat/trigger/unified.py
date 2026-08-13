@@ -20,7 +20,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
@@ -203,7 +203,8 @@ def _catalog_model_id_from_model_options(
     if not model_options:
         return None
     catalog_id = (
-        model_options.get("weworkCloudModelCatalogModelId")
+        model_options.get("weworkCloudModelCodexCatalogModelId")
+        or model_options.get("weworkCloudModelCatalogModelId")
         or model_options.get("codex_catalog_model_id")
         or model_options.get("codexCatalogModelId")
     )
@@ -375,8 +376,11 @@ def _build_cloud_gateway_model_config(
     model_name: str,
     creator: Any,
     upstream_api_format: Optional[str] = None,
+    model_type: Optional[str] = None,
+    namespace: Optional[str] = None,
+    resource_user_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build the backend LLM gateway config for a public/group cloud model.
+    """Build the backend LLM gateway config for an authorized cloud model.
 
     Mirrors the App's cloud-model send: the executor forwards to the backend
     `llm-responses-proxy` with the user's token and model identity headers; the
@@ -384,27 +388,64 @@ def _build_cloud_gateway_model_config(
     executor devices never see the raw API key and requests share the gateway's
     quota management instead of being rate-limited per device.
 
-    Returns None for models that should keep their direct config (user-owned
-    models that may be local, or models without a public/group Model CRD).
+    Exact identities route public, group, and user cloud models through the
+    gateway. Legacy name-only callers keep user-owned models on their direct
+    config path.
     """
 
     from app.core.config import settings
     from app.core.security import create_access_token
-    from app.services.chat.config.model_resolver import _find_model_with_namespace
 
-    kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
-    if kind is None or not kind.json:
-        return None
-    namespace = str(kind.namespace or "default")
-    if kind.user_id == 0:
-        model_type = "public"
-        resource_user_id = 0
-    elif namespace != "default":
-        model_type = "group"
-        resource_user_id = int(kind.user_id or 0)
+    exact_identity = any(
+        value is not None for value in (model_type, namespace, resource_user_id)
+    )
+    if exact_identity:
+        if model_type is None or namespace is None or resource_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cloud model identity is incomplete",
+            )
+        from app.services.llm_proxy_service import _validate_model_access
+
+        _validate_model_access(
+            db,
+            creator,
+            model_type,
+            namespace,
+            resource_user_id,
+        )
+        kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == resource_user_id,
+                Kind.kind == "Model",
+                Kind.namespace == namespace,
+                Kind.name == model_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if kind is None or not kind.json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cloud model not found",
+            )
     else:
-        # User-owned models may be local; keep the direct config path.
-        return None
+        from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+        kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
+        if kind is None or not kind.json:
+            return None
+        namespace = str(kind.namespace or "default")
+        if kind.user_id == 0:
+            model_type = "public"
+            resource_user_id = 0
+        elif namespace != "default":
+            model_type = "group"
+            resource_user_id = int(kind.user_id or 0)
+        else:
+            # Legacy callers keep user-owned models on their direct config path.
+            return None
     backend_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
     if not backend_base:
         return None

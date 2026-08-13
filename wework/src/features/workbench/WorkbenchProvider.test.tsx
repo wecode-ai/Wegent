@@ -932,6 +932,15 @@ function ProjectSendProbe() {
       </button>
       <button
         type="button"
+        onClick={() => {
+          if (!currentRuntimeTask) return
+          void workbench.bindRuntimeTaskToImSessions(currentRuntimeTask, ['session-a'])
+        }}
+      >
+        bind runtime task to IM
+      </button>
+      <button
+        type="button"
         onClick={() =>
           void workbench.openStandaloneWorkspace('device-1', '/workspace/direct-codex')
         }
@@ -3703,6 +3712,108 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('project-worktree-branch')).toHaveTextContent('feature/beta')
   })
 
+  test('binds the active runtime model selection with a private IM session', async () => {
+    const bindRuntimeTaskImSessions = vi.fn().mockResolvedValue({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      },
+      boundSessionKeys: ['session-a'],
+      notifiedCount: 1,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      modelSelection: {
+                        modelName: 'gpt-5.6-luna',
+                        modelType: 'public',
+                        options: { reasoningEffort: 'low' },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [],
+      }),
+      bindRuntimeTaskImSessions,
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'gpt-5.6-luna',
+              type: 'public',
+              namespace: 'default',
+              resourceUserId: 0,
+              provider: 'cloud',
+            },
+          ],
+        }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('open project runtime task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
+    await userEvent.click(screen.getByText('bind runtime task to IM'))
+
+    await waitFor(() => expect(bindRuntimeTaskImSessions).toHaveBeenCalledTimes(1))
+    expect(bindRuntimeTaskImSessions).toHaveBeenCalledWith({
+      address: expect.objectContaining({
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      }),
+      sessionKeys: ['session-a'],
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: {
+          reasoningEffort: 'low',
+          collaborationMode: 'default',
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      },
+    })
+  })
+
   test('keeps executor-backed model choices selectable inside existing runtime tasks', async () => {
     const models: UnifiedModel[] = [
       {
@@ -5188,6 +5299,8 @@ describe('WorkbenchProvider runtime tasks', () => {
             {
               name: 'shared-model',
               type: 'user',
+              namespace: 'default',
+              resourceUserId: 1,
               provider: 'cloud',
               config: {
                 weworkModelKind: 'model-interface',
@@ -5219,6 +5332,9 @@ describe('WorkbenchProvider runtime tasks', () => {
           options: {
             collaborationMode: 'plan',
             reasoning: 'high',
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '1',
+            weworkCloudModelUpstreamApiFormat: 'openai-responses',
           },
         },
       })
@@ -5330,7 +5446,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         modelSelection: {
           modelName: 'local-model:claude-test',
           modelType: 'runtime',
-          options: { reasoning: 'high' },
+          options: { collaborationMode: 'default', reasoning: 'high' },
         },
       })
     )

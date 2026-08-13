@@ -190,6 +190,28 @@ describe('ComposerProseMirrorEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('existing pasted text')
   })
 
+  test('moves the caret to the end after pasting text', () => {
+    const { editorRef } = renderEditor('before after')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => editorRef.current?.setValue('before after', 'before '.length))
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'pasted ' : ''),
+        types: ['text/plain'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'before pasted after',
+      selectionOffset: 'before pasted after'.length,
+      selectionStart: 'before pasted after'.length,
+      selectionEnd: 'before pasted after'.length,
+    })
+  })
+
   test('keeps line breaks when pasting rich text', () => {
     const { editorRef, onChange } = renderEditor('')
     const editor = screen.getByTestId('composer-editor')
