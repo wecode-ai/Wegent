@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     redis-server \
     sqlite3 \
     xvfb \
+    zip \
     zstd \
   && curl --proto '=https' --tlsv1.2 -fsSL \
     "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
@@ -46,4 +47,5 @@ RUN node --version \
   && python3 --version \
   && uv --version \
   && rustc --version \
-  && cargo --version
+  && cargo --version \
+  && zip --version
