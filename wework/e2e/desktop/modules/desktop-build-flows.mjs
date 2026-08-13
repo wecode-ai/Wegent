@@ -60,7 +60,6 @@ import {
   RETRY_COMPLETION_TEXT,
   RETRY_PROMPT,
   RUNS_PLUGIN_E2E,
-  RESTART_RECONCILE_TIMEOUT_MS,
   TELEMETRY_TEST_PROJECT_KEY,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -868,7 +867,7 @@ async function verifyCloudProjectFlow(
     control,
     'replacement-workspace',
     'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
-    RESTART_RECONCILE_TIMEOUT_MS
+    WORKBENCH_READY_TIMEOUT_MS
   )
   assert.notEqual(
     restartedProjectId,
