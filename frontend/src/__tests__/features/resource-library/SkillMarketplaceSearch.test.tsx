@@ -146,7 +146,14 @@ describe('SkillMarketplaceSearch', () => {
     expect(mockedUploadSkill).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'summary.zip' }),
       'summary',
-      'engineering'
+      'engineering',
+      undefined,
+      {
+        type: 'marketplace',
+        provider_key: 'partner',
+        skill_key: 'partner/summary',
+        original_skill_key: 'summary',
+      }
     )
     expect(onSkillsChange).toHaveBeenCalled()
   })

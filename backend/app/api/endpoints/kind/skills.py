@@ -11,6 +11,7 @@ import io
 import json
 import logging
 import zipfile
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -86,6 +87,31 @@ def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
         return False
     candidates = [value.strip() for value in if_none_match.split(",")]
     return "*" in candidates or etag in candidates
+
+
+def _build_uploaded_skill_source(
+    source_type: str,
+    provider_key: Optional[str],
+    skill_key: Optional[str],
+    original_skill_key: Optional[str],
+) -> Dict[str, str]:
+    """Build validated source metadata for uploaded skill archives."""
+    if source_type == "upload":
+        return {"type": "upload"}
+    if source_type != "marketplace":
+        raise HTTPException(status_code=400, detail="Unsupported skill source type")
+    if not provider_key or not skill_key or not original_skill_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Marketplace source requires provider_key, skill_key, and original_skill_key",
+        )
+    return {
+        "type": "marketplace",
+        "provider_key": provider_key,
+        "skill_key": skill_key,
+        "original_skill_key": original_skill_key,
+        "imported_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _is_runtime_skill_download(request: Request) -> bool:
@@ -377,6 +403,10 @@ async def upload_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
     name: str = Form(..., description="Skill name (unique)"),
     namespace: str = Form("default", description="Namespace"),
+    source_type: str = Form("upload", description="Skill source type"),
+    source_provider_key: Optional[str] = Form(None),
+    source_skill_key: Optional[str] = Form(None),
+    source_original_skill_key: Optional[str] = Form(None),
     current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
@@ -421,6 +451,12 @@ async def upload_skill(
         file_content=file_content,
         file_name=file.filename,
         user_id=current_user.id,
+        source=_build_uploaded_skill_source(
+            source_type,
+            source_provider_key,
+            source_skill_key,
+            source_original_skill_key,
+        ),
     )
 
     return skill
@@ -813,6 +849,10 @@ async def upload_public_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
     name: str = Form(..., description="Skill name (unique)"),
     marketplace_tags: str = Form("[]", description="JSON array of marketplace tag IDs"),
+    source_type: str = Form("upload", description="Skill source type"),
+    source_provider_key: Optional[str] = Form(None),
+    source_skill_key: Optional[str] = Form(None),
+    source_original_skill_key: Optional[str] = Form(None),
     current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
@@ -873,6 +913,12 @@ async def upload_public_skill(
         file_content=file_content,
         file_name=file.filename,
         user_id=0,  # Public skill
+        source=_build_uploaded_skill_source(
+            source_type,
+            source_provider_key,
+            source_skill_key,
+            source_original_skill_key,
+        ),
         add_to_user_default=False,
     )
 
@@ -892,6 +938,10 @@ async def upload_public_skill(
 async def update_public_skill_with_upload(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
+    source_type: str = Form("upload", description="Skill source type"),
+    source_provider_key: Optional[str] = Form(None),
+    source_skill_key: Optional[str] = Form(None),
+    source_original_skill_key: Optional[str] = Form(None),
     current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
@@ -938,6 +988,12 @@ async def update_public_skill_with_upload(
         user_id=0,  # Public skill
         file_content=file_content,
         file_name=file.filename,
+        source=_build_uploaded_skill_source(
+            source_type,
+            source_provider_key,
+            source_skill_key,
+            source_original_skill_key,
+        ),
     )
 
     # Convert to dict format for consistency with other public skill endpoints
@@ -1375,6 +1431,9 @@ def list_unified_skills(
                     "type": source_data.get("type", "upload"),
                     "repo_url": source_data.get("repo_url"),
                     "skill_path": source_data.get("skill_path"),
+                    "provider_key": source_data.get("provider_key"),
+                    "skill_key": source_data.get("skill_key"),
+                    "original_skill_key": source_data.get("original_skill_key"),
                     "imported_at": source_data.get("imported_at"),
                 }
 
@@ -1914,6 +1973,10 @@ def update_skill_from_git(
 async def update_skill(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
+    source_type: str = Form("upload", description="Skill source type"),
+    source_provider_key: Optional[str] = Form(None),
+    source_skill_key: Optional[str] = Form(None),
+    source_original_skill_key: Optional[str] = Form(None),
     current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
@@ -1951,6 +2014,12 @@ async def update_skill(
         user_id=skill_kind.user_id,
         file_content=file_content,
         file_name=file.filename,
+        source=_build_uploaded_skill_source(
+            source_type,
+            source_provider_key,
+            source_skill_key,
+            source_original_skill_key,
+        ),
     )
 
     return skill

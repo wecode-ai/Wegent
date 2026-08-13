@@ -9,9 +9,15 @@ import {
   addSkillToGroups,
   fetchSkillByName,
   scanGitRepoSkills,
+  updateSkill,
   updateSkillFromGitRepository,
   uploadSkill,
 } from '@/apis/skills'
+import {
+  downloadSkill as downloadMarketSkill,
+  listSkillMarketProviders,
+  searchSkills as searchMarketSkills,
+} from '@/apis/skillMarketplace'
 import SkillUploadModal from '@/features/settings/components/skills/SkillUploadModal'
 import { toast } from 'sonner'
 
@@ -29,6 +35,12 @@ jest.mock('@/apis/skills', () => ({
   updateSkillFromGit: jest.fn(),
   uploadPublicSkill: jest.fn(),
   uploadSkill: jest.fn(),
+}))
+
+jest.mock('@/apis/skillMarketplace', () => ({
+  downloadSkill: jest.fn(),
+  listSkillMarketProviders: jest.fn(),
+  searchSkills: jest.fn(),
 }))
 
 jest.mock('@/features/resource-library/components/CapabilityScopeSelector', () => ({
@@ -51,6 +63,7 @@ describe('SkillUploadModal partial success', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     ;(fetchSkillByName as jest.Mock).mockResolvedValue(null)
+    ;(listSkillMarketProviders as jest.Mock).mockResolvedValue([])
     ;(uploadSkill as jest.Mock).mockResolvedValue({
       id: 55,
       name: 'uploaded-skill',
@@ -227,5 +240,126 @@ describe('SkillUploadModal partial success', () => {
     })
 
     expect(screen.getByTestId('update-skill-from-original-git')).toBeDisabled()
+  })
+
+  it('updates the existing skill from SkillHub', async () => {
+    const onClose = jest.fn()
+    const user = userEvent.setup()
+    ;(listSkillMarketProviders as jest.Mock).mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    ;(searchMarketSkills as jest.Mock).mockResolvedValue({
+      total: 1,
+      page: 1,
+      pageSize: 20,
+      skills: [
+        {
+          skillKey: 'alice_current-skill',
+          originalSkillKey: 'current-skill',
+          name: 'Current Skill',
+          description: 'Matching skill',
+          author: 'Alice',
+          visibility: 'public',
+          tags: [],
+          version: '2.0.0',
+          downloadCount: 1,
+          createdAt: '',
+          hasDownloadPermission: true,
+          permissionUrl: '',
+        },
+      ],
+    })
+    ;(downloadMarketSkill as jest.Mock).mockResolvedValue(
+      new Blob(['skill archive'], { type: 'application/zip' })
+    )
+    ;(updateSkill as jest.Mock).mockResolvedValue({
+      metadata: { labels: { id: '42' }, name: 'current-skill' },
+    })
+
+    render(
+      <SkillUploadModal
+        open
+        onClose={onClose}
+        skill={{
+          id: 42,
+          name: 'current-skill',
+          namespace: 'default',
+          description: 'Current skill',
+          is_active: true,
+          is_public: false,
+          user_id: 7,
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('skill-update-market-tab'))
+    fireEvent.click(await screen.findByTestId('update-skill-from-market-alice_current-skill'))
+
+    await waitFor(() => {
+      expect(updateSkill).toHaveBeenCalledWith(42, expect.any(File), undefined, {
+        type: 'marketplace',
+        provider_key: 'weibo',
+        skill_key: 'alice_current-skill',
+        original_skill_key: 'current-skill',
+      })
+      expect(onClose).toHaveBeenCalledWith(true, 42)
+    })
+  })
+
+  it('uses the saved SkillHub provider and skill key for the initial lookup', async () => {
+    ;(listSkillMarketProviders as jest.Mock).mockResolvedValue([{ key: 'weibo', name: 'SkillHub' }])
+    ;(searchMarketSkills as jest.Mock).mockResolvedValue({
+      total: 1,
+      page: 1,
+      pageSize: 20,
+      skills: [
+        {
+          skillKey: 'zhanglei28_find-skills',
+          originalSkillKey: 'find-skills',
+          name: 'Find Skills',
+          description: 'Find skills',
+          author: 'zhanglei28',
+          visibility: 'public',
+          tags: [],
+          version: '1.0.0',
+          downloadCount: 1,
+          createdAt: '',
+          hasDownloadPermission: true,
+          permissionUrl: '',
+        },
+      ],
+    })
+
+    render(
+      <SkillUploadModal
+        open
+        onClose={jest.fn()}
+        skill={{
+          id: 42,
+          name: 'find-skills',
+          namespace: 'default',
+          description: 'Find skills',
+          is_active: true,
+          is_public: false,
+          user_id: 7,
+          source: {
+            type: 'marketplace',
+            provider_key: 'weibo',
+            skill_key: 'zhanglei28_find-skills',
+            original_skill_key: 'find-skills',
+          },
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('skill-update-market-tab')).toHaveAttribute(
+      'data-state',
+      'active'
+    )
+    await waitFor(() => {
+      expect(searchMarketSkills).toHaveBeenCalledWith('weibo', {
+        keyword: 'zhanglei28_find-skills',
+        page: 1,
+        pageSize: 20,
+      })
+    })
   })
 })
