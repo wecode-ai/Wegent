@@ -136,6 +136,36 @@ def test_apply_selected_knowledge_context_is_idempotent(
     assert request.user_selected_skills == ["demo-knowledge"]
 
 
+def test_apply_selected_knowledge_context_rejects_partially_registered_providers() -> (
+    None
+):
+    request = ExecutionRequest(
+        bot=[{"shell_type": "Chat"}],
+        knowledge_base_ids=[12],
+        external_knowledge_refs=[
+            {
+                "provider": "unregistered",
+                "mode": "explicit",
+                "id": "kb-1",
+                "name": "Unavailable knowledge",
+            }
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        apply_selected_knowledge_context(
+            MagicMock(),
+            request,
+            SimpleNamespace(
+                json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "产品知识"}]}}
+            ),
+        )
+
+    assert exc_info.value.status_code == 503
+    assert "unregistered" in exc_info.value.detail
+    assert request.provider_native_knowledge is False
+
+
 def test_build_selected_knowledge_refs_groups_resources_by_knowledge_base(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -343,6 +373,7 @@ def test_apply_selected_knowledge_context_keeps_legacy_path_for_unsupported_shel
     [
         ("wegent-knowledge", "wegent-knowledge"),
         ("dingtalk-docs", "dingtalk-docs_dingtalk_docs"),
+        ("ap-knowledge", "ap-knowledge"),
     ],
 )
 def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(

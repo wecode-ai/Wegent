@@ -1296,6 +1296,7 @@ def test_main_app_mounts_registered_custom_mcp_app(monkeypatch):
         name="demo",
         mount_path="/mcp/demo",
         transport_path="/sse",
+        server=MagicMock(),
         build_app=lambda mount_path: fake_custom_app,
     )
     monkeypatch.setitem(mcp_server_module._custom_mcp_app_specs, spec.name, spec)
@@ -1315,6 +1316,7 @@ def test_main_app_mounts_registered_custom_mcp_app(monkeypatch):
 
     assert response.status_code == 200
     assert response.text == "custom"
+    assert (spec.name, spec.server) in _get_mcp_lifespan_servers()
 
 
 def test_main_lifespan_skips_external_knowledge_mcp_by_default():

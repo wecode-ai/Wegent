@@ -39,6 +39,11 @@ def register_provider_skill(provider_id: str, skill_name: str) -> None:
     PROVIDER_SKILLS[provider_id] = skill_name
 
 
+def get_provider_skill_name(provider_id: str) -> str | None:
+    """Return the runtime Skill registered for a knowledge Provider."""
+    return PROVIDER_SKILLS.get(provider_id)
+
+
 def apply_selected_knowledge_context(
     db: "Session",
     request: "ExecutionRequest",
@@ -56,6 +61,15 @@ def apply_selected_knowledge_context(
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
         return []
+
+    missing_providers = sorted(
+        {ref.provider for ref in refs if ref.provider not in PROVIDER_SKILLS}
+    )
+    if missing_providers:
+        _raise_capability_error(
+            "Required knowledge Provider is unavailable: "
+            + ", ".join(missing_providers)
+        )
 
     request.selected_knowledge_prompt = render_selected_knowledge_prompt(refs)
     request.provider_native_knowledge = False
@@ -326,7 +340,7 @@ def _build_external_refs(request: "ExecutionRequest") -> list[SelectedKnowledgeR
             continue
         provider = str(value.get("provider") or "").strip().lower()
         kb_id = str(value.get("id") or "").strip()
-        if provider not in PROVIDER_SKILLS or not kb_id:
+        if not provider or not kb_id:
             continue
         scope_type = str(value.get("target_type") or "knowledge_base")
         resource_id = None
