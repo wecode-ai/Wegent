@@ -734,6 +734,7 @@ class KnowledgeOrchestrator:
         keyword: str | None = None,
         sort_by: str = "createdAt",
         sort_order: str = "desc",
+        content_origin: str | None = None,
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -778,6 +779,7 @@ class KnowledgeOrchestrator:
             keyword=keyword,
             sort_by=sort_by,
             sort_order=sort_order,
+            content_origin=content_origin,
         )
 
         # Batch query user names for created_by field
@@ -2259,12 +2261,6 @@ class KnowledgeOrchestrator:
         if not document:
             raise ValueError("Document not found")
 
-        skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension, document.file_size
-        )
-        if skip_reason:
-            raise ValueError(skip_reason)
-
         # Check access permission via knowledge base
         knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -2282,6 +2278,16 @@ class KnowledgeOrchestrator:
             raise ValueError(
                 "You do not have permission to manage this document in this knowledge base"
             )
+
+        from app.services.knowledge.content_scope import assert_user_content_is_mutable
+
+        assert_user_content_is_mutable(getattr(document, "origin", "user"))
+
+        skip_reason = get_rag_indexing_skip_reason(
+            document.source_type, document.file_extension, document.file_size
+        )
+        if skip_reason:
+            raise ValueError(skip_reason)
 
         # Apply an optional multimodal prompt override AFTER the access check so
         # an unauthorized caller cannot poison the stored prompt. Powers the
@@ -2568,6 +2574,10 @@ class KnowledgeOrchestrator:
                 "error_code": "NOT_FOUND",
                 "error_message": "Document not found or access denied",
             }
+
+        from app.services.knowledge.content_scope import assert_user_content_is_mutable
+
+        assert_user_content_is_mutable(getattr(document, "origin", "user"))
 
         # Verify manage permission before mutating content
         from app.models.kind import Kind

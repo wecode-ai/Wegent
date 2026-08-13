@@ -32,9 +32,9 @@ PUBLIC = {
 @pytest.fixture(autouse=True)
 def _no_cache(monkeypatch):
     """The cache is an optimisation; these tests are about what is resolved."""
-    monkeypatch.setattr(resolution, "_cached", lambda source, has_token: None)
+    monkeypatch.setattr(resolution, "_cached", lambda source, *, user_id: None)
     monkeypatch.setattr(
-        resolution, "_remember", lambda source, has_token, resolved: None
+        resolution, "_remember", lambda source, *, user_id, resolved: None
     )
 
 
@@ -125,7 +125,7 @@ def test_an_unreadable_result_is_not_cached(source, monkeypatch):
     monkeypatch.setattr(
         resolution,
         "_remember",
-        lambda source, has_token, resolved: remembered.append(resolved),
+        lambda source, *, user_id, resolved: remembered.append(resolved),
     )
     git_info, provider = _with(None, None)
 

@@ -141,18 +141,18 @@ code_wiki 的 splitter **由系统按目标类型固定,用户不可选/不可�
 
 ## 7.5 一期留下的清理项(已定推迟到本期)
 
-**内部回写端点的固定 token 通道要拆掉。** `/api/internal/wiki/generations/contents`
-接受三种身份:agent 实际走 skill 身份 token,还有用户 JWT,以及一个固定 token
-(`WIKI_INTERNAL_API_TOKEN`,默认 `weki`)。第三条**没有任何调用方** —— skill 支持从
-`WIKI_TOKEN` 环境变量取,但全仓无人设置这个变量。
+**内部回写端点的固定 token 通道已拆掉。** `/api/internal/wiki/generations/contents`
+只接受 agent 实际持有的 skill identity token 或用户 JWT。曾经的固定 token
+(`WIKI_INTERNAL_API_TOKEN`,默认 `weki`)没有调用方；skill 支持从 `WIKI_TOKEN`
+环境变量取值，但全仓无人设置这个变量。
 
-它不只是死代码。`_internal_caller` 对固定 token 返回 `None`,而 `None` 会让
+它不只是死代码。旧 `_internal_caller` 对固定 token 返回 `None`,而 `None` 会让
 `_assert_caller_owns_generation` **直接放行**,所以拿到那个默认值就能往任意 generation
 写页面并结束它 —— 一期之后这意味着投影进任意知识库。internal router 和其它路由挂在同一个
 app 上,没有额外网络隔离。
 
-一期没动是因为它是既有行为,可能有我们不知道的运维脚本在用。本期一并处理:删掉这条路径,
-`_internal_caller` 的 `None` 分支随之消失,所有权检查不再有例外。
+一期没动是因为它是既有行为,可能有我们不知道的运维脚本在用。现已删掉这条路径，
+`_internal_caller` 的 `None` 分支随之消失，所有权检查不再有例外。
 
 ## 7.7 分享链接入口够不到(待定,先记下来)
 
