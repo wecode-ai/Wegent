@@ -18,6 +18,30 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+def _get_sandbox_manager_scope() -> str:
+    """Return a stable identifier for the executor-manager deployment.
+
+    Multiple executor-manager deployments can share Redis, so the sandbox
+    repository must not use a process- or pod-specific identifier. Prefer an
+    explicit scope and otherwise derive one from the stable callback URL that
+    is already configured per deployment.
+    """
+    explicit_scope = os.getenv("SANDBOX_MANAGER_SCOPE", "").strip()
+    if explicit_scope:
+        return explicit_scope
+
+    for env_name in (
+        "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",
+        "EXECUTOR_MANAGER_URL",
+        "EXECUTOR_MANAGER_CALLBACK_URL",
+    ):
+        callback_url = os.getenv(env_name, "").strip()
+        if callback_url:
+            return callback_url
+
+    return os.getenv("SERVICE_POOL", "default").strip() or "default"
+
+
 def _get_redis_protocol() -> int:
     """Read and validate Redis wire protocol version."""
     value = os.getenv("REDIS_PROTOCOL", "2")
@@ -126,6 +150,13 @@ class ExecutorConfig:
     )
 
 
+@dataclass(frozen=True)
+class SandboxConfig:
+    """Sandbox ownership configuration."""
+
+    manager_scope: str = field(default_factory=_get_sandbox_manager_scope)
+
+
 @dataclass
 class AppConfig:
     """Application-wide configuration container."""
@@ -134,6 +165,7 @@ class AppConfig:
     timeout: TimeoutConfig = field(default_factory=TimeoutConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
     executor: ExecutorConfig = field(default_factory=ExecutorConfig)
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
 
 # Global configuration instance

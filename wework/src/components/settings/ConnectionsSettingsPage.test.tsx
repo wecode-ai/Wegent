@@ -339,6 +339,7 @@ describe('ConnectionsSettingsPage', () => {
     const codingCategory = screen.getByTestId('settings-category-coding')
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
+    const gitHostingNav = screen.getByTestId('settings-nav-git-hosting')
     const harnessesNav = screen.getByTestId('settings-nav-harnesses')
     expect(screen.getByTestId('settings-nav-harnesses-experimental-badge')).toHaveTextContent(
       '实验性'
@@ -354,10 +355,13 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(harnessesNav)
+    expect(codingCategory.parentElement).toContainElement(gitHostingNav)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      gitHostingNav.compareDocumentPosition(harnessesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
