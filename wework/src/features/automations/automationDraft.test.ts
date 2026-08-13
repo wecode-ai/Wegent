@@ -52,9 +52,11 @@ describe('buildAutomationProjectOptions', () => {
 
     expect(options).toEqual([
       {
-        key: 'local-device\u0000local:wework',
+        key: 'local-device\u0000local:wework\u0000/repo/wework',
         name: 'wework',
         workspacePath: '/repo/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
       },
     ])
   })
@@ -70,9 +72,41 @@ describe('buildAutomationProjectOptions', () => {
 
     expect(buildAutomationProjectOptions([runtimeProject], 'cloud-device')).toEqual([
       {
-        key: 'local-device\u0000local:wework',
+        key: 'local-device\u0000local:wework\u0000/cloud/wework',
         name: 'wework',
         workspacePath: '/cloud/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
+      },
+    ])
+  })
+
+  test('keeps managed worktrees selectable alongside the primary project workspace', () => {
+    const runtimeProject = project('wework', ['/repo/wework'], ['/repo/wework'])
+    runtimeProject.deviceWorkspaces.push({
+      deviceId: 'local-device',
+      available: true,
+      workspacePath: '/worktrees/task-42/wework',
+      workspaceKind: 'worktree',
+      worktreeId: 'task-42',
+      label: 'feature/automation',
+      tasks: [],
+    })
+
+    expect(buildAutomationProjectOptions([runtimeProject], 'local-device')).toEqual([
+      {
+        key: 'local-device\u0000local:wework\u0000/repo/wework',
+        name: 'wework',
+        workspacePath: '/repo/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
+      },
+      {
+        key: 'local-device\u0000local:wework\u0000/worktrees/task-42/wework',
+        name: 'wework',
+        workspacePath: '/worktrees/task-42/wework',
+        workspaceKind: 'worktree',
+        workspaceLabel: 'feature/automation',
       },
     ])
   })
