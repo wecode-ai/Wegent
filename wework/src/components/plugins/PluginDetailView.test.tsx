@@ -54,6 +54,101 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test('allows automatic updates to be changed explicitly', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'dev-tools',
+    }
+    plugin.raw.spec.pluginId = 101
+    plugin.raw.spec.updatePolicy = 'manual'
+    const onAutoUpdateChange = vi.fn()
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        autoUpdateEnabled={false}
+        onAutoUpdateChange={onAutoUpdateChange}
+      />
+    )
+
+    const toggle = screen.getByTestId('plugin-auto-update-toggle-local-1')
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(toggle)
+    expect(onAutoUpdateChange).toHaveBeenCalledWith(true)
+  })
+
+  test('shows when automatic updates pause after repeated failures', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'dev-tools',
+    }
+    plugin.raw.spec.pluginId = 101
+    plugin.raw.spec.updatePolicy = 'auto'
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        autoUpdateEnabled
+        autoUpdatePaused
+        autoUpdateFailureCount={3}
+        onAutoUpdateChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
+  })
+
+  test('keeps automatic update controls visible for a materialized outdated release', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.source = {
+      type: 'marketplace',
+      providerKey: 'wegent-market',
+      pluginKey: 'dev-tools',
+    }
+    plugin.raw.spec.pluginId = 101
+    plugin.raw.spec.installState = 'update_available'
+    plugin.raw.spec.updatePolicy = 'auto'
+    plugin.raw.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 102,
+        actualReleaseId: 101,
+        state: 'failed',
+        attemptCount: 3,
+        updatedAt: '2026-08-13T10:00:00Z',
+      },
+    ]
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        autoUpdateEnabled
+        autoUpdatePaused
+        autoUpdateFailureCount={3}
+        onAutoUpdateChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-auto-update-toggle-local-1')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
+  })
+
   test('keeps manage access in the availability section and publish new version in the menu', () => {
     const onManageAccess = vi.fn()
     const onMenuPublish = vi.fn()

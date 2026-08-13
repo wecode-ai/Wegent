@@ -14,7 +14,7 @@ sidebar_position: 20
 
 - 普通用户只能浏览 Wework 云端市场，不能直接添加任意 GitHub 或 Codex Marketplace。
 - Codex 官方插件按管理员白名单选择性镜像，不做全量同步。
-- 市场展示最新已发布版本，历史 Release 保留；已安装插件默认手动更新。
+- 市场展示最新已发布版本，历史 Release 保留；市场插件默认自动更新，用户可在插件详情中关闭。
 - 本地创建内容位于 `wework-personal`，不自动上传；只有“发布到市场”或所有者主动定向分享时才会上传并进入相同安全扫描。
 - Skill 是展示类型，安装单位始终是 Codex Plugin；单 Skill 插件包含一个 `SKILL.md`。
 - `kinds/InstalledPlugin` 是账号安装意图，`plugin_device_installations` 是设备执行结果，本机 Codex App Server 是运行事实源。
@@ -34,6 +34,12 @@ sidebar_position: 20
 | Token、MCP 密钥             | 系统安全存储                                       | 永不进入插件包和日志                |
 
 `skill_binaries` 不再接收 V2 Release。迁移工具把旧 Marketplace ZIP 搬到对象存储，并把旧安装记录改成 `pluginId/releaseId` 引用。
+
+### 自动更新与失败保护
+
+自动更新只提升到状态为 `ready` 且安全扫描为 `passed` 的不可变 Release。Wework 打开插件市场时批量推进账号期望版本，并同步当前设备；更新失败不会覆盖 `actual_release_id`，设备继续使用已经确认安装的旧版本。
+
+`kinds/InstalledPlugin.spec.updatePolicy` 保存用户策略，`auto` 为默认值，`manual` 表示关闭自动更新。`plugin_device_installations.attempt_count` 按“设备 + 插件 + 目标 Release”记录连续失败次数：少于 3 次时，下次打开插件市场自动重试；达到 3 次后停止自动重试并提示手动更新。手动更新会清零计数并绕过本次熔断；发布新的目标 Release 也会重置计数。全量设备同步必须继续下发熔断前的 `actual_release_id`，不能因其他插件同步而绕过旧版本保护。
 
 ## 3. ER 模型
 
@@ -145,7 +151,7 @@ sequenceDiagram
   API-->>UI: 成功或 502 明确失败
 ```
 
-新安装选择 `latest_release_id`。更新必须由用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的安装记录和物化入口，离线设备上线后补执行。正常卸载不直接清空 Codex 或 Claude `plugins/cache`，缓存目录只应由运行时复用或由独立垃圾回收删除未被安装记录引用的版本。
+新安装选择 `latest_release_id`。市场插件默认自动更新；只有 `updatePolicy=manual` 时才需要用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的安装记录和物化入口，离线设备上线后补执行。正常卸载不直接清空 Codex 或 Claude `plugins/cache`，缓存目录只应由运行时复用或由独立垃圾回收删除未被安装记录引用的版本。
 
 Wework 调用目录、安装、更新和卸载接口时携带本机 Executor 的稳定 `device_id`。目录中的“已安装”只在该设备 `state=installed` 且 `actual_release_id` 等于账号期望 Release 时成立；账号已有安装意图但当前设备为 `pending/failed` 时仍显示可安装和具体设备错误。一次操作只因当前设备失败而返回 `502`，其他设备失败记录在 `plugin_device_installations` 并等待重连补同步。设备 WebSocket 重连完成后会再次回写逐插件结果，清除已完成的卸载或旧失败状态。
 

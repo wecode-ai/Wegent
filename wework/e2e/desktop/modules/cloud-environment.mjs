@@ -1,5 +1,8 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
 
+import { createHash } from 'node:crypto'
+import { rm } from 'node:fs/promises'
+
 import {
   CLOUD_DEVICE_ID,
   CLOUD_MODEL_CASES,
@@ -12,9 +15,12 @@ import {
   appendFile,
   appendProcessOutput,
   assert,
+  createServer,
   dirname,
   fetchJson,
   join,
+  mkdir,
+  readFile,
   repoDir,
   reservePort,
   resultDir,
@@ -24,7 +30,116 @@ import {
   stopProcessGroup,
   waitForUrl,
   weworkDir,
+  writeFile,
 } from './shared.mjs'
+
+class LocalPluginObjectStorage {
+  constructor() {
+    this.buckets = new Set()
+    this.objects = new Map()
+  }
+
+  async start() {
+    this.port = await reservePort()
+    this.server = createServer((request, response) => {
+      void this.handle(request, response).catch(error => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        response.writeHead(error instanceof URIError ? 400 : 500)
+        response.end()
+      })
+    })
+    await new Promise((resolvePromise, reject) => {
+      this.server.once('error', reject)
+      this.server.listen(this.port, '127.0.0.1', resolvePromise)
+    })
+    this.endpoint = `http://127.0.0.1:${this.port}`
+  }
+
+  async handle(request, response) {
+    const url = new URL(request.url ?? '/', this.endpoint)
+    const [bucket = '', ...objectParts] = url.pathname.split('/').filter(Boolean)
+    const objectKey = decodeURIComponent(objectParts.join('/'))
+    const storageKey = `${bucket}/${objectKey}`
+    if (!objectKey) {
+      if (request.method === 'HEAD') {
+        response.writeHead(
+          this.buckets.has(bucket) ? 200 : 404,
+          this.buckets.has(bucket)
+            ? {}
+            : {
+                'x-minio-error-code': 'NoSuchBucket',
+                'x-minio-error-desc': 'Bucket does not exist',
+              }
+        )
+        response.end()
+        return
+      }
+      if (request.method === 'PUT') {
+        this.buckets.add(bucket)
+        response.writeHead(200)
+        response.end()
+        return
+      }
+    }
+    if (request.method === 'PUT') {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      this.buckets.add(bucket)
+      this.objects.set(storageKey, Buffer.concat(chunks))
+      response.writeHead(200, {
+        ETag: `"${createHash('md5').update(this.objects.get(storageKey)).digest('hex')}"`,
+      })
+      response.end()
+      return
+    }
+    const object = this.objects.get(storageKey)
+    if (!object) {
+      response.writeHead(404, {
+        'Content-Type': 'application/xml',
+        'x-minio-error-code': 'NoSuchKey',
+        'x-minio-error-desc': 'Object does not exist',
+      })
+      response.end('<Error><Code>NoSuchKey</Code><Message>Not found</Message></Error>')
+      return
+    }
+    if (request.method === 'HEAD') {
+      response.writeHead(200, {
+        'Content-Length': String(object.length),
+        'Last-Modified': new Date().toUTCString(),
+        ETag: '"e2e"',
+      })
+      response.end()
+      return
+    }
+    if (request.method === 'GET') {
+      response.writeHead(200, {
+        'Content-Length': String(object.length),
+        'Content-Type': 'application/zip',
+      })
+      response.end(object)
+      return
+    }
+    if (request.method === 'DELETE') {
+      this.objects.delete(storageKey)
+      response.writeHead(204)
+      response.end()
+      return
+    }
+    response.writeHead(405)
+    response.end()
+  }
+
+  async stop() {
+    if (!this.server) return
+    await new Promise(resolvePromise => {
+      this.server.close(resolvePromise)
+      this.server.closeAllConnections?.()
+    })
+  }
+}
 
 class RealCloudEnvironment {
   constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
@@ -43,6 +158,8 @@ class RealCloudEnvironment {
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
     this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
+    this.pluginObjectStorage = new LocalPluginObjectStorage()
+    await this.pluginObjectStorage.start()
 
     this.redis = spawn(
       'redis-server',
@@ -68,6 +185,11 @@ class RealCloudEnvironment {
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
+      ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
+      ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
+      ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
+      ATTACHMENT_S3_USE_SSL: 'false',
+      PLUGIN_PUBLISH_ENABLED: 'true',
     }
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
       cwd: join(repoDir, 'backend'),
@@ -101,6 +223,95 @@ class RealCloudEnvironment {
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
     await this.seedCloudProtocolModels()
     await this.seedCloudVisionSidecarModels()
+  }
+
+  async seedPluginAutoUpdateFixtures(count = 6) {
+    if (this.pluginAutoUpdateFixturesSeeded) return
+    const headers = {
+      Authorization: `Bearer ${this.authToken}`,
+      'Content-Type': 'application/json',
+    }
+    for (let index = 1; index <= count; index += 1) {
+      const slug = `desktop-e2e-auto-update-${index}`
+      const first = await this.publishPluginRelease({ headers, slug, version: '1.0.0' })
+      await fetchJson(
+        `${this.backendUrl}/api/admin/plugins/submissions/${first.submissionId}/review`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ approved: true, note: 'Desktop E2E initial release' }),
+        }
+      )
+      await fetchJson(
+        `${this.backendUrl}/api/plugins/marketplace/${first.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
+        { method: 'POST', headers }
+      )
+      const latest = await this.publishPluginRelease({ headers, slug, version: '2.0.0' })
+      await fetchJson(
+        `${this.backendUrl}/api/admin/plugins/submissions/${latest.submissionId}/review`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ approved: true, note: 'Desktop E2E update release' }),
+        }
+      )
+    }
+    this.pluginAutoUpdateFixturesSeeded = true
+  }
+
+  async publishPluginRelease({ headers, slug, version }) {
+    const packageRoot = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
+    const manifestDir = join(packageRoot, '.codex-plugin')
+    const packagePath = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}.zip`)
+    await mkdir(manifestDir, { recursive: true })
+    await writeFile(
+      join(manifestDir, 'plugin.json'),
+      `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
+      'utf8'
+    )
+    await rm(packagePath, { force: true })
+    await runChecked('python3', ['-m', 'zipfile', '-c', packagePath, '.codex-plugin'], {
+      cwd: packageRoot,
+    })
+    const packageBytes = await readFile(packagePath)
+    const initialized = await fetchJson(`${this.backendUrl}/api/plugins/submissions/init`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        slug,
+        displayName: `Auto Update ${slug.split('-').at(-1)}`,
+        version,
+        filename: `${slug}.zip`,
+        sha256: createHash('sha256').update(packageBytes).digest('hex'),
+        sizeBytes: packageBytes.length,
+        visibility: 'workspace',
+      }),
+    })
+    const upload = await fetch(initialized.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/zip' },
+      body: packageBytes,
+    })
+    assert.equal(upload.ok, true, `Plugin E2E upload failed with HTTP ${upload.status}`)
+    await fetchJson(
+      `${this.backendUrl}/api/plugins/submissions/${initialized.submissionId}/complete`,
+      { method: 'POST', headers }
+    )
+    return initialized
+  }
+
+  async assertPluginAutoUpdateComplete(expectedCount = 6) {
+    const installed = await fetchJson(`${this.backendUrl}/api/plugins/installed`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const fixtures = installed.items.filter(item =>
+      item.spec?.source?.pluginKey?.startsWith('desktop-e2e-auto-update-')
+    )
+    assert.equal(fixtures.length, expectedCount, 'Auto-update fixture install count changed')
+    assert.ok(
+      fixtures.every(item => item.spec.version === '2.0.0'),
+      'Not every desktop E2E plugin advanced to version 2.0.0'
+    )
   }
 
   async startRemoteExecutor(executorBinary) {
@@ -426,6 +637,7 @@ class RealCloudEnvironment {
     }
     await stopProcessGroup(this.remoteExecutor)
     await stopProcess(this.backend)
+    await this.pluginObjectStorage?.stop()
     await stopProcess(this.redis)
   }
 }

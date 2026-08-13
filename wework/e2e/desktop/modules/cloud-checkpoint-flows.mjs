@@ -68,6 +68,7 @@ const CLOUD_CHECKPOINTS = [
   'priority-filter',
   'telemetry-consent',
   'automation-lifecycle',
+  'plugin-auto-update',
   'model-routing',
   'core-task-flow',
   'window-lifecycle',
@@ -247,6 +248,38 @@ async function verifyCloudCheckpoint({
     setPhase('cloud-telemetry-preference')
     await verifyTelemetryPreference(control)
     verifyTelemetryRemainsDisabled(control)
+    return
+  }
+
+  if (checkpoint === 'plugin-auto-update') {
+    setPhase('cloud-plugin-auto-update-fixtures')
+    await cloudEnvironment.seedPluginAutoUpdateFixtures(6)
+    setPhase('cloud-plugin-auto-update')
+    await control.command('navigate', 'body', { value: '/plugins' })
+    await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="plugin-operation-notice"]', {
+      text: '6',
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    const completionDeadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
+    let noticeKind = ''
+    while (Date.now() < completionDeadline) {
+      noticeKind = await control
+        .command('getAttribute', '[data-testid="plugin-operation-notice"]', {
+          value: 'data-notice-kind',
+        })
+        .catch(() => '')
+      if (noticeKind === 'success') break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.equal(
+      noticeKind,
+      'success',
+      'Plugin auto-update did not finish successfully in the real Tauri application'
+    )
+    await cloudEnvironment.assertPluginAutoUpdateComplete(6)
     return
   }
 

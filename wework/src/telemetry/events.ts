@@ -140,6 +140,7 @@ export interface AnalyticsEventMap {
       | 'plugin_install'
       | 'plugin_uninstall'
       | 'plugin_toggle'
+      | 'plugin_auto_update'
       | 'automation_save'
       | 'automation_toggle'
       | 'automation_run'
@@ -435,6 +436,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'plugin_install',
       'plugin_uninstall',
       'plugin_toggle',
+      'plugin_auto_update',
       'automation_save',
       'automation_toggle',
       'automation_run',

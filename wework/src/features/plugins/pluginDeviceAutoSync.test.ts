@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { PluginMarketplaceItem } from '@/types/api'
 import {
+  beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
   hasAttemptedPluginDeviceAutoSync,
   hasSettledPluginDeviceAutoSync,
@@ -147,6 +148,15 @@ describe('pluginDeviceAutoSync', () => {
     markPluginDeviceAutoSyncAttempted('device-a')
     expect(hasAttemptedPluginDeviceAutoSync('device-a')).toBe(true)
     expect(hasAttemptedPluginDeviceAutoSync('device-b')).toBe(false)
+  })
+
+  test('allows only one in-flight plugin sync per device', () => {
+    const finish = beginPluginDeviceSync('device-a')
+    expect(finish).not.toBeNull()
+    expect(beginPluginDeviceSync('device-a')).toBeNull()
+    expect(beginPluginDeviceSync('device-b')).not.toBeNull()
+    finish?.()
+    expect(beginPluginDeviceSync('device-a')).not.toBeNull()
   })
 
   test('offers retry for pending gaps after auto-sync settles', () => {
