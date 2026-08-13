@@ -120,3 +120,46 @@ async def test_schedule_marks_subtask_failed_when_recovery_returns_false():
     assert subtask.status == SubtaskStatus.FAILED
     assert subtask.error_message == "Failed to recover executor after Pod deletion"
     db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_executor_pod_missing_returns_false_when_pod_alive():
+    """A confirmed-alive pod should not trigger recovery."""
+    from app.services.execution.schedule_helper import _executor_pod_missing
+
+    with patch(
+        "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+        return_value=True,
+    ):
+        result = await _executor_pod_missing("executor-1", "default")
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_executor_pod_missing_returns_true_when_pod_gone():
+    """executor_manager confirming 'No pod found' should trigger recovery."""
+    from app.services.execution.schedule_helper import _executor_pod_missing
+
+    with patch(
+        "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+        return_value=False,
+    ):
+        result = await _executor_pod_missing("executor-1", "default")
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_executor_pod_missing_treats_transport_error_as_alive():
+    """Network/transport failures must not trigger spurious recovery."""
+    from app.services.execution.schedule_helper import _executor_pod_missing
+
+    with patch(
+        "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+        side_effect=RuntimeError("timeout"),
+    ):
+        result = await _executor_pod_missing("executor-1", "default")
+
+    assert result is False
+
