@@ -325,6 +325,12 @@ class TestExecutorCleanupProgress:
                 new_callable=AsyncMock,
                 return_value=[subtask],
             ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch(
                 "app.services.adapters.executor_job.executor_kinds_service"
             ) as mock_executor_service,
