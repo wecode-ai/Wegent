@@ -6,6 +6,7 @@ import {
   showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
+import { prefetchLocalConnectorAuthForPluginNames } from '@/features/plugins/prefetchLocalConnectorAuth'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
@@ -18,6 +19,7 @@ import {
   requestComposerAppsSync,
   subscribeComposerApps,
 } from './composerAppsSnapshot'
+import { ComposerPluginIcon } from './ComposerPluginIcon'
 import { appReference, displayAppName } from './composerMentionCandidates'
 import { registerComposerMentionIcon } from './composerMentions'
 import {
@@ -43,41 +45,22 @@ function paintComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
   return enabledComposerApps(items.length > 0 ? items : getComposerApps())
 }
 
-function ComposerPluginPreviewIcons({
-  apps,
-  appearanceMode,
-}: {
-  apps: LocalDeviceApp[]
-  appearanceMode: 'light' | 'dark'
-}) {
+function ComposerPluginPreviewIcons({ apps }: { apps: LocalDeviceApp[] }) {
   return (
     <span
       className="flex -space-x-1"
       data-testid="composer-plugin-preview-icons"
       aria-hidden="true"
     >
-      {apps.slice(0, 3).map(app => {
-        const logo = resolvePluginLogo({
-          pluginKey: composerAppPluginKey(app),
-          logo: app.logoUrl,
-          logoDark: app.logoUrlDark,
-          appearanceMode,
-        })
-        return (
-          <span
-            key={app.id}
-            data-testid={`composer-plugin-preview-icon-${app.id}`}
-            className={[
-              'plugin-icon-slot h-6 w-6 rounded-full border-border/30',
-              logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-          >
-            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-4 w-4" />}
-          </span>
-        )
-      })}
+      {apps.slice(0, 3).map(app => (
+        <ComposerPluginIcon
+          key={app.id}
+          app={app}
+          className="plugin-icon-slot h-6 w-6 rounded-full border-border/30"
+          testId={`composer-plugin-preview-icon-${app.id}`}
+          initialClassName="text-xs font-medium leading-none text-text-secondary"
+        />
+      ))}
     </span>
   )
 }
@@ -241,7 +224,7 @@ export function PluginPickerMenu({
           ) : (
             <>
               <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
-              <ComposerPluginPreviewIcons apps={apps} appearanceMode={appearanceMode} />
+              <ComposerPluginPreviewIcons apps={apps} />
               {apps.length > 3 && (
                 <span className="text-xs text-text-muted">+{apps.length - 3}</span>
               )}
@@ -292,12 +275,17 @@ export function PluginPickerMenu({
                     title={app.description || undefined}
                     onClick={() => {
                       const reference = appReference(app)
-                      registerComposerMentionIcon(reference, {
-                        url: logo.url,
-                        contrastPad: logo.contrastPad,
-                      })
+                      if (logo.source === 'provided' && logo.url) {
+                        registerComposerMentionIcon(reference, {
+                          url: logo.url,
+                          contrastPad: logo.contrastPad,
+                        })
+                      }
                       insertPluginReference(reference)
-                      showPluginTrialGuide(displayAppName(app), app.trialTemplates)
+                      showPluginTrialGuide(displayAppName(app), app.trialTemplates, app)
+                      // Warm connector membership/health while the user types so send
+                      // is not blocked on plugin/read + local auth probe.
+                      void prefetchLocalConnectorAuthForPluginNames([composerAppPluginKey(app)])
                       const recent = JSON.parse(
                         window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]'
                       ) as string[]
@@ -308,20 +296,11 @@ export function PluginPickerMenu({
                       setOpen(false)
                     }}
                   >
-                    <span
-                      className={[
-                        'plugin-icon-slot h-[22px] w-[22px] rounded-md border-border/30',
-                        logo.contrastPad ? 'plugin-icon-slot--contrast-pad' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                    >
-                      {logo.url ? (
-                        <img src={logo.url} alt="" />
-                      ) : (
-                        <Boxes className="h-3.5 w-3.5 text-text-muted" />
-                      )}
-                    </span>
+                    <ComposerPluginIcon
+                      app={app}
+                      className="plugin-icon-slot h-[22px] w-[22px] rounded-md border-border/30"
+                      initialClassName="text-xs font-medium leading-none text-text-secondary"
+                    />
                     <span className="min-w-0 truncate text-base leading-5">
                       {displayAppName(app)}
                     </span>

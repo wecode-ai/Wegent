@@ -43,6 +43,7 @@ from app.schemas.knowledge import (
     AllGroupedKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    ContentOrigin,
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
@@ -660,6 +661,10 @@ def list_documents(
         default=SortOrder.DESC,
         description="Document sort order",
     ),
+    origin: Optional[ContentOrigin] = Query(
+        default=None,
+        description="Filter documents by content origin",
+    ),
     limit: int = Query(
         default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
         ge=1,
@@ -688,6 +693,7 @@ def list_documents(
             keyword=keyword,
             sort_by=sort_by.value,
             sort_order=sort_order.value,
+            content_origin=origin.value if origin is not None else None,
         )
     except ValueError as e:
         raise HTTPException(
@@ -1098,6 +1104,10 @@ def create_folder(
 @trace_sync("get_folder_tree", "knowledge.api")
 def get_folder_tree(
     knowledge_base_id: int,
+    origin: Optional[ContentOrigin] = Query(
+        default=None,
+        description="Filter folders by content origin",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> List[KnowledgeFolderResponse]:
@@ -1107,6 +1117,7 @@ def get_folder_tree(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=current_user.id,
+            content_origin=origin.value if origin is not None else None,
         )
     except ValueError as e:
         _raise_document_detail_http_error(e)

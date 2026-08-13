@@ -401,7 +401,7 @@ export function createHybridWorkbenchServices(
     work.chats.forEach(workspace => localDeviceIds.add(workspace.deviceId))
   }
   const isLocalDeviceId = (deviceId?: string | null) =>
-    Boolean(deviceId && localDeviceIds.has(deviceId))
+    Boolean(deviceId && (deviceId === 'local-device' || localDeviceIds.has(deviceId)))
   const isKnownCloudDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && rememberedCloudDevices.some(device => device.device_id === deviceId))
   const runtimeApiForCreate = async (deviceId?: string | null) => {
@@ -722,6 +722,12 @@ export function createHybridWorkbenchServices(
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
     },
+    getRuntimeSettings() {
+      return localServices.runtimeWorkApi!.getRuntimeSettings()
+    },
+    updateRuntimeSettings(data) {
+      return localServices.runtimeWorkApi!.updateRuntimeSettings(data)
+    },
     updateKeybindings(data) {
       return localServices.runtimeWorkApi!.updateKeybindings(data)
     },
@@ -798,6 +804,9 @@ export function createHybridWorkbenchServices(
     },
     clearRuntimeSupervisor(data) {
       return routeByAddress(data.address).clearRuntimeSupervisor(data)
+    },
+    runRuntimeSupervisorNow(data) {
+      return routeByAddress(data.address).runRuntimeSupervisorNow(data)
     },
     resolveRuntimeSupervisor(data) {
       return routeByAddress(data.address).resolveRuntimeSupervisor(data)
@@ -983,6 +992,12 @@ export function createHybridWorkbenchServices(
     cancelRuntimeTask(address: RuntimeTaskAddress) {
       return routeByAddress(address).cancelRuntimeTask(address)
     },
+    forceStartRuntimeTask(address: RuntimeTaskAddress) {
+      return routeByAddress(address).forceStartRuntimeTask(address)
+    },
+    reorderQueuedRuntimeTask(data) {
+      return routeByAddress(data).reorderQueuedRuntimeTask(data)
+    },
     async createRuntimeTask(data: RuntimeTaskCreateRequest) {
       return (await runtimeApiForCreate(data.deviceId)).createRuntimeTask(data)
     },
@@ -1158,7 +1173,7 @@ export function createHybridWorkbenchServices(
       uploadLocalAttachmentToCloud: attachment =>
         uploadLocalAttachmentToCloud(attachment, cloudServices.attachmentApi!.uploadAttachment),
     },
-    userApi: localServices.userApi,
+    userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,

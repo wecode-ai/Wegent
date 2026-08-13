@@ -28,8 +28,31 @@ function stripLeadingApplicationContext(content: string): string {
   const trimmed = content.trimStart()
   if (!trimmed.startsWith(APPLICATION_CONTEXT_OPEN)) return trimmed.trim()
 
-  const closeIndex = trimmed.indexOf(APPLICATION_CONTEXT_CLOSE)
+  const closeIndex = matchingApplicationContextCloseIndex(trimmed)
   if (closeIndex < 0) return trimmed.trim()
 
   return trimmed.slice(closeIndex + APPLICATION_CONTEXT_CLOSE.length).trim()
+}
+
+function matchingApplicationContextCloseIndex(content: string): number {
+  let depth = 1
+  let offset = APPLICATION_CONTEXT_OPEN.length
+
+  while (offset < content.length) {
+    const nextOpen = content.indexOf(APPLICATION_CONTEXT_OPEN, offset)
+    const nextClose = content.indexOf(APPLICATION_CONTEXT_CLOSE, offset)
+    if (nextClose < 0) return -1
+
+    if (nextOpen >= 0 && nextOpen < nextClose) {
+      depth += 1
+      offset = nextOpen + APPLICATION_CONTEXT_OPEN.length
+      continue
+    }
+
+    depth -= 1
+    if (depth === 0) return nextClose
+    offset = nextClose + APPLICATION_CONTEXT_CLOSE.length
+  }
+
+  return -1
 }

@@ -484,7 +484,9 @@ async function main() {
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
-  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
+    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E,
+  })
   const modelSwitchVerification = []
   let app
   let appBundlePath
@@ -732,6 +734,22 @@ last_updated = "2026-07-30T00:00:00Z"`
         'utf8'
       )
       console.log(`Wework desktop browser-multi-tabs checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'project-automation') {
+      phase = 'project-automation-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-automation checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -2747,6 +2765,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         otherTaskRowTestId: secondTaskRowTestId,
       })
+      if (desktopScenario) {
+        phase = 'conversation-mention-switch-restore'
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
       if (shouldStopAfterDesktopCheckpoint('conversation-state')) {
         console.log(`Wework desktop conversation-state checkpoint passed. Evidence: ${resultDir}`)
         return

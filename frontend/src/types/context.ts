@@ -24,8 +24,8 @@ export type ContextType =
  */
 export interface ExternalKnowledgeRef {
   provider: string
-  mode: string
-  id?: string
+  mode: 'explicit'
+  id: string
   name?: string
   scope?: string
   target_type?: 'knowledge_base' | 'folder' | 'document'
@@ -33,6 +33,7 @@ export interface ExternalKnowledgeRef {
   document_id?: string
   parent_id?: string
   target_name?: string
+  resource_url?: string
 }
 
 /**
@@ -139,8 +140,9 @@ export interface DingTalkDocContext extends BaseContextItem {
  * On send, Backend materializes this ref into task-level externalKnowledgeRefs;
  * clearing composer selections does not unbind task-level refs. Embeds the full canonical ref;
  * the context `id` is namespaced
- * (external:{provider}:{mode}:{id ?? 'all'}) to avoid collision with internal
- * KB/table numeric ids. The send-assembly split reads `ref` verbatim.
+ * (external:{provider}:explicit:{id}) to avoid collision with internal KB/table
+ * numeric ids. Child targets append their target type and native resource ID.
+ * The send-assembly split reads `ref` verbatim.
  */
 export interface ExternalKnowledgeContext extends BaseContextItem {
   type: 'external_knowledge'

@@ -85,6 +85,10 @@ class UserMCPService:
         service_id: str,
     ) -> dict[str, Any] | None:
         """Return static MCP service metadata."""
+        provider = get_mcp_provider(provider_id)
+        if not provider or provider["configuration_mode"] != "user":
+            return None
+
         service = get_mcp_provider_service(provider_id, service_id)
         if service:
             return dict(service)
@@ -97,7 +101,8 @@ class UserMCPService:
         provider_id: str,
     ) -> bool:
         """Return whether a provider has static services."""
-        return bool(get_mcp_provider(provider_id))
+        provider = get_mcp_provider(provider_id)
+        return bool(provider and provider["configuration_mode"] == "user")
 
     @staticmethod
     def list_provider_service_configs(
@@ -148,6 +153,13 @@ class UserMCPService:
         enabled_mcps: dict[str, Any] = {}
 
         for provider_id, provider in mcps.items():
+            provider_definition = get_mcp_provider(provider_id)
+            if (
+                not provider_definition
+                or provider_definition["configuration_mode"] != "user"
+            ):
+                continue
+
             services = provider.get(MCP_SERVICES_KEY)
             if not isinstance(services, dict):
                 continue
@@ -296,7 +308,11 @@ class UserMCPService:
     def _configured_provider_ids(
         preferences: str | dict[str, Any] | None,
     ) -> list[str]:
-        provider_ids = [provider["provider_id"] for provider in list_mcp_providers()]
+        provider_ids = [
+            provider["provider_id"]
+            for provider in list_mcp_providers()
+            if provider["configuration_mode"] == "user"
+        ]
         return list(dict.fromkeys(provider_ids))
 
 

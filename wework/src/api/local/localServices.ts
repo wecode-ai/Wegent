@@ -42,6 +42,7 @@ import type {
   RuntimeSupervisorGetRequest,
   RuntimeSupervisorResolveRequest,
   RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
   RuntimeSupervisorSetRequest,
   RuntimeGoalStatus,
   RuntimeTaskAddress,
@@ -51,7 +52,10 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTranscriptRequest,
@@ -1438,10 +1442,12 @@ interface BuildLocalRuntimeExecutionRequestInput {
   teamId: number
   title: string
   message: string
+  bot?: Array<Record<string, unknown>>
   turnSeed: number
   modelId?: string
   modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
@@ -1493,11 +1499,16 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
+  // The backend resolves gateway routing for cloud/public models in the claim
+  // payload; when present that config is authoritative and must not be
+  // rebuilt from the catalog entry (which would fall back to the local Codex
+  // account and route to chatgpt.com).
   const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
     input.runtime.trim().toLowerCase()
   )
   const modelConfig =
-    claudeRuntime && !input.modelId
+    input.modelConfig ??
+    (claudeRuntime && !input.modelId
       ? {}
       : applyRuntimeModelOptions(
           localRuntimeModelConfig(
@@ -1509,7 +1520,7 @@ function buildLocalRuntimeExecutionRequest(
             !claudeRuntime
           ),
           input.modelOptions
-        )
+        ))
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1546,12 +1557,7 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot: [
-      {
-        id: 0,
-        shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex',
-      },
-    ],
+    bot: input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }],
     ...(input.runtimeExecutablePath
       ? { runtime_executable_path: input.runtimeExecutablePath }
       : {}),
@@ -1747,10 +1753,12 @@ async function createLocalRuntimeTaskPayload(
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
+      bot: normalizedData.bot,
       turnSeed,
       modelId: normalizedData.modelId,
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       additionalContext: normalizedData.additionalContext,
@@ -2332,6 +2340,14 @@ export function createRuntimeWorkApiFromIpc(
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return request('runtime.keybindings.get', {})
     },
+    getRuntimeSettings(): Promise<RuntimeSettings> {
+      return request('runtime.settings.get', {})
+    },
+    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
+      return request('runtime.settings.update', {
+        maxConcurrentTasks: data.maxConcurrentTasks,
+      })
+    },
     updateKeybindings(data: {
       keybindings: KeybindingOverride[]
     }): Promise<{ keybindings: KeybindingOverride[] }> {
@@ -2536,6 +2552,11 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeSupervisorResponse> {
       return requestWithLocalDevice('runtime.tasks.supervisor.clear', data)
     },
+    runRuntimeSupervisorNow(
+      data: RuntimeSupervisorRunNowRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.run_now', data)
+    },
     resolveRuntimeSupervisor(
       data: RuntimeSupervisorResolveRequest
     ): Promise<RuntimeSupervisorResponse> {
@@ -2731,6 +2752,14 @@ export function createRuntimeWorkApiFromIpc(
         runtime: response.runtime ?? data.runtime,
         ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
+    },
+    forceStartRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return requestWithLocalDevice('runtime.tasks.force_start', address)
+    },
+    reorderQueuedRuntimeTask(
+      data: RuntimeTaskQueueReorderRequest
+    ): Promise<RuntimeTaskQueueReorderResponse> {
+      return requestWithLocalDevice('runtime.tasks.queue.reorder', data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       if (data.lastTurnId) {
