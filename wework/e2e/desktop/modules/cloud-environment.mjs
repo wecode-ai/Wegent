@@ -270,7 +270,9 @@ class RealCloudEnvironment {
       'utf8'
     )
     await rm(packagePath, { force: true })
-    await runChecked('zip', ['-q', '-r', packagePath, '.'], { cwd: packageRoot })
+    await runChecked('python3', ['-m', 'zipfile', '-c', packagePath, '.codex-plugin'], {
+      cwd: packageRoot,
+    })
     const packageBytes = await readFile(packagePath)
     const initialized = await fetchJson(`${this.backendUrl}/api/plugins/submissions/init`, {
       method: 'POST',
