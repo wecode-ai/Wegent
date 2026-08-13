@@ -10558,6 +10558,38 @@ describe('WorkbenchProvider runtime tasks', () => {
         'idle:idle'
       )
     )
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '102',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+      'running:streaming'
+    )
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '102',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
+        'idle:idle'
+      )
+    )
   })
 
   test('syncs board completion from the in-memory terminal event while task status stays active', async () => {

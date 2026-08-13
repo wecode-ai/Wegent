@@ -162,6 +162,26 @@ export function createRuntimeTaskStreamHandlers(
 ): ChatStreamHandlers {
   const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
   const firstTokenSent = new Set<string>()
+  const unsettledAssistantTurnIds = new Set<string>()
+  const settledAssistantTurnIds = new Set<string>()
+  const settleAssistantTurn = (
+    terminalTurnId: string,
+    outcome: 'succeeded' | 'failed' | 'cancelled',
+    allowProviderAlias = true
+  ) => {
+    if (settledAssistantTurnIds.has(terminalTurnId)) return
+
+    let lifecycleTurnId = terminalTurnId
+    if (unsettledAssistantTurnIds.has(terminalTurnId)) {
+      unsettledAssistantTurnIds.delete(terminalTurnId)
+    } else if (allowProviderAlias && unsettledAssistantTurnIds.size > 0) {
+      lifecycleTurnId = unsettledAssistantTurnIds.values().next().value ?? terminalTurnId
+      unsettledAssistantTurnIds.delete(lifecycleTurnId)
+    }
+    settledAssistantTurnIds.add(terminalTurnId)
+    settledAssistantTurnIds.add(lifecycleTurnId)
+    handlers.onAssistantSettled?.(lifecycleTurnId, outcome)
+  }
 
   const streamHandlers: ChatStreamHandlers = {
     scope: {
@@ -190,6 +210,8 @@ export function createRuntimeTaskStreamHandlers(
         return
       }
       debugRuntimeStreamEvent('chat:start', address, payload, true)
+      settledAssistantTurnIds.delete(identity.subtaskId)
+      unsettledAssistantTurnIds.add(identity.subtaskId)
       handlers.onAssistantStart?.(identity.subtaskId)
       handlers.onMessageAction({
         type: 'assistant_started',
@@ -309,7 +331,7 @@ export function createRuntimeTaskStreamHandlers(
           new TextEncoder().encode(assistantText).byteLength
         )
       }
-      handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
+      settleAssistantTurn(identity.subtaskId, 'succeeded')
     },
     onChatError: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) {
@@ -351,7 +373,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
-      handlers.onAssistantSettled?.(identity.subtaskId, cancelled ? 'cancelled' : 'failed')
+      settleAssistantTurn(identity.subtaskId, cancelled ? 'cancelled' : 'failed')
       streamedFileChanges.delete(identity.subtaskId)
     },
     onBlockCreated: payload => {
@@ -388,7 +410,7 @@ export function createRuntimeTaskStreamHandlers(
           type: 'assistant_done',
           subtaskId: identity.subtaskId,
         })
-        handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
+        settleAssistantTurn(identity.subtaskId, 'succeeded', false)
       }
     },
     onBlockUpdated: payload => {
