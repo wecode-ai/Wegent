@@ -66,7 +66,7 @@ def write_status_change(
     # so appending in place would mutate the committed list and leave the new
     # metadata content-equal to it, which SQLAlchemy then skips on flush.
     history = list(current) if isinstance(current, list) else []
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
     history.append(
         {
             "from_status": from_status,
