@@ -521,7 +521,7 @@ class SandboxManager(metaclass=SingletonMeta):
         incoming: Dict[str, Any],
         bot_config: Optional[Dict[str, Any]],
     ) -> None:
-        """Merge credentials and active Skill names into a reused sandbox."""
+        """Apply the current activation metadata to a reused sandbox."""
         for key in (
             "auth_token",
             "skill_identity_token",
@@ -533,9 +533,10 @@ class SandboxManager(metaclass=SingletonMeta):
             if incoming.get(key):
                 sandbox.metadata[key] = incoming[key]
 
-        required = set(required_skill_names(sandbox.metadata))
-        required.update(required_skill_names(incoming))
-        sandbox.metadata["required_skills"] = sorted(required)
+        # Required Skills describe the current activation request. Keeping the
+        # union forever would make request-only Skills sticky after their refs
+        # disappear from a later chat turn.
+        sandbox.metadata["required_skills"] = required_skill_names(incoming)
         if bot_config:
             sandbox.metadata["bot_config"] = bot_config
 
