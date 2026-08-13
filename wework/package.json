@@ -24,7 +24,7 @@
     "lint:task-lifecycle": "node scripts/check-runtime-task-lifecycle.mjs",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "node scripts/run-vitest.mjs",
     "test:watch": "vitest",
     "test:kimi-k3-profile": "node scripts/verify-kimi-k3-profile.mjs",
     "e2e": "playwright test",

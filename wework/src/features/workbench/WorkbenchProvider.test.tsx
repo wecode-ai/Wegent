@@ -7140,6 +7140,66 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
   })
 
+  test('does not sync remote projects from an inactive workspace tab', async () => {
+    const remoteRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: '/srv/project-alpha',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Wegent',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              workspacePath: '/srv/project-alpha',
+              workspaceSource: 'remote',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'local-device', device_type: 'local' }),
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+      >
+        <RuntimeProjectMutationProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalled())
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalled()
+  })
+
   test('archives a worktree task without prompting and preserves a snapshot', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(

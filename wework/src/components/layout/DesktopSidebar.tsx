@@ -146,6 +146,7 @@ import {
   type ProjectHoverSource,
 } from './ProjectSidebarHoverCardContent'
 import { TaskSidebarHoverCardContent } from './TaskSidebarHoverCardContent'
+import { useSidebarPaneDragScrollLock } from './useSidebarPaneDragScrollLock'
 import {
   getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
@@ -3108,6 +3109,11 @@ export function DesktopSidebar({
   >(() => new Map())
   const chatTaskPinRequestIdRef = useRef(0)
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
+  const {
+    scrollContainerRef: sidebarWorklistsScrollRef,
+    dragOutsideSidebar: paneDragOutsideSidebar,
+    preserveLockedScrollPosition,
+  } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
@@ -3812,11 +3818,16 @@ export function DesktopSidebar({
           </nav>
 
           <div
+            ref={sidebarWorklistsScrollRef}
             data-testid="sidebar-worklists-scroll"
             data-scrolled={sidebarScrolled}
-            onScroll={event => setSidebarScrolled(event.currentTarget.scrollTop > 0)}
+            onScroll={event => {
+              if (preserveLockedScrollPosition(event)) return
+              setSidebarScrolled(event.currentTarget.scrollTop > 0)
+            }}
             className={cn(
-              'relative mb-2 mt-0.5 min-h-0 flex-1 overflow-y-auto border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
+              'relative mb-2 mt-0.5 min-h-0 flex-1 border-t border-transparent pb-3 [overflow-anchor:none] [mask-image:linear-gradient(to_bottom,black_0,black_calc(100%_-_16px),transparent_100%)]',
+              paneDragOutsideSidebar ? 'overflow-y-hidden' : 'overflow-y-auto',
               sidebarScrolled &&
                 'scrollbar-soft border-border [mask-image:linear-gradient(to_bottom,transparent_0,black_12px,black_calc(100%_-_16px),transparent_100%)]',
               !sidebarScrolled && 'scrollbar-none'
