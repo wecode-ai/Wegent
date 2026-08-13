@@ -178,7 +178,12 @@ export function SidebarSortableList<T>({
     setSortingSuppressed(false)
   }, [clearPointerListeners])
 
-  useEffect(() => clearPointerListeners, [clearPointerListeners])
+  useEffect(() => {
+    return () => {
+      if (externalDragActiveRef.current) dispatchWorkbenchSidebarPaneDragCancel()
+      clearPointerListeners()
+    }
+  }, [clearPointerListeners])
 
   const startPointerTracking = useCallback(
     (initialCoordinates: PointerCoordinates) => {

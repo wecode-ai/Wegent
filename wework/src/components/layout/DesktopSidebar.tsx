@@ -123,10 +123,6 @@ import type {
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
 import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
-import {
-  WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT,
-  WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT,
-} from './workbenchPaneDrag'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import {
@@ -150,6 +146,7 @@ import {
   type ProjectHoverSource,
 } from './ProjectSidebarHoverCardContent'
 import { TaskSidebarHoverCardContent } from './TaskSidebarHoverCardContent'
+import { useSidebarPaneDragScrollLock } from './useSidebarPaneDragScrollLock'
 import {
   getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
@@ -3112,11 +3109,11 @@ export function DesktopSidebar({
   >(() => new Map())
   const chatTaskPinRequestIdRef = useRef(0)
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
-  const sidebarWorklistsScrollRef = useRef<HTMLDivElement | null>(null)
-  const paneDragActiveRef = useRef(false)
-  const paneDragOutsideSidebarRef = useRef(false)
-  const paneDragLockedScrollTopRef = useRef(0)
-  const [paneDragOutsideSidebar, setPaneDragOutsideSidebar] = useState(false)
+  const {
+    scrollContainerRef: sidebarWorklistsScrollRef,
+    dragOutsideSidebar: paneDragOutsideSidebar,
+    preserveLockedScrollPosition,
+  } = useSidebarPaneDragScrollLock()
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? EMPTY_RUNTIME_TASK_KEYS
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
@@ -3699,45 +3696,6 @@ export function DesktopSidebar({
     displayedProjectsExpanded,
   ])
 
-  useEffect(() => {
-    const setOutsideSidebar = (outside: boolean) => {
-      if (paneDragOutsideSidebarRef.current === outside) return
-      paneDragOutsideSidebarRef.current = outside
-      setPaneDragOutsideSidebar(outside)
-    }
-    const handlePaneDragStart = () => {
-      paneDragActiveRef.current = true
-      paneDragLockedScrollTopRef.current = sidebarWorklistsScrollRef.current?.scrollTop ?? 0
-    }
-    const handlePointerMove = (event: globalThis.PointerEvent) => {
-      if (!paneDragActiveRef.current) return
-      const scrollContainer = sidebarWorklistsScrollRef.current
-      if (!scrollContainer) return
-      const bounds = scrollContainer.getBoundingClientRect()
-      const outside = event.clientX < bounds.left || event.clientX > bounds.right
-      if (outside && !paneDragOutsideSidebarRef.current) {
-        paneDragLockedScrollTopRef.current = scrollContainer.scrollTop
-      }
-      setOutsideSidebar(outside)
-      if (outside && scrollContainer.scrollTop !== paneDragLockedScrollTopRef.current) {
-        scrollContainer.scrollTop = paneDragLockedScrollTopRef.current
-      }
-    }
-    const handlePaneDragEnd = () => {
-      paneDragActiveRef.current = false
-      setOutsideSidebar(false)
-    }
-
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handlePaneDragStart)
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handlePaneDragEnd)
-    window.addEventListener('pointermove', handlePointerMove, true)
-    return () => {
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handlePaneDragStart)
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handlePaneDragEnd)
-      window.removeEventListener('pointermove', handlePointerMove, true)
-    }
-  }, [])
-
   return (
     <aside
       data-testid={containerTestId}
@@ -3864,10 +3822,7 @@ export function DesktopSidebar({
             data-testid="sidebar-worklists-scroll"
             data-scrolled={sidebarScrolled}
             onScroll={event => {
-              if (paneDragOutsideSidebarRef.current) {
-                event.currentTarget.scrollTop = paneDragLockedScrollTopRef.current
-                return
-              }
+              if (preserveLockedScrollPosition(event)) return
               setSidebarScrolled(event.currentTarget.scrollTop > 0)
             }}
             className={cn(
