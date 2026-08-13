@@ -1,3 +1,5 @@
+import type { BrowserAnnotationContextData, StyleAdjustment } from './browser-annotation'
+
 export interface WorkspaceFileEntry {
   name: string
   path: string
@@ -76,6 +78,7 @@ export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {
 
 export interface CodeCommentContext {
   id: string
+  source?: 'browser_annotation' | 'code_selection'
   filePath: string
   fileName: string
   startLine: number
@@ -83,4 +86,7 @@ export interface CodeCommentContext {
   selectedText: string
   comment: string
   createdAt: string
+  updatedAt?: string
+  browserAnnotation?: BrowserAnnotationContextData
+  adjustments?: StyleAdjustment[]
 }

@@ -811,6 +811,11 @@ function ProjectSendProbe() {
       </span>
       <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="composer-input">{paneSession.input}</span>
+      <span data-testid="project-browser-annotation-command">
+        {paneSession.browserAnnotationCommand
+          ? `${paneSession.browserAnnotationCommand.sequence}:${paneSession.browserAnnotationCommand.reason}`
+          : 'none'}
+      </span>
       <span data-testid="trial-plugin-app">
         {workbench.projectChat.trialPluginApp?.pluginKey ?? 'none'}
       </span>
@@ -1719,6 +1724,11 @@ function FollowUpProbe() {
       </span>
       <span data-testid="runtime-attachment-count">{workbench.projectChat.attachments.length}</span>
       <span data-testid="code-comment-context-count">{paneSession.codeCommentContexts.length}</span>
+      <span data-testid="browser-annotation-command">
+        {paneSession.browserAnnotationCommand
+          ? `${paneSession.browserAnnotationCommand.sequence}:${paneSession.browserAnnotationCommand.reason}`
+          : 'none'}
+      </span>
       <span data-testid="follow-up-current-runtime-task">
         {currentRuntimeTask
           ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
@@ -1770,6 +1780,28 @@ function FollowUpProbe() {
         }
       >
         add code comment
+      </button>
+      <button
+        data-testid="follow-up-add-browser-annotation"
+        type="button"
+        onClick={() =>
+          paneSession.addCodeComment({
+            id: 'browser-annotation-1',
+            source: 'browser_annotation',
+            filePath: 'browser:https://example.com/page',
+            fileName: 'Example page',
+            startLine: 1,
+            endLine: 1,
+            selectedText: 'Submit button',
+            comment: 'Use a clearer label',
+            createdAt: '2026-08-13T00:00:00.000Z',
+          })
+        }
+      >
+        add browser annotation
+      </button>
+      <button type="button" onClick={paneSession.clearCodeComments}>
+        clear code comments
       </button>
       <button type="button" onClick={() => void paneSession.setCurrentGoal()}>
         set follow-up goal
@@ -6277,6 +6309,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('workbench-error')).not.toHaveTextContent(
       '请选择项目或打开设备工作区后再发送'
     )
+    expect(screen.getByTestId('project-browser-annotation-command')).toHaveTextContent('none')
   })
 
   test('registers a standalone Codex workspace with an optional label', async () => {
@@ -6804,12 +6837,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a removed workspace under a different project identity', async () => {
+  test('does not restore a removed workspace under different project and device identities', async () => {
     const cloudRuntimeWork = deferred<RuntimeWorkListResponse>()
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(staleRuntimeWork),
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(staleRuntimeWork)
+        .mockResolvedValue(createRuntimeWork({ projects: [], totalTasks: 0 })),
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -6849,11 +6885,24 @@ describe('WorkbenchProvider runtime tasks', () => {
         createRuntimeWork({
           projects: [
             {
-              project: { id: 99, key: 'stale-cloud-project', name: 'Resurrected' },
-              deviceWorkspaces: staleRuntimeWork.projects[0].deviceWorkspaces,
-              totalTasks: 3,
+              project: { id: 8, key: 'cloud-project', name: 'Restored Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 23,
+                  projectId: 8,
+                  deviceId: 'cloud-device',
+                  deviceName: 'Cloud Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+              totalTasks: 0,
             },
           ],
+          totalTasks: 0,
         })
       )
     })
@@ -7027,10 +7076,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/srv/project-alpha',
       runtime: 'codex',
     })
-    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      projects: [],
-    })
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
   })
 
   test('does not treat a local-only empty remote view as an authoritative deletion', async () => {
@@ -8502,6 +8548,50 @@ describe('WorkbenchProvider runtime tasks', () => {
       modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('only emits browser cleanup commands when browser annotations are cleared', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+
+    await userEvent.click(screen.getByTestId('follow-up-add-code-comment'))
+    await userEvent.click(screen.getByText('clear code comments'))
+    expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('browser-annotation-command')).toHaveTextContent('none')
+
+    await userEvent.click(screen.getByTestId('follow-up-add-browser-annotation'))
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('browser-annotation-command')).toHaveTextContent('1:send_success')
   })
 
   test('shows the runtime rejection in the active pane when a follow-up send fails', async () => {
