@@ -1301,6 +1301,9 @@ function RuntimeProjectMutationProbe() {
       <button type="button" onClick={() => void workbench.removeProject(7)}>
         remove runtime project
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        refresh runtime projects
+      </button>
     </div>
   )
 }
@@ -7023,11 +7026,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           .mockResolvedValue([
             createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
           ]),
-        listRuntimeWork: vi.fn().mockResolvedValue({
-          projects: [],
-          chats: [],
-          totalTasks: 0,
-        }),
+        listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
       },
     })
 
@@ -7076,6 +7075,13 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/srv/project-alpha',
       runtime: 'codex',
     })
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+    )
+    await userEvent.click(screen.getByText('refresh runtime projects'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mutation-project-order')).toHaveTextContent('Wegent')
+    )
     expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
   })
 
