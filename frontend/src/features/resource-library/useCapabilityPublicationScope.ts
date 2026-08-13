@@ -128,7 +128,6 @@ export function useCapabilityPublicationScope({
       resource_type: resourceType,
       source_name: savedSourceName,
       source_namespace: savedSourceNamespace,
-      name: savedSourceName,
       display_name: displayName || savedSourceName,
       description,
       icon: null,

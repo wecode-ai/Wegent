@@ -161,7 +161,10 @@ export function QuickAccessCards({
   const hasTeamsOutsideQuickAccess = allSelectableTeams.some(
     team => !quickAccessTeamIds.has(team.id)
   )
-  const morePopoverTeams = showAllTeamsInMore ? allSelectableTeams : displayTeams
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase()
+  const isSearchingAllTeams = normalizedSearchQuery.length > 0
+  const isShowingAllTeams = showAllTeamsInMore || isSearchingAllTeams
+  const morePopoverTeams = isShowingAllTeams ? allSelectableTeams : displayTeams
   const favoriteQuickAccessTeamIds = quickAccessTeams
     .filter(team => !team.is_system && !systemRecommendedQuickAccessIdSet.has(team.id))
     .map(team => team.id)
@@ -179,10 +182,9 @@ export function QuickAccessCards({
 
   // Filter teams by search query for the more popover
   const filteredTeamsBySearch = morePopoverTeams.filter(team => {
-    const normalizedSearch = searchQuery.toLowerCase()
     return (
-      getTeamDisplayName(team).toLowerCase().includes(normalizedSearch) ||
-      team.name.toLowerCase().includes(normalizedSearch)
+      getTeamDisplayName(team).toLowerCase().includes(normalizedSearchQuery) ||
+      team.name.toLowerCase().includes(normalizedSearchQuery)
     )
   })
 
@@ -195,7 +197,7 @@ export function QuickAccessCards({
   }
 
   const handleSelectTeamFromMore = (team: Team) => {
-    if (showAllTeamsInMore) {
+    if (isShowingAllTeams) {
       const targetPage = getTeamTargetPage(team, 'all')
       const currentPage = getCurrentTargetPageByMode(currentMode)
       if (targetPage !== currentPage) {
@@ -424,9 +426,7 @@ export function QuickAccessCards({
     const popoverDescription = showAllTeamsInMore
       ? t('common:teams.all_agents_description')
       : t('common:teams.quick_access_description')
-    const searchPlaceholder = showAllTeamsInMore
-      ? t('common:teams.search_all_agents')
-      : t('common:teams.search_quick_access')
+    const searchPlaceholder = t('common:teams.search_all_agents')
 
     return (
       <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
@@ -487,7 +487,7 @@ export function QuickAccessCards({
               favoriteUpdatingTeamId={favoriteUpdatingTeamId}
               onToggleFavorite={handleToggleFavorite}
               optionTestIdPrefix="quick-access-more-team"
-              showReorderHandle={!showAllTeamsInMore}
+              showReorderHandle={!isShowingAllTeams}
               canReorder={displayTeams.length > 1}
               dragOverTeamId={dragOverTeamId}
               onTeamDragStart={handleQuickAccessDragStart}
