@@ -836,6 +836,30 @@ fn apply_codex_global_state_ops(
                 }
             }
             OPLOG_KIND_UPSERT_REMOTE_PROJECTS => {
+                let synchronized_hosts = op
+                    .remote_projects
+                    .iter()
+                    .map(|project| project.host_id.as_str())
+                    .collect::<HashSet<_>>();
+                let synchronized_project_ids = op
+                    .remote_projects
+                    .iter()
+                    .map(|project| project.id.as_str())
+                    .collect::<HashSet<_>>();
+                let removed_projects = remote_project_items(payload.get(REMOTE_PROJECTS_KEY))
+                    .into_iter()
+                    .filter(|project| {
+                        synchronized_hosts.contains(project.host_id.as_str())
+                            && !synchronized_project_ids.contains(project.key.as_str())
+                    })
+                    .collect::<Vec<_>>();
+                for project in removed_projects {
+                    remove_codex_global_project_payload(
+                        payload,
+                        &project.key,
+                        &project.remote_path,
+                    );
+                }
                 for project in &op.remote_projects {
                     upsert_remote_project_payload(payload, project);
                     upsert_project_order(payload, &project.id);
@@ -2146,5 +2170,51 @@ mod tests {
             json!({"projectId": "removed"})
         );
         assert!(payload["local-projects"]["local"].is_object());
+    }
+
+    #[test]
+    fn remote_project_batch_removes_stale_projects_from_synchronized_hosts() {
+        let mut payload = payload(json!({
+            "remote-projects": [
+                {"id": "stale", "hostId": "host", "remotePath": "/stale"},
+                {"id": "retained", "hostId": "host", "remotePath": "/retained", "label": "Old"},
+                {"id": "other-host", "hostId": "other", "remotePath": "/other"}
+            ],
+            "project-order": ["stale", "retained", "other-host"],
+            "pinned-project-ids": ["stale", "retained"],
+            "project-appearances": {"stale": {"color": "red"}},
+            "sidebar-project-thread-orders": {"stale": {"threadIds": ["t1"]}},
+            "thread-project-assignments": {"t1": {"projectId": "stale"}}
+        }));
+        let operation = CodexGlobalStateOplogRecord {
+            kind: OPLOG_KIND_UPSERT_REMOTE_PROJECTS.to_owned(),
+            remote_projects: vec![CodexGlobalRemoteProject {
+                id: "retained".to_owned(),
+                host_id: "host".to_owned(),
+                remote_path: "/retained".to_owned(),
+                label: Some("Current".to_owned()),
+            }],
+            ..Default::default()
+        };
+
+        apply_codex_global_state_ops(&mut payload, &[operation]);
+
+        assert_eq!(
+            payload["remote-projects"],
+            json!([
+                {
+                    "id": "retained",
+                    "hostId": "host",
+                    "remotePath": "/retained",
+                    "label": "Current"
+                },
+                {"id": "other-host", "hostId": "other", "remotePath": "/other"}
+            ])
+        );
+        assert_eq!(payload["project-order"], json!(["retained", "other-host"]));
+        assert_eq!(payload["pinned-project-ids"], json!(["retained"]));
+        assert!(payload["project-appearances"]["stale"].is_null());
+        assert!(payload["sidebar-project-thread-orders"]["stale"].is_null());
+        assert!(payload["thread-project-assignments"]["t1"].is_null());
     }
 }

@@ -1025,7 +1025,8 @@ describe('createLocalAppServices', () => {
     expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
   })
 
-  test('creates a git worktree from the current branch before creating a local runtime task', async () => {
+  test('defers git worktree creation to the local runtime scheduler', async () => {
+    const worktreePath = '/Users/me/.wework/workspace/worktrees/task-1/project'
     const request = vi
       .fn()
       .mockImplementation(async (method: string, data: Record<string, unknown>) => {
@@ -1034,14 +1035,11 @@ describe('createLocalAppServices', () => {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
         }
-        if (method === 'runtime.worktrees.prepare') {
-          const path = `/Users/me/.wework/workspace/worktrees/${data.worktreeId}/project`
-          return { success: true, path, worktree: { path } }
-        }
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
             taskId: 'task-1',
+            workspacePath: worktreePath,
             runtime: 'codex',
             runtimeHandle: {
               modelSelection: {
@@ -1077,10 +1075,6 @@ describe('createLocalAppServices', () => {
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
-    const worktreePath = String(createPayload.workspacePath)
-    expect(worktreePath).toMatch(
-      /^\/Users\/me\/\.wework\/workspace\/worktrees\/runtime-\d+\/project$/
-    )
     expect(response?.workspacePath).toBe(worktreePath)
     expect(response?.runtimeHandle).toEqual({
       modelSelection: {
@@ -1094,28 +1088,24 @@ describe('createLocalAppServices', () => {
       args: ['/Users/me/project'],
       timeout_seconds: 15,
     })
-    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
-      deviceId: 'device-uuid',
-      sourcePath: '/Users/me/project',
-      worktreeId: expect.stringMatching(/^runtime-\d+$/),
-    })
+    expect(request).not.toHaveBeenCalledWith('runtime.worktrees.prepare', expect.anything())
     expect(createPayload).toEqual(
       expect.objectContaining({
         deviceId: 'device-uuid',
-        workspacePath: worktreePath,
+        workspacePath: '/Users/me/project',
         execution: {
           workspace: {
             source: 'git_worktree',
-            path: worktreePath,
+            path: '/Users/me/project',
           },
         },
         executionRequest: expect.objectContaining({
           workspace_source: 'git_worktree',
-          project_workspace_path: worktreePath,
+          project_workspace_path: '/Users/me/project',
           workspace: {
             project: {
               source: 'git_worktree',
-              path: worktreePath,
+              path: '/Users/me/project',
             },
           },
         }),
@@ -1124,6 +1114,7 @@ describe('createLocalAppServices', () => {
   })
 
   test('passes an explicit worktree branch when creating a local runtime task', async () => {
+    const worktreePath = '/Users/me/.wework/workspace/worktrees/task-1/project'
     const request = vi
       .fn()
       .mockImplementation(async (method: string, data: Record<string, unknown>) => {
@@ -1132,14 +1123,11 @@ describe('createLocalAppServices', () => {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
         }
-        if (method === 'runtime.worktrees.prepare') {
-          const path = `/Users/me/.wework/workspace/worktrees/${data.worktreeId}/project`
-          return { success: true, path, worktree: { path } }
-        }
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
             taskId: 'task-1',
+            workspacePath: worktreePath,
             runtime: 'codex',
           }
         }
@@ -1170,19 +1158,14 @@ describe('createLocalAppServices', () => {
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
-    const worktreePath = String(createPayload.workspacePath)
-    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
-      deviceId: 'device-uuid',
-      sourcePath: '/Users/me/project',
-      worktreeId: expect.stringMatching(/^runtime-\d+$/),
-      ref: 'develop',
-    })
+    expect(request).not.toHaveBeenCalledWith('runtime.worktrees.prepare', expect.anything())
     expect(createPayload).toEqual(
       expect.objectContaining({
+        workspacePath: '/Users/me/project',
         execution: {
           workspace: {
             source: 'git_worktree',
-            path: worktreePath,
+            path: '/Users/me/project',
             branch: 'develop',
           },
         },
@@ -1190,7 +1173,7 @@ describe('createLocalAppServices', () => {
           workspace: {
             project: {
               source: 'git_worktree',
-              path: worktreePath,
+              path: '/Users/me/project',
               branch: 'develop',
             },
           },

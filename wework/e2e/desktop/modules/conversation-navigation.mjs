@@ -817,9 +817,6 @@ async function reopenCurrentTurnNavigationTask(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await restartDesktopApp()
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

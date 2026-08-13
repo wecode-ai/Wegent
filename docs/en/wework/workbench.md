@@ -22,6 +22,10 @@ When a runtime task is linked to a specific project-space task, select the task 
 
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
 
+## Split tasks by dragging
+
+Drag a task from the sidebar to the top, bottom, left, or right target in the workbench to create a split in that direction. Dropping on the center target replaces the task in the current area. Once the pointer enters the workbench, sidebar sorting and automatic scrolling stop so they cannot take over the split operation. Move the pointer back into the sidebar to resume task reordering.
+
 ## Start a new task
 
 The new-task page uses compact suggestion buttons to help choose a task direction. Selecting a direction reveals more specific prompts. Selecting a prompt writes it into the composer, where it can still be edited before sending.

@@ -11,10 +11,10 @@ import pytest
 from app.services.sandbox_file_syncer import (
     SandboxFileSyncer,
     _sanitize_filename,
-    build_sandbox_attachment_path,
     get_sandbox_file_syncer,
     sync_attachment_to_sandbox_background,
 )
+from shared.utils.attachment_block import build_sandbox_path
 
 
 class TestSanitizeFilename:
@@ -50,21 +50,21 @@ class TestSanitizeFilename:
 
 
 class TestBuildSandboxAttachmentPath:
-    """Tests for build_sandbox_attachment_path function."""
+    """Tests for the shared sandbox attachment path builder."""
 
     def test_normal_path(self):
         """Test normal path generation."""
-        path = build_sandbox_attachment_path(123, 456, "document.pdf")
+        path = build_sandbox_path(123, 456, "document.pdf")
         assert path == "/home/user/123:executor:attachments/456/document.pdf"
 
     def test_path_with_unsafe_filename(self):
         """Test path generation with unsafe filename."""
-        path = build_sandbox_attachment_path(123, 456, "../../../etc/passwd")
+        path = build_sandbox_path(123, 456, "../../../etc/passwd")
         assert path == "/home/user/123:executor:attachments/456/passwd"
 
     def test_path_with_special_chars(self):
         """Test path generation with special characters in filename."""
-        path = build_sandbox_attachment_path(123, 456, "file\nwith\rnewlines.pdf")
+        path = build_sandbox_path(123, 456, "file\nwith\rnewlines.pdf")
         assert path == "/home/user/123:executor:attachments/456/filewithnewlines.pdf"
 
 

@@ -38,6 +38,9 @@ RUN npm install --global "pnpm@${PNPM_VERSION}" \
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Claude Code permits bypassPermissions for root only inside an explicit sandbox.
+ENV IS_SANDBOX=1
+
 RUN node --version \
   && pnpm --version \
   && python3 --version \

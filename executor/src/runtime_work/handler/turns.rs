@@ -252,9 +252,20 @@ impl RuntimeWorkRpcHandler {
                 return Err(error);
             }
         }
+        if let Some(turn) = turn_to_start.as_ref() {
+            self.reserve_worktree_preparation(turn);
+        }
         drop(_operation);
         if let Some(turn) = turn_to_start {
-            self.start_turn(turn);
+            if turn
+                .request
+                .extra
+                .contains_key("deferred_worktree_source_path")
+            {
+                self.prepare_and_start_reserved_turn(turn).await?;
+            } else {
+                self.start_turn(turn);
+            }
         } else {
             log_executor_event(
                 "runtime work turn queued",
@@ -262,6 +273,212 @@ impl RuntimeWorkRpcHandler {
             );
         }
         Ok(())
+    }
+
+    pub(super) async fn prepare_deferred_worktree(
+        &self,
+        turn: &mut SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        let Some(source_path) = turn
+            .request
+            .extra
+            .remove("deferred_worktree_source_path")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        else {
+            return Ok(());
+        };
+        let git_ref = turn
+            .request
+            .extra
+            .remove("deferred_worktree_ref")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned));
+        let planned_path = turn
+            .request
+            .extra
+            .remove("deferred_worktree_path")
+            .and_then(|value| value.as_str().map(PathBuf::from));
+        let worktrees = self.worktrees.clone();
+        let worktree_id = turn.local_task_id.clone();
+        let record = tokio::task::spawn_blocking(move || match planned_path {
+            Some(planned_path) => worktrees.prepare_at(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                false,
+                &planned_path,
+            ),
+            None => worktrees.prepare(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                false,
+            ),
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_prepare_failed",
+                format!("Worktree preparation task failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        turn.request.project_workspace_path = Some(record.path.clone());
+        self.store.update_task(&turn.local_task_id, |link| {
+            link.workspace_path = record.path.clone();
+            link.updated_at = now_ms();
+        });
+        self.schedule_worktree_prune();
+        Ok(())
+    }
+
+    pub(super) fn reserve_worktree_preparation(&self, turn: &SpawnTurnRequest) {
+        if !turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            return;
+        }
+        self.preparing_worktree_turns
+            .lock()
+            .expect("preparing worktree turn map lock should not be poisoned")
+            .insert(
+                turn.local_task_id.clone(),
+                PreparingWorktreeTurn {
+                    cancellation_requested: false,
+                },
+            );
+    }
+
+    pub(super) fn cancel_preparing_worktree_turn(&self, local_task_id: &str) -> bool {
+        let mut preparing = self
+            .preparing_worktree_turns
+            .lock()
+            .expect("preparing worktree turn map lock should not be poisoned");
+        let Some(preparation) = preparing.get_mut(local_task_id) else {
+            return false;
+        };
+        preparation.cancellation_requested = true;
+        true
+    }
+
+    fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
+        let local_task_id = &turn.local_task_id;
+        self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
+        self.store.update_task(local_task_id, |link| {
+            link.running = false;
+            link.thread_status = "failed".to_owned();
+            link.turn_status = Some("failed".to_owned());
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.remove("queuePosition");
+                runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+            }
+        });
+    }
+
+    fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
+        self.store.update_task(local_task_id, |link| {
+            link.running = false;
+            link.status = "active".to_owned();
+            link.thread_status = "cancelled".to_owned();
+            link.turn_status = Some("cancelled".to_owned());
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.remove("queuePosition");
+            }
+        });
+    }
+
+    async fn cleanup_cancelled_worktree(&self, turn: &SpawnTurnRequest) {
+        let Some(path) = turn
+            .request
+            .project_workspace_path
+            .as_deref()
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+        let worktrees = self.worktrees.clone();
+        let cleanup_path = path.clone();
+        let result =
+            tokio::task::spawn_blocking(move || worktrees.delete(&cleanup_path, false)).await;
+        if let Err(error) = result
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()))
+        {
+            log_executor_event(
+                "cancelled deferred worktree cleanup failed",
+                &[
+                    ("local_task_id", turn.local_task_id.clone()),
+                    ("path", path.display().to_string()),
+                    ("error", error),
+                ],
+            );
+        }
+    }
+
+    pub(super) async fn prepare_and_start_reserved_turn(
+        &self,
+        mut turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        let preparation = self.prepare_deferred_worktree(&mut turn).await;
+        if preparation.is_ok() {
+            {
+                let mut preparing = self
+                    .preparing_worktree_turns
+                    .lock()
+                    .expect("preparing worktree turn map lock should not be poisoned");
+                if !preparing
+                    .get(&turn.local_task_id)
+                    .is_some_and(|preparation| preparation.cancellation_requested)
+                {
+                    preparing.remove(&turn.local_task_id);
+                    self.start_turn(turn);
+                    return Ok(());
+                }
+                preparing.remove(&turn.local_task_id);
+            }
+            self.cleanup_cancelled_worktree(&turn).await;
+            self.mark_deferred_worktree_cancelled(&turn.local_task_id);
+            self.finish_scheduled_turn().await;
+            return Ok(());
+        }
+        let cancelled = {
+            let mut preparing = self
+                .preparing_worktree_turns
+                .lock()
+                .expect("preparing worktree turn map lock should not be poisoned");
+            preparing
+                .remove(&turn.local_task_id)
+                .is_some_and(|preparation| preparation.cancellation_requested)
+        };
+        if cancelled {
+            self.mark_deferred_worktree_cancelled(&turn.local_task_id);
+            self.finish_scheduled_turn().await;
+            return Ok(());
+        }
+        let error = preparation.expect_err("failed preparation should contain an error");
+        self.mark_deferred_worktree_failed(&turn, &error);
+        self.finish_scheduled_turn().await;
+        Err(error)
+    }
+
+    pub(super) fn start_queued_turn(&self, turn: SpawnTurnRequest) {
+        if !turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            self.start_turn(turn);
+            return;
+        }
+        let handler = self.clone();
+        tokio::spawn(async move {
+            let _ = handler.prepare_and_start_reserved_turn(turn).await;
+        });
     }
 
     pub(super) fn start_turn(&self, mut turn: SpawnTurnRequest) {
@@ -595,9 +812,12 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         }
+        for turn in &turns {
+            self.reserve_worktree_preparation(turn);
+        }
         drop(_operation);
         for turn in turns {
-            self.start_turn(turn);
+            self.start_queued_turn(turn);
         }
     }
 
@@ -628,9 +848,12 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         }
+        for turn in &turns {
+            self.reserve_worktree_preparation(turn);
+        }
         drop(_operation);
         for turn in turns {
-            self.start_turn(turn);
+            self.start_queued_turn(turn);
         }
     }
 
@@ -659,9 +882,12 @@ impl RuntimeWorkRpcHandler {
             );
             return;
         }
+        for turn in &turns {
+            self.reserve_worktree_preparation(turn);
+        }
         drop(_operation);
         for turn in turns {
-            self.start_turn(turn);
+            self.start_queued_turn(turn);
         }
     }
 

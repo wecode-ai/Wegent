@@ -231,9 +231,9 @@ jobs:
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v2-
+            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
@@ -458,9 +458,9 @@ jobs:
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v2-
+            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework

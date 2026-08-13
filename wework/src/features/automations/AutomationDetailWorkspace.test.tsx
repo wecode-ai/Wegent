@@ -25,6 +25,7 @@ function AutomationDetailHarness() {
       dirty
       running={false}
       onChange={(key, value) => setDraft(current => ({ ...current, [key]: value }))}
+      onModelChange={vi.fn()}
       onSourceChange={vi.fn()}
       onClose={vi.fn()}
       onSave={vi.fn()}

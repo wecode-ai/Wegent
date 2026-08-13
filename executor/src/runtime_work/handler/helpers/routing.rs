@@ -1,5 +1,5 @@
-fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) {
-    if !is_inactive_running_codex_task(link) {
+fn normalize_inactive_running_task(link: &mut RuntimeTaskLink) {
+    if !is_inactive_running_task(link) {
         return;
     }
     link.status = "active".to_owned();
@@ -45,7 +45,7 @@ fn apply_local_execution_state(
         return;
     }
     if !running {
-        normalize_inactive_running_codex_task(link);
+        normalize_inactive_running_task(link);
         return;
     }
 
@@ -55,8 +55,8 @@ fn apply_local_execution_state(
     link.turn_status = Some("inProgress".to_owned());
 }
 
-fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
-    if !link.running || !is_codex_runtime(&link.runtime) {
+fn is_inactive_running_task(link: &RuntimeTaskLink) -> bool {
+    if !link.running {
         return false;
     }
     let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();

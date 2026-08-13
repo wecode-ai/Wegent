@@ -501,8 +501,12 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new(local_backend_config(), transport.clone())
-        .with_shared_runtime_work_handler(handler, event_tx.subscribe());
+    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        handler,
+        event_tx.subscribe(),
+    );
 
     event_tx
         .send(json!({

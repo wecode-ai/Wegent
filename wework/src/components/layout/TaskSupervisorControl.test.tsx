@@ -92,7 +92,7 @@ describe('TaskSupervisorControl', () => {
     )
     expect(screen.getByTestId('task-supervisor-model')).toHaveTextContent('GPT 5.6 Luna')
     fireEvent.change(screen.getByTestId('task-supervisor-model'), {
-      target: { value: 'public:gpt-5.6-luna' },
+      target: { value: 'public:gpt-5.6-luna:default:0' },
     })
     fireEvent.change(screen.getByTestId('task-supervisor-frequency'), {
       target: { value: '60' },
@@ -114,6 +114,91 @@ describe('TaskSupervisorControl', () => {
         60
       )
     )
+  })
+
+  test('defaults to the last selected supervisor model', () => {
+    render(
+      <TaskSupervisorControl
+        supervisor={null}
+        open
+        defaultModelSelection={{
+          modelName: 'saved-review-model',
+          modelType: 'public',
+        }}
+        onOpenChange={vi.fn()}
+        models={[
+          {
+            name: 'first-model',
+            type: 'public',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+          {
+            name: 'saved-review-model',
+            type: 'public',
+            namespace: 'default',
+            resourceUserId: 0,
+          },
+        ]}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue(
+      'public:saved-review-model:default:0'
+    )
+  })
+
+  test('restores a saved model by its complete cloud identity', () => {
+    render(
+      <TaskSupervisorControl
+        supervisor={null}
+        open
+        defaultModelSelection={{
+          modelName: 'shared-name',
+          modelType: 'public',
+          options: {
+            weworkCloudModelNamespace: 'team-b',
+            weworkCloudModelResourceUserId: '22',
+          },
+        }}
+        onOpenChange={vi.fn()}
+        models={[
+          {
+            name: 'shared-name',
+            type: 'public',
+            namespace: 'team-a',
+            resourceUserId: 11,
+          },
+          {
+            name: 'shared-name',
+            type: 'public',
+            namespace: 'team-b',
+            resourceUserId: 22,
+          },
+        ]}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:shared-name:team-b:22')
+  })
+
+  test('defaults to the last selected supervisor interval', () => {
+    render(
+      <TaskSupervisorControl
+        supervisor={null}
+        open
+        defaultIntervalSeconds={300}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('300')
   })
 
   test('reopens supervision configured before the task starts', () => {
@@ -153,7 +238,7 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-instructions')).toHaveValue(
       'Review from the first turn'
     )
-    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:gpt-5.6-luna')
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:gpt-5.6-luna:default:0')
     expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('60')
     expect(screen.getByTestId('task-supervisor-disable-button')).toBeInTheDocument()
   })
@@ -190,7 +275,7 @@ describe('TaskSupervisorControl', () => {
       />
     )
 
-    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:review-model')
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('public:review-model:default:0')
   })
 
   test('renders configuration in an accessible dialog', () => {
@@ -239,6 +324,27 @@ describe('TaskSupervisorControl', () => {
     expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
       'workbench.supervisor_aligned'
     )
+  })
+
+  test('shows the next scheduled check and runs supervision from the status row', async () => {
+    const onRunNow = vi.fn().mockResolvedValue(supervisor)
+    render(
+      <TaskSupervisorStatusButton
+        supervisor={{
+          ...supervisor,
+          lastEvaluatedAt: Date.now(),
+          intervalSeconds: 30,
+        }}
+        onClick={vi.fn()}
+        onRunNow={onRunNow}
+      />
+    )
+
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent(
+      'workbench.supervisor_next_check'
+    )
+    fireEvent.click(screen.getByTestId('task-supervisor-status-run-now-button'))
+    await waitFor(() => expect(onRunNow).toHaveBeenCalledOnce())
   })
 
   test('shows the next scheduled check and can run immediately', async () => {

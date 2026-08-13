@@ -38,6 +38,7 @@ import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitiali
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createHttpClient } from '@/api/http'
@@ -271,6 +272,7 @@ function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              syncRemoteProjects={active}
             >
               {onOpenWeworkForAppshot && active && !iframe ? (
                 <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
@@ -720,6 +722,7 @@ function AppShell() {
             token={cloudConnection.token}
           />
         ) : null}
+        <CloudModelCatalogSyncDialogHost />
         <div
           data-testid="app-route-host"
           className={cn(

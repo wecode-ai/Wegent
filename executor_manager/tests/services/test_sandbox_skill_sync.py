@@ -35,6 +35,74 @@ def _mock_client(mocker, handler):
     )
 
 
+def test_skill_fingerprint_is_stable_across_ordering():
+    """Equivalent Skill plans must produce the same deployment fingerprint."""
+    first = ResolvedTaskSkills(
+        team_namespace="team-a",
+        skills=["sandbox", "analyzer"],
+        preload_skills=["sandbox"],
+        skill_refs={
+            "sandbox": {
+                "skill_id": 1,
+                "namespace": "default",
+                "content_hash": "sha256:a",
+            },
+            "analyzer": {
+                "skill_id": 2,
+                "namespace": "default",
+                "content_hash": "sha256:b",
+            },
+        },
+        required_skills=["analyzer", "sandbox"],
+    )
+    second = ResolvedTaskSkills(
+        team_namespace="team-a",
+        skills=["analyzer", "sandbox"],
+        preload_skills=["sandbox"],
+        skill_refs={
+            "analyzer": {
+                "content_hash": "sha256:b",
+                "namespace": "default",
+                "skill_id": 2,
+            },
+            "sandbox": {
+                "content_hash": "sha256:a",
+                "namespace": "default",
+                "skill_id": 1,
+            },
+        },
+        required_skills=["sandbox", "analyzer"],
+    )
+
+    assert first.fingerprint == second.fingerprint
+
+
+def test_skill_fingerprint_changes_with_content_hash():
+    """A hot-updated Skill package must invalidate the deployment fingerprint."""
+    old = ResolvedTaskSkills(
+        skills=["analyzer"],
+        skill_refs={
+            "analyzer": {
+                "skill_id": 2,
+                "namespace": "default",
+                "content_hash": "sha256:old",
+            }
+        },
+    )
+    new = ResolvedTaskSkills(
+        skills=["analyzer"],
+        skill_refs={
+            "analyzer": {
+                "skill_id": 2,
+                "namespace": "default",
+                "content_hash": "sha256:new",
+            }
+        },
+    )
+
+    assert old.fingerprint != new.fingerprint
+
+
 @pytest.mark.asyncio
 async def test_resolve_fetches_authoritative_task_skills(mocker):
     """Resolution should forward auth and preserve all Skill reference fields."""

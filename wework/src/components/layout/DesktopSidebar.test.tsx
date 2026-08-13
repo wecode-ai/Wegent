@@ -23,6 +23,10 @@ import {
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import {
+  dispatchWorkbenchSidebarPaneDragCancel,
+  dispatchWorkbenchSidebarPaneDragStart,
+} from './workbenchPaneDrag'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -1432,6 +1436,43 @@ describe('DesktopSidebar', () => {
     expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
+  })
+
+  test('locks native sidebar scrolling while a task drag is outside the sidebar', () => {
+    renderSidebar()
+
+    const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
+    vi.spyOn(scrollContainer, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 280,
+      bottom: 700,
+      width: 280,
+      height: 700,
+      toJSON: () => ({}),
+    } as DOMRect)
+    scrollContainer.scrollTop = 120
+
+    act(() => {
+      dispatchWorkbenchSidebarPaneDragStart({ paneKey: 'task:1', title: 'Task 1' })
+      fireEvent.pointerMove(window, { clientX: 600, clientY: 680 })
+    })
+
+    expect(scrollContainer).toHaveClass('overflow-y-hidden')
+    scrollContainer.scrollTop = 240
+    fireEvent.scroll(scrollContainer)
+    expect(scrollContainer.scrollTop).toBe(120)
+
+    act(() => {
+      fireEvent.pointerMove(window, { clientX: 120, clientY: 680 })
+    })
+    expect(scrollContainer).toHaveClass('overflow-y-auto')
+
+    act(() => {
+      dispatchWorkbenchSidebarPaneDragCancel()
+    })
   })
 
   test('matches Codex sidebar text emphasis levels', () => {

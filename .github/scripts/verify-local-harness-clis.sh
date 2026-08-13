@@ -22,7 +22,7 @@ verify_cli() {
   fi
 }
 
-verify_cli claude 2.1.199
+verify_cli claude 2.1.228
 verify_cli kimi 0.35.0
 verify_cli opencode 1.18.16
 

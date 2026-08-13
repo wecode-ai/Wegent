@@ -34,32 +34,22 @@ impl HeartbeatConfig {
 
         let heartbeat_id = env_value("HEARTBEAT_ID").or_else(|| env_value("SANDBOX_ID"))?;
         let heartbeat_type = env_value("HEARTBEAT_TYPE").unwrap_or_else(|| "sandbox".to_owned());
-        let heartbeat_url = build_heartbeat_url(&heartbeat_id, &heartbeat_type)?;
-        let interval = Duration::from_secs(env_u64(
-            "HEARTBEAT_INTERVAL",
-            DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
-        ));
-        let timeout = Duration::from_secs(DEFAULT_HEARTBEAT_TIMEOUT_SECONDS);
-
-        Some(Self {
-            heartbeat_id,
-            heartbeat_type,
-            heartbeat_url,
-            interval,
-            timeout,
-        })
+        Self::for_runtime(&heartbeat_id, &heartbeat_type)
     }
 
-    fn for_task(task_id: &str) -> Option<Self> {
-        let heartbeat_id = task_id.trim();
+    fn for_runtime(heartbeat_id: &str, heartbeat_type: &str) -> Option<Self> {
+        let heartbeat_id = heartbeat_id.trim();
         if heartbeat_id.is_empty() {
             return None;
         }
-        let heartbeat_type = "task".to_owned();
-        let heartbeat_url = build_heartbeat_url(heartbeat_id, &heartbeat_type)?;
+        let heartbeat_type = heartbeat_type.trim();
+        if !matches!(heartbeat_type, "sandbox" | "task") {
+            return None;
+        }
+        let heartbeat_url = build_heartbeat_url(heartbeat_id, heartbeat_type)?;
         Some(Self {
             heartbeat_id: heartbeat_id.to_owned(),
-            heartbeat_type,
+            heartbeat_type: heartbeat_type.to_owned(),
             heartbeat_url,
             interval: Duration::from_secs(env_u64(
                 "HEARTBEAT_INTERVAL",
@@ -71,46 +61,56 @@ impl HeartbeatConfig {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct TaskHeartbeatController {
-    active: Arc<Mutex<Option<ActiveTaskHeartbeat>>>,
+pub struct RuntimeHeartbeatController {
+    active: Arc<Mutex<Option<ActiveRuntimeHeartbeat>>>,
 }
 
 #[derive(Debug)]
-struct ActiveTaskHeartbeat {
-    task_id: String,
+struct ActiveRuntimeHeartbeat {
+    heartbeat_id: String,
+    heartbeat_type: String,
     handle: JoinHandle<()>,
 }
 
-impl Drop for ActiveTaskHeartbeat {
+impl Drop for ActiveRuntimeHeartbeat {
     fn drop(&mut self) {
         self.handle.abort();
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskHeartbeatActivationError {
-    EmptyTaskId,
+pub enum RuntimeHeartbeatActivationError {
+    EmptyHeartbeatId,
+    InvalidHeartbeatType(String),
     MissingEndpoint,
-    TaskConflict {
-        active_task_id: String,
-        requested_task_id: String,
+    BindingConflict {
+        active_heartbeat_id: String,
+        active_heartbeat_type: String,
+        requested_heartbeat_id: String,
+        requested_heartbeat_type: String,
     },
     StateUnavailable,
 }
 
-impl fmt::Display for TaskHeartbeatActivationError {
+impl fmt::Display for RuntimeHeartbeatActivationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyTaskId => formatter.write_str("task_id is required"),
+            Self::EmptyHeartbeatId => formatter.write_str("heartbeat_id is required"),
+            Self::InvalidHeartbeatType(heartbeat_type) => {
+                write!(formatter, "unsupported heartbeat_type: {heartbeat_type}")
+            }
             Self::MissingEndpoint => {
                 formatter.write_str("executor heartbeat endpoint is not configured")
             }
-            Self::TaskConflict {
-                active_task_id,
-                requested_task_id,
+            Self::BindingConflict {
+                active_heartbeat_id,
+                active_heartbeat_type,
+                requested_heartbeat_id,
+                requested_heartbeat_type,
             } => write!(
                 formatter,
-                "executor is bound to task {active_task_id}, not {requested_task_id}"
+                "executor heartbeat is bound to {active_heartbeat_type} {active_heartbeat_id}, \
+                 not {requested_heartbeat_type} {requested_heartbeat_id}"
             ),
             Self::StateUnavailable => {
                 formatter.write_str("executor task binding state is unavailable")
@@ -119,47 +119,80 @@ impl fmt::Display for TaskHeartbeatActivationError {
     }
 }
 
-impl std::error::Error for TaskHeartbeatActivationError {}
+impl std::error::Error for RuntimeHeartbeatActivationError {}
 
-impl TaskHeartbeatController {
-    pub fn activate(&self, task_id: &str) -> Result<(), TaskHeartbeatActivationError> {
-        let requested_task_id = task_id.trim();
-        if requested_task_id.is_empty() {
-            return Err(TaskHeartbeatActivationError::EmptyTaskId);
+impl RuntimeHeartbeatController {
+    pub fn from_env() -> Option<Self> {
+        let config = HeartbeatConfig::from_env();
+        if config.is_none() && !warm_pool_mode_enabled() {
+            return None;
+        }
+        let controller = Self::default();
+        if let Some(config) = config {
+            controller.activate_config(config).ok()?;
+        }
+        Some(controller)
+    }
+
+    pub fn activate(
+        &self,
+        heartbeat_id: &str,
+        heartbeat_type: &str,
+    ) -> Result<(), RuntimeHeartbeatActivationError> {
+        let requested_heartbeat_id = heartbeat_id.trim();
+        if requested_heartbeat_id.is_empty() {
+            return Err(RuntimeHeartbeatActivationError::EmptyHeartbeatId);
+        }
+        let requested_heartbeat_type = heartbeat_type.trim();
+        if !matches!(requested_heartbeat_type, "sandbox" | "task") {
+            return Err(RuntimeHeartbeatActivationError::InvalidHeartbeatType(
+                requested_heartbeat_type.to_owned(),
+            ));
         }
 
+        let config = HeartbeatConfig::for_runtime(requested_heartbeat_id, requested_heartbeat_type)
+            .ok_or(RuntimeHeartbeatActivationError::MissingEndpoint)?;
+        self.activate_config(config)
+    }
+
+    fn activate_config(
+        &self,
+        config: HeartbeatConfig,
+    ) -> Result<(), RuntimeHeartbeatActivationError> {
         let mut active = self
             .active
             .lock()
-            .map_err(|_| TaskHeartbeatActivationError::StateUnavailable)?;
+            .map_err(|_| RuntimeHeartbeatActivationError::StateUnavailable)?;
         if let Some(active) = active.as_ref() {
-            if active.task_id == requested_task_id {
+            if active.heartbeat_id == config.heartbeat_id
+                && active.heartbeat_type == config.heartbeat_type
+            {
                 return Ok(());
             }
-            return Err(TaskHeartbeatActivationError::TaskConflict {
-                active_task_id: active.task_id.clone(),
-                requested_task_id: requested_task_id.to_owned(),
+            return Err(RuntimeHeartbeatActivationError::BindingConflict {
+                active_heartbeat_id: active.heartbeat_id.clone(),
+                active_heartbeat_type: active.heartbeat_type.clone(),
+                requested_heartbeat_id: config.heartbeat_id,
+                requested_heartbeat_type: config.heartbeat_type,
             });
         }
 
-        let config = HeartbeatConfig::for_task(requested_task_id)
-            .ok_or(TaskHeartbeatActivationError::MissingEndpoint)?;
+        let heartbeat_id = config.heartbeat_id.clone();
+        let heartbeat_type = config.heartbeat_type.clone();
         let handle = start_heartbeat(config);
-        *active = Some(ActiveTaskHeartbeat {
-            task_id: requested_task_id.to_owned(),
+        *active = Some(ActiveRuntimeHeartbeat {
+            heartbeat_id,
+            heartbeat_type,
             handle,
         });
         Ok(())
     }
 }
 
-pub fn executor_warm_pool_mode_enabled() -> bool {
-    env_value("EXECUTOR_WARMPOOL_MODE").is_some_and(|value| value.eq_ignore_ascii_case("true"))
-}
-
-pub fn start_heartbeat_from_env() -> Option<JoinHandle<()>> {
-    let config = HeartbeatConfig::from_env()?;
-    Some(start_heartbeat(config))
+fn warm_pool_mode_enabled() -> bool {
+    ["WARM_POOL_MODE", "EXECUTOR_WARMPOOL_MODE"]
+        .into_iter()
+        .any(|key| env_value(key).is_some_and(|value| value.eq_ignore_ascii_case("true")))
 }
 
 pub fn start_heartbeat(config: HeartbeatConfig) -> JoinHandle<()> {
@@ -296,8 +329,8 @@ fn truncate_for_log(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        callback_base_url, executor_warm_pool_mode_enabled, HeartbeatConfig,
-        TaskHeartbeatActivationError, TaskHeartbeatController,
+        callback_base_url, HeartbeatConfig, RuntimeHeartbeatActivationError,
+        RuntimeHeartbeatController,
     };
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -383,19 +416,18 @@ mod tests {
     }
 
     #[test]
-    fn executor_warm_pool_mode_requires_explicit_executor_flag() {
+    fn generic_warm_pool_mode_enables_dynamic_runtime_heartbeat() {
         let _lock = env_lock();
         let _generic = EnvGuard::set("WARM_POOL_MODE", "true");
         let _executor = EnvGuard::remove("EXECUTOR_WARMPOOL_MODE");
+        let _heartbeat_id = EnvGuard::remove("HEARTBEAT_ID");
+        let _sandbox_id = EnvGuard::remove("SANDBOX_ID");
 
-        assert!(!executor_warm_pool_mode_enabled());
-
-        let _executor = EnvGuard::set("EXECUTOR_WARMPOOL_MODE", "true");
-        assert!(executor_warm_pool_mode_enabled());
+        assert!(RuntimeHeartbeatController::from_env().is_some());
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn dynamic_task_heartbeat_is_idempotent_and_rejects_another_task() {
+    async fn dynamic_runtime_heartbeat_is_idempotent_and_rejects_another_binding() {
         let _lock = env_lock();
         let _base = EnvGuard::set(
             "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",
@@ -403,29 +435,31 @@ mod tests {
         );
         let _callback = EnvGuard::remove("CALLBACK_URL");
         let _interval = EnvGuard::set("HEARTBEAT_INTERVAL", "3600");
-        let controller = TaskHeartbeatController::default();
+        let controller = RuntimeHeartbeatController::default();
 
-        assert_eq!(controller.activate("42"), Ok(()));
-        assert_eq!(controller.activate("42"), Ok(()));
+        assert_eq!(controller.activate("42", "sandbox"), Ok(()));
+        assert_eq!(controller.activate("42", "sandbox"), Ok(()));
         assert_eq!(
-            controller.activate("43"),
-            Err(TaskHeartbeatActivationError::TaskConflict {
-                active_task_id: "42".to_owned(),
-                requested_task_id: "43".to_owned(),
+            controller.activate("43", "task"),
+            Err(RuntimeHeartbeatActivationError::BindingConflict {
+                active_heartbeat_id: "42".to_owned(),
+                active_heartbeat_type: "sandbox".to_owned(),
+                requested_heartbeat_id: "43".to_owned(),
+                requested_heartbeat_type: "task".to_owned(),
             })
         );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn dynamic_task_heartbeat_requires_manager_endpoint() {
+    async fn dynamic_runtime_heartbeat_requires_manager_endpoint() {
         let _lock = env_lock();
         let _base = EnvGuard::remove("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL");
         let _callback = EnvGuard::remove("CALLBACK_URL");
-        let controller = TaskHeartbeatController::default();
+        let controller = RuntimeHeartbeatController::default();
 
         assert_eq!(
-            controller.activate("42"),
-            Err(TaskHeartbeatActivationError::MissingEndpoint)
+            controller.activate("42", "sandbox"),
+            Err(RuntimeHeartbeatActivationError::MissingEndpoint)
         );
     }
 }

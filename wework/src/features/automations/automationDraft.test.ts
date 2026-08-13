@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import {
+  automationModelFields,
   automationDraftFromAutomation,
   automationWorkspaceTarget,
   buildAutomationProjectOptions,
@@ -10,6 +11,40 @@ import {
   initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
 } from './automationDraft'
+
+describe('automationModelFields', () => {
+  test('preserves the complete cloud model identity for execution', () => {
+    expect(
+      automationModelFields(
+        {
+          name: 'desktop-e2e-public-model',
+          type: 'public',
+          displayName: 'Desktop E2E Public Model',
+          provider: 'openai',
+          modelId: 'desktop-e2e-public-upstream-model',
+          namespace: 'default',
+          resourceUserId: 0,
+          config: {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+          },
+          runtime: { family: 'openai.openai-responses' },
+        },
+        { reasoningEffort: 'medium' }
+      )
+    ).toEqual({
+      modelId: 'desktop-e2e-public-model',
+      modelType: 'public',
+      modelOptions: {
+        reasoningEffort: 'medium',
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+      },
+    })
+  })
+})
 
 describe('automationWorkspaceTarget', () => {
   test('uses a selected project workspace', () => {
@@ -52,9 +87,11 @@ describe('buildAutomationProjectOptions', () => {
 
     expect(options).toEqual([
       {
-        key: 'local-device\u0000local:wework',
+        key: 'local-device\u0000local:wework\u0000/repo/wework',
         name: 'wework',
         workspacePath: '/repo/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
       },
     ])
   })
@@ -70,9 +107,41 @@ describe('buildAutomationProjectOptions', () => {
 
     expect(buildAutomationProjectOptions([runtimeProject], 'cloud-device')).toEqual([
       {
-        key: 'local-device\u0000local:wework',
+        key: 'local-device\u0000local:wework\u0000/cloud/wework',
         name: 'wework',
         workspacePath: '/cloud/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
+      },
+    ])
+  })
+
+  test('keeps managed worktrees selectable alongside the primary project workspace', () => {
+    const runtimeProject = project('wework', ['/repo/wework'], ['/repo/wework'])
+    runtimeProject.deviceWorkspaces.push({
+      deviceId: 'local-device',
+      available: true,
+      workspacePath: '/worktrees/task-42/wework',
+      workspaceKind: 'worktree',
+      worktreeId: 'task-42',
+      label: 'feature/automation',
+      tasks: [],
+    })
+
+    expect(buildAutomationProjectOptions([runtimeProject], 'local-device')).toEqual([
+      {
+        key: 'local-device\u0000local:wework\u0000/repo/wework',
+        name: 'wework',
+        workspacePath: '/repo/wework',
+        workspaceKind: undefined,
+        workspaceLabel: null,
+      },
+      {
+        key: 'local-device\u0000local:wework\u0000/worktrees/task-42/wework',
+        name: 'wework',
+        workspacePath: '/worktrees/task-42/wework',
+        workspaceKind: 'worktree',
+        workspaceLabel: 'feature/automation',
       },
     ])
   })
