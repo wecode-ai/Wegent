@@ -26,6 +26,7 @@ export interface BrowserAnnotationInjectionStrings {
 export interface BrowserAnnotationInjectionOptions {
   browserTabId?: string
   uiFontSize?: number
+  isDark?: boolean
   strings?: Partial<BrowserAnnotationInjectionStrings>
 }
 
@@ -52,11 +53,13 @@ const defaultStrings: BrowserAnnotationInjectionStrings = {
 export function browserAnnotationInjectionScript({
   browserTabId = 'workspace-browser',
   uiFontSize = DEFAULT_UI_FONT_SIZE,
+  isDark = false,
   strings = {},
 }: BrowserAnnotationInjectionOptions = {}) {
   const typography = resolveUiTypographyVariables(uiFontSize)
   const config = JSON.stringify({
     browserTabId,
+    isDark,
     strings: { ...defaultStrings, ...strings, properties: strings.properties ?? {} },
   })
 
@@ -79,6 +82,25 @@ export function browserAnnotationInjectionScript({
     annotations: [], nextNumber: 1, revision: 0, layer: null, hoverBox: null, hoverElement: null,
     activeEditor: null, activeInput: null, attached: false, animationFrame: null, resizeObserver: null,
     baselineByElement: new Map(), blocker: null,
+  };
+
+  const dark = config.isDark === true;
+  const C = {
+    surface: dark ? '#1c1f24' : '#ffffff',
+    foreground: dark ? '#f1f5f9' : '#171717',
+    secondary: dark ? '#cbd5e1' : '#5d5d5d',
+    tertiary: dark ? '#94a3b8' : '#9ca3af',
+    border: dark ? 'rgba(255,255,255,.14)' : 'rgba(0,0,0,.12)',
+    borderStrong: dark ? 'rgba(255,255,255,.2)' : 'rgba(0,0,0,.14)',
+    divider: dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.08)',
+    hoverBg: dark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)',
+    handleBg: dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.04)',
+    chipBg: dark ? 'rgba(96,165,250,.22)' : 'rgba(22,131,255,.1)',
+    chipBorder: dark ? 'rgba(96,165,250,.5)' : 'rgba(22,131,255,.42)',
+    inputBg: dark ? '#171a1f' : '#ffffff',
+    inverseBg: dark ? '#f1f5f9' : '#171717',
+    inverseFg: dark ? '#171a1f' : '#ffffff',
+    shadow: dark ? '0 12px 32px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.08)' : '0 12px 32px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.04)',
   };
 
   const isLayerTarget = target => target instanceof Element && target.closest('[data-wework-annotation-layer]');
@@ -195,7 +217,7 @@ export function browserAnnotationInjectionScript({
   };
   const currentValue = (element, property) => property === 'text' ? (element?.textContent || '') : element ? getComputedStyle(element).getPropertyValue(property).trim() : '';
   const toHexColor = value => { const match = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(String(value)); if (match) return '#' + [match[1], match[2], match[3]].map(n => Number(n).toString(16).padStart(2, '0')).join(''); return /^#[0-9a-f]{6}$/i.test(String(value)) ? String(value) : '#000000'; };
-  const dialogButton = (text, testId, primary = false) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.dataset.weworkAnnotation = testId; style(button, { height: '28px', border: primary ? '0' : '1px solid rgba(0,0,0,.14)', borderRadius: '8px', padding: '0 12px', background: primary ? '#171717' : 'white', color: primary ? 'white' : '#171717', cursor: 'pointer', fontSize: ${JSON.stringify(typography['--text-sm'])}, fontWeight: '500' }); return button; };
+  const dialogButton = (text, testId, primary = false) => { const button = document.createElement('button'); button.type = 'button'; button.textContent = text; button.dataset.weworkAnnotation = testId; style(button, { height: '28px', border: primary ? '0' : '1px solid ' + C.borderStrong, borderRadius: '8px', padding: '0 12px', background: primary ? C.inverseBg : C.surface, color: primary ? C.inverseFg : C.foreground, cursor: 'pointer', fontSize: ${JSON.stringify(typography['--text-sm'])}, fontWeight: '500' }); return button; };
   const deleteAnnotation = annotation => { const element = annotation.element; state.annotations = state.annotations.filter(item => item.id !== annotation.id); annotation.marker?.remove(); replayElement(element); bumpRevision(); closeEditor(); schedulePositionUpdate(); };
   const showEditor = (element, annotation, clickPoint) => {
     closeEditor(); clearHover();
@@ -205,12 +227,12 @@ export function browserAnnotationInjectionScript({
     const editorWidth = 294;
     const editorWidthExpanded = 344;
     const editor = document.createElement('div'); editor.dataset.weworkAnnotation = 'editor';
-    style(editor, { position: 'fixed', left: Math.min(Math.max(8, rect.x + 8), Math.max(8, window.innerWidth - (editorWidthExpanded + 16))) + 'px', top: Math.min(Math.max(8, rect.y + 28), Math.max(8, window.innerHeight - 72)) + 'px', width: editorWidth + 'px', maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 16px)', display: 'flex', flexDirection: 'column', borderRadius: '22px', border: '1px solid rgba(0,0,0,.12)', background: 'white', boxShadow: '0 12px 32px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.04)', boxSizing: 'border-box', pointerEvents: 'auto', overflow: 'hidden', zIndex: '2' });
-    const adjust = document.createElement('button'); adjust.type = 'button'; adjust.dataset.weworkAnnotation = 'adjust-toggle'; adjust.title = config.strings.adjust; adjust.setAttribute('aria-label', config.strings.adjust); adjust.innerHTML = svgIcon(icons.adjust, 16); style(adjust, { position: 'absolute', top: '10px', left: '12px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '6px', background: 'transparent', color: '#5d5d5d', cursor: 'pointer', transition: 'background .18s ease', zIndex: '2' });
+    style(editor, { position: 'fixed', left: Math.min(Math.max(8, rect.x + 8), Math.max(8, window.innerWidth - (editorWidthExpanded + 16))) + 'px', top: Math.min(Math.max(8, rect.y + 28), Math.max(8, window.innerHeight - 72)) + 'px', width: editorWidth + 'px', maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 16px)', display: 'flex', flexDirection: 'column', borderRadius: '22px', border: '1px solid ' + C.border, background: C.surface, color: C.foreground, boxShadow: C.shadow, boxSizing: 'border-box', pointerEvents: 'auto', overflow: 'hidden', zIndex: '2' });
+    const adjust = document.createElement('button'); adjust.type = 'button'; adjust.dataset.weworkAnnotation = 'adjust-toggle'; adjust.title = config.strings.adjust; adjust.setAttribute('aria-label', config.strings.adjust); adjust.innerHTML = svgIcon(icons.adjust, 16); style(adjust, { position: 'absolute', top: '10px', left: '12px', width: '24px', height: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '6px', background: 'transparent', color: C.secondary, cursor: 'pointer', transition: 'background .18s ease', zIndex: '2' });
     const content = document.createElement('div'); style(content, { position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: isEdit ? 'flex-start' : 'center', minHeight: '44px', overflowY: 'auto', maxHeight: 'calc(100vh - 32px)' });
     const inputShell = document.createElement('div'); style(inputShell, { padding: isEdit ? '12px 16px 8px 48px' : '8px 52px 8px 48px', boxSizing: 'border-box', display: 'flex', alignItems: 'center' });
     const uiFont = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif";
-    const input = document.createElement('textarea'); input.placeholder = config.strings.placeholder; input.value = annotation?.comment || ''; input.dataset.weworkAnnotation = 'comment-input'; input.rows = 1; input.setAttribute('aria-label', config.strings.comment || 'Comment'); style(input, { width: '100%', minHeight: '24px', maxHeight: '96px', border: '0', outline: '0', resize: 'none', padding: '0', fontSize: ${JSON.stringify(typography['--text-base'])}, lineHeight: '24px', background: 'transparent', fontFamily: uiFont, boxSizing: 'border-box', display: 'block' });
+    const input = document.createElement('textarea'); input.placeholder = config.strings.placeholder; input.value = annotation?.comment || ''; input.dataset.weworkAnnotation = 'comment-input'; input.rows = 1; input.setAttribute('aria-label', config.strings.comment || 'Comment'); style(input, { width: '100%', minHeight: '24px', maxHeight: '96px', border: '0', outline: '0', resize: 'none', padding: '0', fontSize: ${JSON.stringify(typography['--text-base'])}, lineHeight: '24px', background: 'transparent', color: C.foreground, fontFamily: uiFont, boxSizing: 'border-box', display: 'block' });
     inputShell.appendChild(input);
     const autoGrow = () => { input.style.height = 'auto'; input.style.height = Math.min(96, Math.max(24, input.scrollHeight)) + 'px'; };
     const initialAdjustments = annotation ? annotation.adjustments.map(item => ({ ...item })) : [];
@@ -233,12 +255,12 @@ export function browserAnnotationInjectionScript({
     const renderAdjustments = () => {
       designStack?.remove();
       designStack = document.createElement('div'); designStack.dataset.weworkAnnotation = 'adjustments';
-      style(designStack, { display: 'flex', flexDirection: 'column', width: '100%', borderTop: '1px solid rgba(0,0,0,.08)' });
+      style(designStack, { display: 'flex', flexDirection: 'column', width: '100%', borderTop: '1px solid ' + C.divider });
       const dragHandle = document.createElement('div'); dragHandle.dataset.weworkAnnotation = 'adjustments-handle';
-      style(dragHandle, { display: 'flex', minWidth: '0', cursor: 'grab', touchAction: 'none', alignItems: 'center', justifyContent: 'space-between', gap: '12px', background: 'rgba(0,0,0,.04)', padding: '8px 16px', fontSize: ${JSON.stringify(typography['--text-sm'])}, color: '#171717', userSelect: 'none', fontFamily: uiFont });
+      style(dragHandle, { display: 'flex', minWidth: '0', cursor: 'grab', touchAction: 'none', alignItems: 'center', justifyContent: 'space-between', gap: '12px', background: C.handleBg, padding: '8px 16px', fontSize: ${JSON.stringify(typography['--text-sm'])}, color: C.foreground, userSelect: 'none', fontFamily: uiFont });
       const targetLabel = document.createElement('span'); targetLabel.textContent = element ? element.tagName.toLowerCase() : config.strings.selectedItems;
       style(targetLabel, { minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '500', fontFamily: uiFont });
-      const grip = document.createElement('span'); grip.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9.5" cy="5.5" r="1.5"/><circle cx="9.5" cy="12" r="1.5"/><circle cx="9.5" cy="18.5" r="1.5"/><circle cx="14.5" cy="5.5" r="1.5"/><circle cx="14.5" cy="12" r="1.5"/><circle cx="14.5" cy="18.5" r="1.5"/></svg>'; style(grip, { display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', flexShrink: '0' });
+      const grip = document.createElement('span'); grip.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9.5" cy="5.5" r="1.5"/><circle cx="9.5" cy="12" r="1.5"/><circle cx="9.5" cy="18.5" r="1.5"/><circle cx="14.5" cy="5.5" r="1.5"/><circle cx="14.5" cy="12" r="1.5"/><circle cx="14.5" cy="18.5" r="1.5"/></svg>'; style(grip, { display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.tertiary, flexShrink: '0' });
       dragHandle.append(targetLabel, grip);
       let editorDrag = null;
       dragHandle.addEventListener('pointerdown', event => { if (event.button !== 0) return; event.preventDefault(); dragHandle.setPointerCapture?.(event.pointerId); editorDrag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, left: parseFloat(editor.style.left) || 0, top: parseFloat(editor.style.top) || 0 }; });
@@ -248,17 +270,17 @@ export function browserAnnotationInjectionScript({
       designStack.appendChild(dragHandle);
       const scroll = document.createElement('div');
       style(scroll, { maxHeight: '216px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 16px' });
-      if (!targetAvailable) { const note = document.createElement('p'); note.textContent = config.strings.targetUnavailable; style(note, { margin: '0', color: '#5d5d5d', fontSize: ${JSON.stringify(typography['--text-xs'])}, fontFamily: uiFont }); scroll.appendChild(note); }
+      if (!targetAvailable) { const note = document.createElement('p'); note.textContent = config.strings.targetUnavailable; style(note, { margin: '0', color: C.secondary, fontSize: ${JSON.stringify(typography['--text-xs'])}, fontFamily: uiFont }); scroll.appendChild(note); }
       const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-      const uxBox = width => { const box = document.createElement('span'); box.className = 'wework-annotation-box'; style(box, { display: 'flex', minHeight: '28px', minWidth: '0', width: width, maxWidth: '100%', alignItems: 'center', gap: '6px', padding: '0 8px', borderRadius: '8px', border: '1px solid rgba(0,0,0,.14)', background: 'white', boxShadow: '0 1px 2px rgba(0,0,0,.05)', boxSizing: 'border-box', transition: 'border-color .15s ease, box-shadow .15s ease' }); return box; };
-      const innerField = field => { style(field, { minWidth: '0', appearance: 'none', border: '0', background: 'transparent', fontFamily: monoFont, fontSize: ${JSON.stringify(typography['--text-xs'])}, color: '#171717', outline: 'none', height: '28px', width: '100%', boxSizing: 'border-box', padding: '0' }); field.classList.add('wework-annotation-input'); };
-      const resetBtn = (property, edited) => { const reset = document.createElement('button'); reset.type = 'button'; reset.dataset.weworkAnnotation = 'reset-' + property; reset.innerHTML = svgIcon(icons.reset, 12, true); reset.setAttribute('aria-label', (config.strings.resetProperty || 'Reset {property}').replace('{property}', config.strings.properties[property] || property)); style(reset, { display: edited ? 'flex' : 'none', width: '20px', height: '20px', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '999px', background: 'transparent', color: '#9ca3af', cursor: 'pointer', flexShrink: '0' }); reset.addEventListener('click', () => resetDraftProperty(property)); return reset; };
+      const uxBox = width => { const box = document.createElement('span'); box.className = 'wework-annotation-box'; style(box, { display: 'flex', minHeight: '28px', minWidth: '0', width: width, maxWidth: '100%', alignItems: 'center', gap: '6px', padding: '0 8px', borderRadius: '8px', border: '1px solid ' + C.borderStrong, background: C.inputBg, boxShadow: '0 1px 2px rgba(0,0,0,.05)', boxSizing: 'border-box', transition: 'border-color .15s ease, box-shadow .15s ease' }); return box; };
+      const innerField = field => { style(field, { minWidth: '0', appearance: 'none', border: '0', background: 'transparent', fontFamily: monoFont, fontSize: ${JSON.stringify(typography['--text-xs'])}, color: C.foreground, outline: 'none', height: '28px', width: '100%', boxSizing: 'border-box', padding: '0' }); field.classList.add('wework-annotation-input'); };
+      const resetBtn = (property, edited) => { const reset = document.createElement('button'); reset.type = 'button'; reset.dataset.weworkAnnotation = 'reset-' + property; reset.innerHTML = svgIcon(icons.reset, 12, true); reset.setAttribute('aria-label', (config.strings.resetProperty || 'Reset {property}').replace('{property}', config.strings.properties[property] || property)); style(reset, { display: edited ? 'flex' : 'none', width: '20px', height: '20px', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '999px', background: 'transparent', color: C.tertiary, cursor: 'pointer', flexShrink: '0' }); reset.addEventListener('click', () => resetDraftProperty(property)); return reset; };
       const buildRow = (property, controlNodes) => {
         const edited = draftAdjustments.find(item => item.property === property);
         const row = document.createElement('div'); row.dataset.weworkAnnotation = 'adjustment-row'; row.dataset.property = property;
         style(row, { display: 'flex', alignItems: 'center', gap: '10px', minHeight: '28px' });
         const label = document.createElement('span'); label.textContent = config.strings.properties[property] || property;
-        style(label, { flex: '0 0 108px', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#5d5d5d', fontSize: ${JSON.stringify(typography['--text-sm'])}, textAlign: 'left', fontFamily: uiFont });
+        style(label, { flex: '0 0 108px', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.secondary, fontSize: ${JSON.stringify(typography['--text-sm'])}, textAlign: 'left', fontFamily: uiFont });
         const control = document.createElement('span'); style(control, { flex: '1', minWidth: '0', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' });
         controlNodes(edited).forEach(node => control.appendChild(node));
         row.append(label, control);
@@ -280,7 +302,7 @@ export function browserAnnotationInjectionScript({
           const box = uxBox('192px');
           const current = targetAvailable ? currentValue(element, property) : '';
           const picker = document.createElement('input'); picker.type = 'color'; picker.value = toHexColor(edited?.after || current); picker.disabled = !targetAvailable; picker.setAttribute('aria-label', config.strings.properties[property] || property);
-          style(picker, { width: '20px', height: '20px', padding: '0', border: '1px solid rgba(0,0,0,.14)', borderRadius: '6px', background: 'transparent', cursor: 'pointer', flexShrink: '0', appearance: 'none' });
+          style(picker, { width: '20px', height: '20px', padding: '0', border: '1px solid ' + C.borderStrong, borderRadius: '6px', background: 'transparent', cursor: 'pointer', flexShrink: '0', appearance: 'none' });
           const field = document.createElement('input'); field.type = 'text'; field.dataset.weworkAnnotation = 'adjustment-' + property; field.disabled = !targetAvailable; field.value = edited?.after || current; field.setAttribute('aria-label', config.strings.properties[property] || property); field.setAttribute('dir', 'ltr');
           innerField(field);
           field.addEventListener('input', () => updateDraft(property, field.value));
@@ -297,7 +319,7 @@ export function browserAnnotationInjectionScript({
           field.value = edited?.after?.replace(/px$/, '') || current.replace(/px$/, ''); if (property === 'opacity') { field.min = '0'; field.max = '1'; field.step = '.05'; }
           innerField(field); field.style.textAlign = 'left'; field.style.appearance = 'textfield'; field.style.cursor = 'ns-resize';
           field.addEventListener('input', () => updateDraft(property, field.value + (pixelProperties.has(property) ? 'px' : '')));
-          const unit = document.createElement('span'); unit.textContent = pixelProperties.has(property) ? 'px' : ''; style(unit, { fontSize: ${JSON.stringify(typography['--text-xs'])}, color: '#9ca3af', fontFamily: monoFont, flexShrink: '0' });
+          const unit = document.createElement('span'); unit.textContent = pixelProperties.has(property) ? 'px' : ''; style(unit, { fontSize: ${JSON.stringify(typography['--text-xs'])}, color: C.tertiary, fontFamily: monoFont, flexShrink: '0' });
           let scrub = null;
           field.addEventListener('pointerdown', event => { if (event.button !== 0 || !targetAvailable) return; scrub = { pointerId: event.pointerId, startY: event.clientY, startValue: Number.parseFloat(field.value) || 0, step: property === 'opacity' ? 0.05 : 1, activated: false }; });
           field.addEventListener('pointermove', event => { if (!scrub || scrub.pointerId !== event.pointerId) return; if (!scrub.activated) { if (Math.abs(scrub.startY - event.clientY) < 4) return; scrub.activated = true; field.setPointerCapture?.(event.pointerId); } event.preventDefault(); const delta = Math.round((scrub.startY - event.clientY) / 4) * scrub.step; let next = scrub.startValue + delta; if (property === 'opacity') next = Math.max(0, Math.min(1, next)); else if (property !== 'margin') next = Math.max(0, next); const value = property === 'opacity' ? String(Math.round(next * 20) / 20) : String(Math.round(next)); field.value = value; updateDraft(property, value + (pixelProperties.has(property) ? 'px' : '')); });
@@ -341,7 +363,7 @@ export function browserAnnotationInjectionScript({
       addFontRow();
       addNumericRow('font-size');
       addWeightRow();
-      const divider = document.createElement('div'); style(divider, { height: '1px', background: 'rgba(0,0,0,.08)', margin: '4px 0' }); scroll.appendChild(divider);
+      const divider = document.createElement('div'); style(divider, { height: '1px', background: C.divider, margin: '4px 0' }); scroll.appendChild(divider);
       ['width', 'height', 'padding', 'margin', 'border-radius'].forEach(addNumericRow);
       addColorRow('border-color');
       addNumericRow('border-width');
@@ -351,19 +373,19 @@ export function browserAnnotationInjectionScript({
       repositionEditor();
     };
     const chipRow = document.createElement('div'); chipRow.dataset.weworkAnnotation = 'selection-chips'; style(chipRow, { display: 'none', gap: '6px', flexWrap: 'nowrap', overflowX: 'auto', padding: '8px 16px 0', maxWidth: '100%' });
-    const chip = document.createElement('span'); chip.dataset.weworkAnnotation = 'selection-chip'; style(chip, { display: 'inline-flex', alignItems: 'center', gap: '4px', height: '24px', padding: '0 4px 0 8px', borderRadius: '8px', border: '1px solid rgba(22,131,255,.42)', background: 'rgba(22,131,255,.1)', color: '#171717', fontSize: ${JSON.stringify(typography['--text-xs'])}, whiteSpace: 'nowrap', maxWidth: '220px' });
-    const tag = document.createElement('span'); tag.textContent = element ? '<' + element.tagName.toLowerCase() + '>' : ''; style(tag, { display: 'inline-flex', alignItems: 'center', padding: '0 4px', borderRadius: '4px', background: 'rgba(0,0,0,.06)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: ${JSON.stringify(typography['--text-xs'])}, color: '#5d5d5d', flexShrink: '0' });
+    const chip = document.createElement('span'); chip.dataset.weworkAnnotation = 'selection-chip'; style(chip, { display: 'inline-flex', alignItems: 'center', gap: '4px', height: '24px', padding: '0 4px 0 8px', borderRadius: '8px', border: '1px solid ' + C.chipBorder, background: C.chipBg, color: C.foreground, fontSize: ${JSON.stringify(typography['--text-xs'])}, whiteSpace: 'nowrap', maxWidth: '220px' });
+    const tag = document.createElement('span'); tag.textContent = element ? '<' + element.tagName.toLowerCase() + '>' : ''; style(tag, { display: 'inline-flex', alignItems: 'center', padding: '0 4px', borderRadius: '4px', background: C.hoverBg, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: ${JSON.stringify(typography['--text-xs'])}, color: C.secondary, flexShrink: '0' });
     const chipText = document.createElement('span'); chipText.textContent = element ? textFor(element, 120) : ''; style(chipText, { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' });
     chip.append(tag, chipText);
     if (!annotation) {
-      const removeChip = document.createElement('button'); removeChip.type = 'button'; removeChip.dataset.weworkAnnotation = 'selection-remove'; removeChip.innerHTML = svgIcon(icons.close, 12, true); removeChip.setAttribute('aria-label', (config.strings.removeAnnotationSelection || 'Remove {label}').replace('{label}', tag.textContent)); style(removeChip, { display: 'flex', width: '20px', height: '20px', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '6px', background: 'transparent', color: '#9ca3af', cursor: 'pointer', flexShrink: '0' });
+      const removeChip = document.createElement('button'); removeChip.type = 'button'; removeChip.dataset.weworkAnnotation = 'selection-remove'; removeChip.innerHTML = svgIcon(icons.close, 12, true); removeChip.setAttribute('aria-label', (config.strings.removeAnnotationSelection || 'Remove {label}').replace('{label}', tag.textContent)); style(removeChip, { display: 'flex', width: '20px', height: '20px', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '6px', background: 'transparent', color: C.tertiary, cursor: 'pointer', flexShrink: '0' });
       removeChip.addEventListener('click', () => { restoreDraft(); closeEditor(); });
       chip.appendChild(removeChip);
     }
     chipRow.appendChild(chip);
-    const submit = isEdit ? null : document.createElement('button'); if (submit) { submit.type = 'button'; submit.dataset.weworkAnnotation = 'submit'; submit.title = config.strings.add; submit.setAttribute('aria-label', config.strings.add); submit.innerHTML = svgIcon(icons.check, 16); style(submit, { position: 'absolute', right: '10px', bottom: '10px', width: '26px', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '999px', background: '#171717', color: 'white', cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,.2)', zIndex: '1', opacity: '0.4' }); }
-    const footer = document.createElement('div'); footer.dataset.weworkAnnotation = 'editor-footer'; style(footer, { display: 'none', alignItems: 'center', justifyContent: isEdit ? 'space-between' : 'flex-start', gap: '8px', padding: '8px 12px', borderTop: '1px solid rgba(0,0,0,.08)', flexShrink: '0' });
-    const remove = isEdit ? document.createElement('button') : null; if (remove) { remove.type = 'button'; remove.dataset.weworkAnnotation = 'delete'; remove.title = config.strings.delete; remove.setAttribute('aria-label', config.strings.delete); remove.innerHTML = svgIcon(icons.trash, 16); style(remove, { display: 'flex', width: '24px', height: '24px', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '6px', background: 'transparent', color: '#9ca3af', cursor: 'pointer' }); }
+    const submit = isEdit ? null : document.createElement('button'); if (submit) { submit.type = 'button'; submit.dataset.weworkAnnotation = 'submit'; submit.title = config.strings.add; submit.setAttribute('aria-label', config.strings.add); submit.innerHTML = svgIcon(icons.check, 16); style(submit, { position: 'absolute', right: '10px', bottom: '10px', width: '26px', height: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '999px', background: C.inverseBg, color: C.inverseFg, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,.2)', zIndex: '1', opacity: '0.4' }); }
+    const footer = document.createElement('div'); footer.dataset.weworkAnnotation = 'editor-footer'; style(footer, { display: 'none', alignItems: 'center', justifyContent: isEdit ? 'space-between' : 'flex-start', gap: '8px', padding: '8px 12px', borderTop: '1px solid ' + C.divider, flexShrink: '0' });
+    const remove = isEdit ? document.createElement('button') : null; if (remove) { remove.type = 'button'; remove.dataset.weworkAnnotation = 'delete'; remove.title = config.strings.delete; remove.setAttribute('aria-label', config.strings.delete); remove.innerHTML = svgIcon(icons.trash, 16); style(remove, { display: 'flex', width: '24px', height: '24px', alignItems: 'center', justifyContent: 'center', border: '0', borderRadius: '6px', background: 'transparent', color: C.tertiary, cursor: 'pointer' }); }
     const actions = document.createElement('div'); style(actions, { display: 'flex', alignItems: 'center', gap: '6px' });
     const cancel = dialogButton(config.strings.cancel, 'cancel');
     const save = isEdit ? dialogButton(config.strings.save, 'save', true) : null;
@@ -372,12 +394,12 @@ export function browserAnnotationInjectionScript({
     const persist = () => { const comment = input.value.trim(); if (!comment && draftAdjustments.length === 0) return; if (annotation) { annotation.comment = comment; annotation.adjustments = draftAdjustments; annotation.updatedAt = new Date().toISOString(); replayElement(element); } else { const target = targetFor(element); const baseline = state.baselineByElement.get(element); if (baseline && baseline.text !== undefined) target.text = String(baseline.text).replace(/\s+/g, ' ').trim().slice(0, 500); const markerPoint = clickPoint ? { x: clickPoint.x + window.scrollX, y: clickPoint.y + window.scrollY } : null; const next = { id: 'browser-annotation-' + Date.now() + '-' + state.nextNumber, number: state.nextNumber++, comment, adjustments: draftAdjustments, target, element, lastKnownRect: target.rect, markerPoint, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), box: null }; state.annotations.push(next); replayElement(element); renderAnnotation(next); } bumpRevision(); closeEditor(); schedulePositionUpdate(); };
     updatePrimaryDisabled(); input.addEventListener('input', () => { updatePrimaryDisabled(); autoGrow(); });
     if (save) save.addEventListener('click', event => { event.preventDefault(); persist(); }); cancel.addEventListener('click', () => { restoreDraft(); closeEditor(); }); remove?.addEventListener('click', () => deleteAnnotation(annotation)); submit?.addEventListener('click', event => { event.preventDefault(); persist(); });
-    const openDesign = () => { designOpen = true; content.style.justifyContent = 'flex-start'; footer.style.display = 'flex'; adjust.style.background = 'rgba(0,0,0,.06)'; input.placeholder = config.strings.tweaksPlaceholder || config.strings.placeholder; renderAdjustments(); autoGrow(); input.focus(); };
+    const openDesign = () => { designOpen = true; content.style.justifyContent = 'flex-start'; footer.style.display = 'flex'; adjust.style.background = C.hoverBg; input.placeholder = config.strings.tweaksPlaceholder || config.strings.placeholder; renderAdjustments(); autoGrow(); input.focus(); };
     const closeDesign = () => { designOpen = false; designStack?.remove(); designStack = null; content.style.justifyContent = isEdit ? 'flex-start' : 'center'; chipRow.style.display = 'none'; footer.style.display = isEdit ? 'flex' : 'none'; adjust.style.background = 'transparent'; input.placeholder = config.strings.placeholder; editor.style.width = editorWidth + 'px'; autoGrow(); input.focus(); };
     adjust.addEventListener('click', () => { designOpen ? closeDesign() : openDesign(); });
     editor.addEventListener('keydown', event => { if (event.key === 'Enter' && event.target === input && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); persist(); } if (event.key === 'Escape') { event.preventDefault(); restoreDraft(); closeEditor(); } }, true);
     editor.addEventListener('pointerdown', event => event.stopPropagation());
-    const styleTag = document.createElement('style'); styleTag.textContent = '.wework-annotation-input::placeholder{color:#9ca3af;}.wework-annotation-box:focus-within{border-color:#1683ff;box-shadow:0 0 0 1px #1683ff;}'; editor.appendChild(styleTag);
+    const styleTag = document.createElement('style'); styleTag.textContent = '.wework-annotation-input::placeholder{color:' + C.tertiary + ';}.wework-annotation-box:focus-within{border-color:#1683ff;box-shadow:0 0 0 1px #1683ff;}'; editor.appendChild(styleTag);
     content.append(chipRow, inputShell); editor.append(adjust, content, footer); if (submit) editor.appendChild(submit);
     if (isEdit) { footer.style.display = 'flex'; }
     if (designOpen) { openDesign(); }
