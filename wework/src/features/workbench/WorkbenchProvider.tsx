@@ -1725,10 +1725,7 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            // Runtime providers may replace the provisional subtask ID with their canonical
-            // turn ID while streaming. A terminal event is already scoped to one task, so it
-            // must settle that task even when the provider-facing ID changed.
-            lifecycleStore.turnSettled(address, null, outcome)
+            lifecycleStore.turnSettled(address, turnId, outcome)
             const running = lifecycleStore.getTask(address)?.derived.isRunning ?? false
             const status = running
               ? 'active'

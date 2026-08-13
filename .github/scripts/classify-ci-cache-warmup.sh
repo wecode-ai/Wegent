@@ -63,6 +63,10 @@ classify_path() {
       changed[executor_rust]=true
       changed[wework_target]=true
       ;;
+    docker/wework-e2e/desktop.Dockerfile)
+      changed[docker]=true
+      changed[wework_target]=true
+      ;;
     executor/*)
       changed[docker]=true
       changed[executor_rust]=true
