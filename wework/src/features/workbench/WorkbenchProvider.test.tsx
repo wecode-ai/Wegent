@@ -6809,7 +6809,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     const staleRuntimeWork = createRuntimeWork()
     writeCachedRemoteRuntimeWork(1, staleRuntimeWork)
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork: vi.fn().mockResolvedValue(staleRuntimeWork),
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(staleRuntimeWork)
+        .mockResolvedValue(createRuntimeWork({ projects: [], totalTasks: 0 })),
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -7040,10 +7043,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/srv/project-alpha',
       runtime: 'codex',
     })
-    expect(runtimeWorkApi.syncRuntimeRemoteProjects).not.toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      projects: [],
-    })
+    expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1)
   })
 
   test('does not treat a local-only empty remote view as an authoritative deletion', async () => {
