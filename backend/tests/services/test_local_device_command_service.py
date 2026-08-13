@@ -210,7 +210,7 @@ def test_git_hosting_cli_status_reports_timeout(tmp_path: Path) -> None:
     from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
 
     executable = tmp_path / "gh"
-    executable.write_text("#!/bin/sh\nsleep 1\n", encoding="utf-8")
+    executable.write_text("#!/bin/sh\nexec /bin/sleep 1\n", encoding="utf-8")
     executable.chmod(0o755)
 
     result = subprocess.run(
