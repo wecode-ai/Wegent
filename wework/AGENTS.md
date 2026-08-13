@@ -45,12 +45,12 @@ pnpm --filter wework exec prettier --check <changed-files>
 pnpm --filter wework exec eslint <changed-files>
 ```
 
-- Pass Vitest file paths and filters directly after `test`. Never insert an
-  extra `--` (for example, do not run
-  `pnpm --filter wework test -- <test-file>`), because Vitest can ignore the
-  intended filter and collect the full suite. When running a focused test,
-  confirm the initial collection output matches the requested files and stop
-  the run immediately if it starts collecting unrelated tests.
+- Pass Vitest file paths and filters directly after `test`. The test runner
+  also removes one leading `--` for compatibility with generated commands, so
+  both `pnpm --filter wework test <test-file>` and
+  `pnpm --filter wework test -- <test-file>` remain focused. When running a
+  focused test, confirm the initial collection output matches the requested
+  files and stop the run immediately if it starts collecting unrelated tests.
 
 Direct debug Cargo builds create marked, unavailable stubs for ignored bundled
 sidecars when their real binaries have not been prepared. Do not prepare DWS

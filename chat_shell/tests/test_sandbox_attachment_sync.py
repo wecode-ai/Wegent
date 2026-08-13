@@ -50,6 +50,7 @@ class _FakeManager:
 
 class _FakeAsyncClient:
     calls: list[tuple[str, dict[str, str]]] = []
+    task_attachments: list[dict] = []
 
     def __init__(self, **kwargs) -> None:
         self.options = kwargs
@@ -62,6 +63,12 @@ class _FakeAsyncClient:
 
     async def get(self, url: str, headers: dict[str, str]) -> httpx.Response:
         self.calls.append((url, headers))
+        if "/api/attachments/task/" in url:
+            return httpx.Response(
+                200,
+                json=self.task_attachments,
+                request=httpx.Request("GET", url),
+            )
         return httpx.Response(
             200,
             content=b"name,value\nalpha,1\n",
@@ -72,6 +79,7 @@ class _FakeAsyncClient:
 @pytest.fixture(autouse=True)
 def _reset_fake_client() -> None:
     _FakeAsyncClient.calls = []
+    _FakeAsyncClient.task_attachments = []
 
 
 @pytest.mark.asyncio
@@ -143,14 +151,65 @@ async def test_syncs_attachment_before_sandbox_tools_can_read_it(monkeypatch) ->
     ]
     assert _FakeAsyncClient.calls == [
         (
+            "http://backend:8000/api/attachments/task/100/all",
+            {"Authorization": "Bearer task-token"},
+        ),
+        (
             "http://backend:8000/api/attachments/77/executor-download",
             {"Authorization": "Bearer task-token"},
-        )
+        ),
     ]
     assert sandbox.files.writes == [(path, b"name,value\nalpha,1\n")]
     assert request.attachments[0]["status"] == "success"
     assert request.attachments[0]["local_path"] == path
     assert "File Path(already in sandbox)" in request.prompt
+
+
+@pytest.mark.asyncio
+async def test_backend_url_with_api_suffix_is_not_doubled(monkeypatch) -> None:
+    sandbox = _FakeSandbox()
+    manager = _FakeManager(sandbox)
+    monkeypatch.setattr(
+        SandboxManager,
+        "get_instance",
+        classmethod(lambda cls, **kwargs: manager),
+    )
+    monkeypatch.setattr(sandbox_attachment_sync.httpx, "AsyncClient", _FakeAsyncClient)
+
+    path = build_sandbox_path(100, 201, "report.csv")
+    request = ExecutionRequest(
+        task_id=100,
+        subtask_id=202,
+        user_subtask_id=201,
+        user_id=3,
+        user_name="alice",
+        prompt=f"File Path(already in sandbox): {path}",
+        skill_names=["sandbox"],
+        auth_token="task-token",
+        backend_url="http://backend:8000/api",
+        attachments=[
+            {
+                "id": 77,
+                "original_filename": "report.csv",
+                "file_size": 19,
+                "subtask_id": 201,
+            }
+        ],
+    )
+
+    await sync_chat_attachments_to_sandbox(request)
+
+    assert _FakeAsyncClient.calls == [
+        (
+            "http://backend:8000/api/attachments/task/100/all",
+            {"Authorization": "Bearer task-token"},
+        ),
+        (
+            "http://backend:8000/api/attachments/77/executor-download",
+            {"Authorization": "Bearer task-token"},
+        ),
+    ]
+    assert request.attachments[0]["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -161,6 +220,7 @@ async def test_failed_sync_stops_claiming_attachment_is_in_sandbox(monkeypatch) 
         "get_instance",
         classmethod(lambda cls, **kwargs: manager),
     )
+    monkeypatch.setattr(sandbox_attachment_sync.httpx, "AsyncClient", _FakeAsyncClient)
 
     path = build_sandbox_path(100, 201, "report.csv")
     request = ExecutionRequest(
@@ -181,7 +241,81 @@ async def test_failed_sync_stops_claiming_attachment_is_in_sandbox(monkeypatch) 
     assert "File Path(already in sandbox)" not in request.prompt
     assert f"File Path(not synchronized): {path}" in request.prompt
     assert "attachment_url=/api/attachments/77/download" in request.prompt
-    assert f"save_path={path}" in request.prompt
+    assert f"it will save to {path}" in request.prompt
+
+
+@pytest.mark.asyncio
+async def test_syncs_historical_task_attachments(monkeypatch) -> None:
+    sandbox = _FakeSandbox()
+    manager = _FakeManager(sandbox)
+    monkeypatch.setattr(
+        SandboxManager,
+        "get_instance",
+        classmethod(lambda cls, **kwargs: manager),
+    )
+    monkeypatch.setattr(sandbox_attachment_sync.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.task_attachments = [
+        {
+            "id": 76,
+            "filename": "历史附件.txt",
+            "mime_type": "text/plain",
+            "file_size": 19,
+            "subtask_id": 199,
+        }
+    ]
+    path = build_sandbox_path(100, 199, "历史附件.txt")
+    request = ExecutionRequest(
+        task_id=100,
+        subtask_id=202,
+        user_subtask_id=201,
+        user_id=3,
+        user_name="alice",
+        prompt="继续分析之前的附件",
+        skill_names=["sandbox"],
+        auth_token="task-token",
+        backend_url="http://backend:8000",
+    )
+
+    await sync_chat_attachments_to_sandbox(request)
+
+    assert _FakeAsyncClient.calls == [
+        (
+            "http://backend:8000/api/attachments/task/100/all",
+            {"Authorization": "Bearer task-token"},
+        ),
+        (
+            "http://backend:8000/api/attachments/76/executor-download",
+            {"Authorization": "Bearer task-token"},
+        ),
+    ]
+    assert sandbox.files.writes == [(path, b"name,value\nalpha,1\n")]
+    assert request.attachments[0]["subtask_id"] == 199
+    assert request.attachments[0]["local_path"] == path
+
+
+@pytest.mark.asyncio
+async def test_empty_task_attachment_list_does_not_create_sandbox(monkeypatch) -> None:
+    def fail_if_called(cls, **kwargs):
+        raise AssertionError("sandbox should not be created")
+
+    monkeypatch.setattr(
+        SandboxManager,
+        "get_instance",
+        classmethod(fail_if_called),
+    )
+    monkeypatch.setattr(sandbox_attachment_sync.httpx, "AsyncClient", _FakeAsyncClient)
+    request = ExecutionRequest(
+        task_id=100,
+        subtask_id=202,
+        prompt="plain chat",
+        skill_names=["sandbox"],
+        auth_token="task-token",
+        backend_url="http://backend:8000",
+    )
+
+    await sync_chat_attachments_to_sandbox(request)
+
+    assert request.attachments == []
 
 
 @pytest.mark.asyncio

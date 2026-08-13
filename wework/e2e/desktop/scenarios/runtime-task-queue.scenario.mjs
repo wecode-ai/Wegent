@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { access } from 'node:fs/promises'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -59,9 +60,29 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
   throw new Error('Timed out waiting for a newly queued runtime task row')
 }
 
-async function sendNewTask(control, knownRows, prompt, timeoutMs) {
-  await control.command('click', '[data-testid="new-chat-button"]')
+async function pathExists(path) {
+  try {
+    await access(path)
+    return true
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+async function sendNewTask(control, knownRows, prompt, timeoutMs, executionMode = 'local_path') {
+  await control.command(
+    'click',
+    executionMode === 'git_worktree'
+      ? '[data-testid="project-new-conversation-button"]'
+      : '[data-testid="new-chat-button"]'
+  )
   await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  if (executionMode === 'git_worktree') {
+    await control.command('waitFor', '[data-testid="execution-mode-button"]', { timeoutMs })
+    await control.command('click', '[data-testid="execution-mode-button"]')
+    await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
+  }
   await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
   await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
   const rowTestId = await waitForNewTaskRow(control, knownRows, timeoutMs)
@@ -247,7 +268,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }
       )
 
-      const second = await sendNewTask(control, knownRows, PROMPTS.second, uiTimeoutMs)
+      const second = await sendNewTask(
+        control,
+        knownRows,
+        PROMPTS.second,
+        uiTimeoutMs,
+        'git_worktree'
+      )
       await control.command(
         'waitFor',
         `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"] [data-testid="runtime-local-task-queued-${second.taskId}"]`,
@@ -268,6 +295,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
           visible: sidebarVisible,
         }
+      )
+      const queuedWorktreeSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        queuedWorktreeSnapshot.workbench?.currentRuntimeTask?.taskId,
+        second.taskId,
+        'The queued worktree task was not the active conversation'
+      )
+      const queuedWorktreePath = queuedWorktreeSnapshot.workbench?.currentRuntimeTask?.workspacePath
+      assert.ok(queuedWorktreePath, 'The queued worktree task did not expose its planned path')
+      assert.equal(
+        await pathExists(queuedWorktreePath),
+        false,
+        'The queued task created its worktree before a concurrency slot was available'
       )
       const third = await sendNewTask(control, knownRows, PROMPTS.third, uiTimeoutMs)
       await control.command(
@@ -385,6 +427,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         requests,
         [PROMPTS.first, PROMPTS.third, PROMPTS.second],
         'The reordered queue did not determine the next execution order'
+      )
+      assert.equal(
+        await pathExists(queuedWorktreePath),
+        true,
+        'The queued worktree was not created after the task acquired a concurrency slot'
       )
       releases.get(PROMPTS.second)?.()
       await control.command('click', `${sidebarSelector} [data-testid="${second.rowTestId}"]`)

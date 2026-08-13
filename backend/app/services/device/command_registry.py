@@ -75,6 +75,91 @@ GIT_PUSH_COMMAND = (
     'exec git push -u origin "$branch"\''
 )
 
+GIT_HOSTING_CLI_STATUS_SCRIPT = """
+import json
+import shutil
+import subprocess
+import sys
+
+
+tool = sys.argv[1]
+timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
+executable = shutil.which(tool)
+if not executable:
+    print(
+        json.dumps(
+            {
+                "tool": tool,
+                "installed": False,
+                "authenticated": False,
+                "executablePath": None,
+                "version": None,
+                "detectionError": None,
+            }
+        )
+    )
+    raise SystemExit(0)
+
+
+def run(*args):
+    return subprocess.run(
+        [executable, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+
+
+try:
+    version_result = run("--version")
+    version = next(
+        (
+            line.strip()
+            for line in version_result.stdout.splitlines()
+            if line.strip()
+        ),
+        None,
+    )
+    auth_result = run("auth", "status")
+except subprocess.TimeoutExpired:
+    print(
+        json.dumps(
+            {
+                "tool": tool,
+                "installed": True,
+                "authenticated": False,
+                "executablePath": executable,
+                "version": None,
+                "detectionError": "timeout",
+            }
+        )
+    )
+    raise SystemExit(0)
+
+print(
+    json.dumps(
+        {
+            "tool": tool,
+            "installed": True,
+            "authenticated": auth_result.returncode == 0,
+            "executablePath": executable,
+            "version": version,
+            "detectionError": None,
+        }
+    )
+)
+""".strip()
+
+
+def git_hosting_cli_status_command(tool: str) -> str:
+    """Build a safe CLI status command for a fixed provider tool."""
+    return (
+        f"python3 -c {shlex.quote(GIT_HOSTING_CLI_STATUS_SCRIPT)} {shlex.quote(tool)}"
+    )
+
+
 WORKSPACE_ROOT_GUARD_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
@@ -1534,6 +1619,28 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="git status --porcelain"
     ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
+    "git_github_cli_status": LocalDeviceCommandDefinition(
+        command=git_hosting_cli_status_command("gh"),
+        post_processor="json",
+    ),
+    "git_gitlab_cli_status": LocalDeviceCommandDefinition(
+        command=git_hosting_cli_status_command("glab"),
+        post_processor="json",
+    ),
+    "git_github_pull_requests": LocalDeviceCommandDefinition(
+        command=(
+            "gh pr list --state all --limit 20 "
+            "--json number,url,title,state,isDraft,statusCheckRollup --head"
+        ),
+        post_processor="json",
+    ),
+    "git_gitlab_merge_requests": LocalDeviceCommandDefinition(
+        command=(
+            "glab mr list --all --per-page 20 --order updated_at --sort desc "
+            "--output json --source-branch"
+        ),
+        post_processor="json",
+    ),
     "git_commit_available": LocalDeviceCommandDefinition(
         command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
     ),
