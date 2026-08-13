@@ -260,12 +260,17 @@ if ! grep -Fq "$playwright_key" "$workflow_dir/e2e-tests.yml" ||
 fi
 
 wework_workflow="$workflow_dir/wework-e2e.yml"
+wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
   [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
   grep -Eq 'playwright (install|install-deps)|install-wework-tauri-system-dependencies' \
     "$wework_workflow"; then
   fail "Wework E2E must consume its immutable dependency image without runtime installs"
+fi
+
+if ! grep -Eq '^ENV IS_SANDBOX=1$' "$wework_desktop_image"; then
+  fail "Wework desktop E2E must identify its root container as a Claude Code sandbox"
 fi
 
 # GitHub expressions are matched literally in workflow source.
