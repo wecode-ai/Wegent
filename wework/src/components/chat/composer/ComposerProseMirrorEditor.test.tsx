@@ -471,7 +471,14 @@ describe('ComposerProseMirrorEditor', () => {
 
     expect(editorRef.current?.getSnapshot().selectionOffset).toBe('first line\n'.length)
     expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
-    expect(editorRef.current?.getSnapshot().value).toBe('first line\nthird line')
+    const expectedSelectionOffset =
+      key === 'Backspace' ? 'first line'.length : 'first line\n'.length
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'first line\nthird line',
+      selectionOffset: expectedSelectionOffset,
+      selectionStart: expectedSelectionOffset,
+      selectionEnd: expectedSelectionOffset,
+    })
     expect(onChange).toHaveBeenLastCalledWith('first line\nthird line')
   })
 
