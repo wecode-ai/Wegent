@@ -553,6 +553,10 @@ recipe closely:
   Short threads therefore fill the viewport while long and virtualized threads
   grow naturally. Keep bottom following stable across delayed virtual
   measurements, but stop following immediately after an explicit user scroll.
+- When guidance or another runtime event inserts, removes, or reorders messages
+  inside a virtualized thread, remeasure mounted rows from the first changed
+  index. The virtual container must include every rendered row so no message can
+  appear below or behind the sticky composer.
 
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
