@@ -7,11 +7,18 @@ import {
   useState,
 } from 'react'
 import type { RefObject } from 'react'
+import {
+  chainCommands,
+  deleteSelection,
+  joinBackward,
+  joinForward,
+  splitBlock,
+} from 'prosemirror-commands'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
-import { EditorView } from 'prosemirror-view'
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
 import { ComposerLinkNodeView } from './ComposerLinkNodeView'
@@ -123,14 +130,46 @@ export const ComposerProseMirrorEditor = forwardRef<
               return !transaction.docChanged || !containsObjectReplacementCharacter(transaction.doc)
             },
           }),
+          new Plugin({
+            props: {
+              decorations(state) {
+                if (
+                  !state.selection.empty ||
+                  !state.selection.$head.parent.isTextblock ||
+                  state.selection.$head.parent.content.size > 0
+                ) {
+                  return null
+                }
+                return DecorationSet.create(state.doc, [
+                  Decoration.widget(
+                    state.selection.head,
+                    () => {
+                      const caret = document.createElement('span')
+                      caret.className = 'composer-empty-caret'
+                      caret.setAttribute('aria-hidden', 'true')
+                      return caret
+                    },
+                    { key: 'composer-empty-caret', side: -1 }
+                  ),
+                ])
+              },
+            },
+          }),
           history(),
           keymap({
             'Mod-z': undo,
             'Mod-y': redo,
             'Shift-Mod-z': redo,
-            'Shift-Enter': (state, dispatch) => {
-              dispatch?.(state.tr.replaceSelectionWith(composerSchema.nodes.hard_break.create()))
-              return true
+            Backspace: chainCommands(deleteSelection, joinBackward),
+            Delete: chainCommands(deleteSelection, joinForward),
+            'Shift-Enter': (state, dispatch, view) => {
+              const handled = splitBlock(
+                state,
+                dispatch ? transaction => dispatch(transaction.scrollIntoView()) : undefined,
+                view
+              )
+              if (handled && dispatch && view) keepTrailingComposerCaretVisible(view)
+              return handled
             },
           }),
         ],
@@ -178,9 +217,8 @@ export const ComposerProseMirrorEditor = forwardRef<
         const text =
           event.clipboardData?.getData('text/plain') || event.clipboardData?.getData('text')
         if (!text) return false
-        const paragraph = createComposerDocument(text).firstChild
-        if (!paragraph) return false
-        let transaction = view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0))
+        const pastedDocument = createComposerDocument(text)
+        let transaction = view.state.tr.replaceSelection(new Slice(pastedDocument.content, 1, 1))
         transaction = transaction.setSelection(TextSelection.atEnd(transaction.doc))
         view.dispatch(
           transaction.setMeta('paste', true).setMeta('uiEvent', 'paste').scrollIntoView()
@@ -316,8 +354,19 @@ function editorAttributes(props: ComposerProseMirrorEditorProps): Record<string,
     spellcheck: 'true',
     rows: String(props.rows),
     placeholder: props.placeholder,
-    class: `${props.className} relative z-30 whitespace-pre-wrap break-words`,
+    class: `${props.className} composer-prosemirror-editor relative z-30 whitespace-pre-wrap break-words`,
   }
+}
+
+function keepTrailingComposerCaretVisible(view: EditorView): void {
+  window.requestAnimationFrame(() => {
+    const selectionAtEnd = view.state.selection.head === view.state.doc.content.size - 1
+    if (!selectionAtEnd || view.dom.scrollHeight <= view.dom.clientHeight) return
+
+    // WebKit reports the rectangle before consecutive trailing BR nodes, so
+    // ProseMirror cannot scroll the actual caret into view on its own.
+    view.dom.scrollTop = view.dom.scrollHeight - view.dom.clientHeight
+  })
 }
 
 function defineComposerValueProperty(view: EditorView): void {
@@ -490,46 +539,60 @@ function replaceComposerValue(
 
 function serializedOffsetFromPosition(doc: ProseMirrorNode, position: number): number {
   let serializedOffset = 0
-  const paragraph = doc.firstChild
-  if (!paragraph) return 0
-
-  paragraph.forEach((node, nodeOffset) => {
-    const nodeStart = nodeOffset + 1
-    if (nodeStart >= position) return
+  doc.descendants((node, nodeStart) => {
+    if (nodeStart >= position) return false
+    if (node.type === composerSchema.nodes.paragraph) {
+      if (nodeStart > 0 && position > nodeStart) serializedOffset += 1
+      return true
+    }
     if (node.isText) {
       serializedOffset += Math.min(node.text?.length ?? 0, position - nodeStart)
-      return
+      return false
     }
     if (node.type === composerSchema.nodes.composer_mention) {
       if (position >= nodeStart + node.nodeSize) {
         serializedOffset += String(node.attrs.reference ?? '').length
       }
-      return
+      return false
     }
     if (node.type === composerSchema.nodes.composer_link) {
       if (position >= nodeStart + node.nodeSize) {
         serializedOffset += serializeComposerLinkNode(node).length
       }
-      return
+      return false
     }
     if (node.type === composerSchema.nodes.hard_break && position >= nodeStart + node.nodeSize) {
       serializedOffset += 1
     }
+    return false
   })
   return serializedOffset
 }
 
 function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number): number {
-  const paragraph = doc.firstChild
-  if (!paragraph) return 1
   const normalizedTarget = Math.max(0, targetOffset)
   let serializedOffset = 0
   let position = doc.content.size - 1
   let resolved = false
 
-  paragraph.forEach((node, nodeOffset) => {
-    if (resolved) return
-    const nodeStart = nodeOffset + 1
+  doc.descendants((node, nodeStart) => {
+    if (resolved) return false
+    if (node.type === composerSchema.nodes.paragraph) {
+      if (normalizedTarget === serializedOffset) {
+        position = nodeStart + 1
+        resolved = true
+        return false
+      }
+      if (nodeStart > 0) {
+        serializedOffset += 1
+        if (normalizedTarget <= serializedOffset) {
+          position = nodeStart + 1
+          resolved = true
+          return false
+        }
+      }
+      return true
+    }
     if (node.isText) {
       const length = node.text?.length ?? 0
       if (normalizedTarget <= serializedOffset + length) {
@@ -538,7 +601,7 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
       } else {
         serializedOffset += length
       }
-      return
+      return false
     }
 
     const serializedLength =
@@ -558,6 +621,7 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
     } else {
       serializedOffset += serializedLength
     }
+    return false
   })
   return position
 }
