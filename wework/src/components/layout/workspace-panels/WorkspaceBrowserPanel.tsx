@@ -19,6 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { FormEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import {
   canUseEmbeddedBrowser,
@@ -70,12 +71,16 @@ import {
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import type { BrowserAnnotationScope } from '@/types/browser-annotation'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
-import {
-  DEFAULT_UI_FONT_SIZE,
-  resolveUiTypographyVariables,
-} from '@/features/appearance/typography'
 import { track } from '@/telemetry/client'
+import { browserAnnotationInjectionScript as createBrowserAnnotationInjectionScript } from './browser-annotation/injection-script'
+import type {
+  BrowserAnnotationCommand,
+  BrowserAnnotationSnapshot,
+  PageAnnotationDto,
+} from '@/types/browser-annotation'
+import { browserSnapshotToContexts } from '@/lib/browser-annotation-context'
 
 const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
@@ -86,8 +91,7 @@ const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
 const BROWSER_CLEAR_STARTED_NOTICE_MIN_MS = 350
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
 const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
-  try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
-  try { window.__weworkBrowserAnnotationClose?.(); } catch (_) {}
+  try { window.__WEWORK_BROWSER_ANNOTATION__?.destroy?.(); } catch (_) {}
   document.getElementById('__wework_browser_annotation_layer__')?.remove();
   document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
   return true;
@@ -96,9 +100,17 @@ const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
 export interface WorkspaceBrowserPanelProps {
   active: boolean
   label?: string
+  browserTabId?: string
   openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
+  codeCommentContexts?: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   onAddCodeComment?: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onNativeLabelChange?: (nativeLabel: string | null) => void
   onDownloadActivityChange?: (hasActiveDownload: boolean) => void
   onFaviconChange?: (faviconUrl: string | null) => void
@@ -119,28 +131,6 @@ type BrowserOpenDiagnosticStage =
   | 'native_open_succeeded'
   | 'native_open_failed'
   | 'lifecycle_cancelled'
-type BrowserAnnotationRect = { x: number; y: number; width: number; height: number }
-type BrowserAnnotationTarget = {
-  inspectId?: string
-  ref?: string
-  index?: number
-  role?: string
-  name?: string
-  tagName?: string
-  text?: string
-  rect?: BrowserAnnotationRect
-  confidence?: number
-}
-type BrowserAnnotation = BrowserAnnotationRect & {
-  id: string
-  comment: string
-  number: number
-  inspectId?: string
-  target?: BrowserAnnotationTarget
-  candidates?: BrowserAnnotationTarget[]
-  matchConfidence?: number
-}
-
 function logBrowserAnnotation(message: string, data?: Record<string, unknown>) {
   console.info(BROWSER_ANNOTATION_LOG_PREFIX, message, data ?? {})
 }
@@ -261,494 +251,17 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
   if (element) observer.observe(element)
 }
 
-// Exported for DOM-level regression tests of the injected browser behavior.
-// eslint-disable-next-line react-refresh/only-export-components
-export function browserAnnotationInjectionScript(uiFontSize = DEFAULT_UI_FONT_SIZE) {
-  const typography = resolveUiTypographyVariables(uiFontSize)
-  return String.raw`
-(() => {
-  const log = (message, data = {}) => {
-    console.info('[Wework][BrowserAnnotation][page]', message, data);
-  };
-
-  // Tear down any previous annotation session completely (listeners + DOM).
-  // Removing only the layer leaves stale capture listeners that can recreate boxes.
-  if (typeof window.__weworkBrowserAnnotationClose === 'function') {
-    log('close previous annotation session before reinject');
-    try {
-      window.__weworkBrowserAnnotationClose();
-    } catch (error) {
-      log('previous annotation session close failed', {
-        error: String(error?.stack || error?.message || error),
-      });
-    }
-  }
-  document.getElementById('__wework_browser_annotation_layer__')?.remove();
-  document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
-
-  const state = {
-    nextNumber: 1,
-    published: [],
-    draftBox: null,
-    hoverBox: null,
-    activeElement: null,
-    activeEditor: null,
-    activeInput: null,
-  };
-  const isAnnotationLayerTarget = (target) =>
-    target instanceof Element && target.closest('#__wework_browser_annotation_layer__');
-
-  const layer = document.createElement('div');
-  layer.id = '__wework_browser_annotation_layer__';
-  Object.assign(layer.style, {
-    position: 'fixed',
-    inset: '0',
-    zIndex: '2147483647',
-    background: 'transparent',
-    pointerEvents: 'none',
-    userSelect: 'none',
-  });
-
-  const makeBox = (rect) => {
-    const box = document.createElement('div');
-    box.dataset.weworkAnnotation = 'box';
-    Object.assign(box.style, {
-      position: 'fixed',
-      left: rect.x + 'px',
-      top: rect.y + 'px',
-      width: rect.width + 'px',
-      height: rect.height + 'px',
-      border: '2px solid #1683ff',
-      background: 'rgba(147, 197, 253, 0.45)',
-      boxSizing: 'border-box',
-      pointerEvents: 'none',
-    });
-    return box;
-  };
-
-  const elementRect = (element) => {
-    const rect = element.getBoundingClientRect();
-    return {
-      x: Math.max(0, rect.left),
-      y: Math.max(0, rect.top),
-      width: Math.max(1, Math.min(rect.width, window.innerWidth - Math.max(0, rect.left))),
-      height: Math.max(1, Math.min(rect.height, window.innerHeight - Math.max(0, rect.top))),
-    };
-  };
-
-  const updateHoverBox = (element) => {
-    const rect = elementRect(element);
-    if (!state.hoverBox) {
-      state.hoverBox = makeBox(rect);
-      state.hoverBox.dataset.weworkAnnotation = 'hover';
-      state.hoverBox.style.background = 'rgba(147, 197, 253, 0.28)';
-      layer.appendChild(state.hoverBox);
-    }
-    Object.assign(state.hoverBox.style, {
-      left: rect.x + 'px',
-      top: rect.y + 'px',
-      width: rect.width + 'px',
-      height: rect.height + 'px',
-    });
-  };
-
-  const textFor = (element, maxLength = 120) => {
-    const text = (
-      element.getAttribute?.('aria-label') ||
-      element.getAttribute?.('title') ||
-      element.getAttribute?.('placeholder') ||
-      element.innerText ||
-      element.textContent ||
-      ''
-    )
-      .replace(/\s+/g, ' ')
-      .trim();
-    return text.slice(0, maxLength);
-  };
-
-  const rectIntersectionArea = (a, b) => {
-    const left = Math.max(a.x, b.x);
-    const top = Math.max(a.y, b.y);
-    const right = Math.min(a.x + a.width, b.x + b.width);
-    const bottom = Math.min(a.y + a.height, b.y + b.height);
-    return Math.max(0, right - left) * Math.max(0, bottom - top);
-  };
-
-  const centerDistance = (a, b) => {
-    const ax = a.x + a.width / 2;
-    const ay = a.y + a.height / 2;
-    const bx = b.x + b.width / 2;
-    const by = b.y + b.height / 2;
-    return Math.hypot(ax - bx, ay - by);
-  };
-
-  const summarizeTarget = (element, rect, extra = {}) => ({
-    ...extra,
-    tagName: element.tagName?.toLowerCase?.(),
-    name: textFor(element),
-    text: textFor(element, 240),
-    rect,
-  });
-
-  const resolveAnnotationTarget = (element, annotationRect) => {
-    const registries = window.__WEWORK_BROWSER_AGENT__?.inspectRegistries;
-    const candidates = [];
-    if (Array.isArray(registries)) {
-      registries.forEach((registry, registryRank) => {
-        Object.values(registry.refs || {}).forEach((record) => {
-          const candidateElement = record?.element;
-          if (!(candidateElement instanceof Element) || !candidateElement.isConnected) return;
-          const candidateRect = elementRect(candidateElement);
-          const targetArea = Math.max(1, annotationRect.width * annotationRect.height);
-          const candidateArea = Math.max(1, candidateRect.width * candidateRect.height);
-          const overlap = rectIntersectionArea(annotationRect, candidateRect);
-          const overlapRatio = overlap / Math.min(targetArea, candidateArea);
-          const containment =
-            candidateElement === element
-              ? 1
-              : candidateElement.contains(element)
-                ? 0.72
-                : element.contains(candidateElement)
-                  ? 0.62
-                  : 0;
-          const distancePenalty = Math.min(0.28, centerDistance(annotationRect, candidateRect) / 1600);
-          const recencyBonus = registryRank === 0 ? 0.04 : 0;
-          const confidence = Math.max(
-            0,
-            Math.min(1, Math.max(overlapRatio, containment) + recencyBonus - distancePenalty)
-          );
-          if (confidence < 0.18) return;
-          candidates.push(
-            summarizeTarget(candidateElement, candidateRect, {
-              inspectId: registry.inspectId,
-              ref: record.ref,
-              index: record.index,
-              role: record.role,
-              confidence: Number(confidence.toFixed(2)),
-            })
-          );
-        });
-      });
-    }
-
-    candidates.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
-    const unique = [];
-    const seenRefs = new Set();
-    candidates.forEach((candidate) => {
-      const key = candidate.ref || [candidate.tagName, candidate.rect?.x, candidate.rect?.y].join(':');
-      if (seenRefs.has(key)) return;
-      seenRefs.add(key);
-      unique.push(candidate);
-    });
-    const topCandidates = unique.slice(0, 3);
-    const fallback = summarizeTarget(element, annotationRect, { confidence: 0.45 });
-    const target = topCandidates[0] || fallback;
-    return {
-      inspectId: target.inspectId,
-      target,
-      candidates: topCandidates,
-      matchConfidence: target.confidence || 0.45,
-    };
-  };
-
-  const clearHoverBox = () => {
-    state.hoverBox?.remove();
-    state.hoverBox = null;
-  };
-
-  const removeAnnotationVisualNodes = (root) => {
-    root.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
-    root.querySelectorAll('[data-wework-annotation="box"]').forEach((node) => node.remove());
-    root.querySelectorAll('[data-wework-annotation="hover"]').forEach((node) => node.remove());
-  };
-
-  const clearAnnotationVisuals = () => {
-    clearHoverBox();
-    // Clear both the live layer and any orphaned nodes left outside it.
-    // Orphans can remain when a previous injection session leaked boxes.
-    removeAnnotationVisualNodes(layer);
-    removeAnnotationVisualNodes(document);
-    state.nextNumber = 1;
-    state.published.length = 0;
-    state.draftBox = null;
-    state.activeEditor = null;
-    state.activeInput = null;
-    state.activeElement = null;
-  };
-
-  window.__weworkBrowserAnnotationConsume = () => {
-    const items = state.published.slice();
-    state.published.length = 0;
-    if (items.length > 0) {
-      log('consume published annotations', { count: items.length, comments: items.map((item) => item.comment) });
-    }
-    return items;
-  };
-  window.__weworkBrowserAnnotationClear = () => {
-    log('clear annotations');
-    clearAnnotationVisuals();
-  };
-
-  const validTarget = (target) => {
-    if (!(target instanceof Element)) return null;
-    if (isAnnotationLayerTarget(target)) return null;
-    if (target === document.documentElement || target === document.body) return null;
-    return target;
-  };
-
-  const showEditor = (element) => {
-    const rect = elementRect(element);
-    log('open editor', {
-      tagName: element.tagName?.toLowerCase?.(),
-      text: (element.innerText || element.textContent || '').trim().slice(0, 120),
-      rect,
-    });
-    clearHoverBox();
-    const draftBox = makeBox(rect);
-    state.draftBox = draftBox;
-    layer.appendChild(draftBox);
-
-    const editor = document.createElement('div');
-    Object.assign(editor.style, {
-      position: 'fixed',
-      left: Math.min(rect.x + 8, Math.max(8, window.innerWidth - 300)) + 'px',
-      top: Math.min(rect.y + 28, Math.max(8, window.innerHeight - 52)) + 'px',
-      width: '280px',
-      height: '40px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      padding: '0 10px',
-      borderRadius: '999px',
-      border: '1px solid rgba(0,0,0,0.12)',
-      background: 'white',
-      boxShadow: '0 12px 30px rgba(0,0,0,0.16)',
-      boxSizing: 'border-box',
-      cursor: 'default',
-      pointerEvents: 'auto',
-    });
-    editor.dataset.weworkAnnotation = 'editor';
-
-    const input = document.createElement('input');
-    input.placeholder = '添加评论...';
-    Object.assign(input.style, {
-      minWidth: '0',
-      flex: '1',
-      height: '28px',
-      border: '0',
-      outline: '0',
-      fontSize: ${JSON.stringify(typography['--text-base'])},
-      background: 'transparent',
-    });
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = '发布';
-    Object.assign(button.style, {
-      border: '0',
-      borderRadius: '999px',
-      background: '#1683ff',
-      color: 'white',
-      height: '28px',
-      padding: '0 10px',
-      fontSize: ${JSON.stringify(typography['--text-xs'])},
-      cursor: 'pointer',
-    });
-
-    const closeEditor = (removeDraft) => {
-      editor.remove();
-      if (removeDraft) {
-        draftBox.remove();
-      }
-      if (state.draftBox === draftBox) {
-        state.draftBox = null;
-      }
-      if (state.activeEditor === editor) {
-        state.activeEditor = null;
-        state.activeInput = null;
-      }
-    };
-
-    const publish = () => {
-      const comment = input.value.trim();
-      if (!comment) return;
-      const number = state.nextNumber++;
-      const badge = document.createElement('span');
-      badge.textContent = String(number);
-      Object.assign(badge.style, {
-        position: 'absolute',
-        right: '4px',
-        top: '4px',
-        minWidth: '20px',
-        height: '20px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: '999px',
-        background: '#1683ff',
-        color: 'white',
-        fontSize: ${JSON.stringify(typography['--text-xs'])},
-        fontWeight: '700',
-        padding: '0 4px',
-      });
-      draftBox.appendChild(badge);
-      const annotation = {
-        id: 'browser-annotation-' + Date.now() + '-' + number,
-        number,
-        comment,
-        tagName: element.tagName.toLowerCase(),
-        text: (element.innerText || element.textContent || '').trim().slice(0, 500),
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height,
-        ...resolveAnnotationTarget(element, rect),
-      };
-      state.published.push(annotation);
-      log('publish annotation', annotation);
-      closeEditor(false);
-    };
-
-    button.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      publish();
-    });
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
-        event.preventDefault();
-        event.stopPropagation();
-        publish();
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        closeEditor(true);
-      }
-    });
-    editor.addEventListener('pointerdown', (event) => event.stopPropagation());
-    editor.addEventListener('mousedown', (event) => event.stopPropagation());
-    editor.addEventListener('click', (event) => event.stopPropagation());
-    editor.append(input, button);
-    layer.appendChild(editor);
-    state.activeEditor = editor;
-    state.activeInput = input;
-    input.focus();
-  };
-
-  const handleMouseMove = (event) => {
-    if (state.draftBox) return;
-    const target = validTarget(event.target);
-    if (!target) {
-      clearHoverBox();
-      return;
-    }
-    state.activeElement = target;
-    updateHoverBox(target);
-  };
-
-  const keepDraftFocus = (event) => {
-    if (!state.draftBox) return false;
-    const target = event.target;
-    if (isAnnotationLayerTarget(target)) {
-      return false;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    state.activeInput?.focus();
-    return true;
-  };
-
-  const handlePointerDown = (event) => {
-    keepDraftFocus(event);
-  };
-
-  const handleClick = (event) => {
-    if (keepDraftFocus(event)) return;
-    if (isAnnotationLayerTarget(event.target)) return;
-    const target = validTarget(event.target) || state.activeElement;
-    if (!target) return;
-    event.preventDefault();
-    event.stopPropagation();
-    showEditor(target);
-  };
-
-  const cleanup = () => {
-    log('cleanup annotation layer');
-    document.removeEventListener('pointerdown', handlePointerDown, true);
-    document.removeEventListener('mousemove', handleMouseMove, true);
-    document.removeEventListener('click', handleClick, true);
-    clearAnnotationVisuals();
-    layer.remove();
-    // Defensive: remove any orphaned annotation nodes left outside the layer.
-    document.getElementById('__wework_browser_annotation_layer__')?.remove();
-    document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
-    delete window.__weworkBrowserAnnotationConsume;
-    delete window.__weworkBrowserAnnotationClose;
-    delete window.__weworkBrowserAnnotationClear;
-  };
-
-  window.__weworkBrowserAnnotationClose = cleanup;
-
-  document.addEventListener('pointerdown', handlePointerDown, true);
-  document.addEventListener('mousemove', handleMouseMove, true);
-  document.addEventListener('click', handleClick, true);
-
-  document.documentElement.appendChild(layer);
-  log('annotation layer installed', { url: window.location.href });
-  return true;
-})();`
-}
-
-function browserAnnotationContext(
-  annotation: BrowserAnnotation,
-  url: string | null,
-  title: string | null
-): CodeCommentContext {
-  const browserUrl = url ?? 'about:blank'
-  const fallbackName = (() => {
-    try {
-      return new URL(browserUrl).hostname || browserUrl
-    } catch {
-      return browserUrl
-    }
-  })()
-  return {
-    id: annotation.id,
-    filePath: `browser:${browserUrl}`,
-    fileName: title || fallbackName,
-    startLine: annotation.number,
-    endLine: annotation.number,
-    selectedText: JSON.stringify(
-      {
-        type: 'browser_annotation',
-        url: browserUrl,
-        title,
-        rect: {
-          x: Math.round(annotation.x),
-          y: Math.round(annotation.y),
-          width: Math.round(annotation.width),
-          height: Math.round(annotation.height),
-        },
-        inspectId: annotation.inspectId,
-        target: annotation.target,
-        candidates: annotation.candidates,
-        matchConfidence: annotation.matchConfidence,
-      },
-      null,
-      2
-    ),
-    comment: annotation.comment,
-    createdAt: new Date().toISOString(),
-  }
-}
-
 export function WorkspaceBrowserTabPanel({
   active,
   label = 'workspace-browser',
+  browserTabId = label,
   openRequest,
   codeCommentCount = 0,
+  codeCommentContexts = [],
+  browserAnnotationCommand,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onNativeLabelChange,
   onDownloadActivityChange,
   onFaviconChange,
@@ -774,7 +287,8 @@ export function WorkspaceBrowserTabPanel({
   const activeDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
-  const previousCodeCommentCountRef = useRef(codeCommentCount)
+  const lastAnnotationCommandSequenceRef = useRef(0)
+  const annotationSnapshotRef = useRef<{ pageSessionId: string; revision: number } | null>(null)
   const handledOpenRequestIdRef = useRef<string | null>(null)
   const activeOpenRequestIdRef = useRef<string | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
@@ -790,7 +304,10 @@ export function WorkspaceBrowserTabPanel({
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [annotationMode, setAnnotationMode] = useState(false)
-  const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
+  const [annotations, setAnnotations] = useState<PageAnnotationDto[]>([])
+  const [, setAnnotationScope] = useState<BrowserAnnotationScope | null>(null)
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
+  const [discardingAnnotations, setDiscardingAnnotations] = useState(false)
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
@@ -813,6 +330,7 @@ export function WorkspaceBrowserTabPanel({
   )
   const embeddedBrowserOccluded =
     occludingOverlayIds.size > 0 || (active && Boolean(currentUrl) && documentOverlayOccluded)
+  const pendingCommentContextCount = Math.max(codeCommentCount, codeCommentContexts.length)
 
   const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
     setDownloads(current => {
@@ -1065,6 +583,20 @@ export function WorkspaceBrowserTabPanel({
       if (!activeRef.current || pageState.nativeLabel !== nativeLabelRef.current) return
       setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
+      if (
+        annotationModeRef.current &&
+        nextUrl &&
+        activePageUrlRef.current &&
+        nextUrl !== activePageUrlRef.current
+      ) {
+        annotationSnapshotRef.current = null
+        annotationRequestGenerationRef.current += 1
+        annotationModeRef.current = false
+        setAnnotations([])
+        setAnnotationScope(null)
+        setAnnotationMode(false)
+        void evalEmbeddedBrowser('window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true', label)
+      }
       updatePageUrl(nextUrl)
       if (nextUrl) {
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
@@ -1090,7 +622,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onFaviconChange, onTitleChange, updatePageUrl])
+  }, [label, onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
@@ -1148,6 +680,17 @@ export function WorkspaceBrowserTabPanel({
     return cleanupPromise
   }, [])
 
+  const suspendAnnotationLayer = useCallback(async (targetLabel: string) => {
+    try {
+      await evalEmbeddedBrowser(
+        'window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true',
+        targetLabel
+      )
+    } catch (error) {
+      console.error('Failed to suspend embedded browser annotation layer:', error)
+    }
+  }, [])
+
   const cleanupInvalidatedAnnotationRequest = useCallback(
     async (requestGeneration: number, targetLabel: string) => {
       if (
@@ -1167,16 +710,14 @@ export function WorkspaceBrowserTabPanel({
     logBrowserAnnotation('exit annotation mode', {
       label,
       currentUrl,
+      pendingCommentContextCount,
       nativeBrowserOpen: nativeBrowserOpenRef.current,
     })
     annotationRequestGenerationRef.current += 1
     annotationModeRef.current = false
     setAnnotationMode(false)
-    setAnnotations([])
-    // Clear visuals first, then close the session. Also remove any orphaned
-    // annotation nodes so published boxes cannot linger after mode exit.
-    void cleanupAnnotationLayer(label)
-  }, [cleanupAnnotationLayer, currentUrl, label])
+    void suspendAnnotationLayer(label)
+  }, [currentUrl, label, pendingCommentContextCount, suspendAnnotationLayer])
 
   const enterAnnotationMode = useCallback(async () => {
     logBrowserAnnotation('enter annotation mode requested', {
@@ -1216,7 +757,47 @@ export function WorkspaceBrowserTabPanel({
         return
       }
       annotationInjectionOwnerRef.current = requestGeneration
-      await evalEmbeddedBrowser(browserAnnotationInjectionScript(appearance.uiFontSize), label)
+      await evalEmbeddedBrowser(
+        createBrowserAnnotationInjectionScript({
+          browserTabId,
+          uiFontSize: appearance.uiFontSize,
+          strings: {
+            placeholder: t('workbench.browser_annotation_placeholder'),
+            publish: t('workbench.browser_annotation_publish'),
+            save: t('workbench.browser_annotation_save'),
+            cancel: t('workbench.cancel'),
+            adjust: t('workbench.browser_annotation_adjust'),
+            add: t('workbench.browser_annotation_add'),
+            send: t('workbench.browser_annotation_send'),
+            delete: t('workbench.browser_annotation_delete'),
+            deleteTitle: t('workbench.browser_annotation_delete_title'),
+            deleteDescription: t('workbench.browser_annotation_delete_description'),
+            targetUnavailable: t('workbench.browser_annotation_target_unavailable'),
+            resetProperty: t('workbench.browser_annotation_reset_property'),
+            tweaksPlaceholder: t('workbench.browser_annotation_tweaks_placeholder'),
+            selectedItems: t('workbench.browser_annotation_selected_items'),
+            removeAnnotationSelection: t('workbench.browser_annotation_remove_selection'),
+            comment: t('workbench.code_comment_preview_comment'),
+            properties: {
+              text: t('workbench.browser_annotation_adjustment_text'),
+              color: t('workbench.browser_annotation_adjustment_color'),
+              'background-color': t('workbench.browser_annotation_adjustment_background-color'),
+              opacity: t('workbench.browser_annotation_adjustment_opacity'),
+              'font-family': t('workbench.browser_annotation_adjustment_font-family'),
+              'font-size': t('workbench.browser_annotation_adjustment_font-size'),
+              'font-weight': t('workbench.browser_annotation_adjustment_font-weight'),
+              width: t('workbench.browser_annotation_adjustment_width'),
+              height: t('workbench.browser_annotation_adjustment_height'),
+              padding: t('workbench.browser_annotation_adjustment_padding'),
+              margin: t('workbench.browser_annotation_adjustment_margin'),
+              'border-radius': t('workbench.browser_annotation_adjustment_border-radius'),
+              'border-color': t('workbench.browser_annotation_adjustment_border-color'),
+              'border-width': t('workbench.browser_annotation_adjustment_border-width'),
+            },
+          },
+        }),
+        label
+      )
       if (
         !mountedRef.current ||
         currentLabelRef.current !== label ||
@@ -1264,18 +845,32 @@ export function WorkspaceBrowserTabPanel({
     exitAnnotationMode,
     internalDesktopPage,
     label,
+    browserTabId,
     t,
   ])
 
   useEffect(() => {
-    const previousCount = previousCodeCommentCountRef.current
-    previousCodeCommentCountRef.current = codeCommentCount
-    // After annotations are sent (or cleared from composer), leave annotation mode
-    // and remove any remaining page selection boxes.
-    if (previousCount > 0 && codeCommentCount === 0 && annotationMode) {
-      exitAnnotationMode()
+    if (
+      !browserAnnotationCommand ||
+      browserAnnotationCommand.sequence <= lastAnnotationCommandSequenceRef.current
+    ) {
+      return
     }
-  }, [annotationMode, codeCommentCount, exitAnnotationMode])
+    lastAnnotationCommandSequenceRef.current = browserAnnotationCommand.sequence
+    void evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
+      'window.__WEWORK_BROWSER_ANNOTATION__?.clear?.() ?? null',
+      label
+    )
+      .then(snapshot => {
+        if (!snapshot || snapshot.scope.browserTabId !== browserTabId) return
+        setAnnotations(snapshot.annotations)
+        setAnnotationScope(snapshot.scope)
+      })
+      .catch(error => {
+        console.error('Failed to execute browser annotation cleanup command:', error)
+      })
+      .finally(exitAnnotationMode)
+  }, [browserAnnotationCommand, browserTabId, exitAnnotationMode, label])
 
   const clearScheduledBoundsSync = useCallback(() => {
     if (syncBoundsAnimationFrameRef.current !== null) {
@@ -1572,6 +1167,9 @@ export function WorkspaceBrowserTabPanel({
         }
         setStatus('ready')
         schedulePostOpenBoundsSync(active)
+        if (!annotationModeRef.current) {
+          void suspendAnnotationLayer(label)
+        }
       } catch {
         // No existing native browser for this label.
       }
@@ -1590,6 +1188,7 @@ export function WorkspaceBrowserTabPanel({
     label,
     onTitleChange,
     schedulePostOpenBoundsSync,
+    suspendAnnotationLayer,
     updatePageUrl,
   ])
 
@@ -1694,50 +1293,54 @@ export function WorkspaceBrowserTabPanel({
 
     const consumeAnnotations = async () => {
       try {
-        const published = await evalEmbeddedBrowserJson<BrowserAnnotation[]>(
-          'window.__weworkBrowserAnnotationConsume?.() ?? []',
+        const snapshot = await evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
+          'window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.() ?? null',
           label
         )
         if (cancelled) return
-        if (!Array.isArray(published)) {
-          logBrowserAnnotation('consume returned non-array payload', {
+        if (!snapshot || !snapshot.scope || snapshot.scope.browserTabId !== browserTabId) {
+          logBrowserAnnotation('snapshot returned invalid payload', {
             label,
-            payloadType: typeof published,
+            hasSnapshot: Boolean(snapshot),
           })
           return
         }
-        if (published.length === 0) {
+        const previousSnapshot = annotationSnapshotRef.current
+        if (
+          previousSnapshot?.pageSessionId === snapshot.scope.pageSessionId &&
+          previousSnapshot.revision === snapshot.revision
+        ) {
           if (annotationEmptyPollLogCountRef.current < 5) {
             annotationEmptyPollLogCountRef.current += 1
-            logBrowserAnnotation('consume returned no annotations', {
+            logBrowserAnnotation('snapshot unchanged', {
               label,
               emptyPollCount: annotationEmptyPollLogCountRef.current,
             })
           }
           return
         }
-        logBrowserAnnotation('consume returned annotations', {
+        annotationSnapshotRef.current = {
+          pageSessionId: snapshot.scope.pageSessionId,
+          revision: snapshot.revision,
+        }
+        annotationEmptyPollLogCountRef.current = 0
+        logBrowserAnnotation('snapshot returned annotations', {
           label,
-          count: published.length,
-          comments: published.map(annotation => annotation.comment),
+          count: snapshot.annotations.length,
+          revision: snapshot.revision,
           hasAddCodeComment: Boolean(onAddCodeComment),
         })
-        setAnnotations(current => [...current, ...published])
-        published.forEach(annotation => {
-          logBrowserAnnotation('forward annotation to workbench', {
-            label,
-            annotationId: annotation.id,
-            number: annotation.number,
-            commentLength: annotation.comment.length,
-          })
-          onAddCodeComment?.(
-            browserAnnotationContext(
-              annotation,
-              activePageUrl,
-              activePageUrl ? getFallbackBrowserTitle(activePageUrl) : null
-            )
-          )
-        })
+        setAnnotations(snapshot.annotations)
+        setAnnotationScope(snapshot.scope)
+        const contexts = browserSnapshotToContexts(
+          snapshot,
+          activePageUrl ? getFallbackBrowserTitle(activePageUrl) : null
+        )
+        if (onReplaceBrowserCodeComments) {
+          onReplaceBrowserCodeComments(snapshot.scope, contexts)
+        } else {
+          contexts.forEach(context => onAddCodeComment?.(context))
+        }
       } catch (error) {
         if (cancelled) return
         console.error('Failed to consume embedded browser annotations:', error)
@@ -1762,10 +1365,12 @@ export function WorkspaceBrowserTabPanel({
     active,
     activePageUrl,
     annotationMode,
+    browserTabId,
     embeddedBrowserAvailable,
     internalDesktopPage,
     label,
     onAddCodeComment,
+    onReplaceBrowserCodeComments,
   ])
 
   useEffect(() => {
@@ -1942,7 +1547,7 @@ export function WorkspaceBrowserTabPanel({
       )
       pageStateRequestGenerationRef.current += 1
 
-      if (annotationMode && cloudDesktopExtension.isInternalPageUrl(nextUrl)) {
+      if (annotationMode && nextUrl !== activePageUrl) {
         exitAnnotationMode()
       }
 
@@ -2013,6 +1618,7 @@ export function WorkspaceBrowserTabPanel({
 
   const handleReload = () => {
     if (!activePageUrl) return
+    if (annotationMode) exitAnnotationMode()
     reloadCurrentUrl(activePageUrl)
   }
 
@@ -2150,24 +1756,8 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-annotation-clear-button"
             label={t('workbench.browser_annotation_clear')}
-            onClick={() => {
-              setAnnotations([])
-              // Prefer the injected Clear (resets numbering/state). Always also
-              // wipe visual nodes from the document so orphaned boxes cannot stay
-              // after the toolbar count already cleared.
-              void evalEmbeddedBrowser(
-                `(() => {
-                  try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
-                  document
-                    .querySelectorAll('[data-wework-annotation="box"], [data-wework-annotation="hover"], [data-wework-annotation="editor"]')
-                    .forEach((node) => node.remove());
-                  return true;
-                })()`,
-                label
-              ).catch(error => {
-                console.error('Failed to clear embedded browser annotations:', error)
-              })
-            }}
+            disabled={annotations.length === 0 || discardingAnnotations}
+            onClick={() => setDiscardDialogOpen(true)}
           >
             <Trash2 className="h-4 w-4" />
           </BrowserToolbarButton>
@@ -2291,6 +1881,36 @@ export function WorkspaceBrowserTabPanel({
           ) : null}
         </div>
       )}
+      <ConfirmDialog
+        open={discardDialogOpen}
+        title={t('workbench.browser_annotation_discard_title')}
+        description={t('workbench.browser_annotation_discard_description')}
+        cancelLabel={t('workbench.cancel')}
+        confirmLabel={t('workbench.browser_annotation_discard_confirm')}
+        confirmTestId="workspace-browser-annotation-discard-confirm-button"
+        destructive
+        pending={discardingAnnotations}
+        onClose={() => setDiscardDialogOpen(false)}
+        onConfirm={() => {
+          setDiscardingAnnotations(true)
+          void evalEmbeddedBrowserJson<BrowserAnnotationSnapshot>(
+            'window.__WEWORK_BROWSER_ANNOTATION__?.clear?.() ?? null',
+            label
+          )
+            .then(snapshot => {
+              if (!snapshot) throw new Error('Annotation runtime is unavailable')
+              setAnnotations(snapshot.annotations)
+              setAnnotationScope(snapshot.scope)
+              onRemoveBrowserCodeComments?.(snapshot.scope)
+              setDiscardDialogOpen(false)
+            })
+            .catch(error => {
+              console.error('Failed to clear embedded browser annotations:', error)
+              setError(t('workbench.browser_annotation_clear_failed'))
+            })
+            .finally(() => setDiscardingAnnotations(false))
+        }}
+      />
       {shouldShowAgentState(agentState) ? (
         <div
           data-testid="workspace-browser-agent-status"
