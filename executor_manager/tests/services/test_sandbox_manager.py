@@ -905,6 +905,31 @@ class TestSandboxManager:
         sync.assert_not_awaited()
         start.assert_not_called()
 
+    def test_reused_sandbox_replaces_request_scoped_required_skills(
+        self,
+        sandbox_manager_with_mock_redis,
+        sample_sandbox,
+    ):
+        """A request-only Skill must not remain required on later turns."""
+        sample_sandbox.metadata.update(
+            {
+                "required_skills": ["wegent-knowledge"],
+                "bot_config": "previous-request",
+            }
+        )
+
+        sandbox_manager_with_mock_redis._merge_activation_metadata(
+            sample_sandbox,
+            {
+                "required_skills": ["abtest-file-analyzer"],
+                "bot_config": "current-request",
+            },
+            None,
+        )
+
+        assert sample_sandbox.metadata["required_skills"] == ["abtest-file-analyzer"]
+        assert sample_sandbox.metadata["bot_config"] == "current-request"
+
     @pytest.mark.asyncio
     async def test_reused_sandbox_skill_sync_failure_preserves_runtime(
         self,

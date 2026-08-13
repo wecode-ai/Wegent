@@ -15,8 +15,51 @@ from chat_shell.tools import skill_factory
 from chat_shell.tools.builtin.load_skill import LoadSkillTool
 from chat_shell.tools.skill_factory import (
     _load_skill_mcp_tools,
+    _with_request_skill_plan,
     prepare_skill_tools,
 )
+from shared.models.execution import ExecutionRequest
+
+
+def test_sandbox_config_carries_request_scoped_skill_plan():
+    """Sandbox creation should preserve Skills resolved for this chat turn."""
+    skill_config = {
+        "name": "sandbox",
+        "config": {
+            "bot_config": [
+                {
+                    "shell_type": "ClaudeCode",
+                    "agent_config": {"env": {"model": "claude"}},
+                }
+            ]
+        },
+    }
+    request = ExecutionRequest(
+        skill_names=["sandbox", "wegent-knowledge"],
+        preload_skills=["sandbox", "wegent-knowledge"],
+        skill_refs={
+            "wegent-knowledge": {
+                "skill_id": 42,
+                "namespace": "default",
+                "is_public": True,
+            }
+        },
+        preload_skill_refs={
+            "wegent-knowledge": {
+                "skill_id": 42,
+                "namespace": "default",
+                "is_public": True,
+            }
+        },
+    )
+
+    enriched = _with_request_skill_plan(skill_config, request)
+
+    sandbox_bot = enriched["config"]["bot_config"][0]
+    assert sandbox_bot["skills"] == ["sandbox", "wegent-knowledge"]
+    assert sandbox_bot["preload_skills"] == ["sandbox", "wegent-knowledge"]
+    assert sandbox_bot["skill_refs"]["wegent-knowledge"]["skill_id"] == 42
+    assert "skills" not in skill_config["config"]["bot_config"][0]
 
 
 class TestLoadSkillMcpTools:
