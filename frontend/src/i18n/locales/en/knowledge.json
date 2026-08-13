@@ -247,6 +247,14 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
+      "categoryFilter": {
+        "label": "Knowledge base category",
+        "all": "All",
+        "document": "Document",
+        "code": "Code",
+        "emptyDocument": "No document knowledge bases",
+        "emptyCode": "No code knowledge bases"
+      },
       "currentDefaultView": "Current Default Opening View",
       "convertToNotebook": "Open Workspace by Default",
       "convertToClassic": "Open Document Management by Default",
@@ -422,6 +430,7 @@
         "transferSuccessFolders": "Transferred {{folderCount}} folder(s) successfully",
         "transferSuccessMixed": "Transferred {{folderCount}} folder(s) and {{docCount}} document(s) successfully",
         "transferFailed": "Transfer failed",
+        "transferSelectionLimit": "Select at most {{count}} documents and folders per transfer",
         "noOtherKbs": "No target knowledge bases match the transfer rules",
         "errors": {
           "SOURCE_TARGET_SAME": "Source and target knowledge bases must be different",
@@ -430,6 +439,7 @@
           "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
           "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "A transfer can include at most 200 documents and folders",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
@@ -1149,6 +1159,13 @@
       "emptyFailed": "The last run did not finish",
       "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
     },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "Document Management",
+      "generatedContent": "Wiki",
+      "userContent": "Documents",
+      "permissions": "Permissions"
+    },
     "history": {
       "title": "Generation history",
       "never": "Never generated",
@@ -1170,7 +1187,10 @@
       "republished": "This version is published again",
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
-      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break."
+      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "viewFailure": "View full error",
+      "failureDetailsTitle": "Generation error",
+      "failureDetailsDescription": "Full error message from this generation run."
     },
     "failure": {
       "task_ended_without_report": "The task ended without reporting a result",

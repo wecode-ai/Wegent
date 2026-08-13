@@ -110,8 +110,8 @@ def _generation_config_for_log(config: Any) -> Dict[str, Any]:
 def _request_shell_type(request: "ExecutionRequest") -> str:
     """Extract the primary shell type from an execution request."""
     if request.bot and isinstance(request.bot[0], dict):
-        return str(request.bot[0].get("shell_type") or "")
-    return ""
+        return str(request.bot[0].get("shell_type") or "Chat")
+    return "Chat"
 
 
 def _should_inline_attachment_content(request: "ExecutionRequest") -> bool:
@@ -991,24 +991,33 @@ async def build_execution_request(
                 user.id,
                 preload_selected_kb_skill=preload_selected_kb_skill,
             )
-            if (
-                preload_selected_kb_skill
-                and (device_id or _request_shell_type(request) == "ClaudeCode")
-                and request.knowledge_base_ids
-                and request.is_user_selected_kb
-                and SELECTED_KB_PRELOAD_SKILL not in (request.skill_names or [])
-            ):
-                from app.schemas.kind import Team as TeamCRD
 
-                team_crd = TeamCRD.model_validate(team.json)
-                bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
-                if bot:
-                    request = builder.resolve_request_preload_skills(
-                        request=request,
-                        bot=bot,
-                        team=team,
-                        user=user,
-                    )
+        from app.services.chat.selected_knowledge import (
+            activate_provider_native_knowledge,
+            apply_selected_knowledge_context,
+        )
+
+        provider_skills = []
+        if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE:
+            provider_skills = apply_selected_knowledge_context(db, request, task)
+        unresolved_provider_skills = [
+            skill_name
+            for skill_name in provider_skills
+            if skill_name not in (request.skill_names or [])
+        ]
+        if unresolved_provider_skills:
+            from app.schemas.kind import Team as TeamCRD
+
+            team_crd = TeamCRD.model_validate(team.json)
+            bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
+            if bot:
+                request = builder.resolve_request_preload_skills(
+                    request=request,
+                    bot=bot,
+                    team=team,
+                    user=user,
+                )
+        activate_provider_native_knowledge(request, provider_skills)
 
         return request
 
@@ -1044,6 +1053,7 @@ async def _process_contexts(
     inline_attachment_content = _should_inline_attachment_content(request)
 
     # Process contexts (attachments, knowledge bases, etc.)
+    base_system_prompt = request.system_prompt
     ctx = await prepare_contexts_for_chat(
         db=db,
         user_subtask_id=user_subtask_id,
@@ -1061,9 +1071,24 @@ async def _process_contexts(
     # computed inside _prepare_kb_tools_from_contexts and surfaced here - no extra
     # DB queries needed.
     request.prompt = ctx.final_message
-    request.system_prompt = ctx.kb.enhanced_system_prompt
+    from app.services.chat.selected_knowledge import (
+        SUPPORTED_PROVIDER_NATIVE_SHELLS,
+    )
+
+    prepare_provider_native_knowledge = bool(
+        ctx.kb.knowledge_base_ids
+        and preload_selected_kb_skill
+        and _request_shell_type(request) in SUPPORTED_PROVIDER_NATIVE_SHELLS
+    )
+    request.system_prompt = (
+        base_system_prompt
+        if prepare_provider_native_knowledge
+        else ctx.kb.enhanced_system_prompt
+    )
     request.table_contexts = ctx.table_contexts
-    request.kb_meta_prompt = ctx.kb.kb_meta_prompt
+    request.kb_meta_prompt = (
+        "" if prepare_provider_native_knowledge else ctx.kb.kb_meta_prompt
+    )
     request.attachments = [
         _build_executor_attachment_payload(context)
         for context in context_service.get_attachments_by_subtask(db, user_subtask_id)
@@ -1076,13 +1101,14 @@ async def _process_contexts(
         [attachment.get("id") for attachment in request.attachments],
     )
     if ctx.kb.knowledge_base_ids:
+        request.provider_native_knowledge = False
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
         request.knowledge_base_scopes = ctx.kb.knowledge_base_scopes
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
-        if preload_selected_kb_skill:
+        if prepare_provider_native_knowledge:
             _ensure_selected_kb_skill_priority(request)
 
     logger.info(

@@ -3,7 +3,6 @@ import {
   ChevronDown,
   MoreHorizontal,
   RefreshCw,
-  Search,
   Settings2,
   UserRoundX,
   X,
@@ -106,6 +105,7 @@ import {
   shouldShowInstalledMarketplaceActions,
 } from './marketplaceCatalogMerge'
 import { humanizeMarketplaceInstallError } from './marketplaceInstallError'
+import { MarketplaceSearchInput, type MarketplaceSearchInputHandle } from './MarketplaceSearchInput'
 import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from './marketplacePluginLock'
 import {
   groupMarketplaceItemsAdaptively,
@@ -138,6 +138,7 @@ type MarketplaceKind = 'local' | 'cloud'
 const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
 const INSTALLED_STRIP_VISIBLE_COUNT = 12
 const INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT = 4
+const MARKETPLACE_SEARCH_RESULT_BATCH_SIZE = 40
 
 interface MarketplaceOption {
   key: string
@@ -1278,6 +1279,7 @@ export function PluginsWorkspace({
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [query, setQuery] = useState('')
+  const [searchResultWindow, setSearchResultWindow] = useState({ query: '', limit: 0 })
   const [marketplaceDistributionFilter, setMarketplaceDistributionFilter] = useState<
     'all' | PluginDistribution
   >('all')
@@ -1354,7 +1356,7 @@ export function PluginsWorkspace({
     initialInstalledPlugins.map(plugin => plugin.raw)
   )
   const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
-  const marketplaceSearchInputRef = useRef<HTMLInputElement>(null)
+  const marketplaceSearchInputRef = useRef<MarketplaceSearchInputHandle>(null)
   const marketplaceScrollRegionRef = useRef<HTMLDivElement>(null)
   const marketplaceReturnScrollTopRef = useRef<number | null>(null)
   const preparingInstallPluginIdsRef = useRef(new Set<string | number>())
@@ -1404,7 +1406,6 @@ export function PluginsWorkspace({
       }
     }
   )
-  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [deviceAutoSyncSettled, setDeviceAutoSyncSettled] = useState(() =>
     hasSettledPluginDeviceAutoSync(currentDeviceId)
   )
@@ -1519,15 +1520,11 @@ export function PluginsWorkspace({
   const hasMarketplace = selectedMarketplace !== null
 
   const normalizedQuery = normalizeMarketplaceSearchQuery(query)
-  const isMarketplaceSearchUpdating =
-    Boolean(normalizedQuery) && (normalizedQuery !== debouncedQuery || isMarketplaceRefreshing)
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setDebouncedQuery(normalizedQuery)
-    }, 300)
-    return () => window.clearTimeout(timeoutId)
-  }, [normalizedQuery])
+  const isMarketplaceSearchUpdating = Boolean(normalizedQuery) && isMarketplaceRefreshing
+  const visibleSearchResultLimit =
+    searchResultWindow.query === normalizedQuery
+      ? searchResultWindow.limit
+      : MARKETPLACE_SEARCH_RESULT_BATCH_SIZE
 
   const applyLocalMarketplaceState = useCallback(
     (state: Awaited<ReturnType<typeof localPluginApi.readState>>) => {
@@ -4731,44 +4728,14 @@ export function PluginsWorkspace({
                   ))}
               </div>
               <div className="flex w-full shrink-0 items-center gap-2 md:w-auto">
-                <label className="relative min-w-0 flex-1 md:w-[300px] md:flex-none">
-                  <span className="sr-only">
-                    {t('workbench.plugins_search_plugins', '搜索插件')}
-                  </span>
-                  <input
-                    ref={marketplaceSearchInputRef}
-                    value={query}
-                    onChange={event => {
-                      setQuery(event.target.value)
-                    }}
-                    onKeyDown={event => {
-                      if (event.key === 'Escape' && query) {
-                        event.preventDefault()
-                        setQuery('')
-                      }
-                    }}
-                    placeholder={t('workbench.plugins_marketplace_search', '搜索插件')}
-                    data-testid="plugins-search-input"
-                    className="plugin-market-search-input"
-                  />
-                  {query ? (
-                    <button
-                      type="button"
-                      data-testid="plugins-search-clear-button"
-                      className="plugin-market-search-clear"
-                      aria-label={t('workbench.plugins_clear_search', '清空搜索')}
-                      title={t('workbench.plugins_clear_search', '清空搜索')}
-                      onClick={() => {
-                        setQuery('')
-                        marketplaceSearchInputRef.current?.focus()
-                      }}
-                    >
-                      <X aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                  )}
-                </label>
+                <MarketplaceSearchInput
+                  ref={marketplaceSearchInputRef}
+                  initialValue={query}
+                  label={t('workbench.plugins_search_plugins', '搜索插件')}
+                  placeholder={t('workbench.plugins_marketplace_search', '搜索插件')}
+                  clearLabel={t('workbench.plugins_clear_search', '清空搜索')}
+                  onQueryChange={setQuery}
+                />
               </div>
             </div>
           </div>
@@ -4989,6 +4956,7 @@ export function PluginsWorkspace({
                       data-testid="plugins-clear-marketplace-filters"
                       className="h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
                       onClick={() => {
+                        marketplaceSearchInputRef.current?.clear()
                         setQuery('')
                         setMarketplaceDistributionFilter('all')
                       }}
@@ -5030,6 +4998,7 @@ export function PluginsWorkspace({
                     data-testid="plugins-clear-marketplace-filters"
                     className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
                     onClick={() => {
+                      marketplaceSearchInputRef.current?.clear()
                       setQuery('')
                       rememberMarketplaceKey('')
                       setSelectedMarketplaceKey(cloudMarketplaceKey())
@@ -5046,7 +5015,11 @@ export function PluginsWorkspace({
                 {marketplaceCategorySections.map(section => {
                   const { preview, rest } = previewMarketplaceSectionItems(
                     section.items,
-                    section.flat ? section.items.length : MARKETPLACE_SECTION_PREVIEW_COUNT
+                    section.flat
+                      ? normalizedQuery
+                        ? visibleSearchResultLimit
+                        : section.items.length
+                      : MARKETPLACE_SECTION_PREVIEW_COUNT
                   )
                   return (
                     <section
@@ -5101,7 +5074,20 @@ export function PluginsWorkspace({
                           items={rest}
                           label={marketplaceSectionRevealLabel(rest, t)}
                           testId={`plugins-category-more-${section.key}`}
-                          onReveal={() => setBrowsingCategoryKey(section.key)}
+                          onReveal={() => {
+                            if (section.flat && normalizedQuery) {
+                              setSearchResultWindow(current => ({
+                                query: normalizedQuery,
+                                limit:
+                                  (current.query === normalizedQuery
+                                    ? current.limit
+                                    : MARKETPLACE_SEARCH_RESULT_BATCH_SIZE) +
+                                  MARKETPLACE_SEARCH_RESULT_BATCH_SIZE,
+                              }))
+                              return
+                            }
+                            setBrowsingCategoryKey(section.key)
+                          }}
                         />
                       )}
                     </section>

@@ -29,7 +29,7 @@ import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
-import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
+import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { DingtalkDocsPage } from './DingtalkDocs'
@@ -43,7 +43,7 @@ import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
 } from '@/utils/namespace-permissions'
-import type { KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
+import type { CodeWikiView, KnowledgeBase, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 // Sidebar width constant
@@ -84,17 +84,44 @@ export function KnowledgeDocumentPageDesktop({
     sidebar.selectedKb?.id
   )
   const selectedKbId = sidebar.selectedKb?.id
+  const selectedKbType = sidebar.selectedKb?.kb_type
+  const [codeWikiView, setCodeWikiView] = useState<CodeWikiView>('wiki')
 
   useEffect(() => {
+    if (selectedKbType === 'code_wiki') {
+      onKnowledgeViewStateChange?.({
+        visible: Boolean(selectedKbId),
+        switcher: 'code-wiki',
+        currentView: codeWikiView,
+        onViewChange: view => {
+          if (view === 'wiki' || view === 'documents') setCodeWikiView(view)
+        },
+      })
+      return
+    }
+
     onKnowledgeViewStateChange?.({
       visible: Boolean(selectedKbId),
+      switcher: 'document',
       currentView,
-      onViewChange: setCurrentView,
+      onViewChange: view => {
+        if (view === 'documents' || view === 'notebook') setCurrentView(view)
+      },
     })
-  }, [currentView, onKnowledgeViewStateChange, selectedKbId, setCurrentView])
+  }, [
+    codeWikiView,
+    currentView,
+    onKnowledgeViewStateChange,
+    selectedKbId,
+    selectedKbType,
+    setCurrentView,
+  ])
+
+  useEffect(() => {
+    setCodeWikiView('wiki')
+  }, [selectedKbId])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
-
   // Group KBs hook (extracted from inline logic)
   const {
     groupKbs,
@@ -461,7 +488,16 @@ export function KnowledgeDocumentPageDesktop({
       // one needed a redirect, and that redirect lost a race with this page's own
       // history.pushState and rendered the wiki as a notebook anyway.
       if (sidebar.selectedKb.kb_type === 'code_wiki') {
-        return <CodeWikiReader key={sidebar.selectedKb.id} wiki={sidebar.selectedKb} />
+        return (
+          <CodeWikiWorkspace
+            key={sidebar.selectedKb.id}
+            wiki={sidebar.selectedKb}
+            view={codeWikiView}
+            onConfigure={() => dialogs.setEditingKb(sidebar.selectedKb!)}
+            groupInfo={selectedKbGroupInfo}
+            onGroupClick={handleGroupClick}
+          />
+        )
       }
 
       return (

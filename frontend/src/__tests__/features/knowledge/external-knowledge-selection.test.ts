@@ -9,10 +9,10 @@ import {
 
 describe('external knowledge selection identity', () => {
   it('uses provider, mode, and knowledge base id as the canonical scope identity', () => {
-    const explicit = { provider: 'ap', mode: 'explicit', id: 'kb-1' }
-    const allAccessible = { provider: 'ap', mode: 'all_accessible', id: 'kb-1' }
+    const first = { provider: 'demo', mode: 'explicit' as const, id: 'kb-1' }
+    const second = { provider: 'demo', mode: 'explicit' as const, id: 'kb-2' }
 
-    expect(getExternalKnowledgeScopeKey(explicit)).toBe('ap:explicit:kb-1')
-    expect(isSameExternalKnowledgeScope(explicit, allAccessible)).toBe(false)
+    expect(getExternalKnowledgeScopeKey(first)).toBe('demo:explicit:kb-1')
+    expect(isSameExternalKnowledgeScope(first, second)).toBe(false)
   })
 })

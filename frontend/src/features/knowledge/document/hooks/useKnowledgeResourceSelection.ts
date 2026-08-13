@@ -9,6 +9,8 @@ import { useCallback, useMemo, useState } from 'react'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import type { KnowledgeResourceTreeIndex } from '../utils/resource-tree'
 
+export const MAX_TRANSFER_SELECTION_COUNT = 200
+
 export interface KnowledgeResourceSelectionPayload {
   documentIds: number[]
   folderIds: number[]
@@ -22,6 +24,7 @@ export interface KnowledgeResourceSelectionSummary {
   canMoveDocuments: boolean
   canDeleteDocuments: boolean
   canTransfer: boolean
+  transferLimitExceeded: boolean
 }
 
 interface UseKnowledgeResourceSelectionOptions {
@@ -158,6 +161,7 @@ export function useKnowledgeResourceSelection({
     const folderCount = selectedFolderIds.size
     const hasDocumentSelection = documentCount > 0
     const hasFolderScopeSelection = folderCount > 0
+    const transferLimitExceeded = documentCount + folderCount > MAX_TRANSFER_SELECTION_COUNT
     return {
       documentCount,
       folderCount,
@@ -166,6 +170,7 @@ export function useKnowledgeResourceSelection({
       canMoveDocuments: hasDocumentSelection && !hasFolderScopeSelection,
       canDeleteDocuments: hasDocumentSelection && !hasFolderScopeSelection,
       canTransfer: hasDocumentSelection || hasFolderScopeSelection,
+      transferLimitExceeded,
     }
   }, [selectedDocumentIds, selectedFolderIds])
 

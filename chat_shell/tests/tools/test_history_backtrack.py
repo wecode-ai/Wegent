@@ -147,3 +147,15 @@ def test_dynamic_context_omits_empty_backtrack_hint():
     ctx = SimpleNamespace(kb_meta_prompt="", backtrack_hint="")
     out = ChatService._build_dynamic_context(None, request, ctx)
     assert out == ""
+
+
+def test_dynamic_context_includes_selected_knowledge_before_kb_metadata():
+    request = SimpleNamespace(
+        selected_knowledge_prompt="<selected_knowledge_sources />",
+        kb_meta_prompt="KB metadata",
+    )
+    ctx = SimpleNamespace(kb_meta_prompt="", backtrack_hint="")
+
+    out = ChatService._build_dynamic_context(None, request, ctx)
+
+    assert out == "<selected_knowledge_sources />\n\nKB metadata"

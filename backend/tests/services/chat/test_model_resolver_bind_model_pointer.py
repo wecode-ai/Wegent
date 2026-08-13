@@ -14,6 +14,7 @@ instead of raising, producing an authentication failure deep inside the
 executor container.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -226,6 +227,31 @@ class TestExtractModelConfigExplicitErrors:
         assert result["api_key"] == "sk-test"
         assert result["model_id"] == "claude-3-5-sonnet"
         assert result["model"] == "claude"
+
+    @_DECRYPT_PATCH
+    def test_does_not_log_model_credentials(
+        self, _decrypt: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        api_key = "sk-sensitive-model-key"
+        header_value = "Bearer sensitive-header-value"
+        spec = {
+            "modelConfig": {
+                "env": {
+                    "api_key": api_key,
+                    "model_id": "claude-3-5-sonnet",
+                    "model": "claude",
+                    "DEFAULT_HEADERS": header_value,
+                }
+            }
+        }
+
+        caplog.set_level(logging.INFO, logger="app.services.chat.config.model_resolver")
+        _extract_model_config(spec)
+
+        log_output = "\n".join(record.getMessage() for record in caplog.records)
+        assert api_key not in log_output
+        assert api_key[:8] not in log_output
+        assert header_value not in log_output
 
     @_DECRYPT_PATCH
     def test_legacy_model_capabilities_are_normalized(self, _decrypt):

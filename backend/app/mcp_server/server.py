@@ -89,6 +89,24 @@ class McpAppSpec:
 
 
 @dataclass(frozen=True)
+class CustomMcpAppSpec:
+    """MCP app registered by a deployment-specific extension."""
+
+    name: str
+    mount_path: str
+    transport_path: str
+    build_app: Callable[[str], Starlette]
+
+
+_custom_mcp_app_specs: dict[str, CustomMcpAppSpec] = {}
+
+
+def register_custom_mcp_app(spec: CustomMcpAppSpec) -> None:
+    """Register or replace a deployment-specific MCP app before startup."""
+    _custom_mcp_app_specs[spec.name] = spec
+
+
+@dataclass(frozen=True)
 class ExternalKnowledgeUser:
     id: int
     user_name: str
@@ -850,6 +868,21 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
             effective_spec.name,
             effective_spec.mount_path,
             effective_spec.transport_path,
+        )
+
+    for custom_spec in _custom_mcp_app_specs.values():
+        custom_mount_path = (
+            f"{normalized_prefix}{custom_spec.mount_path}"
+            if normalized_prefix
+            else custom_spec.mount_path
+        )
+        custom_app = custom_spec.build_app(custom_mount_path)
+        app.mount(custom_mount_path, custom_app)
+        logger.info(
+            "Mounted custom MCP server '%s' at %s (transport: %s)",
+            custom_spec.name,
+            custom_mount_path,
+            custom_spec.transport_path,
         )
 
     if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:

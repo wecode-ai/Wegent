@@ -153,19 +153,6 @@ describe('groupInputContexts', () => {
         type: 'external_knowledge',
         ref: { provider: 'ap', mode: 'explicit', id: 'kb-2', name: 'Whole KB' },
       },
-      {
-        id: 'external:ap:all-accessible:kb-1:doc-3',
-        name: 'Doc 3',
-        type: 'external_knowledge',
-        ref: {
-          provider: 'ap',
-          mode: 'all_accessible',
-          id: 'kb-1',
-          name: 'Project KB',
-          target_type: 'document',
-          node_id: 'doc-3',
-        },
-      },
     ]
 
     expect(groupInputContexts(contexts, t)).toEqual([
@@ -178,12 +165,6 @@ describe('groupInputContexts', () => {
       expect.objectContaining({
         key: 'context:external_knowledge:external:ap:kb-2',
         contextIds: ['external:ap:kb-2'],
-      }),
-      expect.objectContaining({
-        key: 'external:ap:all_accessible:kb-1',
-        contextIds: ['external:ap:all-accessible:kb-1:doc-3'],
-        displayName: 'Project KB',
-        displaySubtitle: 'knowledge:picker.scopeDocumentsCompact:1',
       }),
     ])
   })

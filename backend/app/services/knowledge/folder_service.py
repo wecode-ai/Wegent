@@ -13,18 +13,22 @@ import logging
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import bindparam, func, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.models.knowledge import ContentOrigin, KnowledgeDocument, KnowledgeFolder
 from app.schemas.base_role import BaseRole
 from app.schemas.knowledge import (
     BatchOperationResult,
     KnowledgeFolderCreate,
     KnowledgeFolderResponse,
     KnowledgeFolderUpdate,
+)
+from app.services.knowledge.content_scope import (
+    assert_folder_accepts_content_origin,
+    assert_user_content_is_mutable,
 )
 from app.services.knowledge.folder_policy import (
     assert_document_can_be_placed_in_folder,
@@ -119,12 +123,14 @@ class KnowledgeFolderService:
                 raise ValueError(
                     f"Parent folder {data.parent_id} not found in this knowledge base"
                 )
+            assert_folder_accepts_content_origin(parent, ContentOrigin.USER)
         validate_new_folder_depth(db, knowledge_base_id, data.parent_id)
 
         folder = KnowledgeFolder(
             kind_id=knowledge_base_id,
             parent_id=data.parent_id,
             name=data.name.strip(),
+            origin=ContentOrigin.USER.value,
         )
         db.add(folder)
         db.commit()
@@ -135,6 +141,7 @@ class KnowledgeFolderService:
             kind_id=folder.kind_id,
             parent_id=folder.parent_id,
             name=folder.name,
+            origin=folder.origin,
             children=[],
             document_count=0,
             created_at=folder.created_at,
@@ -146,6 +153,7 @@ class KnowledgeFolderService:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
+        content_origin: str | None = None,
     ) -> List[KnowledgeFolderResponse]:
         """Get the full folder tree for a knowledge base.
 
@@ -162,27 +170,33 @@ class KnowledgeFolderService:
         KnowledgeFolderService._check_kb_access(db, knowledge_base_id, user_id)
 
         # Bulk load all folders in this KB
-        all_folders = (
+        folder_query = (
             db.query(KnowledgeFolder)
             .filter(KnowledgeFolder.kind_id == knowledge_base_id)
             .order_by(KnowledgeFolder.name)
-            .all()
         )
+        if content_origin is not None:
+            folder_query = folder_query.filter(KnowledgeFolder.origin == content_origin)
+        all_folders = folder_query.all()
 
         # Bulk load document counts per folder.
         # Filter on kind_id first so the engine can use the composite index
         # (kind_id, folder_id) if present, or at minimum narrow the scan via
         # ix_knowledge_documents_kind_active_created before grouping.
         doc_counts: Dict[int, int] = defaultdict(int)
-        counts = (
+        counts_query = (
             db.query(
                 KnowledgeDocument.folder_id,
                 func.count(KnowledgeDocument.id),
             )
             .filter(KnowledgeDocument.kind_id == knowledge_base_id)
             .group_by(KnowledgeDocument.folder_id)
-            .all()
         )
+        if content_origin is not None:
+            counts_query = counts_query.filter(
+                KnowledgeDocument.origin == content_origin
+            )
+        counts = counts_query.all()
         for folder_id, count in counts:
             doc_counts[folder_id] = count
 
@@ -197,6 +211,7 @@ class KnowledgeFolderService:
                 kind_id=f.kind_id,
                 parent_id=f.parent_id,
                 name=f.name,
+                origin=f.origin,
                 children=[],
                 document_count=direct_document_count,
                 direct_document_count=direct_document_count,
@@ -270,6 +285,7 @@ class KnowledgeFolderService:
         if knowledge_base_id is not None and folder.kind_id != knowledge_base_id:
             raise ValueError("Folder does not belong to the specified knowledge base")
         KnowledgeFolderService._check_kb_write_access(db, folder.kind_id, user_id)
+        assert_user_content_is_mutable(folder.origin)
 
         if data.name is not None:
             folder.name = data.name.strip()
@@ -300,6 +316,7 @@ class KnowledgeFolderService:
                         "Target parent folder does not belong to the same knowledge base"
                     )
                 folder = locked_folder
+                assert_folder_accepts_content_origin(locked_parent, ContentOrigin.USER)
                 # Re-check descendant relationship after acquiring locks
                 descendant_ids = KnowledgeFolderService._collect_descendant_ids(
                     db, locked_folder.id, locked_folder.kind_id
@@ -350,6 +367,7 @@ class KnowledgeFolderService:
             kind_id=folder.kind_id,
             parent_id=folder.parent_id,
             name=folder.name,
+            origin=folder.origin,
             children=[],
             document_count=doc_count,
             direct_document_count=doc_count,
@@ -388,6 +406,7 @@ class KnowledgeFolderService:
         if knowledge_base_id is not None and folder.kind_id != knowledge_base_id:
             raise ValueError("Folder does not belong to the specified knowledge base")
         KnowledgeFolderService._check_kb_write_access(db, folder.kind_id, user_id)
+        assert_user_content_is_mutable(folder.origin)
 
         # Collect all descendant folder IDs (including self) via a single
         # recursive CTE query instead of iterative BFS round-trips.
@@ -395,6 +414,29 @@ class KnowledgeFolderService:
             db, folder_id, folder.kind_id
         )
         descendant_ids.add(folder_id)
+
+        generated_folder = (
+            db.query(KnowledgeFolder.id)
+            .filter(
+                KnowledgeFolder.id.in_(descendant_ids),
+                KnowledgeFolder.origin == ContentOrigin.GENERATED.value,
+            )
+            .first()
+        )
+        if generated_folder:
+            assert_user_content_is_mutable(ContentOrigin.GENERATED)
+
+        generated_document = (
+            db.query(KnowledgeDocument.id)
+            .filter(
+                KnowledgeDocument.kind_id == folder.kind_id,
+                KnowledgeDocument.folder_id.in_(descendant_ids),
+                KnowledgeDocument.origin == ContentOrigin.GENERATED.value,
+            )
+            .first()
+        )
+        if generated_document:
+            assert_user_content_is_mutable(ContentOrigin.GENERATED)
 
         # Move documents in the deleted folders back to root level.
         # When descendant_ids is large, split into batches to avoid MySQL
@@ -448,13 +490,17 @@ class KnowledgeFolderService:
         if not doc:
             raise ValueError("Document not found or access denied")
         KnowledgeFolderService._check_kb_write_access(db, doc.kind_id, user_id)
+        assert_user_content_is_mutable(doc.origin)
 
         # Validate target folder if not root.
         # Filter on kind_id first to leverage ix_knowledge_folders_parent
         # (kind_id, parent_id) — the primary-key lookup on id is then cheap.
         if folder_id > 0:
             target_folder = assert_document_can_be_placed_in_folder(
-                db, doc.kind_id, folder_id
+                db,
+                doc.kind_id,
+                folder_id,
+                content_origin=ContentOrigin.USER,
             )
             folder_id = target_folder.id
 
@@ -508,6 +554,9 @@ class KnowledgeFolderService:
 
         movable_ids_by_kb: dict[int, list[int]] = defaultdict(list)
         for doc in docs:
+            if doc.origin != ContentOrigin.USER.value:
+                failed_id_set.add(doc.id)
+                continue
             permission = kb_permissions.get(doc.kind_id)
             if permission is None:
                 failed_id_set.add(doc.id)
@@ -684,6 +733,9 @@ class KnowledgeFolderService:
             if folder is None:
                 folder_validation[kb_id] = None
                 continue
+            if folder.origin != ContentOrigin.USER.value:
+                folder_validation[kb_id] = None
+                continue
             validate_document_target_folder_depth(db, kb_id, folder.id)
             folder_validation[kb_id] = folder.id
         return folder_validation
@@ -704,6 +756,7 @@ class KnowledgeFolderService:
                     .filter(
                         KnowledgeDocument.kind_id == kb_id,
                         KnowledgeDocument.id.in_(batch),
+                        KnowledgeDocument.origin == ContentOrigin.USER.value,
                     )
                     .update(
                         {"folder_id": target_folder_id},
@@ -751,6 +804,28 @@ class KnowledgeFolderService:
             )
 
     @staticmethod
+    def _collect_ancestor_ids(
+        db: Session, folder_ids: set[int], kind_id: int
+    ) -> set[int]:
+        """Collect folder IDs and every ancestor in one recursive CTE query."""
+        if not folder_ids:
+            return set()
+
+        try:
+            return KnowledgeFolderService._collect_ancestor_ids_cte(
+                db, folder_ids, kind_id
+            )
+        except (ProgrammingError, OperationalError):
+            logger.warning(
+                "Recursive CTE not supported, falling back to iterative ancestor "
+                "lookup for %d folders",
+                len(folder_ids),
+            )
+            return KnowledgeFolderService._collect_ancestor_ids_bfs(
+                db, folder_ids, kind_id
+            )
+
+    @staticmethod
     def _collect_descendant_ids_cte(db: Session, folder_id: int, kind_id: int) -> set:
         """Single-query recursive CTE implementation.
 
@@ -781,6 +856,41 @@ class KnowledgeFolderService:
         return {row[0] for row in rows}
 
     @staticmethod
+    def _collect_ancestor_ids_cte(
+        db: Session, folder_ids: set[int], kind_id: int
+    ) -> set[int]:
+        """Single-query recursive ancestor traversal for multiple folders.
+
+        The recursive member emits a folder's ``parent_id`` instead of joining the
+        parent row directly.  That preserves a dangling parent ID so the transfer
+        service can raise its existing structured not-found error.
+        """
+        sql = text(
+            """
+            WITH RECURSIVE ancestors AS (
+                SELECT id
+                FROM knowledge_folders
+                WHERE kind_id = :kind_id
+                  AND id IN :folder_ids
+
+                UNION
+
+                SELECT kf.parent_id
+                FROM knowledge_folders kf
+                         INNER JOIN ancestors a ON kf.id = a.id
+                WHERE kf.kind_id = :kind_id
+                  AND kf.parent_id > 0
+            )
+            SELECT id
+            FROM ancestors
+            """
+        ).bindparams(bindparam("folder_ids", expanding=True))
+        rows = db.execute(
+            sql, {"kind_id": kind_id, "folder_ids": list(folder_ids)}
+        ).fetchall()
+        return set(folder_ids) | {row[0] for row in rows}
+
+    @staticmethod
     def _collect_descendant_ids_bfs(db: Session, folder_id: int, kind_id: int) -> set:
         """Iterative BFS fallback using a deque for O(1) pops.
 
@@ -809,6 +919,31 @@ class KnowledgeFolderService:
             current_level = next_level
 
         return descendant_ids
+
+    @staticmethod
+    def _collect_ancestor_ids_bfs(
+        db: Session, folder_ids: set[int], kind_id: int
+    ) -> set[int]:
+        """Fallback ancestor traversal for database dialects without CTE support."""
+        ancestor_ids = set(folder_ids)
+        current_ids = set(folder_ids)
+
+        while current_ids:
+            rows = (
+                db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+                .filter(
+                    KnowledgeFolder.kind_id == kind_id,
+                    KnowledgeFolder.id.in_(current_ids),
+                )
+                .all()
+            )
+            current_ids = set()
+            for _, parent_id in rows:
+                if parent_id > 0 and parent_id not in ancestor_ids:
+                    ancestor_ids.add(parent_id)
+                    current_ids.add(parent_id)
+
+        return ancestor_ids
 
     @staticmethod
     def _count_folder_docs(db: Session, folder_id: int, kind_id: int) -> int:
