@@ -41,6 +41,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskQueueReorderRequest,
+    RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
@@ -477,6 +479,44 @@ async def cancel_runtime_task_endpoint(
         db=db,
         user_id=current_user.id,
         address=address,
+    )
+
+
+@router.post(
+    "/force-start",
+    response_model=RuntimeTaskCancelResponse,
+    response_model_by_alias=True,
+)
+async def force_start_runtime_task_endpoint(
+    address: RuntimeTaskAddress,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Force one queued runtime task to start through its owning executor."""
+
+    return await runtime_work_service.force_start_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        address=address,
+    )
+
+
+@router.post(
+    "/queue/reorder",
+    response_model=RuntimeTaskQueueReorderResponse,
+    response_model_by_alias=True,
+)
+async def reorder_runtime_task_queue_endpoint(
+    request: RuntimeTaskQueueReorderRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Move one queued runtime task to a new execution position."""
+
+    return await runtime_work_service.reorder_runtime_task_queue(
+        db=db,
+        user_id=current_user.id,
+        request=request,
     )
 
 

@@ -199,9 +199,12 @@ def _update_spec(knowledge_base: Kind, **values) -> None:
 
 def _record_verdict(generation: WikiGeneration, verdict: GateVerdict) -> None:
     ext = dict(generation.ext or {})
-    ext[PUBLISH_GATE_EXT_KEY] = verdict.to_ext(
-        datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-    )
+    stored = verdict.to_ext(datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
+    # Mermaid findings are returned to the still-running agent after publication.
+    # Keep that correction window on the generation, so the writer can allow one
+    # narrowly scoped follow-up without reopening arbitrary completed versions.
+    stored["correctionPending"] = verdict.passed and bool(verdict.diagram_warnings)
+    ext[PUBLISH_GATE_EXT_KEY] = stored
     generation.ext = ext
 
 

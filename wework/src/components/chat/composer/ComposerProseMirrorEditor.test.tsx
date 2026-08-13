@@ -499,6 +499,18 @@ test('renders GitHub URLs as recognized inline link chips', () => {
   )
 })
 
+test('renders Wegent Sites project markdown links as inline link chips', () => {
+  const value = '[产品发布页](wegent-sites-project://prj_product) 请说出你要做的改动'
+  renderEditor(value)
+
+  const chip = screen.getByTestId('composer-link-chip')
+  expect(chip).toHaveAttribute('data-composer-link-url', 'wegent-sites-project://prj_product')
+  expect(chip).toHaveAttribute('data-composer-link-provider', 'wegent-sites-project')
+  expect(chip).toHaveTextContent('产品发布页')
+  expect(chip.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+  expect(serializeComposerDocument(createComposerDocument(value))).toBe(value)
+})
+
 test('keeps unrecognized URLs as plain text', () => {
   renderEditor('Visit https://example.com/page')
 

@@ -28,6 +28,14 @@ from wecode.service.skill_market import weibo_skill_market_provider
 
 skill_market_registry.register(weibo_skill_market_provider)
 
+# Register Weibo System Skill Provider
+from app.services.system_skill_providers.core.registry import (
+    system_skill_provider_registry,
+)
+from wecode.service.system_skill_providers import weibo_system_skill_provider
+
+system_skill_provider_registry.register(weibo_system_skill_provider)
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.device_monitor_patch  # noqa: F401  register internal admin restart handler
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)
@@ -77,6 +85,7 @@ from wecode.api.knowledge_document_protection import (
 from wecode.api.knowledge_video_download import (
     router as knowledge_video_download_router,
 )
+from wecode.api.knowledge_video_play import router as knowledge_video_play_router
 from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
@@ -165,6 +174,13 @@ api_router.include_router(
     knowledge_video_download_router,
     prefix="/knowledge-documents",
     tags=["knowledge-video-download"],
+)
+# User-facing KB video playback URL resolver (returns a signed CDN URL; the
+# browser <video src> reaches Weibo CDN directly, no byte proxying).
+api_router.include_router(
+    knowledge_video_play_router,
+    prefix="/knowledge-documents",
+    tags=["knowledge-video-play"],
 )
 api_router.include_router(
     knowledge_document_protection_router,

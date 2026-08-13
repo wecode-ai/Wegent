@@ -26,6 +26,8 @@ interface DesktopEmptyTaskLauncherProps {
   onOpenProjectSelector: (anchorElement: HTMLButtonElement) => void
   onSelectSuggestion: (prompt: string) => void
   composer: ReactNode
+  /** Defaults to the workbench empty-state composer input. */
+  composerInputTestId?: string
 }
 
 function ExploreSuggestionIcon(props: SVGProps<SVGSVGElement>) {
@@ -178,6 +180,7 @@ export function DesktopEmptyTaskLauncher({
   onOpenProjectSelector,
   onSelectSuggestion,
   composer,
+  composerInputTestId = 'chat-message-input',
 }: DesktopEmptyTaskLauncherProps) {
   const { t } = useTranslation('common')
   const launcherRef = useRef<HTMLElement>(null)
@@ -185,25 +188,22 @@ export function DesktopEmptyTaskLauncher({
   const selectedCategory = TASK_SUGGESTION_CATEGORIES.find(
     category => category.id === selectedCategoryId
   )
+  const composerInputSelector = `[data-testid="${composerInputTestId}"]`
 
   useEffect(() => {
     const focusComposer = () => {
-      focusComposerAtEnd(
-        launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')
-      )
+      focusComposerAtEnd(launcherRef.current?.querySelector<HTMLElement>(composerInputSelector))
     }
 
     focusComposer()
     window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
     return () => window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
-  }, [])
+  }, [composerInputSelector])
 
   const selectSuggestion = (prompt: string) => {
     onSelectSuggestion(prompt)
     window.requestAnimationFrame(() => {
-      focusComposerAtEnd(
-        launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')
-      )
+      focusComposerAtEnd(launcherRef.current?.querySelector<HTMLElement>(composerInputSelector))
     })
   }
 

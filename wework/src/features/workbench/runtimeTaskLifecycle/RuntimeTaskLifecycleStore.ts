@@ -23,6 +23,7 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
   version: 0,
   tasks: new Map(),
   runningTaskKeys: new Set(),
+  queuedTaskKeys: new Set(),
   unreadTaskKeys: new Set(),
 }
 
@@ -238,6 +239,7 @@ export class RuntimeTaskLifecycleStore {
     if (
       previous.derived.isRunning &&
       !next.derived.isRunning &&
+      !next.derived.isQueued &&
       next.goalStatus !== 'active' &&
       next.key !== this.currentTaskKey
     ) {
@@ -262,11 +264,13 @@ export class RuntimeTaskLifecycleStore {
   private publish(): void {
     const tasks = new Map<string, RuntimeTaskLifecycleSnapshot>()
     const runningTaskKeys = new Set<string>()
+    const queuedTaskKeys = new Set<string>()
     const unreadTaskKeys = new Set<string>()
     for (const [key, machine] of this.machines) {
       const task = machine.getSnapshot()
       tasks.set(key, task)
       if (task.derived.isRunning) runningTaskKeys.add(key)
+      if (task.derived.isQueued) queuedTaskKeys.add(key)
       if (task.derived.shouldShowUnread) unreadTaskKeys.add(key)
     }
     this.version += 1
@@ -274,6 +278,7 @@ export class RuntimeTaskLifecycleStore {
       version: this.version,
       tasks,
       runningTaskKeys,
+      queuedTaskKeys,
       unreadTaskKeys,
     }
     this.persistUnreadKeys(unreadTaskKeys)
@@ -331,6 +336,7 @@ function getRuntimeTaskAddress(
   return {
     deviceId: workspace.deviceId,
     taskId: task.taskId,
+    ...(task.runtime !== 'codex' ? { runtime: task.runtime } : {}),
     threadId: task.threadId,
     workspacePath: task.workspacePath || workspace.workspacePath,
     runtimeHandle: task.runtimeHandle,
@@ -343,7 +349,7 @@ function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummar
     threadId: address.threadId,
     workspacePath: address.workspacePath ?? '',
     title: address.taskId,
-    runtime: 'codex',
+    runtime: address.runtime ?? 'codex',
     runtimeHandle: address.runtimeHandle,
   }
 }

@@ -25,6 +25,7 @@ import type {
   KnowledgeFolder,
   KnowledgeFolderCreate,
   KnowledgeFolderUpdate,
+  KnowledgeContentOrigin,
   KnowledgeResourceScope,
   TableUrlValidationResponse,
   WebScrapeResponse,
@@ -101,6 +102,7 @@ export interface ListDocumentsParams {
   keyword?: string
   sort_by?: 'name' | 'size' | 'createdAt' | 'updatedAt'
   sort_order?: 'asc' | 'desc'
+  origin?: KnowledgeContentOrigin
 }
 
 /**
@@ -131,6 +133,9 @@ export async function listDocuments(
   }
   if (params?.sort_order) {
     searchParams.set('sort_order', params.sort_order)
+  }
+  if (params?.origin) {
+    searchParams.set('origin', params.origin)
   }
   const query = searchParams.toString()
   return apiClient.get<KnowledgeDocumentListResponse>(
@@ -550,8 +555,12 @@ export async function readDocumentText(documentId: number): Promise<string> {
 /**
  * Get the folder tree for a knowledge base
  */
-export async function getFolderTree(knowledgeBaseId: number): Promise<KnowledgeFolder[]> {
-  return apiClient.get<KnowledgeFolder[]>(`/knowledge-bases/${knowledgeBaseId}/folders`)
+export async function getFolderTree(
+  knowledgeBaseId: number,
+  origin?: KnowledgeContentOrigin
+): Promise<KnowledgeFolder[]> {
+  const query = origin ? `?origin=${origin}` : ''
+  return apiClient.get<KnowledgeFolder[]>(`/knowledge-bases/${knowledgeBaseId}/folders${query}`)
 }
 
 /**

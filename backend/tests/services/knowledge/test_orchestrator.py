@@ -1125,13 +1125,50 @@ class TestKnowledgeOrchestrator:
             mock_query.return_value.filter.return_value.first.return_value = (
                 mock_document
             )
+            with (
+                patch(
+                    "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                    return_value=(MagicMock(id=1), True),
+                ),
+                patch(
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
+                ),
+            ):
+                with pytest.raises(ValueError, match="EXCEL_FILE_SIZE_EXCEEDED"):
+                    orchestrator.reindex_document(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=1,
+                    )
 
-            with pytest.raises(ValueError, match="EXCEL_FILE_SIZE_EXCEEDED"):
-                orchestrator.reindex_document(
-                    db=mock_db,
-                    user=mock_user,
-                    document_id=1,
-                )
+    def test_reindex_document_checks_access_before_content_origin(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """An unauthorized caller must not learn whether a document is generated."""
+        mock_document = MagicMock(
+            id=1,
+            kind_id=2,
+            origin="generated",
+            source_type=DocumentSourceType.FILE.value,
+            file_extension="txt",
+            file_size=1024,
+        )
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(MagicMock(id=2), False),
+            ):
+                with pytest.raises(ValueError, match="Access denied to knowledge base"):
+                    orchestrator.reindex_document(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=1,
+                    )
 
     def test_schedule_indexing_celery_skips_duplicate_enqueue(
         self, orchestrator, mock_db, mock_user

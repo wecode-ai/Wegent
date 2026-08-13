@@ -1,5 +1,15 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  memo,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import {
+  Archive,
   ArrowLeftRight,
   Bot,
   ChevronRight,
@@ -64,11 +74,15 @@ import {
   type RightWorkspaceBrowserState,
   type RightWorkspaceBrowserTab,
   type RightWorkspaceChatTab,
+  type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
 } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
-import { useResizableRightSplitChat } from './workspace-panels/useResizableWorkspacePanel'
+import {
+  RIGHT_SPLIT_PANEL_MIN_WIDTH,
+  useResizableRightSplitChat,
+} from './workspace-panels/useResizableWorkspacePanel'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
@@ -76,7 +90,9 @@ import {
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
   TitlebarFeedbackPortal,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
+  WORKBENCH_SPLIT_ACTIONS_PORTAL_ID,
   WorkbenchMainHeaderPortal,
+  WorkbenchPaneHeaderActionsPortal,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
@@ -135,9 +151,16 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
+  resolveRuntimeWorkbenchPane,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
-import { CachedWorkbenchPaneStack, useWorkbenchPaneActive } from './workbenchPaneStack'
+import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import {
+  useWorkbenchPaneActive,
+  useWorkbenchPaneId,
+  useWorkbenchPaneHeaderActionsPortalId,
+  useWorkbenchPaneVisible,
+} from './workbenchPanePresentation'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import {
   formatEnvironmentReviewErrorMessage,
@@ -161,6 +184,8 @@ import {
 } from './TaskSupervisorControl'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type {
+  ModelSelectionConfig,
+  RuntimeName,
   RuntimeSupervisorMode,
   RuntimeSupervisorSuggestion,
   RuntimeTaskAddress,
@@ -172,7 +197,10 @@ import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
-import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
 import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
@@ -205,7 +233,6 @@ const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
-const MAX_CACHED_DESKTOP_WORKBENCH_PANES = 1
 interface SelectedAssistantPlan {
   blockId: string
   subtaskId: string
@@ -225,6 +252,16 @@ interface WorkbenchPaneWorkspaceState {
     path: string
     isDirectory: boolean
   } | null
+}
+
+interface EnvironmentInfoVisibilityState {
+  pinned: boolean
+  overlayOpen: boolean
+}
+
+const DEFAULT_ENVIRONMENT_INFO_VISIBILITY: EnvironmentInfoVisibilityState = {
+  pinned: true,
+  overlayOpen: false,
 }
 
 interface PendingBlankBrowserMigration {
@@ -305,12 +342,21 @@ function rightPanelTabType(
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
+  if (isRightWorkspaceHarnessTab(tab)) return 'terminal'
   if (tab === 'review' || tab === 'terminal' || tab === 'files') return tab
   return 'other'
 }
 
 function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightWorkspaceBrowserTab {
   return tab.startsWith('browser:')
+}
+
+function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
+  return tab.startsWith('harness:')
+}
+
+function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
+  return tab.slice('harness:'.length)
 }
 
 function logBrowserOpenDiagnostic(stage: string, detail: Record<string, unknown> = {}) {
@@ -398,7 +444,10 @@ interface DesktopWorkbenchMainProps {
   sidebarResizing?: boolean
   showComposerProjectMenuAction?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
-  onLocalHarnessSessionStarted?: (session: LocalHarnessWorkbenchSession) => void
+  onLocalHarnessSessionStarted?: (
+    session: LocalHarnessWorkbenchSession,
+    options?: LocalHarnessSessionRegistrationOptions
+  ) => void
   onLocalHarnessSessionTitleChange?: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose?: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit?: (sessionId: string) => void
@@ -431,7 +480,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
   return (
     <BottomWorkspacePanel
-      open={open}
+      open={open && paneVisible}
       active={active && paneVisible}
       preserveContent
       testIdsEnabled={active && paneVisible}
@@ -451,7 +500,8 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
-  const { services } = useWorkbench()
+  const { services, workspaceTabId, openRuntimeTask } = useWorkbench()
+  const { t } = useTranslation('common')
   const {
     onLocalHarnessSessionStarted,
     onLocalHarnessSessionTitleChange,
@@ -462,8 +512,10 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
-  const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
-  const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
+  const [splitMode, setSplitMode] = useState(false)
+  const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
+    Record<string, EnvironmentInfoVisibilityState>
+  >({})
   const [internalHarnessSessions, setInternalHarnessSessions] = useState<
     LocalHarnessWorkbenchSession[]
   >([])
@@ -478,16 +530,18 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const activeLocalHarnessSession =
     localHarnessSessions.find(session => session.sessionId === activeLocalHarnessSessionId) ?? null
   const registerLocalHarnessSession = useCallback(
-    (session: LocalHarnessWorkbenchSession) => {
+    (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
       if (onLocalHarnessSessionStarted) {
-        onLocalHarnessSessionStarted(session)
+        onLocalHarnessSessionStarted(session, options)
         return
       }
       setInternalHarnessSessions(current => [
         session,
         ...current.filter(candidate => candidate.sessionId !== session.sessionId),
       ])
-      setInternalActiveHarnessSessionId(session.sessionId)
+      if (options?.activate !== false) {
+        setInternalActiveHarnessSessionId(session.sessionId)
+      }
     },
     [onLocalHarnessSessionStarted]
   )
@@ -531,14 +585,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     },
     [onLocalHarnessSessionClose, removeLocalHarnessSession]
   )
-  const [terminalPinOwnersByPane, setTerminalPinOwnersByPane] = useState<Record<string, string[]>>(
-    {}
-  )
+  const [resourceOwnersByPane, setResourceOwnersByPane] = useState<Record<string, string[]>>({})
   const paneWorkspaceStateRef = useRef(new Map<string, WorkbenchPaneWorkspaceState>())
-  const terminalPinnedPaneKeys = useMemo(
-    () =>
-      Object.keys(terminalPinOwnersByPane).filter(key => terminalPinOwnersByPane[key].length > 0),
-    [terminalPinOwnersByPane]
+  const retainedResourceKeys = useMemo(
+    () => Object.keys(resourceOwnersByPane).filter(key => resourceOwnersByPane[key].length > 0),
+    [resourceOwnersByPane]
   )
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
@@ -546,33 +597,46 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   )
   const runtimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
   const activePaneKey = getWorkbenchPaneKey(props.activePane)
-  const prunedPaneKeys = useMemo(
-    () =>
-      terminalPinnedPaneKeys.filter(
-        key => key.startsWith('runtime:') && !runtimePaneKeySet.has(key)
-      ),
-    [runtimePaneKeySet, terminalPinnedPaneKeys]
+  const setPaneResourceRetained = useCallback(
+    (paneKey: string, owner: string, retained: boolean) => {
+      setResourceOwnersByPane(current => {
+        const owners = current[paneKey] ?? []
+        const nextOwners = retained
+          ? owners.includes(owner)
+            ? owners
+            : [...owners, owner]
+          : owners.filter(candidate => candidate !== owner)
+        if (
+          nextOwners.length === owners.length &&
+          nextOwners.every((value, index) => value === owners[index])
+        ) {
+          return current
+        }
+        if (nextOwners.length === 0) {
+          const next = { ...current }
+          delete next[paneKey]
+          return next
+        }
+        return { ...current, [paneKey]: nextOwners }
+      })
+    },
+    []
   )
-  const setTerminalPanePinned = useCallback((paneKey: string, owner: string, pinned: boolean) => {
-    setTerminalPinOwnersByPane(current => {
-      const owners = current[paneKey] ?? []
-      const nextOwners = pinned
-        ? owners.includes(owner)
-          ? owners
-          : [...owners, owner]
-        : owners.filter(candidate => candidate !== owner)
-      if (nextOwners === owners) return current
-      if (nextOwners.length === 0) {
-        const next = { ...current }
-        delete next[paneKey]
-        return next
-      }
-      return { ...current, [paneKey]: nextOwners }
-    })
-  }, [])
   const rememberPaneWorkspaceState = useCallback(
     (paneKey: string, workspaceState: WorkbenchPaneWorkspaceState) => {
       paneWorkspaceStateRef.current.set(paneKey, workspaceState)
+    },
+    []
+  )
+  const updateEnvironmentInfoVisibility = useCallback(
+    (paneId: string, patch: Partial<EnvironmentInfoVisibilityState>) => {
+      setEnvironmentInfoVisibilityByPane(current => ({
+        ...current,
+        [paneId]: {
+          ...(current[paneId] ?? DEFAULT_ENVIRONMENT_INFO_VISIBILITY),
+          ...patch,
+        },
+      }))
     },
     []
   )
@@ -583,39 +647,94 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       }
     })
   }, [runtimePaneKeySet])
+  const resolvePane = useCallback(
+    (paneKey: string) => {
+      if (paneKey === activePaneKey) return props.activePane
+      return resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
+    },
+    [activePaneKey, props.activePane, state.runtimeWork]
+  )
+  const getPaneTitle = useCallback(
+    (pane: WorkbenchPaneIdentity) => {
+      if (!pane.currentRuntimeTask) {
+        return pane.currentProject?.name ?? t('workbench.new_chat', '新任务')
+      }
+      const task = findRuntimeTask(state.runtimeWork, pane.currentRuntimeTask)
+      return (
+        truncateRuntimeTaskTitle(task?.title) ??
+        t('workbench.task_fallback_title', {
+          defaultValue: '任务 {{taskId}}',
+          taskId: pane.currentRuntimeTask.taskId,
+        })
+      )
+    },
+    [state.runtimeWork, t]
+  )
+  const focusPane = useCallback(
+    (pane: WorkbenchPaneIdentity) => {
+      if (pane.currentRuntimeTask) void openRuntimeTask(pane.currentRuntimeTask)
+    },
+    [openRuntimeTask]
+  )
+  const renderWorkbenchPane = useCallback(
+    (pane: WorkbenchPaneIdentity) => (
+      <DesktopWorkbenchPane
+        pane={pane}
+        workbenchVisible={props.visible ?? true}
+        sidebarCollapsed={props.sidebarCollapsed}
+        sidebarResizing={props.sidebarResizing ?? false}
+        showComposerProjectMenuAction={props.showComposerProjectMenuAction ?? false}
+        workspaceSessionApi={services?.workspaceSessionApi}
+        environmentInfoVisibilityByPane={environmentInfoVisibilityByPane}
+        onSidebarCollapsedChange={props.onSidebarCollapsedChange}
+        onEnvironmentInfoVisibilityChange={updateEnvironmentInfoVisibility}
+        onPaneResourceRetained={setPaneResourceRetained}
+        initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
+        onWorkspaceStateChange={rememberPaneWorkspaceState}
+        onLocalHarnessSessionStarted={registerLocalHarnessSession}
+        localHarnessSessions={localHarnessSessions}
+        activeLocalHarnessSession={
+          getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
+        }
+        onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
+        onLocalHarnessSessionClose={closeHarnessSession}
+        onLocalHarnessSessionExit={removeLocalHarnessSession}
+      />
+    ),
+    [
+      activeLocalHarnessSession,
+      activePaneKey,
+      closeHarnessSession,
+      environmentInfoVisibilityByPane,
+      localHarnessSessions,
+      props.onSidebarCollapsedChange,
+      props.showComposerProjectMenuAction,
+      props.sidebarCollapsed,
+      props.sidebarResizing,
+      props.visible,
+      registerLocalHarnessSession,
+      rememberPaneWorkspaceState,
+      removeLocalHarnessSession,
+      setPaneResourceRetained,
+      services?.workspaceSessionApi,
+      updateEnvironmentInfoVisibility,
+      updateHarnessSessionTitle,
+    ]
+  )
   const paneStack = (
-    <CachedWorkbenchPaneStack
+    <SplitWorkbenchPaneStack
       activePane={props.activePane}
-      maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_PANES}
-      pinnedKeys={terminalPinnedPaneKeys}
-      prunedKeys={prunedPaneKeys}
+      storageKey={`wework:workbench-split-layout:v2:${workspaceTabId ?? 'popout'}`}
       validRuntimeKeys={runtimePaneKeys}
+      retainedResourceKeys={retainedResourceKeys}
+      runtimeKeysReady={state.runtimeWork !== null}
       activeTestId="desktop-workbench-main"
-      renderPane={pane => (
-        <DesktopWorkbenchPane
-          pane={pane}
-          workbenchVisible={props.visible ?? true}
-          sidebarCollapsed={props.sidebarCollapsed}
-          sidebarResizing={props.sidebarResizing ?? false}
-          showComposerProjectMenuAction={props.showComposerProjectMenuAction ?? false}
-          workspaceSessionApi={services?.workspaceSessionApi}
-          environmentInfoPinned={environmentInfoPinned}
-          environmentInfoOverlayOpen={environmentInfoOverlayOpen}
-          onSidebarCollapsedChange={props.onSidebarCollapsedChange}
-          onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
-          onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
-          onTerminalPanePinChange={setTerminalPanePinned}
-          initialWorkspaceState={paneWorkspaceStateRef.current.get(getWorkbenchPaneKey(pane))}
-          onWorkspaceStateChange={rememberPaneWorkspaceState}
-          onLocalHarnessSessionStarted={registerLocalHarnessSession}
-          activeLocalHarnessSession={
-            getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
-          }
-          onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
-          onLocalHarnessSessionClose={closeHarnessSession}
-          onLocalHarnessSessionExit={removeLocalHarnessSession}
-        />
-      )}
+      workbenchVisible={props.visible ?? true}
+      resolvePane={resolvePane}
+      getPaneTitle={getPaneTitle}
+      onPaneFocus={focusPane}
+      onSplitModeChange={setSplitMode}
+      renderPane={renderWorkbenchPane}
     />
   )
 
@@ -627,14 +746,16 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-      <header
-        id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
-        data-testid="workbench-main-header"
-        className={cn(
-          'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
-          background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
-        )}
-      />
+      {!splitMode ? (
+        <header
+          id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
+          data-testid="workbench-main-header"
+          className={cn(
+            'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
+            background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
+          )}
+        />
+      ) : null}
       {mainContent}
     </div>
   )
@@ -647,15 +768,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   sidebarResizing = false,
   showComposerProjectMenuAction,
   workspaceSessionApi,
-  environmentInfoPinned,
-  environmentInfoOverlayOpen,
+  environmentInfoVisibilityByPane,
   onSidebarCollapsedChange,
-  onEnvironmentInfoPinnedChange,
-  onEnvironmentInfoOverlayOpenChange,
-  onTerminalPanePinChange,
+  onEnvironmentInfoVisibilityChange,
+  onPaneResourceRetained,
   initialWorkspaceState,
   onWorkspaceStateChange,
   onLocalHarnessSessionStarted,
+  localHarnessSessions,
   activeLocalHarnessSession,
   onLocalHarnessSessionTitleChange,
   onLocalHarnessSessionClose,
@@ -667,21 +787,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   sidebarResizing?: boolean
   showComposerProjectMenuAction: boolean
   workspaceSessionApi?: WorkspaceSessionApi
-  environmentInfoPinned: boolean
-  environmentInfoOverlayOpen: boolean
+  environmentInfoVisibilityByPane: Record<string, EnvironmentInfoVisibilityState>
   onSidebarCollapsedChange: (collapsed: boolean) => void
-  onEnvironmentInfoPinnedChange: (open: boolean) => void
-  onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
-  onTerminalPanePinChange: (paneKey: string, owner: string, pinned: boolean) => void
+  onEnvironmentInfoVisibilityChange: (
+    paneId: string,
+    patch: Partial<EnvironmentInfoVisibilityState>
+  ) => void
+  onPaneResourceRetained: (paneKey: string, owner: string, retained: boolean) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
-  onLocalHarnessSessionStarted: (session: LocalHarnessWorkbenchSession) => void
+  onLocalHarnessSessionStarted: (
+    session: LocalHarnessWorkbenchSession,
+    options?: LocalHarnessSessionRegistrationOptions
+  ) => void
+  localHarnessSessions: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSession: LocalHarnessWorkbenchSession | null
   onLocalHarnessSessionTitleChange: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit: (sessionId: string) => void
 }) {
   const paneActive = useWorkbenchPaneActive()
+  const paneVisible = useWorkbenchPaneVisible()
+  const paneId = useWorkbenchPaneId()
+  const paneHeaderActionsPortalId = useWorkbenchPaneHeaderActionsPortalId()
+  const splitMode = paneHeaderActionsPortalId !== null
+  const environmentInfoVisibility =
+    environmentInfoVisibilityByPane[paneId] ?? DEFAULT_ENVIRONMENT_INFO_VISIBILITY
+  const environmentInfoPinned = environmentInfoVisibility.pinned
+  const environmentInfoOverlayOpen = environmentInfoVisibility.overlayOpen
   const paneActiveRef = useRef(paneActive)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appPreferences = useAppPreferencesState()
@@ -707,7 +840,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
   const { t } = useTranslation('common')
-  const [harnessSessionPickerOpen, setHarnessSessionPickerOpen] = useState(false)
+  const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
+    'main' | 'right' | null
+  >(null)
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
@@ -760,6 +895,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [localHarnessDetectionFailed, setLocalHarnessDetectionFailed] = useState(false)
   const [centralHarnessStarting, setCentralHarnessStarting] = useState(false)
   const [centralHarnessError, setCentralHarnessError] = useState<string | null>(null)
+  const [additionalHarnessError, setAdditionalHarnessError] = useState<string | null>(null)
   const [harnessResumeLaunchError, setHarnessResumeLaunchError] = useState<{
     sessionId: string
     message: string
@@ -844,9 +980,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const pendingProjectSpaceContext =
     !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
       <ComposerModePill
-        label={t('workbench.project_space_context_pending', '加入看板 · {{name}}', {
-          name: pendingCloudProject.name,
-        })}
+        label={pendingCloudProject.name}
         icon={LayoutDashboard}
         testId="project-space-context-pill"
         cancelTestId="clear-project-space-context-button"
@@ -867,10 +1001,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorFeatureAvailable = Boolean(
     experimentalFeaturesEnabled &&
     services?.runtimeWorkApi &&
-    (!currentRuntimeTask || currentRuntimeTaskSupportsSupervisor)
+    (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
   const supervisorModels = projectChat.models.filter(
-    model => model.isActive !== false && !model.compatibilityDisabled
+    model =>
+      model.isActive !== false &&
+      ['public', 'user', 'group'].includes(model.type) &&
+      Boolean(model.namespace) &&
+      model.resourceUserId !== undefined
   )
 
   const runtimeWorkApi = services?.runtimeWorkApi
@@ -881,7 +1019,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         address,
         mode: config.mode,
         instructions: config.instructions,
-        modelId: config.modelId,
+        modelSelection: config.modelSelection,
         intervalSeconds: config.intervalSeconds,
       })
       if (!response.accepted) {
@@ -893,8 +1031,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const sendPaneInputWithContext = useCallback(
-    (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
-      const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
+    (
+      value?: string,
+      options?: {
+        guideWhenBusy?: boolean
+        interruptWhenBusy?: boolean
+        runtime?: RuntimeName
+        runtimeExecutablePath?: string
+        runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+        modelSelection?: ModelSelectionConfig | null
+      }
+    ) => {
+      const supervisorConfig =
+        currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
       const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
@@ -929,7 +1078,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   })
 
   const submitPaneInput = useCallback(
-    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+    async (
+      value?: string,
+      options?: {
+        guideWhenBusy?: boolean
+        interruptWhenBusy?: boolean
+        runtime?: RuntimeName
+        runtimeExecutablePath?: string
+        runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+        modelSelection?: ModelSelectionConfig | null
+      }
+    ) => {
       const submitted = (value ?? paneSession.input).trim()
       if (submitted) {
         const gate = await connectorAuthGate.gateBeforeSend(submitted)
@@ -948,13 +1107,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     async (
       mode: RuntimeSupervisorMode,
       instructions: string,
-      modelId: string | null,
+      modelSelection: ModelSelectionConfig | null,
       intervalSeconds: number
     ) => {
       const config = {
         mode,
         instructions,
-        modelId,
+        modelSelection,
         intervalSeconds,
       }
       if (!currentRuntimeTask) {
@@ -979,6 +1138,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       throw new Error(response.error || t('workbench.supervisor_clear_failed'))
     }
   }, [currentRuntimeTask, runtimeWorkApi, setPendingSupervisorConfig, t])
+
+  const runTaskSupervisorNow = useCallback(async () => {
+    if (!currentRuntimeTask || !runtimeWorkApi) return null
+    const response = await runtimeWorkApi.runRuntimeSupervisorNow({
+      address: currentRuntimeTask,
+    })
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.supervisor_run_now_failed'))
+    }
+    return response.supervisor
+  }, [currentRuntimeTask, runtimeWorkApi, t])
 
   const resolveTaskSupervisorSuggestion = useCallback(
     async (suggestion: RuntimeSupervisorSuggestion, status: 'accepted' | 'dismissed') => {
@@ -1206,7 +1376,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
   }, [])
   useLayoutEffect(() => {
-    if (!paneActive) return
+    if (!paneActive || !paneVisible) return
     const workbenchMain = workbenchMainRef.current
     if (workbenchMain && workbenchMain.scrollLeft !== 0) {
       workbenchMain.scrollLeft = 0
@@ -1215,7 +1385,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
       workbenchScroll.scrollLeft = 0
     }
-  }, [activeLocalHarnessSession?.sessionId, paneActive])
+  }, [activeLocalHarnessSession?.sessionId, paneActive, paneVisible])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const closeRightPanel = () => {
     setRightPanelExpanded(false)
@@ -1249,8 +1419,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
     defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
-  const rightPanelTransitionDisabled = rightSplitResizing || rightPanelImmediateLayout
+  const rightPanelTransitionDisabled = splitMode || rightSplitResizing || rightPanelImmediateLayout
   const chatColumnWidth = rightPanelOpen && !rightPanelExpanded ? rightSplitChatWidth : '100%'
+  const chatColumnMaxWidth =
+    rightPanelOpen && !rightPanelExpanded ? `calc(100% - ${RIGHT_SPLIT_PANEL_MIN_WIDTH}px)` : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
   const environmentInfoDocked =
     Boolean(currentRuntimeTask) &&
@@ -1263,45 +1435,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (open: boolean) => {
       if (environmentInfoDocked) {
         setEnvironmentInfoTransitionEnabled(true)
-        onEnvironmentInfoPinnedChange(open)
+        onEnvironmentInfoVisibilityChange(paneId, { pinned: open })
         return
       }
-      onEnvironmentInfoOverlayOpenChange(open)
+      onEnvironmentInfoVisibilityChange(paneId, { overlayOpen: open })
     },
     [
       environmentInfoDocked,
-      onEnvironmentInfoOverlayOpenChange,
-      onEnvironmentInfoPinnedChange,
+      onEnvironmentInfoVisibilityChange,
+      paneId,
       setEnvironmentInfoTransitionEnabled,
     ]
   )
   const openSupervisorDialog = useCallback(() => {
     setSupervisorDialogTaskKey(supervisorDialogScopeKey)
     if (!environmentInfoDocked) {
-      onEnvironmentInfoOverlayOpenChange(false)
+      onEnvironmentInfoVisibilityChange(paneId, { overlayOpen: false })
     }
   }, [
     environmentInfoDocked,
-    onEnvironmentInfoOverlayOpenChange,
+    onEnvironmentInfoVisibilityChange,
+    paneId,
     setSupervisorDialogTaskKey,
     supervisorDialogScopeKey,
   ])
 
   useEffect(() => {
     if (currentRuntimeTask && !environmentInfoDocked) return
-    onEnvironmentInfoOverlayOpenChange(false)
-  }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange])
+    onEnvironmentInfoVisibilityChange(paneId, { overlayOpen: false })
+  }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoVisibilityChange, paneId])
 
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
-  const rightPanelWidth = Math.max(0, workbenchContentWidth - rightSplitChatWidth)
-  const rightPanelShellWidth = rightPanelOpen
-    ? rightPanelExpanded
-      ? '100%'
-      : `${rightPanelWidth}px`
-    : '0px'
+  const rightPanelWidth = rightPanelExpanded ? '100%' : `calc(100% - ${rightSplitChatWidth}px)`
+  const rightPanelShellWidth = rightPanelOpen ? rightPanelWidth : '0px'
   const rightPanelTabBarRightOffset = '0px'
   const rightPanelTabBarWidth = rightPanelOpen
-    ? `calc(${rightPanelExpanded ? '100%' : `${rightPanelWidth}px`} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+    ? `calc(${rightPanelWidth} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
     : '0px'
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
@@ -1336,11 +1505,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const hasPersistentRightPanelResource =
     fileWorkspaceDirty ||
-    rightPanelTabs.some(tab => tab === 'terminal' || isRightWorkspaceBrowserTab(tab))
+    rightPanelTabs.some(
+      tab =>
+        tab === 'terminal' || isRightWorkspaceBrowserTab(tab) || isRightWorkspaceHarnessTab(tab)
+    )
   useEffect(() => {
-    onTerminalPanePinChange(paneKey, 'right-panel', hasPersistentRightPanelResource)
-    return () => onTerminalPanePinChange(paneKey, 'right-panel', false)
-  }, [hasPersistentRightPanelResource, onTerminalPanePinChange, paneKey])
+    onPaneResourceRetained(paneKey, 'right-panel', hasPersistentRightPanelResource)
+    return () => onPaneResourceRetained(paneKey, 'right-panel', false)
+  }, [hasPersistentRightPanelResource, onPaneResourceRetained, paneKey])
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const activeDeviceId =
     currentRuntimeTask?.deviceId ??
@@ -1513,6 +1685,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     selectedHarnessPreference &&
     localHarnesses.some(harness => harness.id === selectedHarnessPreference.id && harness.installed)
   )
+  const selectedHarnessExecutablePath =
+    selectedHarnessPreference?.executablePath ??
+    localHarnesses.find(harness => harness.id === selectedHarnessPreference?.id)?.executable_path ??
+    undefined
   const selectedHarnessAvailable = Boolean(
     selectedHarnessInstalled &&
     isLocalHarnessAvailable() &&
@@ -1597,6 +1773,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       projectId,
       cwd,
       resumeSession,
+      activate = true,
+      onError = setCentralHarnessError,
     }: {
       preference: LocalHarnessPreference
       model: LocalHarnessModelOption | null
@@ -1605,7 +1783,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       projectId: number | null
       cwd: string
       resumeSession?: LocalHarnessWorkbenchSession
-    }) => {
+      activate?: boolean
+      onError?: (message: string) => void
+    }): Promise<LocalHarnessWorkbenchSession | null> => {
       setCentralHarnessStarting(true)
       setCentralHarnessError(null)
       const requestId = centralHarnessRequestIdRef.current + 1
@@ -1643,12 +1823,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           if (modelLaunch) {
             await services?.localHarnessModelApi?.unregisterProxy(modelLaunch.proxyToken)
           }
-          return
+          return null
         }
         if (!resumeSession) {
           setPaneInput('')
         }
-        onLocalHarnessSessionStarted({
+        const session: LocalHarnessWorkbenchSession = {
           sessionId,
           harnessId: preference.id,
           cwd,
@@ -1663,7 +1843,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           modelKey: model?.key ?? null,
           pluginRoots,
           proxyToken: modelLaunch?.proxyToken,
-        })
+        }
+        onLocalHarnessSessionStarted(session, { activate })
+        return session
       } catch (error) {
         console.error('Failed to launch local Harness session:', {
           harnessId: preference.id,
@@ -1673,11 +1855,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (proxyToken) {
           await services?.localHarnessModelApi?.unregisterProxy(proxyToken)
         }
-        setCentralHarnessError(
+        onError(
           error instanceof Error
             ? error.message
             : t('workbench.harness_start_failed', '启动编码工具失败')
         )
+        return null
       } finally {
         setCentralHarnessStarting(false)
       }
@@ -1835,10 +2018,35 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const submitWorkbenchInput = async (
     value?: string,
-    options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }
+    options?: {
+      guideWhenBusy?: boolean
+      interruptWhenBusy?: boolean
+      runtime?: 'codex' | 'claude_code'
+      runtimeExecutablePath?: string
+      runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+      modelSelection?: ModelSelectionConfig | null
+    }
   ) => {
     if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
       return submitPaneInput(value, options)
+    }
+    if (activeNewChatRuntime === 'claude_code') {
+      return submitPaneInput(value, {
+        ...options,
+        runtime: 'claude_code',
+        runtimeExecutablePath: selectedHarnessExecutablePath,
+        runtimePermissionMode:
+          selectedHarnessPreference?.permissionMode === 'bypass'
+            ? 'bypassPermissions'
+            : (selectedHarnessPreference?.permissionMode ?? 'default'),
+        modelSelection: selectedHarnessModel
+          ? {
+              modelName: selectedHarnessModel.model.name,
+              modelType: selectedHarnessModel.model.type,
+              options: selectedHarnessModel.options,
+            }
+          : null,
+      })
     }
 
     const prompt = (value ?? paneInput).trim()
@@ -1874,18 +2082,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }
 
   const startAdditionalHarnessSession = useCallback(
-    async (harnessId: LocalHarnessId) => {
+    async (
+      harnessId: LocalHarnessId,
+      target: 'main' | 'right',
+      model: LocalHarnessModelOption | null
+    ) => {
       if (centralHarnessStarting) return
 
       const preference = enabledLocalHarnesses.find(candidate => candidate.id === harnessId)
-      const modelKey = preference ? getConfiguredHarnessModelKey(preference) : null
-      const model = preference ? getSelectedHarnessModel(preference) : null
       const installed = localHarnesses.some(
         harness => harness.id === harnessId && harness.installed
       )
       if (
         !preference ||
-        (modelKey && !model) ||
         !installed ||
         !centralHarnessCwd ||
         !preferLocalWorkspaceTerminal ||
@@ -1902,21 +2111,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
 
       try {
+        setAdditionalHarnessError(null)
         const cwd = activeLocalHarnessSession?.cwd ?? (await resolvePrimaryHarnessCwd())
-        await launchHarnessSession({
+        const session = await launchHarnessSession({
           preference,
           model,
           prompt: '',
           isPrimary: false,
           projectId: activeLocalHarnessSession?.projectId ?? currentProject?.id ?? null,
           cwd,
+          activate: target === 'main',
+          onError: target === 'right' ? setAdditionalHarnessError : setCentralHarnessError,
         })
+        if (session && target === 'right') {
+          const tab = `harness:${session.sessionId}` as RightWorkspaceHarnessTab
+          setRightPanelOpen(true)
+          setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
+          setRightPanelView(tab)
+        }
       } catch (error) {
-        setCentralHarnessError(
+        const message =
           error instanceof Error
             ? error.message
             : t('workbench.harness_start_failed', '启动编码工具失败')
-        )
+        if (target === 'right') {
+          setAdditionalHarnessError(message)
+        } else {
+          setCentralHarnessError(message)
+        }
       }
     },
     [
@@ -1926,13 +2148,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       centralHarnessStarting,
       currentProject,
       enabledLocalHarnesses,
-      getConfiguredHarnessModelKey,
-      getSelectedHarnessModel,
       launchHarnessSession,
       localHarnesses,
       preferLocalWorkspaceTerminal,
       resolvePrimaryHarnessCwd,
       services,
+      setAdditionalHarnessError,
       setCentralHarnessError,
       t,
     ]
@@ -1944,27 +2165,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         disabled: Boolean(
           centralHarnessStarting ||
           !localHarnesses.some(harness => harness.id === preference.id && harness.installed) ||
-          (getConfiguredHarnessModelKey(preference) && !getSelectedHarnessModel(preference)) ||
           !centralHarnessCwd ||
           !preferLocalWorkspaceTerminal ||
-          !canPrepareHarnessWorktree ||
-          (getSelectedHarnessModel(preference) && !services?.localHarnessModelApi)
+          !canPrepareHarnessWorktree
         ),
+        models: services?.localHarnessModelApi ? getHarnessModelOptions(preference.id) : [],
+        selectedModel: services?.localHarnessModelApi ? getSelectedHarnessModel(preference) : null,
       })),
     [
       canPrepareHarnessWorktree,
       centralHarnessCwd,
       centralHarnessStarting,
       enabledLocalHarnesses,
-      getConfiguredHarnessModelKey,
+      getHarnessModelOptions,
       getSelectedHarnessModel,
       localHarnesses,
       preferLocalWorkspaceTerminal,
       services?.localHarnessModelApi,
     ]
   )
-  const harnessWorkspaceActions = useMemo<WorkspaceAddMenuItem[]>(
-    () =>
+  const createHarnessWorkspaceActions = useCallback(
+    (target: 'main' | 'right'): WorkspaceAddMenuItem[] =>
       enabledLocalHarnesses.length > 0
         ? [
             {
@@ -1976,11 +2197,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 '新建编码会话'
               )} · ${t('workbench.experimental_badge', '实验性')}`,
               disabled: harnessSessionPickerOptions.every(option => option.disabled),
-              onSelect: () => setHarnessSessionPickerOpen(true),
+              onSelect: () => setHarnessSessionPickerTarget(target),
             },
           ]
         : [],
     [enabledLocalHarnesses.length, harnessSessionPickerOptions, t]
+  )
+  const rightHarnessWorkspaceActions = useMemo(
+    () => createHarnessWorkspaceActions('right'),
+    [createHarnessWorkspaceActions]
+  )
+  const bottomHarnessWorkspaceActions = useMemo(
+    () => createHarnessWorkspaceActions('main'),
+    [createHarnessWorkspaceActions]
   )
 
   useEffect(() => {
@@ -2103,30 +2332,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     preferLocalTerminal: workspacePanelPrefersLocalTerminal,
     terminalContextTitle: workbenchTitle,
   }
-  const rememberActiveBottomPanelContext = () => {
+  const activeBottomPanelContextRef = useRef(activeBottomPanelContext)
+  useLayoutEffect(() => {
+    activeBottomPanelContextRef.current = {
+      key: bottomPanelWorkspaceKey,
+      currentProject: workspaceProject,
+      devices,
+      workspaceTarget: workspacePanelTarget,
+      preferLocalTerminal: workspacePanelPrefersLocalTerminal,
+      terminalContextTitle: workbenchTitle,
+    }
+  }, [
+    bottomPanelWorkspaceKey,
+    devices,
+    workspacePanelPrefersLocalTerminal,
+    workspacePanelTarget,
+    workspaceProject,
+    workbenchTitle,
+  ])
+  const rememberActiveBottomPanelContext = useCallback(() => {
+    const context = activeBottomPanelContextRef.current
     setBottomPanelContexts(current => {
-      const existingIndex = current.findIndex(context => context.key === bottomPanelWorkspaceKey)
+      const existingIndex = current.findIndex(item => item.key === context.key)
       if (existingIndex < 0) {
-        return [...current, activeBottomPanelContext]
+        return [...current, context]
       }
-      if (current[existingIndex] === activeBottomPanelContext) {
+      if (current[existingIndex] === context) {
         return current
       }
       const next = [...current]
-      next[existingIndex] = activeBottomPanelContext
+      next[existingIndex] = context
       return next
     })
-  }
-  const setCurrentBottomPanelOpen = (next: boolean | ((open: boolean) => boolean)) => {
-    rememberActiveBottomPanelContext()
-    onTerminalPanePinChange(paneKey, 'bottom-panel', true)
-    setBottomPanelOpenByKey(current => {
-      const currentOpen = current[bottomPanelWorkspaceKey] ?? false
-      const nextOpen = typeof next === 'function' ? next(currentOpen) : next
-      if (currentOpen === nextOpen) return current
-      return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
-    })
-  }
+  }, [])
   const inactiveBottomPanelContexts = bottomPanelContexts.filter(
     context => context.key !== bottomPanelWorkspaceKey
   )
@@ -2181,13 +2419,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
-  const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
+  const currentRuntimeUsesCodex =
+    (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
+    'codex'
+  const currentRuntimeSupportsGoal =
+    currentRuntimeUsesCodex || currentRuntimeTask?.runtime === 'claude_code'
+  const currentRuntimeTaskSupportsGoal = Boolean(
+    currentRuntimeTask && currentRuntimeSupportsGoal && activeDeviceSupportsGoal
+  )
   const canEditLastUserMessage = Boolean(
-    currentRuntimeTask && activeDeviceSupportsGoal && !paneSession.status.isBusy
+    currentRuntimeTask &&
+    currentRuntimeUsesCodex &&
+    activeDeviceSupportsGoal &&
+    !paneSession.status.isBusy
   )
   const composerSupportsGoal = currentRuntimeTask
     ? currentRuntimeTaskSupportsGoal
-    : activeDeviceSupportsGoal
+    : (activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code') &&
+      activeDeviceSupportsGoal
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
@@ -2518,6 +2767,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
     if (tab.startsWith('chat:')) {
       temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+    }
+    if (isRightWorkspaceHarnessTab(tab)) {
+      void onLocalHarnessSessionClose(getRightWorkspaceHarnessSessionId(tab))
     }
     if (tab === 'files') {
       setOpenFileRequest(null)
@@ -2872,7 +3124,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const toggleRightPanelExpanded = () => {
     setRightPanelExpanded(expanded => !expanded)
   }
-  const toggleBottomPanel = () => setCurrentBottomPanelOpen(open => !open)
+  const toggleBottomPanel = () => {
+    rememberActiveBottomPanelContext()
+    onPaneResourceRetained(paneKey, 'bottom-panel', true)
+    setBottomPanelOpenByKey(current => {
+      const open = current[bottomPanelWorkspaceKey] ?? false
+      return { ...current, [bottomPanelWorkspaceKey]: !open }
+    })
+  }
+  const openTerminalPanel = useEffectEvent(() => {
+    toggleBottomPanel()
+  })
   const {
     pauseCurrentResponse: pauseCurrentResponseAction,
     compactContext: compactContextAction,
@@ -2902,25 +3164,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () => void clearCurrentGoalAction(),
     [clearCurrentGoalAction]
   )
-  const closeBottomPanelContext = useCallback(
-    (key: string) => {
-      setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
-    },
-    [setBottomPanelOpenByKey]
-  )
+  const closeBottomPanelContext = useCallback((key: string) => {
+    setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
+  }, [])
   const handleTerminalTabsEmpty = () => {
-    onTerminalPanePinChange(paneKey, 'bottom-panel', false)
+    onPaneResourceRetained(paneKey, 'bottom-panel', false)
   }
-
   useEffect(() => {
-    if (!paneActive) return
+    if (!paneActive || !paneVisible) return
     const handleOpenTerminal = () => {
-      toggleBottomPanel()
+      openTerminalPanel()
     }
 
     window.addEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
     return () => window.removeEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
-  }, [paneActive, toggleBottomPanel])
+  }, [paneActive, paneVisible])
 
   const renderWorkspacePanelActions = (
     mode:
@@ -3022,7 +3280,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(
-    experimentalFeaturesEnabled && currentRuntimeTask && forkCurrentRuntimeTask
+    experimentalFeaturesEnabled &&
+    currentRuntimeTask &&
+    currentRuntimeUsesCodex &&
+    forkCurrentRuntimeTask
   )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
@@ -3062,7 +3323,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </button>
   ) : undefined
   const closeHarnessButton =
-    activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
+    activeLocalHarnessSession?.harnessId === 'opencode' ? (
+      <button
+        type="button"
+        data-testid={
+          activeLocalHarnessSession.isPrimary
+            ? 'central-harness-archive-button'
+            : 'central-harness-close-button'
+        }
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.archive_harness', '归档编码会话')}
+        title={t('workbench.archive_harness', '归档编码会话')}
+        onClick={() => {
+          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+        }}
+      >
+        <Archive />
+      </button>
+    ) : activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
       <button
         type="button"
         data-testid="central-harness-close-button"
@@ -3140,6 +3418,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightPanelExpanded && 'invisible'
         )}
       >
+        <div
+          id={WORKBENCH_SPLIT_ACTIONS_PORTAL_ID}
+          data-testid="workbench-split-actions"
+          className="flex h-full shrink-0 items-center"
+        />
         {mainHeaderActions}
       </div>
       <div
@@ -3187,6 +3470,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </div>
     </div>
   ) : undefined
+  const paneHeaderActions = activeLocalHarnessSession ? (
+    <>{closeHarnessButton}</>
+  ) : (
+    <>
+      {forkTaskButton}
+      {continueInImButton}
+      {mainHeaderProjectAction}
+      {mainHeaderEnvironmentAction}
+      {panelChromeActions}
+    </>
+  )
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -3226,10 +3520,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )}
     >
       {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
-      {tauriMainHeaderContent && paneActive && workbenchVisible ? (
+      {tauriMainHeaderContent && paneActive && workbenchVisible && !splitMode ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
-      {feedbackInChromeTitlebar && !activeLocalHarnessSession && paneActive && workbenchVisible ? (
+      {paneHeaderActionsPortalId && paneVisible && workbenchVisible ? (
+        <WorkbenchPaneHeaderActionsPortal targetId={paneHeaderActionsPortalId}>
+          {paneHeaderActions}
+        </WorkbenchPaneHeaderActionsPortal>
+      ) : null}
+      {feedbackInChromeTitlebar &&
+      !activeLocalHarnessSession &&
+      paneActive &&
+      workbenchVisible &&
+      !splitMode ? (
         <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
       ) : null}
       <>
@@ -3250,7 +3553,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
-            style={{ width: chatColumnWidth }}
+            style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
             left={topBarLeftContent}
             leftClassName={cn('min-w-0 gap-2', isTauri ? 'contents' : 'max-w-[calc(100%-12rem)]')}
           />
@@ -3265,7 +3568,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             'pointer-events-none absolute bottom-0 left-0 z-popover',
             showPageTopBar ? 'top-11' : 'top-0'
           )}
-          style={{ width: chatColumnWidth }}
+          style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         />
         <div
           ref={workbenchScrollRef}
@@ -3279,7 +3582,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
-          style={{ width: chatColumnWidth }}
+          style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         >
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
@@ -3339,6 +3642,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
                 turnNavigation={paneSession.turnNavigation}
                 loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
+                autoScrollSuspended={!paneVisible || !workbenchVisible}
                 onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
                 onLoadFullTranscript={paneSession.loadFullTranscript}
                 loadingFullTranscript={paneSession.transcriptLoadingFullContent}
@@ -3476,7 +3780,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     onChange={paneSession.setInput}
                                     onDraftEdit={paneSession.clearError}
                                     onSubmit={submitPaneInput}
-                                    disabled={composerDisabled}
+                                    disabled={composerDisabled || !paneVisible || !workbenchVisible}
                                     pluginPickerIconOnly={hasConversation}
                                     submitDisabled={paneSession.status.isSubmitting}
                                     error={paneSession.error}
@@ -3502,7 +3806,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     toolbarLeadingContext={pendingProjectSpaceContext}
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
-                                    onCompactContext={compactCurrentContext}
+                                    onCompactContext={
+                                      currentRuntimeUsesCodex ||
+                                      currentRuntimeTask?.runtime === 'claude_code'
+                                        ? compactCurrentContext
+                                        : undefined
+                                    }
                                     goal={paneSession.goal}
                                     goalContinuing={paneSession.goalContinuing}
                                     taskPlan={paneSession.taskPlan}
@@ -3530,7 +3839,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       paneSession.resumeQueuedMessagesWithInput
                                     }
                                     onClearQueue={paneSession.clearQueuedMessages}
-                                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                                    onSendQueuedAsGuidance={
+                                      currentRuntimeUsesCodex
+                                        ? paneSession.sendQueuedAsGuidance
+                                        : undefined
+                                    }
                                     onInterruptAndSendQueuedMessage={
                                       paneSession.interruptAndSendQueued
                                     }
@@ -3594,18 +3907,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onOpenAssistantPlan={openAssistantPlan}
                 onEditLastUserMessage={paneSession.editLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
-                onForkMessage={message => {
-                  const workspacePath =
-                    currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
-                  if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                  return forkCurrentRuntimeTask(
-                    {
-                      deviceId: currentRuntimeTask.deviceId,
-                      workspacePath,
-                    },
-                    { lastTurnId: message.turnId }
-                  )
-                }}
+                onForkMessage={
+                  currentRuntimeUsesCodex
+                    ? message => {
+                        const workspacePath =
+                          currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                        if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                        return forkCurrentRuntimeTask(
+                          {
+                            deviceId: currentRuntimeTask.deviceId,
+                            workspacePath,
+                          },
+                          { lastTurnId: message.turnId }
+                        )
+                      }
+                    : undefined
+                }
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 onAddSelectionToConversation={addSelectionToConversation}
@@ -3643,15 +3960,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       onSubmit={submitWorkbenchInput}
                       disabled={
                         centralHarnessStarting ||
-                        (activeNewChatRuntime === 'codex' && composerDisabled)
+                        ((activeNewChatRuntime === 'codex' ||
+                          activeNewChatRuntime === 'claude_code') &&
+                          composerDisabled) ||
+                        !paneVisible ||
+                        !workbenchVisible
                       }
                       submitDisabled={
                         centralHarnessStarting ||
-                        (activeNewChatRuntime === 'codex' && paneSession.status.isSubmitting)
+                        ((activeNewChatRuntime === 'codex' ||
+                          activeNewChatRuntime === 'claude_code') &&
+                          paneSession.status.isSubmitting)
                       }
                       error={centralHarnessError ?? paneSession.error}
                       disabledReason={
-                        activeNewChatRuntime === 'codex' ? inlineComposerDisabledReason : undefined
+                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
+                          ? inlineComposerDisabledReason
+                          : undefined
                       }
                       placeholder={
                         showComposerProjectMenuAction
@@ -3723,7 +4048,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       toolbarLeadingContext={pendingProjectSpaceContext}
                       isStreaming={paneIsBusy}
                       onPause={pauseCurrentResponse}
-                      onCompactContext={compactCurrentContext}
+                      onCompactContext={
+                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
+                          ? compactCurrentContext
+                          : undefined
+                      }
                       goal={paneSession.goal}
                       goalContinuing={paneSession.goalContinuing}
                       taskPlan={paneSession.taskPlan}
@@ -3745,7 +4074,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       onResumeQueue={paneSession.resumeQueuedMessages}
                       onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                       onClearQueue={paneSession.clearQueuedMessages}
-                      onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                      onSendQueuedAsGuidance={
+                        activeNewChatRuntime === 'codex'
+                          ? paneSession.sendQueuedAsGuidance
+                          : undefined
+                      }
                       onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                       onEditQueuedMessage={paneSession.editQueuedMessage}
                       onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
@@ -3787,10 +4120,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             aria-label={t('workbench.resize_right_workspace_panel')}
             aria-controls="right-workspace-panel-shell"
             className={cn(
-              'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
+              'relative z-critical -mx-[3px] w-1.5 shrink-0 self-stretch cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
               rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
             )}
-            style={{ left: rightSplitChatWidth }}
             onPointerDown={handleRightSplitResizeStart}
           />
         )}
@@ -3798,7 +4130,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'z-popover min-w-0 shrink-0 overflow-hidden',
+            'z-popover flex min-w-0 shrink-0 overflow-hidden',
             rightPanelExpanded ? 'absolute inset-y-0 right-0' : 'relative',
             rightPanelExpanded
               ? 'bg-background'
@@ -3813,13 +4145,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )
               : 'pointer-events-none opacity-0'
           )}
-          style={{ width: rightPanelShellWidth }}
+          style={{
+            minWidth:
+              rightPanelOpen && !rightPanelExpanded ? RIGHT_SPLIT_PANEL_MIN_WIDTH : undefined,
+            width: rightPanelShellWidth,
+          }}
           aria-hidden={!rightPanelOpen}
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground && !rightPanelExpanded}
-              visible={paneActive && workbenchVisible && rightPanelOpen}
+              visible={paneVisible && workbenchVisible && rightPanelOpen}
+              renderTabsInAppTitlebar={!splitMode}
               expanded={rightPanelExpanded}
               activeView={effectiveRightPanelView}
               openTabs={effectiveRightPanelTabs}
@@ -3833,7 +4170,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               fileWorkspaceTargets={fileWorkspaceTargets}
               preferLocalTerminal={workspacePanelPrefersLocalTerminal}
               terminalContextTitle={workbenchTitle}
-              workspaceActions={harnessWorkspaceActions}
+              workspaceActions={rightHarnessWorkspaceActions}
+              harnessSessions={localHarnessSessions}
               workspaceSessionApi={workspaceSessionApi}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
@@ -3844,9 +4182,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               browserStates={browserStates}
               onBrowserStateChange={updateBrowserState}
               codeCommentCount={paneSession.codeCommentContexts.length}
+              codeCommentContexts={paneSession.codeCommentContexts}
+              browserAnnotationCommand={paneSession.browserAnnotationCommand}
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
               onAddCodeComment={paneSession.addCodeComment}
+              onReplaceBrowserCodeComments={paneSession.replaceBrowserCodeComments}
+              onRemoveBrowserCodeComments={paneSession.removeBrowserCodeComments}
               onFileDirtyChange={setFileWorkspaceDirty}
               onFileSelectionChange={handleFileWorkspaceSelectionChange}
               onSelectFileWorkspaceTarget={selectFileWorkspaceTarget}
@@ -3858,6 +4200,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectPlan={selectPlanView}
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
+              onHarnessSessionTitleChange={onLocalHarnessSessionTitleChange}
+              onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
@@ -3873,11 +4217,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             panelKey={context.key}
             open={active && (bottomPanelOpenByKey[context.key] ?? false)}
             active={active}
-            paneVisible={paneActive && workbenchVisible}
+            paneVisible={paneVisible && workbenchVisible}
             context={context}
             workspaceSessionApi={workspaceSessionApi}
             showWorkbenchBackground={hasMainBackground}
-            workspaceActions={harnessWorkspaceActions}
+            workspaceActions={bottomHarnessWorkspaceActions}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />
@@ -3885,10 +4229,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })}
       <>
         <HarnessSessionPickerDialog
-          open={harnessSessionPickerOpen}
+          open={harnessSessionPickerTarget !== null}
           options={harnessSessionPickerOptions}
-          onClose={() => setHarnessSessionPickerOpen(false)}
-          onSelect={startAdditionalHarnessSession}
+          onClose={() => setHarnessSessionPickerTarget(null)}
+          onSelect={(harnessId, model) =>
+            startAdditionalHarnessSession(harnessId, harnessSessionPickerTarget ?? 'main', model)
+          }
         />
         <TaskForkDialog
           key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
@@ -3964,11 +4310,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}
+          onRunNow={currentRuntimeTask ? runTaskSupervisorNow : undefined}
         />
         <TransientNotice
           message={continueInIm.notice?.message ?? null}
           tone={continueInIm.notice?.tone}
           onClear={continueInIm.clearNotice}
+        />
+        <TransientNotice
+          message={additionalHarnessError}
+          tone="error"
+          onClear={() => setAdditionalHarnessError(null)}
         />
         <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />

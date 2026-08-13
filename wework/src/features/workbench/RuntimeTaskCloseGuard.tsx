@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
-import { createPortal, flushSync } from 'react-dom'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { updateAppPreferences } from '@/tauri/appPreferences'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
 
@@ -54,12 +53,8 @@ export function RuntimeTaskCloseGuard() {
       }}
       onConfirm={async () => {
         setClosing(true)
+        setCloseDialogOpen(false)
         try {
-          await updateAppPreferences({ closeToTrayHintSeen: true })
-          flushSync(() => {
-            setCloseDialogOpen(false)
-            setClosing(false)
-          })
           await closeMainWindowToTray()
         } catch (error) {
           console.error('Failed to hide window after close-to-tray hint confirmation:', error)

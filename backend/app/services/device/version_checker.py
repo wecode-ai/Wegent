@@ -4,6 +4,7 @@
 
 """Version checkers for fetching executor latest version."""
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -44,8 +45,7 @@ class GithubVersionChecker(VersionChecker):
     def __init__(self, token: Optional[str] = None):
         self.token = token
 
-    async def get_latest_version(self) -> Optional[VersionInfo]:
-        """Fetch latest release from GitHub."""
+    def _fetch_latest_version(self) -> Optional[VersionInfo]:
         api_url = f"{self.API_BASE}/repos/{self.GITHUB_REPO}/releases/latest"
         headers = {"Accept": "application/vnd.github+json"}
         if self.token:
@@ -66,6 +66,10 @@ class GithubVersionChecker(VersionChecker):
         except Exception as e:
             logger.warning(f"Failed to fetch version from GitHub: {e}")
             return None
+
+    async def get_latest_version(self) -> Optional[VersionInfo]:
+        """Fetch latest release from GitHub without blocking the event loop."""
+        return await asyncio.to_thread(self._fetch_latest_version)
 
 
 class RegistryVersionChecker(VersionChecker):
@@ -89,8 +93,7 @@ class RegistryVersionChecker(VersionChecker):
         # Default: assume URL points to registry root, append binary name and update.json
         return f"{base_url}/{self.BINARY_NAME}/update.json"
 
-    async def get_latest_version(self) -> Optional[VersionInfo]:
-        """Fetch latest version from registry."""
+    def _fetch_latest_version(self) -> Optional[VersionInfo]:
         api_url = self._build_api_url()
         headers = {}
         if self.auth_token:
@@ -113,3 +116,7 @@ class RegistryVersionChecker(VersionChecker):
         except Exception as e:
             logger.warning(f"Failed to fetch version from registry: {e}")
             return None
+
+    async def get_latest_version(self) -> Optional[VersionInfo]:
+        """Fetch latest version from registry without blocking the event loop."""
+        return await asyncio.to_thread(self._fetch_latest_version)

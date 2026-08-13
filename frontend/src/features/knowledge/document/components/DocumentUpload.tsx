@@ -22,6 +22,16 @@ import {
   Globe,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
@@ -46,7 +56,7 @@ import {
   MAX_BATCH_FILES,
   type FileUploadStatus,
 } from '@/hooks/useBatchAttachment'
-import { MAX_FILE_SIZE } from '@/apis/attachments'
+import { isVideoFileName, MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
 import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants'
 import type { Attachment } from '@/types/api'
@@ -64,6 +74,11 @@ import {
   isVideoModelBlock,
 } from '@/features/knowledge/multimodal/utils/upload-validation'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useVideoTimestampPromptGuard } from '@/features/knowledge/multimodal/hooks/useVideoTimestampPromptGuard'
+import {
+  exceedsRecommendedVideoDuration,
+  readLocalVideoDuration,
+} from '@/features/knowledge/multimodal/utils/video-duration'
 import type { DocumentCreationResult } from '../utils/document-creation'
 
 function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
@@ -164,9 +179,13 @@ export function DocumentUpload({
   // a disabled pipeline.
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const multimodalAnalysisEnabled = multimodalAnalysisEnabledProp && multimodalFeatureEnabled
+  const { reviewVideoPrompt, videoTimestampPromptWarningDialog } = useVideoTimestampPromptGuard()
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
+  const [filesAwaitingLongVideoConfirmation, setFilesAwaitingLongVideoConfirmation] = useState<
+    File[] | null
+  >(null)
 
   // Upload mode state
   const [uploadMode, setUploadMode] = useState<UploadMode>('file')
@@ -228,9 +247,19 @@ export function DocumentUpload({
     }
   }, [pendingCount, state.isUploading, startUpload])
 
-  // Handle files added - just add them, upload will auto-start via useEffect
-  const handleFilesAdded = useCallback(
+  const enqueueFiles = useCallback(
     (files: File[]) => {
+      const result = addFiles(files)
+      if (result.rejected > 0 && result.reason) {
+        setValidationError(result.reason)
+        setTimeout(() => setValidationError(null), 5000)
+      }
+    },
+    [addFiles]
+  )
+
+  const handleFilesAdded = useCallback(
+    async (files: File[]) => {
       if (files.length === 0) return
 
       // Filter out unsupported files (images when multimodal disabled; videos
@@ -260,19 +289,27 @@ export function DocumentUpload({
       // Only add supported files
       if (supportedFiles.length === 0) return
 
-      const result = addFiles(supportedFiles)
-      if (result.rejected > 0 && result.reason) {
-        setValidationError(result.reason)
-        setTimeout(() => setValidationError(null), 5000)
+      const videoDurations = await Promise.all(
+        supportedFiles.filter(file => isVideoFileName(file.name)).map(readLocalVideoDuration)
+      )
+      if (
+        videoDurations.some(
+          duration => duration !== null && exceedsRecommendedVideoDuration(duration)
+        )
+      ) {
+        setFilesAwaitingLongVideoConfirmation(supportedFiles)
+        return
       }
+
+      enqueueFiles(supportedFiles)
     },
-    [addFiles, t, multimodalAnalysisEnabled, multimodalModelSupportsVideo]
+    [enqueueFiles, t, multimodalAnalysisEnabled, multimodalModelSupportsVideo]
   )
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files || [])
-      handleFilesAdded(files)
+      void handleFilesAdded(files)
       // Reset input value to allow selecting the same files again
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
@@ -286,7 +323,7 @@ export function DocumentUpload({
       e.preventDefault()
       setIsDragOver(false)
       const files = Array.from(e.dataTransfer.files || [])
-      handleFilesAdded(files)
+      void handleFilesAdded(files)
     },
     [handleFilesAdded]
   )
@@ -338,33 +375,56 @@ export function DocumentUpload({
 
     if (successfulAttachments.length === 0) return
 
-    setIsConfirming(true)
-    try {
-      const results = await onUploadComplete(
-        successfulAttachments,
-        splitterConfig,
-        // Per-media-type prompt overrides collected by the
-        // UploadMultimodalPromptSettings child; null when the queue has no
-        // multimodal files → each document inherits the KB default.
-        multimodalPrompts ?? undefined
-      )
-      applyDocumentCreationResults(results)
+    const submit = async (prompts: UploadMultimodalPrompts | null) => {
+      setIsConfirming(true)
+      try {
+        const results = await onUploadComplete(
+          successfulAttachments,
+          splitterConfig,
+          // Per-media-type prompt overrides collected by the
+          // UploadMultimodalPromptSettings child; null when the queue has no
+          // multimodal files → each document inherits the KB default.
+          prompts ?? undefined
+        )
+        applyDocumentCreationResults(results)
 
-      const createdAttachmentIds = new Set(
-        results.filter(result => result.documentId !== undefined).map(result => result.attachmentId)
-      )
-      const targetedFiles = state.files.filter(file => !targetFileIds || targetFileIds.has(file.id))
-      const hasRemainingTargetFiles = targetedFiles.some(
-        file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
-      )
-      if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
-        handleClose()
+        const createdAttachmentIds = new Set(
+          results
+            .filter(result => result.documentId !== undefined)
+            .map(result => result.attachmentId)
+        )
+        const targetedFiles = state.files.filter(
+          file => !targetFileIds || targetFileIds.has(file.id)
+        )
+        const hasRemainingTargetFiles = targetedFiles.some(
+          file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
+        )
+        if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
+          handleClose()
+        }
+      } catch {
+        // Error handled by parent
+      } finally {
+        setIsConfirming(false)
       }
-    } catch {
-      // Error handled by parent
-    } finally {
-      setIsConfirming(false)
     }
+
+    const includesVideo = successfulAttachments.some(({ file, attachment }) =>
+      isVideoFileName(attachment.filename || file.name)
+    )
+    if (!multimodalAnalysisEnabled || !includesVideo) {
+      await submit(multimodalPrompts)
+      return
+    }
+
+    const effectiveVideoPrompt = multimodalPrompts?.video?.trim()
+      ? multimodalPrompts.video
+      : multimodalVideoPrompt
+    reviewVideoPrompt(effectiveVideoPrompt, result =>
+      submit(
+        result.injected ? { ...(multimodalPrompts ?? {}), video: result.prompt } : multimodalPrompts
+      )
+    )
   }
 
   const handleRetryFile = async (id: string) => {
@@ -396,6 +456,7 @@ export function DocumentUpload({
     setWebError(null)
     setWebSubmitting(false)
     setWebFetching(false)
+    setFilesAwaitingLongVideoConfirmation(null)
     onOpenChange(false)
   }
 
@@ -416,7 +477,7 @@ export function DocumentUpload({
     const file = new File([blob], finalFileName, { type: 'text/plain' })
 
     // Add file to upload queue
-    handleFilesAdded([file])
+    void handleFilesAdded([file])
 
     // Reset text input state and switch back to file mode
     setTextContent('')
@@ -1476,6 +1537,37 @@ export function DocumentUpload({
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         {renderContent()}
       </DialogContent>
+      {videoTimestampPromptWarningDialog}
+      <AlertDialog
+        open={filesAwaitingLongVideoConfirmation !== null}
+        onOpenChange={isOpen => {
+          if (!isOpen) setFilesAwaitingLongVideoConfirmation(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('document.upload.longVideoWarning.title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('document.upload.longVideoWarning.description')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="long-video-warning-cancel">
+              {t('document.upload.longVideoWarning.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="long-video-warning-continue"
+              onClick={() => {
+                const files = filesAwaitingLongVideoConfirmation
+                setFilesAwaitingLongVideoConfirmation(null)
+                if (files) enqueueFiles(files)
+              }}
+            >
+              {t('document.upload.longVideoWarning.continue')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

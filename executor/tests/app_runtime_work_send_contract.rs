@@ -216,6 +216,124 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
 }
 
 #[tokio::test]
+async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-claude-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let workspace = temp_path("runtime-claude-workspace", "dir");
+    fs::create_dir_all(&workspace).unwrap();
+    let log_path = temp_path("runtime-claude-args", "jsonl");
+    let fake_claude = write_fake_claude_runtime(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    let workspace_path = workspace.display().to_string();
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "claude-task-1",
+                "workspacePath": workspace_path,
+                "runtime": "claude_code",
+                "message": "first turn",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2001,
+                    "prompt": "first turn",
+                    "project_workspace_path": workspace_path,
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {},
+                    "runtime_executable_path": fake_claude
+                }
+            }
+        }))
+        .await
+        .expect("Claude task should be accepted");
+    assert_eq!(created["accepted"], true);
+    assert_eq!(created["runtime"], "claude_code");
+    wait_for_text_occurrence_count(&log_path, "CALL\n", 1).await;
+    wait_until_task_idle(&handler, "claude-task-1").await;
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "taskId": "claude-task-1",
+                "address": {
+                    "deviceId": "device-1",
+                    "taskId": "claude-task-1",
+                    "workspacePath": workspace_path,
+                    "runtime": "claude_code"
+                },
+                "message": "second turn",
+                "executionRequest": {
+                    "task_id": 1001,
+                    "subtask_id": 2002,
+                    "prompt": "second turn",
+                    "project_workspace_path": workspace_path,
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {}
+                }
+            }
+        }))
+        .await
+        .expect("Claude follow-up should be accepted");
+    assert_eq!(sent["accepted"], true);
+    assert_eq!(sent["runtime"], "claude_code");
+    wait_for_text_occurrence_count(&log_path, "CALL\n", 2).await;
+    wait_until_task_idle(&handler, "claude-task-1").await;
+
+    let log = fs::read_to_string(&log_path).expect("Claude args should be logged");
+    let calls = log
+        .split("CALL\n")
+        .skip(1)
+        .map(|call| call.lines().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    assert!(!calls[0].contains(&"--resume"));
+    let second_args = &calls[1];
+    let resume_index = second_args
+        .iter()
+        .position(|arg| *arg == "--resume")
+        .expect("Claude follow-up should resume the saved session");
+    assert_eq!(second_args[resume_index + 1], "session-runtime-task");
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "claude-task-1",
+                "address": {
+                    "deviceId": "device-1",
+                    "taskId": "claude-task-1",
+                    "workspacePath": workspace_path,
+                    "runtime": "claude_code"
+                }
+            }
+        }))
+        .await
+        .expect("Claude transcript should load");
+    let messages = transcript["messages"]
+        .as_array()
+        .expect("Claude transcript should contain messages");
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(messages[3]["role"], "assistant");
+
+    let runtime_events = recv_events_until(&mut events, |runtime_events| {
+        runtime_events.iter().any(|event| {
+            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
+        })
+    })
+    .await;
+    assert!(runtime_events.iter().any(|event| {
+        event["event"] == "response.created" && event["payload"]["runtime"] == "claude_code"
+    }));
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -3746,6 +3864,26 @@ done
     path
 }
 
+fn write_fake_claude_runtime(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-claude-runtime-work", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+printf 'CALL\n' >> "$LOG_PATH"
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$LOG_PATH"
+done
+printf '%s\n' '{{"type":"system","subtype":"init","session_id":"session-runtime-task"}}'
+printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"Claude reply"}}]}}}}'
+printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"session_id":"session-runtime-task"}}'
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
 fn write_executable(path: &Path, content: &str) {
     fs::write(path, content).unwrap();
     #[cfg(unix)]
@@ -3998,6 +4136,17 @@ async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &s
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("runtime task did not become idle");
+}
+
+async fn wait_for_text_occurrence_count(log_path: &Path, pattern: &str, expected: usize) {
+    for _ in 0..100 {
+        let content = fs::read_to_string(log_path).unwrap_or_default();
+        if content.matches(pattern).count() >= expected {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("expected at least {expected} occurrences of {pattern:?}");
 }
 
 async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {

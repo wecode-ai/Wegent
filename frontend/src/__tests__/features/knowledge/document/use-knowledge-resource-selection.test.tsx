@@ -4,7 +4,10 @@
 
 import { act, renderHook } from '@testing-library/react'
 
-import { useKnowledgeResourceSelection } from '@/features/knowledge/document/hooks/useKnowledgeResourceSelection'
+import {
+  MAX_TRANSFER_SELECTION_COUNT,
+  useKnowledgeResourceSelection,
+} from '@/features/knowledge/document/hooks/useKnowledgeResourceSelection'
 import { buildKnowledgeResourceTree } from '@/features/knowledge/document/utils/resource-tree'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 
@@ -119,5 +122,25 @@ describe('useKnowledgeResourceSelection', () => {
 
     expect(result.current.selectedFolderIds).toEqual(new Set())
     expect(result.current.isDocumentIncludedInFolderScope(documents[0])).toBe(false)
+  })
+
+  it('reports when a direct transfer selection exceeds the limit', () => {
+    const documents = Array.from({ length: MAX_TRANSFER_SELECTION_COUNT + 1 }, (_, index) =>
+      createDocument({ id: index + 1 })
+    )
+    const { index } = buildKnowledgeResourceTree([], documents)
+    const { result } = renderHook(() =>
+      useKnowledgeResourceSelection({
+        documents,
+        treeIndex: index,
+      })
+    )
+
+    act(() => {
+      result.current.selectVisibleDocuments(true)
+    })
+
+    expect(result.current.summary.canTransfer).toBe(true)
+    expect(result.current.summary.transferLimitExceeded).toBe(true)
   })
 })

@@ -376,9 +376,7 @@ def _process_model_config_placeholders(
         processed_api_key = replace_placeholders_with_sources(api_key, data_sources)
         if processed_api_key:
             model_config["api_key"] = processed_api_key
-            logger.debug(
-                f"[model_resolver] Processed api_key placeholder, from: {api_key} "
-            )
+            logger.debug("[model_resolver] Processed api_key placeholder")
 
     # Process DEFAULT_HEADERS with placeholder replacement
     raw_default_headers = model_config.get("default_headers", {})
@@ -920,40 +918,30 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         try:
             default_headers = json.loads(default_headers)
         except Exception:
-            logger.warning(
-                f"Failed to parse DEFAULT_HEADERS as JSON: {default_headers}"
-            )
+            logger.warning("Failed to parse DEFAULT_HEADERS as JSON")
             default_headers = {}
 
     logger.info(
         f"[model_resolver] _extract_model_config: DEFAULT_HEADERS keys = {list(default_headers.keys()) if default_headers else 'empty'}"
     )
 
-    # Log extracted values (mask API key)
-    masked_key = (
-        f"{api_key[:8]}...{api_key[-4:]}"
-        if api_key and len(api_key) > 12
-        else ("***" if api_key else "EMPTY")
-    )
     logger.info(
-        f"[model_resolver] _extract_model_config: api_key={masked_key}, base_url={base_url}, model_id={model_id}, model_type={model_type}"
+        "[model_resolver] _extract_model_config: api_key_configured=%s, "
+        "base_url_configured=%s, model_id=%s, model_type=%s",
+        bool(api_key),
+        bool(base_url),
+        model_id,
+        model_type,
     )
 
     # Decrypt API key if encrypted (only if it doesn't look like a placeholder)
     if api_key and "${" not in api_key:
         try:
             decrypted_key = decrypt_api_key(api_key)
-            masked_decrypted = (
-                f"{decrypted_key[:8]}...{decrypted_key[-4:]}"
-                if decrypted_key and len(decrypted_key) > 12
-                else ("***" if decrypted_key else "EMPTY")
-            )
-            logger.info(
-                f"[model_resolver] _extract_model_config: decrypted api_key={masked_decrypted}"
-            )
+            logger.info("[model_resolver] _extract_model_config: decrypted api key")
             api_key = decrypted_key
-        except Exception as e:
-            logger.warning(f"Failed to decrypt API key, using as-is: {e}")
+        except Exception:
+            logger.warning("Failed to decrypt API key; using configured value")
 
     # Extract API format (for OpenAI-compatible models)
     # Priority: 1. spec field, 2. modelConfig field, 3. protocol/env inference

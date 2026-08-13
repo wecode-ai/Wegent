@@ -47,7 +47,7 @@ class WeiboMCPProvider(MCPProviderPlugin):
             name="微博MCP平台",
             name_en="Weibo MCP Provider",
             description="微博内部 MCP 服务，使用当前用户身份获取可用 MCP Server",
-            discover_url="http://mcp.intra.weibo.com",
+            discover_url="https://mcp.intra.weibo.com/servers",
             api_key_url="http://mcp.intra.weibo.com",
             token_field="weibo_mcp",
             priority=0,  # 最高优先级，排在第一位

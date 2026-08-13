@@ -631,6 +631,13 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
+- Use the shared `Tooltip` component for compact controls instead of the native
+  HTML `title` attribute. Icon-only controls must keep a localized
+  `aria-label`; controls that currently have neither a visible label nor a
+  tooltip must add both where applicable.
+- Tooltips inside clipped sidebars, cards, tables, and panels must render
+  through the shared portal-based layer so ancestor `overflow` rules cannot
+  hide them.
 
 ### 6.7 Cards and empty states
 

@@ -168,6 +168,7 @@ class GitHubProvider(RepositoryProvider):
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"per_page": limit, "page": page, "sort": "updated"},
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -251,6 +252,7 @@ class GitHubProvider(RepositoryProvider):
                     f"{api_base_url}/repos/{repo_name}/branches",
                     headers=headers,
                     params={"per_page": per_page, "page": page},
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -291,7 +293,9 @@ class GitHubProvider(RepositoryProvider):
 
         try:
             response = requests.get(
-                f"{api_base_url}/repos/{repo_name}", headers=headers
+                f"{api_base_url}/repos/{repo_name}",
+                headers=headers,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
@@ -337,7 +341,11 @@ class GitHubProvider(RepositoryProvider):
                 "Accept": "application/vnd.github.v3+json",
             }
 
-            response = requests.get(f"{api_base_url}/user", headers=headers)
+            response = requests.get(
+                f"{api_base_url}/user",
+                headers=headers,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
+            )
 
             if response.status_code == 401:
                 self.logger.warning(
@@ -532,6 +540,7 @@ class GitHubProvider(RepositoryProvider):
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"per_page": 100, "page": 1, "sort": "updated"},
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
                 repos = response.json()
@@ -622,6 +631,7 @@ class GitHubProvider(RepositoryProvider):
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"per_page": per_page, "page": page, "sort": "updated"},
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -744,6 +754,7 @@ class GitHubProvider(RepositoryProvider):
             response = requests.get(
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
                 headers=headers,
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
@@ -781,6 +792,7 @@ class GitHubProvider(RepositoryProvider):
                 reverse_response = requests.get(
                     f"{api_base_url}/repos/{repo_name}/compare/{source_branch}...{target_branch}",
                     headers=headers,
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 reverse_response.raise_for_status()
                 reverse_data = reverse_response.json()

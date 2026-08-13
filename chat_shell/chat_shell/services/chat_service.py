@@ -122,6 +122,10 @@ class ChatService(ChatInterface):
         """
         parts: list[str] = []
 
+        selected_knowledge_prompt = getattr(request, "selected_knowledge_prompt", "")
+        if selected_knowledge_prompt:
+            parts.append(selected_knowledge_prompt)
+
         # Prefer Backend-provided kb_meta_prompt (HTTP mode).
         if request.kb_meta_prompt:
             parts.append(request.kb_meta_prompt)

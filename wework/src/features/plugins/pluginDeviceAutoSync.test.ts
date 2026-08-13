@@ -86,6 +86,60 @@ describe('pluginDeviceAutoSync', () => {
         })
       )
     ).toBe(false)
+    expect(
+      marketplaceItemNeedsDeviceSync(
+        item({
+          id: 1,
+          name: 'a',
+          installedPluginId: 10,
+          installed: true,
+          installedLocally: true,
+          currentDeviceInstallation: {
+            deviceId: 'd1',
+            desiredReleaseId: 1,
+            state: 'failed',
+            attemptCount: 1,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        })
+      )
+    ).toBe(false)
+    expect(
+      marketplaceItemNeedsDeviceSync(
+        item({
+          id: 1,
+          name: 'a',
+          installedPluginId: 10,
+          installed: false,
+          currentDeviceInstallation: {
+            deviceId: 'd1',
+            desiredReleaseId: 2,
+            actualReleaseId: 1,
+            state: 'failed',
+            attemptCount: 1,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        })
+      )
+    ).toBe(false)
+    expect(
+      marketplaceItemNeedsDeviceSync(
+        item({
+          id: 1,
+          name: 'a',
+          installedPluginId: 10,
+          installed: true,
+          currentDeviceInstallation: {
+            deviceId: 'd1',
+            desiredReleaseId: 2,
+            actualReleaseId: 1,
+            state: 'pending',
+            attemptCount: 1,
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        })
+      )
+    ).toBe(true)
   })
 
   test('tracks one auto-sync attempt per device id', () => {

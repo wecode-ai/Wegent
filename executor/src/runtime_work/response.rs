@@ -35,7 +35,8 @@ pub(crate) struct RuntimeSupervisorState {
     pub mode: String,
     pub status: String,
     pub instructions: String,
-    pub model_id: Option<String>,
+    #[serde(default)]
+    pub model_selection: Option<Value>,
     #[serde(default = "default_supervisor_interval_seconds")]
     pub interval_seconds: u64,
     pub last_evaluated_at: Option<i64>,
@@ -89,12 +90,22 @@ pub(crate) struct RuntimeTaskLink {
 
 impl RuntimeTaskLink {
     pub fn new_pending(local_task_id: String, workspace_path: String, title: String) -> Self {
+        Self::new_pending_with_runtime(local_task_id, workspace_path, title, "codex")
+    }
+
+    pub fn new_pending_with_runtime(
+        local_task_id: String,
+        workspace_path: String,
+        title: String,
+        runtime: impl Into<String>,
+    ) -> Self {
+        let runtime = runtime.into();
         Self {
             local_task_id,
             thread_id: None,
             workspace_path,
             title,
-            runtime: "codex".to_owned(),
+            runtime: runtime.clone(),
             status: "active".to_owned(),
             running: false,
             continuable: true,
@@ -106,7 +117,7 @@ impl RuntimeTaskLink {
             created_at: now_ms(),
             updated_at: now_ms(),
             completed_at: None,
-            runtime_handle: json!({}),
+            runtime_handle: json!({ "runtime": runtime }),
             parent: None,
             ephemeral: false,
             runtime_project_key: None,
@@ -626,6 +637,13 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
+    if let Some(queue_position) = link
+        .runtime_handle
+        .get("queuePosition")
+        .and_then(Value::as_u64)
+    {
+        task.insert("queuePosition".to_owned(), json!(queue_position));
+    }
     task.insert("running".to_owned(), Value::Bool(link.running));
     task.insert("continuable".to_owned(), Value::Bool(link.continuable));
     task.insert(
@@ -911,6 +929,19 @@ mod tests {
         }))
         .expect("task link should deserialize");
         assert!(!restored.running);
+    }
+
+    #[test]
+    fn pending_runtime_task_link_preserves_selected_runtime() {
+        let link = RuntimeTaskLink::new_pending_with_runtime(
+            "task-claude".to_owned(),
+            "/tmp/project".to_owned(),
+            "Claude task".to_owned(),
+            "claude_code",
+        );
+
+        assert_eq!(link.runtime, "claude_code");
+        assert_eq!(link.runtime_handle["runtime"], "claude_code");
     }
 
     #[test]

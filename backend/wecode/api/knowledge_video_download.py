@@ -106,7 +106,11 @@ def _build_content_disposition(filename: str) -> str:
 
 
 def _get_kb_video_attachment(
-    db: Session, attachment_id: int, user_id: int
+    db: Session,
+    attachment_id: int,
+    user_id: int,
+    *,
+    document_id: int | None = None,
 ) -> SubtaskContext:
     """Load a knowledge-base Weibo video attachment, enforcing KB access.
 
@@ -114,11 +118,13 @@ def _get_kb_video_attachment(
     is not a knowledge-base document attachment, is not a Weibo-backed video,
     or the user lacks access to the owning knowledge base.
     """
-    kb_doc = (
-        db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.attachment_id == attachment_id)
-        .first()
-    )
+    document_filters = [
+        KnowledgeDocument.attachment_id == attachment_id,
+        KnowledgeDocument.is_active.is_(True),
+    ]
+    if document_id is not None:
+        document_filters.append(KnowledgeDocument.id == document_id)
+    kb_doc = db.query(KnowledgeDocument).filter(*document_filters).first()
     if not kb_doc:
         raise HTTPException(status_code=404, detail="Attachment not found")
 

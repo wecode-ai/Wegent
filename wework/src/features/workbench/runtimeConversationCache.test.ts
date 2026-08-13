@@ -136,6 +136,32 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
   })
 
+  test('does not let an older active Goal snapshot overwrite completion', () => {
+    setRuntimeConversationGoal(address, {
+      threadId: 'thread-1',
+      objective: 'Finish the fix',
+      status: 'complete',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 10,
+      createdAt: 1,
+      updatedAt: 3,
+    })
+
+    setRuntimeConversationGoal(address, {
+      threadId: 'thread-1',
+      objective: 'Finish the fix',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 2,
+    })
+
+    expect(getRuntimeConversationMetadata(address).goal?.status).toBe('complete')
+  })
+
   test('uses device and task identity across normalized workspace paths', () => {
     applyRuntimeConversationAction(address, {
       type: 'user_added',

@@ -1684,6 +1684,44 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
 
 
 @pytest.mark.asyncio
+async def test_reorder_runtime_task_queue_accepts_null_ordered_task_ids(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskQueueReorderRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "taskId": "codex-1",
+            "orderedTaskIds": None,
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.reorder_runtime_task_queue(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskQueueReorderRequest(
+            deviceId="device-1",
+            localTaskId="codex-1",
+            queuePosition=1,
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.ordered_task_ids == []
+
+
+@pytest.mark.asyncio
 async def test_delete_archived_conversations_bulk_groups_by_device(
     test_db,
     test_user,
@@ -2354,6 +2392,7 @@ async def test_remove_runtime_workspace_dispatches_to_owned_device(
         user_id=test_user.id,
         request=RuntimeWorkspaceRemoveRequest(
             deviceId="device-1",
+            projectKey=" remote-project-id ",
             workspacePath="/Users/crystal/Documents/hello-0/",
             runtime="codex",
         ),
@@ -2367,6 +2406,7 @@ async def test_remove_runtime_workspace_dispatches_to_owned_device(
         method="runtime.workspaces.remove",
         payload={
             "runtime": "codex",
+            "projectKey": "remote-project-id",
             "workspacePath": "/Users/crystal/Documents/hello-0",
         },
         timeout_seconds=60,

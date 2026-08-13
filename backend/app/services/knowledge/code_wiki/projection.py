@@ -97,7 +97,10 @@ def _folder_resolver(db: Session, kind_id: int):
     cache: dict[tuple[int, str], int] = {
         (folder.parent_id, folder.name.casefold()): folder.id
         for folder in db.query(KnowledgeFolder)
-        .filter(KnowledgeFolder.kind_id == kind_id)
+        .filter(
+            KnowledgeFolder.kind_id == kind_id,
+            KnowledgeFolder.origin == ContentOrigin.GENERATED.value,
+        )
         .all()
     }
 

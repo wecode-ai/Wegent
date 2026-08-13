@@ -48,7 +48,7 @@ interface AssistantMarkdownProps {
 
 type AssistantMarkdownPart =
   | { kind: 'markdown'; content: string; windowed: boolean }
-  | { kind: 'visualization'; file: string }
+  | { kind: 'visualization'; file: string; mode?: 'wide'; title?: string }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
@@ -180,7 +180,11 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       a: ({ href, children }: { href?: string; children?: ReactNode }) => {
         const text = reactNodeToText(children)
         const isComposerLink =
-          href && /^https?:\/\//.test(href) && text && text !== href && getRecognizedLink(href)
+          href &&
+          /^[a-z][a-z0-9+.-]*:\/\//i.test(href) &&
+          text &&
+          text !== href &&
+          getRecognizedLink(href)
         if (isComposerLink && !href?.startsWith(WEWORK_MARKDOWN_FILE_LINK_PREFIX)) {
           return <ComposerLinkChip payload={{ url: href, label: text }} />
         }
@@ -207,6 +211,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             key={`${part.file}-${index}`}
             file={part.file}
             fileChanges={fileChanges}
+            mode={part.mode}
+            title={part.title}
           />
         ) : part.windowed ? (
           <WindowedMarkdownChunk

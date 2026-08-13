@@ -3,15 +3,17 @@ import { ApiError, createHttpClient } from './http'
 export type SitePublishStatus = 'unpublished' | 'publishing' | 'published' | 'failed' | 'scanning'
 export type SiteAppType = 'web' | 'miniapp'
 export type SiteNetwork = 'inner' | 'outer'
-export type ApplicationCapability = 'create' | 'publish' | 'delete' | 'open_experience'
+export type ApplicationCapability = 'create' | 'publish' | 'edit' | 'delete' | 'open_experience'
 
 export interface Site {
   app_type: 'web'
   siteid: string
+  project_id?: string | null
   taskid: string
   username: string
   name: string
   slug: string
+  custom_domain_prefix?: string | null
   network?: SiteNetwork
   internal_url: string
   external_url: string | null
@@ -26,6 +28,7 @@ export interface Site {
 export interface MiniProgram {
   app_type: 'miniapp'
   siteid: string
+  project_id?: string | null
   taskid: string
   username: string
   name: string
@@ -72,11 +75,17 @@ export interface ListSitesInput {
   limit: number
 }
 
+export interface UpdateSiteInput {
+  title?: string
+  customDomainPrefix?: string | null
+}
+
 export interface SitesApi {
   listApplicationTypes(): Promise<ApplicationTypeListResponse>
   listSites(input: ListSitesInput): Promise<SiteListResponse>
   publishSite(siteid: string): Promise<Site>
   updateSiteNetwork(siteid: string, network: SiteNetwork): Promise<Site>
+  updateSite(siteid: string, input: UpdateSiteInput): Promise<Site>
   deleteSite(siteid: string): Promise<void>
 }
 
@@ -114,6 +123,14 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
     updateSiteNetwork(siteid, network) {
       return client.put(`/sites/${encodeURIComponent(siteid)}/network`, { network })
     },
+    updateSite(siteid, input) {
+      return client.patch(`/sites/${encodeURIComponent(siteid)}`, {
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.customDomainPrefix !== undefined
+          ? { custom_domain_prefix: input.customDomainPrefix }
+          : {}),
+      })
+    },
     deleteSite(siteid) {
       return client.delete<void>(`/sites/${encodeURIComponent(siteid)}`)
     },
@@ -129,6 +146,7 @@ export function createUnavailableSitesApi(): SitesApi {
     listSites: unavailable,
     publishSite: unavailable,
     updateSiteNetwork: unavailable,
+    updateSite: unavailable,
     deleteSite: unavailable,
   }
 }

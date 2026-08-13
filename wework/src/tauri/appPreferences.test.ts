@@ -14,6 +14,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 const mergedDefaultPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -119,6 +120,22 @@ describe('appPreferences', () => {
     invokeMock.mockResolvedValue({ language: 'fr' })
 
     const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+  })
+
+  test('normalizes the default workspace tab preference', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'board' })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      defaultWorkspaceTab: 'board',
+    })
+
+    invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'unsupported' })
 
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })

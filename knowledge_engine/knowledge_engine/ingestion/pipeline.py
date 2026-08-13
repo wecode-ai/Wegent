@@ -26,6 +26,7 @@ from knowledge_engine.ingestion.qa_unitizer import (
     QAUnitizationResult,
     unitize_qa_documents,
 )
+from knowledge_engine.ingestion.video_segment import enrich_video_segment_nodes
 from knowledge_engine.splitter.config import (
     FlatChunkConfig,
     MarkdownEnhancementConfig,
@@ -71,13 +72,39 @@ class IngestionResult:
 class MarkdownEnhancementTransform(TransformComponent):
     """Apply deterministic markdown weak-section merge before final chunking."""
 
+    # This field participates in the ingestion cache key. It prevents a
+    # re-index from reusing nodes created before video chapters were preserved.
+    transform_version: str = "preserve-video-chapters-v1"
+
     def __call__(
         self,
         nodes: Sequence[BaseNode],
         **kwargs: Any,
     ) -> Sequence[BaseNode]:
         del kwargs
-        return enhance_markdown_nodes(list(nodes))
+        materialized = list(nodes)
+        # Video chapters are already intentional semantic boundaries. Merging
+        # short chapters would collapse distinct time ranges into one node.
+        if any(
+            str((node.metadata or {}).get("filename", "")).lower().endswith(".video")
+            for node in materialized
+        ):
+            return materialized
+        return enhance_markdown_nodes(materialized)
+
+
+class VideoSegmentMetadataTransform(TransformComponent):
+    """Attach video chapter timestamps before final sentence splitting."""
+
+    transform_version: str = "video-segment-metadata-v2"
+
+    def __call__(
+        self,
+        nodes: Sequence[BaseNode],
+        **kwargs: Any,
+    ) -> Sequence[BaseNode]:
+        del kwargs
+        return enrich_video_segment_nodes(nodes)
 
 
 class MetadataEnrichmentTransform(TransformComponent):
@@ -345,6 +372,7 @@ def _build_file_aware_transformations(
         transformations: list[TransformComponent] = [MarkdownNodeParser()]
         if markdown_enhancement.enabled:
             transformations.append(MarkdownEnhancementTransform())
+        transformations.append(VideoSegmentMetadataTransform())
         transformations.append(
             LlamaSentenceSplitter(
                 chunk_size=flat_config.chunk_size,

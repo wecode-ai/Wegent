@@ -93,6 +93,13 @@ interface SkillUploadModalProps {
   ) => void
 }
 
+function validateGitUrl(url: string): boolean {
+  if (!url.trim()) return false
+  // Supports credentials, custom ports, schemeless URLs, and nested repository paths.
+  const urlPattern = /^(https?:\/\/)?([\w.-]+(:[\w.-]+)?@)?[\w.-]+(:\d+)?\/[\w.-]+(\/[\w.-]+)+$/i
+  return urlPattern.test(url.trim())
+}
+
 // Helper to get skill name from either type
 function getSkillName(skill: Skill | UnifiedSkill | null | undefined): string {
   if (!skill) return ''
@@ -421,20 +428,6 @@ export default function SkillUploadModal({
   // Git Import Tab Logic
   // ============================================================================
 
-  const validateGitUrl = (url: string): boolean => {
-    if (!url.trim()) return false
-    // Basic URL validation - should contain at least host/owner/repo pattern
-    // Supports formats:
-    // - https://host/owner/repo
-    // - https://user:pass@host/owner/repo
-    // - https://token@host/owner/repo
-    // - http://host:port/owner/repo
-    // - host/owner/repo
-    // - Multi-level paths like /group/subgroup/repo
-    const urlPattern = /^(https?:\/\/)?([\w.-]+(:[\w.-]+)?@)?[\w.-]+(:\d+)?\/[\w.-]+(\/[\w.-]+)+/i
-    return urlPattern.test(url.trim())
-  }
-
   const handleScanRepository = async () => {
     if (!validateGitUrl(gitUrl)) {
       setGitError(t('skills.git_invalid_url'))
@@ -477,14 +470,6 @@ export default function SkillUploadModal({
   }
 
   const handleSelectAll = () => {
-    if (isEditMode) {
-      setSelectedSkillPaths(
-        selectedSkillPaths.size > 0 || scannedSkills.length === 0
-          ? new Set()
-          : new Set([scannedSkills[0].path])
-      )
-      return
-    }
     if (selectedSkillPaths.size === scannedSkills.length) {
       setSelectedSkillPaths(new Set())
     } else {
@@ -1188,6 +1173,7 @@ function GitImportForm({
           variant="primary"
           onClick={handleImportSkills}
           disabled={isLoading || selectedSkillPaths.size === 0}
+          data-testid="git-import-submit"
         >
           {importing ? (
             <>
@@ -1224,7 +1210,7 @@ function OriginalGitUpdateForm({
 }: OriginalGitUpdateFormProps) {
   const [editedRepoUrl, setEditedRepoUrl] = useState(repoUrl)
   const [editedSkillPath, setEditedSkillPath] = useState(skillPath)
-  const canUpdate = Boolean(editedRepoUrl.trim() && editedSkillPath.trim())
+  const canUpdate = validateGitUrl(editedRepoUrl) && Boolean(editedSkillPath.trim())
 
   return (
     <div className="space-y-4">
@@ -1302,7 +1288,6 @@ function SkillMarketUpdateForm({
   const [showingAll, setShowingAll] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
-
   const activeProvider = providers.find(provider => provider.key === providerKey) || providers[0]
 
   useEffect(() => {
@@ -1315,7 +1300,6 @@ function SkillMarketUpdateForm({
     let cancelled = false
     const sourceSkillName = skillSource?.original_skill_key || skillName
     const sourceSearchKeyword = skillSource?.skill_key || sourceSkillName
-
     setProviderKey(activeProvider.key)
     setSearching(true)
     setMarketError(null)
@@ -1336,9 +1320,7 @@ function SkillMarketUpdateForm({
             item =>
               item.skillKey === skillSource?.skill_key || item.originalSkillKey === sourceSkillName
           )
-          if (matchingSkills.length > 0) {
-            return matchingSkills
-          }
+          if (matchingSkills.length > 0) return matchingSkills
 
           const allSkills = await searchMarketSkills(activeProvider.key, {
             page: 1,
@@ -1357,9 +1339,12 @@ function SkillMarketUpdateForm({
         if (!cancelled) setSkills(result)
       })
       .catch(err => {
-        if (cancelled) return
-        setSkills([])
-        setMarketError(err instanceof Error ? err.message : t('skills.skill_market_search_failed'))
+        if (!cancelled) {
+          setSkills([])
+          setMarketError(
+            err instanceof Error ? err.message : t('skills.skill_market_search_failed')
+          )
+        }
       })
       .finally(() => {
         if (!cancelled) setSearching(false)

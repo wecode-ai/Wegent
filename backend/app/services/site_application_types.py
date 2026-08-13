@@ -110,6 +110,7 @@ class SiteApplicationHandler(ApplicationTypeHandler):
     capabilities: tuple[ApplicationCapability, ...] = (
         "create",
         "publish",
+        "edit",
         "delete",
     )
     create_plugin_name = BUILTIN_SITES_PLUGIN_NAME
@@ -128,10 +129,12 @@ class SiteApplicationHandler(ApplicationTypeHandler):
         site = {
             "app_type": self.app_type,
             "siteid": project_id,
+            "project_id": project_id,
             "taskid": project_id,
             "username": username,
             "name": payload.get("title"),
-            "slug": project_id,
+            "slug": payload.get("slug") or project_id,
+            "custom_domain_prefix": payload.get("custom_domain_prefix"),
             "network": network,
             "internal_url": url,
             "external_url": url if network == "outer" else None,
@@ -173,6 +176,7 @@ class MiniProgramApplicationHandler(ApplicationTypeHandler):
         mini_program = {
             "app_type": self.app_type,
             "siteid": project_id,
+            "project_id": project_id,
             "taskid": project_id,
             "username": username,
             "name": payload.get("title"),

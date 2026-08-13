@@ -41,6 +41,7 @@ import type {
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
+import { useVideoTimestampPromptGuard } from '@/features/knowledge/multimodal/hooks/useVideoTimestampPromptGuard'
 
 /** Available group for selection */
 export interface AvailableGroup {
@@ -162,12 +163,15 @@ export function CreateKnowledgeBaseDialog({
   const [executionModelRef, setExecutionModelRef] = useState<SummaryModelRef | null>(null)
   const [executionModelError, setExecutionModelError] = useState('')
   const {
+    multimodalAnalysisEnabled,
+    multimodalVideoPrompt,
     validate: validateMultimodal,
     clearError: clearMultimodalError,
     reset: resetMultimodal,
     buildSubmitFields: buildMultimodalSubmitFields,
     formProps: multimodalFormProps,
   } = useMultimodalKBConfig()
+  const { reviewVideoPrompt, videoTimestampPromptWarningDialog } = useVideoTimestampPromptGuard()
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
   const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>(
@@ -257,59 +261,69 @@ export function CreateKnowledgeBaseDialog({
       return
     }
 
-    try {
-      // Filter out empty guided questions
-      const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
-      await onSubmit({
-        name: name.trim(),
-        description: description.trim() || undefined,
-        direct_access_requirement: directAccessRequirement,
-        retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
-        rag_config_mode: ragConfigMode,
-        summary_enabled: summaryEnabled,
-        summary_model_ref: summaryEnabled ? summaryModelRef : null,
-        ...buildMultimodalSubmitFields(),
-        guided_questions: validGuidedQuestions.length > 0 ? validGuidedQuestions : undefined,
-        max_calls_per_conversation: maxCalls,
-        exempt_calls_before_check: exemptCalls,
-        selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
-        kb_type: kind === 'code' ? 'code_wiki' : selectedKbType,
-        ...(kind === 'code'
-          ? {
-              source_type: source.source_type,
-              source_url: source.source_url,
-              language: source.language,
-              show_generation_task: source.show_generation_task,
-              // Left blank, the repository's own name is used. Sent from what the
-              // form already resolved rather than pre-filled into the box, which
-              // would read as the caller's own input — and rather than resolved
-              // again on the server, which has asked the provider once already.
-              resolved_name: source.resolution?.name,
-              resolved_description: source.resolution?.description,
-              execution_model_ref: executionModelRef,
-            }
-          : {}),
-      })
-      setName('')
-      setDescription('')
-      setDirectAccessRequirement('read')
-      // Reset selectedKbType and keep summaryEnabled as true
-      setSelectedKbType(initialKbType)
-      setKind('document')
-      setSource(createEmptySource())
-      setSummaryEnabled(true)
-      setSummaryModelRef(null)
-      setExecutionModelRef(null)
-      setExecutionModelError('')
-      resetMultimodal()
-      setGuidedQuestions([])
-      setRagConfigMode('auto')
-      setRetrievalConfig(createDefaultRetrievalConfig())
-      setMaxCalls(10)
-      setExemptCalls(5)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('common:error'))
+    const submit = async (reviewedVideoPrompt: string | null) => {
+      try {
+        // Filter out empty guided questions
+        const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
+        const multimodalFields = buildMultimodalSubmitFields()
+        multimodalFields.multimodal_analysis_video_prompt = multimodalAnalysisEnabled
+          ? reviewedVideoPrompt
+          : null
+        await onSubmit({
+          name: name.trim(),
+          description: description.trim() || undefined,
+          direct_access_requirement: directAccessRequirement,
+          retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
+          rag_config_mode: ragConfigMode,
+          summary_enabled: summaryEnabled,
+          summary_model_ref: summaryEnabled ? summaryModelRef : null,
+          ...multimodalFields,
+          guided_questions: validGuidedQuestions.length > 0 ? validGuidedQuestions : undefined,
+          max_calls_per_conversation: maxCalls,
+          exempt_calls_before_check: exemptCalls,
+          selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
+          kb_type: kind === 'code' ? 'code_wiki' : selectedKbType,
+          ...(kind === 'code'
+            ? {
+                source_type: source.source_type,
+                source_url: source.source_url,
+                language: source.language,
+                show_generation_task: source.show_generation_task,
+                // Left blank, the repository's own name is used. Sent from what the
+                // form already resolved rather than pre-filled into the box, which
+                // would read as the caller's own input — and rather than resolved
+                // again on the server, which has asked the provider once already.
+                resolved_name: source.resolution?.name,
+                resolved_description: source.resolution?.description,
+                execution_model_ref: executionModelRef,
+              }
+            : {}),
+        })
+        setName('')
+        setDescription('')
+        setDirectAccessRequirement('read')
+        // Reset selectedKbType and keep summaryEnabled as true
+        setSelectedKbType(initialKbType)
+        setKind('document')
+        setSource(createEmptySource())
+        setSummaryEnabled(true)
+        setSummaryModelRef(null)
+        setExecutionModelRef(null)
+        setExecutionModelError('')
+        resetMultimodal()
+        setGuidedQuestions([])
+        setRagConfigMode('auto')
+        setRetrievalConfig(createDefaultRetrievalConfig())
+        setMaxCalls(10)
+        setExemptCalls(5)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t('common:error'))
+      }
     }
+
+    reviewVideoPrompt(multimodalAnalysisEnabled ? multimodalVideoPrompt : null, result =>
+      submit(result.prompt)
+    )
   }
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -596,6 +610,7 @@ export function CreateKnowledgeBaseDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {videoTimestampPromptWarningDialog}
     </Dialog>
   )
 }

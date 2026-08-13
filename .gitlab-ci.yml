@@ -627,3 +627,50 @@ trigger_update_simulation_knowledge_web:
         - wecode/docker/knowledge/**/*
         - shared/**/*
         - knowledge_engine/**/*
+
+wegent-doc-converter:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-doc-converter-web
+    DOCKERFILE_PATH: wecode/docker/doc_converter
+  script:
+    - build_image
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - knowledge_doc_converter/**/*
+        - wecode/docker/doc_converter/**/*
+        - shared/**/*
+        - knowledge_engine/**/*
+    - changes:
+        - knowledge_doc_converter/**/*
+        - wecode/docker/doc_converter/**/*
+        - shared/**/*
+        - knowledge_engine/**/*
+
+trigger_update_simulation_doc_converter_web:
+  stage: production
+  variables:
+    APP: simulation-wegent-doc-converter-web
+    SERVICE: wegent-doc-converter-web
+    IMAGE_NAME: wegent-doc-converter-web
+    MASTER_BRANCH: master
+    UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+    UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+    UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+    UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    CD_AUTO_PRODUCTION: 1
+  trigger:
+    project: weibo_rd/cloudnative/aigc_gitops_manifest
+    branch: master
+    strategy: depend
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
+      changes:
+        - knowledge_doc_converter/**/*
+        - wecode/docker/doc_converter/**/*
+        - shared/**/*
+        - knowledge_engine/**/*

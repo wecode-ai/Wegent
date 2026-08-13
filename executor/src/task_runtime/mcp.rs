@@ -11,6 +11,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use crate::logging::log_executor_event;
 use crate::protocol::ExecutionRequest;
 
 use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
@@ -33,7 +34,23 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
         .or_else(|| request.extra.get("cloud_project_id"))
         .and_then(id_value)
         .filter(|value| !value.is_empty());
-    if bound_project_id.is_none() && !prompt_references_cloud_projects(&request.prompt) {
+    let prompt_has_cloud_ref = prompt_references_cloud_projects(&request.prompt);
+    log_executor_event(
+        "space mcp injection decision",
+        &[
+            ("task_id", request.task_id.clone()),
+            (
+                "bound_project_id",
+                bound_project_id.as_deref().unwrap_or("").to_owned(),
+            ),
+            ("prompt_has_cloud_ref", prompt_has_cloud_ref.to_string()),
+            (
+                "shell_type",
+                request.resolved_shell_type().unwrap_or_default(),
+            ),
+        ],
+    );
+    if bound_project_id.is_none() && !prompt_has_cloud_ref {
         return;
     }
     let Ok(executable) = env::current_exe() else {
@@ -100,6 +117,13 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
     } else {
         request.mcp_servers.push(server);
     }
+    log_executor_event(
+        "space mcp server injected",
+        &[
+            ("task_id", request.task_id.clone()),
+            ("mcp_server_count", request.mcp_servers.len().to_string()),
+        ],
+    );
 }
 
 fn prompt_references_cloud_projects(prompt: &Value) -> bool {
@@ -985,6 +1009,7 @@ fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
                         .get("creator_user_id")
                         .and_then(Value::as_i64)
                         .map_or(true, |id| task["created_by_user_id"] == id)
+                    && matches_filter(task, arguments, "parent_id")
             })
             .take(limit)
             .collect(),
@@ -1783,6 +1808,27 @@ mod tests {
     }
 
     #[test]
+    fn backend_task_search_filters_by_parent_id() {
+        let response = json!({
+            "items": [
+                {"id": "parent", "parent_id": null},
+                {"id": "matching-child", "parent_id": "requested-parent"},
+                {"id": "other-child", "parent_id": "other-parent"}
+            ]
+        });
+
+        let result = filter_backend_tasks(
+            response,
+            &json!({"parent_id": "requested-parent", "limit": 50}),
+        );
+
+        assert_eq!(
+            result,
+            json!([{"id": "matching-child", "parent_id": "requested-parent"}])
+        );
+    }
+
+    #[test]
     fn exposes_only_wework_space_business_vocabulary() {
         let serialized = serde_json::to_string(&tools()).unwrap().to_lowercase();
 
@@ -1794,6 +1840,7 @@ mod tests {
             "project_id",
             "task_id",
             "\"todo\"",
+            "report_automation_bug",
         ] {
             assert!(!serialized.contains(forbidden), "found {forbidden}");
         }

@@ -49,6 +49,7 @@ import type {
   LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
 import type { LocalHarnessId } from '@/lib/local-harness'
+import type { createProjectAutomationApi } from '@/api/projectAutomations'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
@@ -133,6 +134,7 @@ export interface WorkbenchServices {
   projectChatClient?: ProjectChatClient
   localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   localHarnessModelApi?: {

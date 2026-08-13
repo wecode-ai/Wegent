@@ -987,7 +987,7 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     const creationStatus = screen.getByTestId('worktree-creation-status')
-    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(creationStatus).toHaveTextContent('正在搭建你的独立工作树')
     expect(screen.getByTestId('chat-message-scroll-area-content')).toContainElement(creationStatus)
     expect(screen.queryByTestId('chat-message-scroll-area-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-chat-input-dock')).not.toBeInTheDocument()

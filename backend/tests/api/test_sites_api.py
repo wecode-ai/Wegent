@@ -78,7 +78,7 @@ def test_list_site_app_types_returns_ordered_capabilities(
                 "app_type": "web",
                 "enabled": True,
                 "order": 10,
-                "capabilities": ["create", "publish", "delete"],
+                "capabilities": ["create", "publish", "edit", "delete"],
                 "create": {
                     "plugin_name": "wegent-sites",
                     "marketplace_name": "wegent",
@@ -142,10 +142,12 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
     assert body["items"][0] == {
         "app_type": "web",
         "siteid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "taskid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "username": "testuser",
         "name": "Product site",
         "slug": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "custom_domain_prefix": None,
         "network": "inner",
         "internal_url": "https://product.inner.test/",
         "external_url": None,
@@ -219,6 +221,7 @@ def test_list_sites_returns_mini_programs_from_the_shared_endpoint(
         {
             "app_type": "miniapp",
             "siteid": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "project_id": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
             "taskid": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
             "username": "testuser",
             "name": "Campaign assistant",
@@ -476,6 +479,40 @@ def test_update_site_name_proxies_platform_name_update(
         "username": "testuser",
         "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "sitename": "Renamed site",
+    }
+
+
+def test_update_site_metadata_proxies_platform_patch(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    monkeypatch.setattr(settings, "SITES_API_TOKEN", "platform-token")
+    httpx_mock.add_response(
+        method="PATCH",
+        url=f"{SITES_API_BASE_URL}/api/v1/projects/prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        json=_project(title="Docs Site", custom_domain_prefix="docs"),
+    )
+
+    response = test_client.patch(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        json={"title": " Docs Site ", "custom_domain_prefix": "docs"},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Docs Site"
+    assert body["custom_domain_prefix"] == "docs"
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["authorization"] == "Bearer platform-token"
+    assert request.headers["x-wegent-username"] == "testuser"
+    assert request.headers["idempotency-key"].startswith("project-update-")
+    assert _json_body(request) == {
+        "title": "Docs Site",
+        "custom_domain_prefix": "docs",
     }
 
 

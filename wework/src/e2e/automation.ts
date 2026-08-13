@@ -35,6 +35,7 @@ import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
 import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
+import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -102,7 +103,9 @@ export function shouldUseNativeProjectDirectoryPicker(): boolean {
 }
 
 function desktopControlUrl(): string | null {
-  const value = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
+  const value =
+    getDesktopE2ERuntimeConfig().controlUrl ??
+    import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
   return value ? value.replace(/\/+$/, '') : null
 }
 
@@ -237,13 +240,20 @@ function createBridge(): WeworkAutomationBridge {
 }
 
 async function seedDesktopE2ECloudConnection(): Promise<void> {
-  const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+  const runtimeConfig = getDesktopE2ERuntimeConfig()
+  const backendUrl =
+    runtimeConfig.cloudBackendUrl ?? import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
-  const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
+  const modelServerUrl =
+    runtimeConfig.modelServerUrl ??
+    import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
+    backendUrl
   const localModelsCatalogReady =
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const token =
-    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
+    runtimeConfig.cloudToken ??
+    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
+    'wework-desktop-e2e-cloud-token'
 
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
@@ -345,6 +355,9 @@ export async function installWeworkAutomationBridge(
     return
   }
 
+  if (isTauriRuntime()) {
+    await loadDesktopE2ERuntimeConfig()
+  }
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
@@ -355,8 +368,9 @@ function findDesktopControlElements(selector: string): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>(selector))
 }
 
-function desktopControlElementText(selector: string): string {
-  return findDesktopControlElements(selector)
+function desktopControlElementText(selector: string, visible = false): string {
+  const elements = findDesktopControlElements(selector)
+  return (visible ? elements.filter(desktopControlElementVisible) : elements)
     .map(element => element.textContent?.trim() ?? '')
     .filter(Boolean)
     .join('\n')
@@ -496,17 +510,27 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
 }
 
 function desktopControlElementVisible(element: HTMLElement): boolean {
-  const style = window.getComputedStyle(element)
+  let current: HTMLElement | null = element
+  while (current) {
+    const style = window.getComputedStyle(current)
+    if (
+      style.display === 'none' ||
+      style.visibility === 'hidden' ||
+      current.getAttribute('aria-hidden') === 'true'
+    ) {
+      return false
+    }
+    current = current.parentElement
+  }
+
   const rect = element.getBoundingClientRect()
-  return (
-    style.display !== 'none' &&
-    style.visibility !== 'hidden' &&
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.bottom > 0 &&
-    rect.right > 0 &&
-    rect.top < window.innerHeight &&
-    rect.left < window.innerWidth
+  return !(
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    rect.bottom <= 0 ||
+    rect.right <= 0 ||
+    rect.top >= window.innerHeight ||
+    rect.left >= window.innerWidth
   )
 }
 
@@ -605,7 +629,13 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+let activeDesktopControlDrag: {
+  sourceText: string
+  target: HTMLElement
+} | null = null
+
+async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
+  if (activeDesktopControlDrag) throw new Error('A desktop control drag is already active')
   const element = findDesktopControlElements(command.selector)[0]
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   if (!command.target) throw new Error('Drag requires a target selector')
@@ -620,7 +650,45 @@ async function dragDesktopControlElement(command: DesktopControlCommand): Promis
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
-  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+  activeDesktopControlDrag = {
+    sourceText: element.textContent?.trim() ?? '',
+    target,
+  }
+  return activeDesktopControlDrag.sourceText
+}
+
+async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
+  const activeDrag = activeDesktopControlDrag
+  if (!activeDrag) throw new Error('No desktop control drag is active')
+  const target = command.target ? findDesktopControlElements(command.target)[0] : activeDrag.target
+  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
+  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  try {
+    dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+    dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
+    await waitForDesktopControlTick()
+    dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+    return activeDrag.sourceText
+  } finally {
+    activeDesktopControlDrag = null
+  }
+}
+
+async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
+  await startDesktopControlDrag(command)
+  return endDesktopControlDrag(command)
+}
+
+function contextMenuDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      ...desktopControlEventOptions(element),
+      button: 2,
+      buttons: 0,
+    })
+  )
   return element.textContent?.trim() ?? ''
 }
 
@@ -955,6 +1023,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'contextMenu':
+      return contextMenuDesktopControlElement(command.selector)
+    case 'dragStart':
+      return startDesktopControlDrag(command)
+    case 'dragEnd':
+      return endDesktopControlDrag(command)
     case 'dropFile':
       return dropDesktopControlFile(command)
     case 'dropPaths':
@@ -966,9 +1040,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
-      return desktopControlElementText(command.selector)
+      return desktopControlElementText(command.selector, command.visible)
     case 'getElementCount':
-      return String(findDesktopControlElements(command.selector).length)
+      return String(
+        command.visible
+          ? findDesktopControlElements(command.selector).filter(desktopControlElementVisible).length
+          : findDesktopControlElements(command.selector).length
+      )
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
     case 'startScrollStabilitySampling': {
@@ -1062,9 +1140,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getAttribute': {
       const elements = findDesktopControlElements(command.selector)
+      const candidates = command.visible ? elements.filter(desktopControlElementVisible) : elements
       const element = command.text
-        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
-        : elements[0]
+        ? candidates.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : candidates[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const attribute = command.value?.trim()
       if (!attribute) throw new Error('getAttribute requires an attribute name')
@@ -1196,7 +1275,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(scroller.scrollTop)
     }
     case 'click': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
@@ -1346,6 +1426,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
         )
       }
+      await waitForDesktopControlTick()
       return element.textContent?.trim() ?? ''
     }
     case 'select': {
@@ -1444,6 +1525,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 }
 
 function installDesktopControlClient() {
+  if (!isTauriRuntime()) return
   const url = desktopControlUrl()
   const windowLabel = getCurrentWindow().label
   if (

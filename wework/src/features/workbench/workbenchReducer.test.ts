@@ -182,6 +182,74 @@ describe('workbenchReducer', () => {
     ])
   })
 
+  test('updates only the matching runtime task supervisor state', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-a',
+                    workspacePath: '/workspace/repo',
+                    title: 'Runtime A',
+                    runtime: 'codex' as const,
+                    status: 'succeeded',
+                  },
+                  {
+                    taskId: 'runtime-b',
+                    workspacePath: '/workspace/repo',
+                    title: 'Runtime B',
+                    runtime: 'codex' as const,
+                    status: 'succeeded',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 2,
+      },
+    }
+    const supervisor = {
+      mode: 'auto' as const,
+      status: 'active' as const,
+      instructions: 'Keep the task focused',
+      modelSelection: {
+        modelName: 'supervisor-model',
+        modelType: 'public',
+      },
+      intervalSeconds: 30,
+      lastEvaluatedAt: 1786557741000,
+      lastContentHash: 'latest',
+      lastError: null,
+      suggestions: [],
+    }
+
+    const updated = workbenchReducer(state, {
+      type: 'runtime_task_supervisor_updated',
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/repo',
+        taskId: 'runtime-a',
+      },
+      supervisor,
+    })
+
+    expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].supervisor).toEqual(
+      supervisor
+    )
+    expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[1].supervisor).toBeUndefined()
+  })
+
   test('preserves blank chat draft when returning to standalone chat', () => {
     const state = workbenchReducer(
       {

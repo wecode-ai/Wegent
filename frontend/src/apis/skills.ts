@@ -1187,7 +1187,8 @@ export async function importGitRepoPublicSkills(
 export interface UpdateFromGitResponse {
   id: number
   name: string
-  message: string
+  version?: string
+  source?: SkillSource
 }
 
 /**

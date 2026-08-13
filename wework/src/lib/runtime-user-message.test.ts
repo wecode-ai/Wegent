@@ -32,6 +32,26 @@ describe('runtime user message', () => {
     ).toBe('Continue fixing')
   })
 
+  test('removes the complete wrapper when referenced conversations contain nested contexts', () => {
+    const referencedConversation = JSON.stringify([
+      {
+        role: 'user',
+        content:
+          '<application_context>\\n[source]\\nsource state\\n</application_context>\\n\\nOriginal question',
+      },
+    ])
+    const content = [
+      '<application_context>',
+      '[referencedConversations]',
+      referencedConversation,
+      '</application_context>',
+      '',
+      'Continue with the referenced conversation',
+    ].join('\n')
+
+    expect(visibleRuntimeUserMessage(content)).toBe('Continue with the referenced conversation')
+  })
+
   test('preserves malformed context instead of dropping user content', () => {
     expect(visibleRuntimeUserMessage('<application_context>\nuser text')).toBe(
       '<application_context>\nuser text'

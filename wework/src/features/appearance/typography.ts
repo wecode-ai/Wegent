@@ -7,6 +7,7 @@ export const MIN_CODE_FONT_SIZE = 8
 export const MAX_CODE_FONT_SIZE = 24
 
 const CODEX_UI_TYPE_SCALE = {
+  '--text-2xs': 10,
   '--text-xs': 12,
   '--text-sm': 13,
   '--text-base': 14,

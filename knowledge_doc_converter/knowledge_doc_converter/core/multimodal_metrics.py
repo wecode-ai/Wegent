@@ -54,6 +54,12 @@ MULTIMODAL_GEMINI_ERRORS_TOTAL = Counter(
     ["error_type", "media_type"],
 )
 
+MULTIMODAL_GEMINI_CALLS_TOTAL = Counter(
+    "converter_multimodal_gemini_calls_total",
+    "Gemini API calls by result (success/failure) for success-rate dashboards",
+    ["result", "media_type"],
+)
+
 MULTIMODAL_ACTIVE = Gauge(
     "converter_multimodal_active",
     "Multimodal conversions in progress",
