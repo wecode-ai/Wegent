@@ -29,7 +29,7 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 插件可以在 `connectors[].localAuth` 中声明设备侧授权。`local_qr` 用于二维码登录；`browser_oauth` 用于需要本机 CLI 打开浏览器的 OAuth。两种模式都必须提供相对插件根目录的 `health` 和 `start` 命令，二维码模式还必须提供非阻塞的 `poll` 命令。`authPolicy: on_install` 会在插件包完成本机同步后检查登录状态，未登录时由 Wework 显示授权界面；取消或失败会终止本次安装。首次使用和运行中授权检查继续作为凭据失效后的恢复入口。
 
-发送消息前的连接器授权预检只对明确包含 `plugin://` 引用或连接器认证提示的消息同步执行；普通消息直接发送，不读取插件清单，避免每次发送都被本机插件枚举阻塞。
+发送消息前的连接器授权预检只对明确包含 `plugin://` 引用或连接器认证提示的消息同步执行；普通消息直接发送，不读取插件清单，避免每次发送都被本机插件枚举阻塞。带插件引用时也只对消息中提到的插件做 `plugin/read` 补全连接器信息，禁止在发送路径上调用完整 `plugin/list` / `readState`，以免会话打开被拖慢约 10 秒。
 
 `browser_oauth` 使用异步授权会话，状态依次为 `preparing`、`waiting_browser`、`verifying` 和 `ok/error`。关闭界面会调用 Executor 的 `cancel` RPC 并终止登录子进程。CLI 输出必须是单个状态 JSON，不得包含 token、cookie 或其他凭据。
 
@@ -87,6 +87,8 @@ Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保
 | 完整访问 | `:danger-full-access`    | `never`         | 不经审批访问文件、终端和网络；启用前必须经过显式风险确认               |
 
 前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
+
+Wework 的 Claude Code 普通对话通过非交互子进程运行，无法展示或完成 Claude CLI 自带的审批提示。因此，Claude Code 设置中的 `default` 在这条执行路径上会映射为 `bypassPermissions`；用户明确选择的 `acceptEdits`、`plan`、`auto` 或 `bypassPermissions` 仍会原样传递。交互式本地终端不经过这项映射。
 
 Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval` 和 `item/permissions/requestApproval` 请求会映射为 Wework 的 `request_user_input` 卡片。卡片保持 `availableDecisions` 的顺序，只展示协议实际提供的决定，并使用稳定协议值回传。Executor 支持单次批准 `accept`、会话批准 `acceptForSession`、命令规则 `acceptWithExecpolicyAmendment`、网络 host 规则 `applyNetworkPolicyAmendment`、拒绝 `decline` 和停止 `cancel`；结构化规则直接使用 Codex 请求携带的 amendment，缺失或不匹配时安全拒绝，不会根据显示文本自行扩大授权。权限请求可以按 turn 或 session scope 授权，也可以在当前 turn 启用 `strictAutoReview`，逐一审查之后的命令；拒绝时不授予任何额外权限。
 

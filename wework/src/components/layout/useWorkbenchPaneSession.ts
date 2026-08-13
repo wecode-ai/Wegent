@@ -21,6 +21,8 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
@@ -39,12 +41,14 @@ import {
 } from '@/lib/runtime-terminal-context'
 import type {
   Attachment,
+  ModelSelectionConfig,
   ModelOptions,
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
   RuntimePlanEventPayload,
   RuntimeGoalContinuationPayload,
+  RuntimeName,
   RuntimeAdditionalContext,
   RuntimeRollbackRequest,
   RuntimeSupervisorCreateInput,
@@ -101,6 +105,10 @@ interface SendRequestUserInputResponseOptions {
 interface RuntimePaneSendOptions {
   guideWhenBusy?: boolean
   interruptWhenBusy?: boolean
+  runtime?: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+  modelSelection?: ModelSelectionConfig | null
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
   initialSupervisor?: RuntimeSupervisorCreateInput | null
@@ -145,10 +153,10 @@ const RUNTIME_TRANSCRIPT_PAGE_SIZE =
     ? configuredRuntimeTranscriptPageSize
     : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
-const noopSetInput = () => undefined
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
+    state: workbenchState,
     projectChat,
     loadRuntimeTranscriptForPane,
     getRuntimeGoal,
@@ -198,8 +206,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
-  const input = projectChat.input ?? ''
-  const scopedSetInput = projectChat.setInput ?? noopSetInput
+  const inputScopeKey = currentRuntimeTask
+    ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
+    : projectChat.scopeKey
+  const input = projectChat.inputByScope[inputScopeKey] ?? ''
+  const setInputForScope = projectChat.setInputForScope
+  const scopedSetInput = useCallback(
+    (value: string) => setInputForScope(inputScopeKey, value),
+    [inputScopeKey, setInputForScope]
+  )
   const [localError, setLocalError] = useState<string | null>(null)
   const error = projectChat.setComposerError ? (projectChat.composerError ?? null) : localError
   const setError = projectChat.setComposerError ?? setLocalError
@@ -325,6 +340,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const lifecycleAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
+  const currentRuntime =
+    currentRuntimeTask?.runtime ??
+    findRuntimeTask(workbenchState.runtimeWork, currentRuntimeTask)?.runtime ??
+    null
   const paneStatus = useMemo(
     () =>
       deriveRuntimePaneStatus({
@@ -1438,6 +1457,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
         return
       }
+      if (currentRuntimeTask.runtime && currentRuntimeTask.runtime !== 'codex') return
 
       if (queuedMessage.status === 'sending') return
 
@@ -1663,6 +1683,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
             initialSupervisor: options.initialSupervisor,
+            ...(options.runtime ? { runtime: options.runtime } : {}),
+            ...(options.runtimeExecutablePath
+              ? { runtimeExecutablePath: options.runtimeExecutablePath }
+              : {}),
+            ...(options.runtimePermissionMode
+              ? { runtimePermissionMode: options.runtimePermissionMode }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+              ? { modelSelection: options.modelSelection }
+              : {}),
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
@@ -1735,9 +1765,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             setError('/compact 不能和附件或代码评论一起发送')
             return false
           }
-          const compacted = await compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-          if (compacted) setInput('')
-          return compacted
+          if (currentRuntimeTask.runtime === 'codex') {
+            const compacted = await compactRuntimePaneTask(currentRuntimeTask, {
+              onError: setError,
+            })
+            if (compacted) setInput('')
+            return compacted
+          }
         }
 
         const pendingInitialGoal =
@@ -1750,6 +1784,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             codeCommentContexts,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            ...(options.runtime ? { runtime: options.runtime } : {}),
+            ...(options.runtimeExecutablePath
+              ? { runtimeExecutablePath: options.runtimeExecutablePath }
+              : {}),
+            ...(options.runtimePermissionMode
+              ? { runtimePermissionMode: options.runtimePermissionMode }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+              ? { modelSelection: options.modelSelection }
+              : {}),
           })
           return true
         }
@@ -1789,6 +1833,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             additionalContext: resolvedAdditionalContext,
             cloudProjectId: options.cloudProjectId,
             initialSupervisor: options.initialSupervisor,
+            ...(options.runtime ? { runtime: options.runtime } : {}),
+            ...(options.runtimeExecutablePath
+              ? { runtimeExecutablePath: options.runtimeExecutablePath }
+              : {}),
+            ...(options.runtimePermissionMode
+              ? { runtimePermissionMode: options.runtimePermissionMode }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+              ? { modelSelection: options.modelSelection }
+              : {}),
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
@@ -2116,8 +2170,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       setError('当前回复进行中，完成后再压缩上下文')
       return false
     }
+    if (currentRuntimeTask.runtime === 'claude_code') {
+      return send('/compact')
+    }
     return compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy, setError])
+  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy, send, setError])
 
   const setCurrentGoal = useCallback(async () => {
     projectChat.setSelectedModelOption('collaborationMode', 'default')
@@ -2184,10 +2241,58 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [updateCurrentGoalStatus]
   )
 
-  const resumeCurrentGoal = useCallback(
-    () => updateCurrentGoalStatus('active'),
-    [updateCurrentGoalStatus]
-  )
+  const resumeCurrentGoal = useCallback(async () => {
+    if (
+      currentRuntime !== 'claude_code' ||
+      !goal ||
+      (goal.status !== 'paused' && goal.status !== 'blocked')
+    ) {
+      return updateCurrentGoalStatus('active')
+    }
+    if (paneStatus.isBusy) {
+      setError('当前回复进行中，完成后再继续目标')
+      return false
+    }
+
+    const resumed = await updateCurrentGoalStatus('active')
+    if (!resumed) return false
+
+    const resumedGoal: RuntimeGoal = {
+      ...goal,
+      status: 'active',
+      updatedAt: Date.now(),
+    }
+    const initialGoal = runtimeGoalCreateInput(resumedGoal)
+    const message: RuntimePaneQueuedMessage = {
+      id: `runtime-goal-resume-${Date.now()}`,
+      content: resumedGoal.objective,
+      status: 'queued',
+      createdAt: new Date().toISOString(),
+      runtimeGoalRequest: true,
+      initialGoal,
+      ...getRuntimeModelFields(),
+    }
+    let sendError: string | null = null
+    const sent = await sendRuntimeMessage(message, {
+      initialGoal,
+      onError: error => {
+        sendError = error
+      },
+    })
+    if (sent) return true
+
+    await updateCurrentGoalStatus('paused')
+    setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
+    return false
+  }, [
+    currentRuntime,
+    getRuntimeModelFields,
+    goal,
+    paneStatus.isBusy,
+    sendRuntimeMessage,
+    setError,
+    updateCurrentGoalStatus,
+  ])
 
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return

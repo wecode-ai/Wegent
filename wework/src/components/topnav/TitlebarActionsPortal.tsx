@@ -9,6 +9,7 @@ export const TITLEBAR_ACTIONS_PORTAL_ID = 'titlebar-actions-portal'
 export const TITLEBAR_FEEDBACK_PORTAL_ID = 'titlebar-feedback-portal'
 export const TITLEBAR_RIGHT_PANEL_PORTAL_ID = 'titlebar-right-panel-portal'
 export const WORKBENCH_MAIN_HEADER_PORTAL_ID = 'workbench-main-header-portal'
+export const WORKBENCH_SPLIT_ACTIONS_PORTAL_ID = 'workbench-split-actions-portal'
 
 interface TitlebarActionsPortalProps {
   children: ReactNode
@@ -60,6 +61,29 @@ export function WorkbenchMainHeaderPortal({ children }: TitlebarActionsPortalPro
   const portalTarget = useSyncExternalStore(
     subscribeToPortalTarget,
     () => document.getElementById(WORKBENCH_MAIN_HEADER_PORTAL_ID),
+    () => null
+  )
+
+  return portalTarget ? createOwnedPortal(children, portalTarget) : null
+}
+
+export function WorkbenchSplitActionsPortal({ children }: TitlebarActionsPortalProps) {
+  const portalTarget = useSyncExternalStore(
+    subscribeToPortalTarget,
+    () => document.getElementById(WORKBENCH_SPLIT_ACTIONS_PORTAL_ID),
+    () => null
+  )
+
+  return portalTarget ? createOwnedPortal(children, portalTarget) : null
+}
+
+export function WorkbenchPaneHeaderActionsPortal({
+  children,
+  targetId,
+}: TitlebarActionsPortalProps & { targetId: string | null }) {
+  const portalTarget = useSyncExternalStore(
+    subscribeToPortalTarget,
+    () => (targetId ? document.getElementById(targetId) : null),
     () => null
   )
 

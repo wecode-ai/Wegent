@@ -252,9 +252,21 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "codex".to_owned());
+        if !is_codex_runtime(&runtime) && !is_claude_runtime(&runtime) {
+            return Err(AppIpcError::new(
+                "unsupported_runtime",
+                format!("unsupported runtime: {runtime}"),
+            ));
+        }
+        let runtime = if is_claude_runtime(&runtime) {
+            "claude_code".to_owned()
+        } else {
+            "codex".to_owned()
+        };
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
-            .unwrap_or_else(|| format!("codex-local-{}", now_ms()));
+            .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
         let payload_workspace_path = workspace_path(&payload);
         let title = string_field(&payload, "title")
             .or_else(|| string_field(&payload, "message"))
@@ -262,27 +274,34 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
-        // Hidden-but-continuable runs (task comments) must keep the Wework-side
-        // link out of the sidebar while still creating a durable Codex thread
-        // (a rollout) so a follow-up can resume the same session after restart.
-        let continuable = bool_field(&payload, "continuable").unwrap_or(false);
-        if let (Some(project_key), Some(project_name)) = (
-            request.runtime_project_key.as_deref(),
-            request.runtime_project_name.as_deref(),
-        ) {
-            if !request.runtime_workspace_roots.is_empty() {
-                upsert_codex_global_local_project(
-                    project_key,
-                    project_name,
-                    &request.runtime_workspace_roots,
-                    None,
-                )
-                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        if is_codex_runtime(&runtime) {
+            if let (Some(project_key), Some(project_name)) = (
+                request.runtime_project_key.as_deref(),
+                request.runtime_project_name.as_deref(),
+            ) {
+                if !request.runtime_workspace_roots.is_empty() {
+                    upsert_codex_global_local_project(
+                        project_key,
+                        project_name,
+                        &request.runtime_workspace_roots,
+                        None,
+                    )
+                    .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+                }
             }
         }
         let payload_has_workspace_path = payload_workspace_path.is_some();
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
+            .or_else(|| {
+                id_field(&payload, "local_project_id")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .and_then(|project_id| {
+                        CodexGlobalProjectIndex::load()
+                            .project_for_ui_id(&self.device_id, project_id)
+                            .map(|project| project.workspace_path.clone())
+                    })
+            })
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
             .ok_or_else(|| {
                 log_executor_event(
@@ -311,24 +330,58 @@ impl RuntimeWorkRpcHandler {
         }
         self.apply_project_workspace_roots(&mut request);
 
-        let mut link = RuntimeTaskLink::new_pending(
+        let mut link = RuntimeTaskLink::new_pending_with_runtime(
             local_task_id.clone(),
             workspace_path.clone(),
             title.clone(),
+            runtime.clone(),
         );
-        link.ephemeral =
-            request.ephemeral || continuable || bool_field(&payload, "ephemeral").unwrap_or(false);
-        if continuable {
-            request.ephemeral = false;
-        }
+        link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        if let Some(executable_path) = request
+            .extra
+            .get("runtime_executable_path")
+            .or_else(|| request.extra.get("runtimeExecutablePath"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        {
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert(
+                    "runtimeExecutablePath".to_owned(),
+                    Value::String(executable_path),
+                );
+            }
+        }
+        if let Some(permission_mode) = request
+            .extra
+            .get("claude_permission_mode")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+        {
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.insert(
+                    "claudePermissionMode".to_owned(),
+                    Value::String(permission_mode),
+                );
+            }
+        }
         if let (Some(runtime_handle), Some(project_id)) = (
             link.runtime_handle.as_object_mut(),
             cloud_project_id(&request),
         ) {
             runtime_handle.insert("cloudProjectId".to_owned(), project_id);
+        }
+        if let (Some(runtime_handle), Some(origin)) = (
+            link.runtime_handle.as_object_mut(),
+            payload.get("origin").filter(|value| value.is_object()),
+        ) {
+            runtime_handle.insert("origin".to_owned(), origin.clone());
         }
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
@@ -336,33 +389,55 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
-        if let Some(supervisor) = payload
-            .get("initialSupervisor")
-            .or_else(|| payload.get("initial_supervisor"))
-        {
-            link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
-        }
-        let runtime_handle = runtime_handle_json(&link);
-        self.upsert_local_task(link);
-        self.schedule_worktree_prune();
-        let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-        let mut side_source = side_source_thread(&payload);
-        if let Some(source) = &mut side_source {
-            if source.thread_path.is_none() {
-                source.thread_path = self.thread_path_for_id(&source.thread_id).await;
+        if is_codex_runtime(&runtime) {
+            if let Some(supervisor) = payload
+                .get("initialSupervisor")
+                .or_else(|| payload.get("initial_supervisor"))
+            {
+                link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
             }
         }
-        self.spawn_turn(SpawnTurnRequest {
-            local_task_id: local_task_id.clone(),
-            request,
-            direct_thread_id: None,
-            fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-            fork_thread_path: side_source.and_then(|source| source.thread_path),
-            resume_thread_id: None,
-            initial_thread_name: Some(title.clone()),
-            initial_thread_goal,
-        });
-        match payload.get("friendlyTitleExecutionRequest").cloned() {
+        let mut runtime_handle = runtime_handle_json(&link);
+        self.upsert_local_task(link);
+        self.schedule_worktree_prune();
+        if is_claude_runtime(&runtime) {
+            self.prepare_claude_goal(&local_task_id, &mut request, &payload);
+            self.spawn_claude_turn(local_task_id.clone(), request)
+                .await?;
+        } else {
+            let initial_thread_goal = initial_thread_goal_from_payload(&payload);
+            let mut side_source = side_source_thread(&payload);
+            if let Some(source) = &mut side_source {
+                if source.thread_path.is_none() {
+                    source.thread_path = self.thread_path_for_id(&source.thread_id).await;
+                }
+            }
+            self.spawn_turn(SpawnTurnRequest {
+                local_task_id: local_task_id.clone(),
+                runtime: "codex".to_owned(),
+                request,
+                direct_thread_id: None,
+                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
+                fork_thread_path: side_source.and_then(|source| source.thread_path),
+                resume_thread_id: None,
+                initial_thread_name: Some(title.clone()),
+                initial_thread_goal,
+            })
+            .await?;
+        }
+        let queue_position = self
+            .queued_local_task_position(&local_task_id)
+            .map(|position| position + 1);
+        if let (Some(queue_position), Some(runtime_handle)) =
+            (queue_position, runtime_handle.as_object_mut())
+        {
+            runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
+        }
+        match payload
+            .get("friendlyTitleExecutionRequest")
+            .cloned()
+            .filter(|_| is_codex_runtime(&runtime))
+        {
             Some(value) => match serde_json::from_value::<ExecutionRequest>(value) {
                 Ok(execution_request) => {
                     log_executor_event(
@@ -409,8 +484,10 @@ impl RuntimeWorkRpcHandler {
             "deviceId": self.device_id,
             "taskId": local_task_id,
             "workspacePath": workspace_path,
-            "runtime": "codex",
+            "runtime": runtime,
             "runtimeHandle": runtime_handle,
+            "status": if queue_position.is_some() { "queued" } else { "running" },
+            "queuePosition": queue_position,
         }))
     }
 
@@ -490,7 +567,7 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
-        if self.is_active_local_task(&local_task_id) {
+        if self.is_busy_local_task(&local_task_id) {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -539,6 +616,51 @@ impl RuntimeWorkRpcHandler {
             request.project_workspace_path = Some(workspace_path.clone());
         }
         self.apply_project_workspace_roots(&mut request);
+        let runtime = existing_link
+            .as_ref()
+            .map(|link| link.runtime.clone())
+            .or_else(|| string_field(&payload, "runtime"))
+            .unwrap_or_else(|| "codex".to_owned());
+        if is_claude_runtime(&runtime) {
+            if request.extra.get("runtime_executable_path").is_none() {
+                if let Some(executable_path) = existing_link
+                    .as_ref()
+                    .and_then(|link| string_field(&link.runtime_handle, "runtimeExecutablePath"))
+                {
+                    request.extra.insert(
+                        "runtime_executable_path".to_owned(),
+                        Value::String(executable_path),
+                    );
+                }
+            }
+            if request.extra.get("claude_permission_mode").is_none() {
+                if let Some(permission_mode) = existing_link
+                    .as_ref()
+                    .and_then(|link| string_field(&link.runtime_handle, "claudePermissionMode"))
+                {
+                    request.extra.insert(
+                        "claude_permission_mode".to_owned(),
+                        Value::String(permission_mode),
+                    );
+                }
+            }
+            self.prepare_claude_goal(&local_task_id, &mut request, &payload);
+            self.prepare_claude_send(&local_task_id, &workspace_path, &request, &payload);
+            self.spawn_claude_turn(local_task_id.clone(), request)
+                .await?;
+            let queue_position = self
+                .queued_local_task_position(&local_task_id)
+                .map(|position| position + 1);
+            return Ok(json!({
+                "success": true,
+                "accepted": true,
+                "deviceId": self.device_id,
+                "taskId": local_task_id,
+                "runtime": "claude_code",
+                "status": if queue_position.is_some() { "queued" } else { "running" },
+                "queuePosition": queue_position,
+            }));
+        }
         let recovered_link = self
             .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
             .await;
@@ -612,6 +734,7 @@ impl RuntimeWorkRpcHandler {
 
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id,
             fork_thread_id: None,
@@ -619,7 +742,11 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id,
             initial_thread_name: None,
             initial_thread_goal,
-        });
+        })
+        .await?;
+        let queue_position = self
+            .queued_local_task_position(&local_task_id)
+            .map(|position| position + 1);
 
         Ok(json!({
             "success": true,
@@ -627,6 +754,8 @@ impl RuntimeWorkRpcHandler {
             "deviceId": self.device_id,
             "taskId": local_task_id,
             "runtime": "codex",
+            "status": if queue_position.is_some() { "queued" } else { "running" },
+            "queuePosition": queue_position,
         }))
     }
 
@@ -731,7 +860,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.task_link_from_payload(&payload, false).await?;
         let local_task_id = existing_link.local_task_id.clone();
-        if self.is_active_local_task(&existing_link.local_task_id) {
+        if self.is_busy_local_task(&existing_link.local_task_id) {
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -792,6 +921,7 @@ impl RuntimeWorkRpcHandler {
         );
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id: Some(thread_id),
             fork_thread_id: None,
@@ -799,7 +929,8 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: None,
             initial_thread_name: None,
             initial_thread_goal: None,
-        });
+        })
+        .await?;
 
         Ok(json!({
             "success": true,
@@ -1063,6 +1194,17 @@ impl RuntimeWorkRpcHandler {
             })
             .or_else(|| self.local_task_link(&local_task_id));
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
+        if self.remove_queued_turn(&local_task_id).await? {
+            return Ok(match link {
+                Some(link) => task_action_success(&link),
+                None => json!({
+                    "success": true,
+                    "accepted": true,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }),
+            });
+        }
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -1083,6 +1225,125 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             }),
         })
+    }
+
+    pub(super) async fn force_start_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let runtime = self
+            .store
+            .get_task(&local_task_id)
+            .map(|link| link.runtime)
+            .unwrap_or_else(|| "codex".to_owned());
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, queued_turn, remaining_turns) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            if scheduler.queued_position(&local_task_id).is_none() {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": runtime,
+                    "error": "runtime task is not queued",
+                    "code": "not_queued",
+                }));
+            }
+            let previous = scheduler.clone();
+            let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
+                AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
+            })?;
+            (previous, turn, scheduler.queued_turns.clone())
+        };
+        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+            *self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned") = previous;
+            return Err(error);
+        }
+        drop(_operation);
+        log_executor_event(
+            "runtime work queued turn force started",
+            &[("local_task_id", local_task_id.clone())],
+        );
+        self.start_turn(queued_turn);
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "taskId": local_task_id,
+            "runtime": runtime,
+        }))
+    }
+
+    pub(super) async fn reorder_queued_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let runtime = self
+            .store
+            .get_task(&local_task_id)
+            .map(|link| link.runtime)
+            .unwrap_or_else(|| "codex".to_owned());
+        let target_position = integer_field(&payload, "queuePosition")
+            .or_else(|| integer_field(&payload, "queue_position"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "queuePosition is required"))?;
+        if target_position < 1 {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "queuePosition must be at least 1",
+            ));
+        }
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, ordered_task_ids, reordered) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            if scheduler.queued_position(&local_task_id).is_none() {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": runtime,
+                    "error": "runtime task is not queued",
+                    "code": "not_queued",
+                }));
+            }
+            let reordered = scheduler
+                .reordered_queue(&local_task_id, target_position as usize)
+                .map_err(|error| AppIpcError::new("runtime_queue_failed", error))?;
+            let previous = scheduler.clone();
+            scheduler.queued_turns = reordered.clone();
+            let ordered_task_ids = scheduler
+                .queued_turns
+                .iter()
+                .map(|turn| turn.local_task_id.clone())
+                .collect::<Vec<_>>();
+            (previous, ordered_task_ids, reordered)
+        };
+        if let Err(error) = self.persist_turn_queue(reordered).await {
+            *self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned") = previous;
+            return Err(error);
+        }
+        log_executor_event(
+            "runtime work queued turn reordered",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("queue_position", target_position.to_string()),
+            ],
+        );
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "taskId": local_task_id,
+            "runtime": runtime,
+            "orderedTaskIds": ordered_task_ids,
+        }))
     }
 
     pub(super) fn resolve_pending_request_user_input_for_stop(&self, local_task_id: &str) {

@@ -694,47 +694,54 @@ export function useWorkbenchRuntimeMessaging({
         | 'onError'
         | 'onRuntimeTaskOptimisticOpen'
         | 'additionalContext'
+        | 'runtime'
+        | 'runtimeExecutablePath'
+        | 'runtimePermissionMode'
+        | 'modelSelection'
       > & {
         collaborationMode?: 'default' | 'plan'
         deliveryId?: string
         cloudProjectId?: string
+        origin?: RuntimeTaskCreateRequest['origin']
         ephemeral?: boolean
-        continuable?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
-        modelSelection?: {
-          modelName: string
-          modelType: ModelType | null
-          options: ModelOptions
-        } | null
         preserveAttachments?: boolean
         launchStartedAt?: number
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
-      const overrideSelection = options?.modelSelection
-      const selectedModel = overrideSelection
-        ? (modelSelection.models.find(
-            model =>
-              model.name === overrideSelection.modelName &&
-              (!overrideSelection.modelType || model.type === overrideSelection.modelType)
-          ) ?? null)
+      const hasOverrideSelection = Boolean(
+        options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+      )
+      const overrideSelection = options?.modelSelection ?? null
+      const selectedModel = hasOverrideSelection
+        ? overrideSelection
+          ? (modelSelection.models.find(
+              model =>
+                model.name === overrideSelection.modelName &&
+                (!overrideSelection.modelType || model.type === overrideSelection.modelType)
+            ) ?? null)
+          : null
         : (modelSelection.getSelectedModel?.() ??
           modelSelection.selectedModel ??
           resolveAutomaticModel(modelSelection.models))
-      const selectedModelOptions = overrideSelection
-        ? (overrideSelection.options ?? {})
+      const selectedModelOptions = hasOverrideSelection
+        ? (overrideSelection?.options ?? {})
         : (modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions)
       const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
-      const friendlyTitle = friendlyTitleForTask(
-        preferences,
-        modelSelection.models,
-        executionModel,
-        options?.ephemeral
-      )
-      const runtime = inferRuntimeName(selectedModel)
+      const runtime = options?.runtime ?? inferRuntimeName(selectedModel)
+      const friendlyTitle =
+        runtime === 'codex'
+          ? friendlyTitleForTask(
+              preferences,
+              modelSelection.models,
+              executionModel,
+              options?.ephemeral
+            )
+          : null
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
       logRuntimeTaskLaunchTiming('prepared-send-entered', launchStartedAt, {
@@ -874,15 +881,21 @@ export function useWorkbenchRuntimeMessaging({
         taskId,
         teamId: payload.team_id,
         runtime,
+        ...(options?.runtimeExecutablePath
+          ? { runtimeExecutablePath: options.runtimeExecutablePath }
+          : {}),
+        ...(options?.runtimePermissionMode
+          ? { runtimePermissionMode: options.runtimePermissionMode }
+          : {}),
         message: payload.message,
         ...(options?.clientUserMessageId
           ? { clientUserMessageId: options.clientUserMessageId }
           : {}),
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
-        modelId: payload.force_override_bot_model,
-        modelType: payload.force_override_bot_model_type ?? null,
+        modelId: executionModel.modelId,
+        modelType: executionModel.modelType ?? null,
         modelOptions: {
-          ...(payload.model_options ?? {}),
+          ...(executionModel.modelOptions ?? {}),
           ...(options && 'collaborationMode' in options && options.collaborationMode
             ? { collaborationMode: options.collaborationMode }
             : {}),
@@ -909,12 +922,12 @@ export function useWorkbenchRuntimeMessaging({
             }
           : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
-        ...(options?.continuable ? { continuable: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
         ...(options?.initialSupervisor ? { initialSupervisor: options.initialSupervisor } : {}),
         ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
         ...(options?.cloudProjectId ? { cloudProjectId: options.cloudProjectId } : {}),
+        ...(options?.origin ? { origin: options.origin } : {}),
         ...(options?.additionalContext ? { additionalContext: options.additionalContext } : {}),
       }
       debugRuntimeCreateFlow('create-request-built', {
@@ -931,6 +944,7 @@ export function useWorkbenchRuntimeMessaging({
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         taskId,
+        runtime,
         workspacePath:
           'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
@@ -1045,6 +1059,7 @@ export function useWorkbenchRuntimeMessaging({
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
           taskId: response.taskId || optimisticAddress.taskId,
+          runtime: response.runtime || optimisticAddress.runtime,
           workspacePath: response.workspacePath || optimisticAddress.workspacePath,
           ...(runtimeHandle ? { runtimeHandle } : {}),
           ...(response.taskId || optimisticAddress.taskId
@@ -1086,6 +1101,8 @@ export function useWorkbenchRuntimeMessaging({
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
+              status: response.status ?? 'running',
+              queuePosition: response.queuePosition,
               workspaceKind:
                 payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
               modelSelection: createModelSelection,
@@ -1113,7 +1130,20 @@ export function useWorkbenchRuntimeMessaging({
             runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           }
         }
-        lifecycleStore.sendAccepted(address)
+        if (response.status === 'queued') {
+          lifecycleStore.syncRuntimeTask(address, {
+            taskId: address.taskId,
+            workspacePath: resolvedWorkspacePath ?? '',
+            title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
+            runtime,
+            running: false,
+            status: 'queued',
+            queuePosition: response.queuePosition,
+            optimistic: true,
+          })
+        } else {
+          lifecycleStore.sendAccepted(address)
+        }
         track('conversation_created', {
           execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
         })
@@ -1334,6 +1364,16 @@ export function useWorkbenchRuntimeMessaging({
           clientUserMessageId: options?.clientUserMessageId,
           additionalContext: options?.additionalContext,
           cloudProjectId: options?.cloudProjectId,
+          ...(options?.runtime ? { runtime: options.runtime } : {}),
+          ...(options?.runtimeExecutablePath
+            ? { runtimeExecutablePath: options.runtimeExecutablePath }
+            : {}),
+          ...(options?.runtimePermissionMode
+            ? { runtimePermissionMode: options.runtimePermissionMode }
+            : {}),
+          ...(options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
+            ? { modelSelection: options.modelSelection }
+            : {}),
         }
       )
       if (sent) {
@@ -1517,10 +1557,9 @@ export function useWorkbenchRuntimeMessaging({
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
+        origin: options.origin,
         modelSelection: options.modelSelection,
         additionalContext: options.additionalContext,
-        ephemeral: options.hiddenFromSidebar,
-        continuable: options.continuable,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
@@ -1731,6 +1770,7 @@ function buildOptimisticRuntimeTask({
   title,
   runtime,
   status = 'creating',
+  queuePosition,
   workspaceKind,
   error,
   modelSelection,
@@ -1739,7 +1779,8 @@ function buildOptimisticRuntimeTask({
   workspacePath: string
   title: string
   runtime: RuntimeTaskSummary['runtime']
-  status?: 'creating' | 'failed'
+  status?: 'creating' | 'failed' | 'queued' | 'running'
+  queuePosition?: number | null
   workspaceKind?: RuntimeTaskSummary['workspaceKind']
   error?: string | null
   modelSelection?: ModelSelectionConfig | null
@@ -1754,9 +1795,10 @@ function buildOptimisticRuntimeTask({
     ...(workspaceKind ? { workspaceKind } : {}),
     createdAt: now,
     updatedAt: now,
-    running: status === 'creating',
+    running: status === 'creating' || status === 'running',
     status,
     optimistic: true,
+    ...(queuePosition != null ? { queuePosition } : {}),
     ...(error ? { error } : {}),
     ...(modelSelection ? { modelSelection } : {}),
   }

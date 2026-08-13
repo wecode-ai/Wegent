@@ -206,11 +206,21 @@ assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
 assert_case "Wework dependency setup runs Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/install-wework-tauri-system-dependencies.sh"
 
+assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
+  "docker/wework-e2e/desktop.Dockerfile"
+
 assert_desktop_case() {
   local name="$1"
   local expected="$2"
   shift 2
 
+  if [[ "$expected" != *"wework_desktop_cloud_e2e="* ]]; then
+    local cloud_defaults
+    cloud_defaults='wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e='
+    expected="${expected/wework_desktop_other_e2e=/$cloud_defaults}"
+  fi
   local output
   output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
   if [[ "$output" != "$expected" ]]; then
@@ -265,8 +275,10 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-workspace-tabs","name":"Core / workspace-tabs","command":"e2e:desktop","segment":"workspace-tabs"},{"id":"core-priority-filter","name":"Core / priority-filter","command":"e2e:desktop","segment":"priority-filter"},{"id":"core-automation-lifecycle","name":"Core / automation-lifecycle","command":"e2e:desktop","segment":"automation-lifecycle"},{"id":"core-model-routing","name":"Core / model-routing","command":"e2e:desktop","segment":"model-routing"},{"id":"core-permission-modes","name":"Core / permission-modes","command":"e2e:desktop","segment":"permission-modes"},{"id":"core-core-task-flow","name":"Core / core-task-flow","command":"e2e:desktop","segment":"core-task-flow"},{"id":"core-window-lifecycle","name":"Core / window-lifecycle","command":"e2e:desktop","segment":"window-lifecycle"},{"id":"core-goal-lifecycle","name":"Core / goal-lifecycle","command":"e2e:desktop","segment":"goal-lifecycle"},{"id":"core-supervisor-lifecycle","name":"Core / supervisor-lifecycle","command":"e2e:desktop","segment":"supervisor-lifecycle"},{"id":"core-resilience","name":"Core / resilience","command":"e2e:desktop","segment":"resilience"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"},{"id":"core-workspace-attachments","name":"Core / workspace-attachments","command":"e2e:desktop","segment":"workspace-attachments"},{"id":"core-rendering-extensions","name":"Core / rendering-extensions","command":"e2e:desktop","segment":"rendering-extensions"},{"id":"core-local-harness","name":"Core / local-harness","command":"e2e:desktop","segment":"local-harness"},{"id":"core-embedded-browser","name":"Core / embedded-browser","command":"e2e:desktop","segment":"embedded-browser"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,priority-filter,conversation-state,rendering-extensions,telemetry-consent,browser-multi-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"goal-lifecycle,automation-lifecycle,workspace-tabs,embedded-browser,workspace-attachments,supervisor-lifecycle"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""},{"id":"cloud-workspace-tabs","name":"Cloud / workspace-tabs","command":"e2e:desktop:cloud","segment":"workspace-tabs"},{"id":"cloud-priority-filter","name":"Cloud / priority-filter","command":"e2e:desktop:cloud","segment":"priority-filter"},{"id":"cloud-telemetry-consent","name":"Cloud / telemetry-consent","command":"e2e:desktop:cloud","segment":"telemetry-consent"},{"id":"cloud-automation-lifecycle","name":"Cloud / automation-lifecycle","command":"e2e:desktop:cloud","segment":"automation-lifecycle"},{"id":"cloud-model-routing","name":"Cloud / model-routing","command":"e2e:desktop:cloud","segment":"model-routing"},{"id":"cloud-core-task-flow","name":"Cloud / core-task-flow","command":"e2e:desktop:cloud","segment":"core-task-flow"},{"id":"cloud-window-lifecycle","name":"Cloud / window-lifecycle","command":"e2e:desktop:cloud","segment":"window-lifecycle"},{"id":"cloud-goal-lifecycle","name":"Cloud / goal-lifecycle","command":"e2e:desktop:cloud","segment":"goal-lifecycle"},{"id":"cloud-supervisor-lifecycle","name":"Cloud / supervisor-lifecycle","command":"e2e:desktop:cloud","segment":"supervisor-lifecycle"},{"id":"cloud-resilience","name":"Cloud / resilience","command":"e2e:desktop:cloud","segment":"resilience"},{"id":"cloud-conversation-state","name":"Cloud / conversation-state","command":"e2e:desktop:cloud","segment":"conversation-state"},{"id":"cloud-workspace-attachments","name":"Cloud / workspace-attachments","command":"e2e:desktop:cloud","segment":"workspace-attachments"},{"id":"cloud-rendering-extensions","name":"Cloud / rendering-extensions","command":"e2e:desktop:cloud","segment":"rendering-extensions"},{"id":"cloud-browser-multi-tabs","name":"Cloud / browser-multi-tabs","command":"e2e:desktop:cloud","segment":"browser-multi-tabs"},{"id":"cloud-embedded-browser","name":"Cloud / embedded-browser","command":"e2e:desktop:cloud","segment":"embedded-browser"}]}'
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}'
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
@@ -328,8 +340,10 @@ assert_desktop_case "cloud files select only the cloud suite" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
-wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"cloud-workspace-tabs","name":"Cloud / workspace-tabs","command":"e2e:desktop:cloud","segment":"workspace-tabs"},{"id":"cloud-priority-filter","name":"Cloud / priority-filter","command":"e2e:desktop:cloud","segment":"priority-filter"},{"id":"cloud-telemetry-consent","name":"Cloud / telemetry-consent","command":"e2e:desktop:cloud","segment":"telemetry-consent"},{"id":"cloud-automation-lifecycle","name":"Cloud / automation-lifecycle","command":"e2e:desktop:cloud","segment":"automation-lifecycle"},{"id":"cloud-model-routing","name":"Cloud / model-routing","command":"e2e:desktop:cloud","segment":"model-routing"},{"id":"cloud-core-task-flow","name":"Cloud / core-task-flow","command":"e2e:desktop:cloud","segment":"core-task-flow"},{"id":"cloud-window-lifecycle","name":"Cloud / window-lifecycle","command":"e2e:desktop:cloud","segment":"window-lifecycle"},{"id":"cloud-goal-lifecycle","name":"Cloud / goal-lifecycle","command":"e2e:desktop:cloud","segment":"goal-lifecycle"},{"id":"cloud-supervisor-lifecycle","name":"Cloud / supervisor-lifecycle","command":"e2e:desktop:cloud","segment":"supervisor-lifecycle"},{"id":"cloud-resilience","name":"Cloud / resilience","command":"e2e:desktop:cloud","segment":"resilience"},{"id":"cloud-conversation-state","name":"Cloud / conversation-state","command":"e2e:desktop:cloud","segment":"conversation-state"},{"id":"cloud-workspace-attachments","name":"Cloud / workspace-attachments","command":"e2e:desktop:cloud","segment":"workspace-attachments"},{"id":"cloud-rendering-extensions","name":"Cloud / rendering-extensions","command":"e2e:desktop:cloud","segment":"rendering-extensions"},{"id":"cloud-browser-multi-tabs","name":"Cloud / browser-multi-tabs","command":"e2e:desktop:cloud","segment":"browser-multi-tabs"},{"id":"cloud-embedded-browser","name":"Cloud / embedded-browser","command":"e2e:desktop:cloud","segment":"embedded-browser"}]}' \
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,priority-filter,conversation-state,rendering-extensions,telemetry-consent,browser-multi-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"goal-lifecycle,automation-lifecycle,workspace-tabs,embedded-browser,workspace-attachments,supervisor-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
 
 assert_desktop_case "plugin files select only their plugin segment" \
@@ -583,6 +597,27 @@ if ! grep -q \
   "needs.changes.outputs.wework_desktop_other_e2e == 'true'" \
   <<<"$wework_desktop_job"; then
   printf 'Wework non-Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+
+wework_desktop_cloud_job="$(
+  sed -n '/^  wework-desktop-cloud-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
+)"
+if ! grep -q \
+  "needs.changes.outputs.wework_desktop_cloud_e2e == 'true'" \
+  <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)" \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq -- "--parallel-segments" <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq 'WEWORK_E2E_ISOLATED_XVFB: "true"' \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "name: Download shared Wework desktop E2E build" \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "WEWORK_E2E_APP_BIN:" <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "WEWORK_E2E_EXECUTOR_BIN:" <<<"$wework_desktop_cloud_job"; then
+  printf 'Wework Cloud desktop E2E must use five prebuilt shards with local parallelism\n' >&2
   exit 1
 fi
 

@@ -493,7 +493,7 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
-      - name: Add Claude Code CLI to PATH
+      - name: Add local harness CLIs to PATH
         run: echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Restore shared Claude Code CLI
@@ -501,7 +501,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .github/claude-code-cli/node_modules
-          key: ${{ runner.os }}-node-24-claude-code-cli-v3-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
+          key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
@@ -529,11 +529,14 @@ jobs:
           source .venv/bin/activate
           uv pip install -e ../shared
 
-      - name: Install Claude Code CLI
+      - name: Install local harness CLIs
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
-        run: npm ci --prefix .github/claude-code-cli
+        run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
 
-      - name: Save shared Claude Code CLI
+      - name: Verify local harness CLIs
+        run: .github/scripts/verify-local-harness-clis.sh
+
+      - name: Save shared local harness CLIs
         if: github.ref == 'refs/heads/main' && steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:

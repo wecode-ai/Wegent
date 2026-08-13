@@ -1,0 +1,555 @@
+.machine {
+  position: relative;
+  width: min(540px, 100%);
+  height: 254px;
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-text-primary) / 7%);
+  border-radius: 20px;
+  background: rgb(var(--color-muted));
+}
+
+.blueprint {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.mainRail,
+.branchRail {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mainRail {
+  stroke: rgb(var(--color-text-primary) / 18%);
+  stroke-width: 3;
+}
+
+.branchRail {
+  stroke: rgb(var(--color-text-primary) / 88%);
+  stroke-dasharray: 250;
+  stroke-dashoffset: 250;
+  stroke-width: 3;
+  animation: draw-branch 4.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.commit {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.commit circle {
+  fill: rgb(var(--color-bg-base));
+  stroke: rgb(var(--color-text-primary) / 88%);
+  stroke-width: 3;
+}
+
+.commitOne {
+  animation: commit-one 4.8s ease-in-out infinite;
+}
+
+.commitTwo {
+  animation: commit-two 4.8s ease-in-out infinite;
+}
+
+.newCommit {
+  opacity: 0;
+  animation: new-commit 4.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.newCommit circle {
+  fill: rgb(var(--color-text-primary));
+}
+
+.newCommit path {
+  fill: none;
+  stroke: rgb(var(--color-bg-base));
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.crane {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  width: 64px;
+  height: 112px;
+  margin-left: -32px;
+  animation: crane-move 4.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  transform-origin: 50% 0;
+}
+
+.craneHead {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  width: 48px;
+  height: 24px;
+  border: 2px solid rgb(var(--color-text-primary) / 88%);
+  border-radius: 8px;
+  background: rgb(var(--color-bg-base));
+  box-shadow: 0 3px 8px rgb(0 0 0 / 10%);
+}
+
+.craneHead::before,
+.craneHead::after {
+  position: absolute;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgb(var(--color-text-primary) / 88%);
+  content: '';
+}
+
+.craneHead::before {
+  left: 10px;
+}
+
+.craneHead::after {
+  right: 10px;
+  animation: crane-eye 1.2s steps(1, end) infinite;
+}
+
+.craneCable {
+  position: absolute;
+  top: 23px;
+  left: 31px;
+  width: 2px;
+  height: 58px;
+  background: rgb(var(--color-text-primary) / 88%);
+  animation: cable 4.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  transform-origin: top;
+}
+
+.craneHook {
+  position: absolute;
+  top: 76px;
+  left: 22px;
+  width: 20px;
+  height: 16px;
+  border-right: 3px solid rgb(var(--color-text-primary) / 88%);
+  border-bottom: 3px solid rgb(var(--color-text-primary) / 88%);
+  border-left: 3px solid rgb(var(--color-text-primary) / 88%);
+  border-radius: 0 0 9px 9px;
+  animation: hook 4.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.workspace {
+  position: absolute;
+  right: 34px;
+  bottom: 28px;
+  width: 150px;
+  height: 102px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-text-primary) / 12%);
+  border-radius: 14px;
+  background: rgb(var(--color-bg-base));
+  box-shadow: 0 8px 20px rgb(0 0 0 / 10%);
+  opacity: 0;
+  animation: workspace-build 4.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  transform-origin: 32px 82px;
+}
+
+.workspaceTop {
+  display: flex;
+  height: 29px;
+  align-items: center;
+  gap: 5px;
+  border-bottom: 1px solid rgb(var(--color-text-primary) / 8%);
+  padding: 0 10px;
+}
+
+.workspaceTop span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgb(var(--color-text-primary) / 18%);
+}
+
+.workspaceBody {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 10px;
+  padding: 11px 10px;
+}
+
+.workspaceTree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-right: 1px solid rgb(var(--color-text-primary) / 8%);
+}
+
+.workspaceTree span {
+  width: 25px;
+  height: 4px;
+  border-radius: 4px;
+  background: rgb(var(--color-text-primary) / 18%);
+  opacity: 0;
+  animation: file-arrive 4.8s ease-out infinite;
+}
+
+.workspaceTree span:nth-child(2) {
+  width: 18px;
+  animation-delay: 80ms;
+}
+
+.workspaceTree span:nth-child(3) {
+  width: 29px;
+  animation-delay: 160ms;
+}
+
+.code {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.code span {
+  height: 4px;
+  border-radius: 4px;
+  background: rgb(var(--color-text-primary) / 18%);
+  opacity: 0;
+  animation: code-arrive 4.8s ease-out infinite;
+  transform-origin: left;
+}
+
+.code span:nth-child(1) {
+  width: 78%;
+}
+
+.code span:nth-child(2) {
+  width: 94%;
+  animation-delay: 70ms;
+}
+
+.code span:nth-child(3) {
+  width: 58%;
+  animation-delay: 140ms;
+}
+
+.code span:nth-child(4) {
+  width: 84%;
+  animation-delay: 210ms;
+}
+
+.spark {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgb(var(--color-text-primary) / 88%);
+  opacity: 0;
+  animation: spark-pop 4.8s ease-out infinite;
+}
+
+.sparkOne {
+  top: 80px;
+  right: 170px;
+}
+
+.sparkTwo {
+  top: 113px;
+  right: 34px;
+  animation-delay: 90ms;
+}
+
+.sparkThree {
+  right: 202px;
+  bottom: 22px;
+  animation-delay: 180ms;
+}
+
+.phase {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: rgb(var(--color-text-primary) / 6%);
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+}
+
+.phaseDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(var(--color-text-primary) / 88%);
+  animation: phase-pulse 1.15s ease-in-out infinite;
+}
+
+.phaseLabel {
+  width: 184px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+@keyframes draw-branch {
+  0%,
+  23% {
+    stroke-dashoffset: 250;
+  }
+
+  52%,
+  90% {
+    stroke-dashoffset: 0;
+  }
+
+  100% {
+    stroke-dashoffset: -250;
+  }
+}
+
+@keyframes commit-one {
+  0%,
+  100% {
+    transform: translateX(-18px);
+  }
+
+  38%,
+  76% {
+    transform: translateX(8px);
+  }
+}
+
+@keyframes commit-two {
+  0%,
+  100% {
+    transform: translateX(-8px);
+  }
+
+  38%,
+  76% {
+    transform: translateX(18px);
+  }
+}
+
+@keyframes new-commit {
+  0%,
+  34% {
+    opacity: 0;
+    transform: translate(-88px, 54px) scale(0.5);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1.18);
+  }
+
+  58%,
+  90% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(18px, -4px) scale(0.85);
+  }
+}
+
+@keyframes crane-move {
+  0%,
+  12% {
+    transform: translate(-108px, -6px) rotate(-2deg);
+  }
+
+  28% {
+    transform: translate(-108px, 44px);
+  }
+
+  44% {
+    transform: translate(-28px, -4px) rotate(2deg);
+  }
+
+  60%,
+  86% {
+    transform: translate(75px, 8px);
+  }
+
+  100% {
+    transform: translate(118px, -16px) rotate(2deg);
+  }
+}
+
+@keyframes cable {
+  0%,
+  12%,
+  44%,
+  100% {
+    transform: scaleY(0.62);
+  }
+
+  28% {
+    transform: scaleY(1);
+  }
+
+  60%,
+  86% {
+    transform: scaleY(0.72);
+  }
+}
+
+@keyframes hook {
+  0%,
+  12%,
+  44%,
+  100% {
+    transform: translateY(-22px) scaleX(1);
+  }
+
+  28% {
+    transform: translateY(0) scaleX(1.18);
+  }
+
+  60%,
+  86% {
+    transform: translateY(-16px) scaleX(0.78);
+  }
+}
+
+@keyframes crane-eye {
+  0%,
+  78%,
+  100% {
+    transform: scaleY(1);
+  }
+
+  82% {
+    transform: scaleY(0.2);
+  }
+}
+
+@keyframes workspace-build {
+  0%,
+  46% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.18) rotate(-5deg);
+  }
+
+  60% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1.04) rotate(1deg);
+  }
+
+  68%,
+  91% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+@keyframes file-arrive {
+  0%,
+  58% {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  70%,
+  91% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes code-arrive {
+  0%,
+  62% {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+
+  76%,
+  91% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes spark-pop {
+  0%,
+  50% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.4);
+  }
+
+  60% {
+    opacity: 1;
+    transform: translate(9px, -10px);
+  }
+
+  72%,
+  100% {
+    opacity: 0;
+    transform: translate(15px, -16px) scale(0.2);
+  }
+}
+
+@keyframes phase-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scale(0.74);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (max-width: 520px) {
+  .machine {
+    height: 226px;
+  }
+
+  .workspace {
+    right: 18px;
+    bottom: 22px;
+    transform-origin: 22px 82px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machine *,
+  .phase * {
+    animation: none;
+  }
+
+  .branchRail {
+    stroke-dashoffset: 0;
+  }
+
+  .newCommit,
+  .workspace,
+  .workspaceTree span,
+  .code span {
+    opacity: 1;
+  }
+
+  .crane {
+    transform: translate(75px, 8px);
+  }
+}

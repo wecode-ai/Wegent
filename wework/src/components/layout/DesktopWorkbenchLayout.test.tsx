@@ -2118,7 +2118,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
-      '加入看板 · Task Follow-up Board'
+      'Task Follow-up Board'
     )
   })
 
@@ -3491,7 +3491,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('restores active native harness sessions after a WebView reload', async () => {
+  test('lists active native harness sessions without opening one after a WebView reload', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessSessionsMock.mockResolvedValue([
       {
@@ -3512,15 +3512,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(
       await screen.findByTestId('local-harness-session-row-local-terminal-restored')
     ).toHaveTextContent('继续修复测试')
-    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
-    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('继续修复测试')
-    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByTestId('embedded-local-terminal')).toHaveAttribute(
-      'data-session-id',
-      'local-terminal-restored'
-    )
-    expect(screen.queryByTestId('central-harness-close-button')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('local-harness-session-row-local-terminal-restored')
+    ).not.toHaveAttribute('aria-current')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
   test('keeps the loaded Codex session above and selected before a restored harness session', async () => {
@@ -3608,7 +3604,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(harnessRow).not.toHaveAttribute('aria-current')
   })
 
-  test('restores a harness session when no Codex session is loaded', async () => {
+  test('opens the new-session interface instead of a restored OpenCode session', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessSessionsMock.mockResolvedValue([
       {
@@ -3628,8 +3624,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(
       await screen.findByTestId('local-harness-session-row-local-harness-restored')
-    ).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByTestId('central-harness-terminal')).toBeVisible()
+    ).not.toHaveAttribute('aria-current')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
   test('reopens the loaded Codex task when switching back from another page', async () => {
@@ -3717,9 +3714,15 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(
-      await screen.findByTestId('local-harness-session-row-local-harness-persisted')
-    ).toHaveTextContent('重启后继续修复')
+    const sessionRow = await screen.findByTestId(
+      'local-harness-session-row-local-harness-persisted'
+    )
+    expect(sessionRow).toHaveTextContent('重启后继续修复')
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+
+    await userEvent.click(sessionRow)
+
     await waitFor(() =>
       expect(startLocalHarnessMock).toHaveBeenCalledWith({
         harnessId: 'opencode',
@@ -3790,19 +3793,17 @@ describe('DesktopWorkbenchLayout', () => {
       'local-harness-session-row-local-harness-model-loading'
     )
     expect(sessionRow).toHaveTextContent('等待模型加载')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-harness-session-resuming')).not.toBeInTheDocument()
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
+
+    await userEvent.click(sessionRow)
+
     expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
       '正在恢复 OpenCode 会话'
     )
     expect(screen.getByTestId('local-harness-session-resuming')).not.toHaveTextContent(
       '请选择可用的 Wework 模型'
-    )
-    expect(startLocalHarnessMock).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('new-chat-button'))
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-    await userEvent.click(sessionRow)
-    expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
-      '正在恢复 OpenCode 会话'
     )
     expect(startLocalHarnessMock).not.toHaveBeenCalled()
 
@@ -3864,9 +3865,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(
-      await screen.findByTestId('local-harness-session-row-local-harness-missing-workspace')
-    ).toHaveTextContent('工作区已删除')
+    const sessionRow = await screen.findByTestId(
+      'local-harness-session-row-local-harness-missing-workspace'
+    )
+    expect(sessionRow).toHaveTextContent('工作区已删除')
+    expect(localPathExistsMock).not.toHaveBeenCalledWith('/workspace/deleted-worktree')
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
+
+    await userEvent.click(sessionRow)
+
     await waitFor(() =>
       expect(screen.getByTestId('local-harness-session-resuming')).toHaveTextContent(
         '原工作区不存在，无法恢复会话：/workspace/deleted-worktree'
@@ -3887,6 +3894,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('starts Claude Code without overriding its native model by default', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     listLocalHarnessesMock.mockResolvedValue([
       {
@@ -3900,8 +3908,23 @@ describe('DesktopWorkbenchLayout', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={{ ...activeProjectState, input: '分析并修复测试失败' }}
+        state={{
+          ...activeProjectState,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+            },
+          ],
+          input: '分析并修复测试失败',
+        }}
         projectChat={{ ...baseProps.projectChat, models: [harnessTestModel] }}
+        onSend={onSend}
       />
     )
 
@@ -3919,25 +3942,18 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.submit(form)
 
     await waitFor(() =>
-      expect(startLocalHarnessMock).toHaveBeenCalledWith({
-        harnessId: 'claude_code',
-        prompt: '分析并修复测试失败',
-        isPrimary: true,
-        projectId: 1,
-        cwd: '/workspace/github_wegent',
-        executablePath: null,
-        args: [],
-        pluginRoots: [],
-        proxyToken: undefined,
-        modelKey: null,
-        resumeSessionId: undefined,
-        env: {
-          WEWORK_EMBEDDED_BROWSER_LABEL: 'workspace-browser-blank-0',
-        },
-      })
+      expect(onSend).toHaveBeenCalledWith(
+        '分析并修复测试失败',
+        expect.objectContaining({
+          runtime: 'claude_code',
+          runtimeExecutablePath: '/usr/local/bin/claude',
+          modelSelection: null,
+        })
+      )
     )
+    expect(startLocalHarnessMock).not.toHaveBeenCalled()
     expect(resolveLocalHarnessLaunchMock).not.toHaveBeenCalled()
-    expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
+    expect(screen.queryByTestId('central-harness-terminal')).not.toBeInTheDocument()
   })
 
   test('starts OpenCode from the Wework dev workspace without selecting a project', async () => {
@@ -4755,7 +4771,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
-    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
+    expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo', 'repo')
     expect(onCreateProject).not.toHaveBeenCalled()
     expect(onPrepareDeviceWorkspace).not.toHaveBeenCalled()
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
@@ -5297,20 +5313,22 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-resize-handle')).toHaveAttribute('role', 'separator')
     expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
-      'absolute',
-      'bottom-[-6px]',
-      'top-0',
+      'relative',
+      '-mx-[3px]',
       'w-1.5',
-      '-translate-x-1/2',
+      'shrink-0',
+      'self-stretch',
       'cursor-col-resize'
     )
-    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '420px' })
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: '580px' })
+      expect(rightPanelShell).toHaveStyle({
+        minWidth: '260px',
+        width: 'calc(100% - 420px)',
+      })
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
@@ -5325,7 +5343,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(content).toHaveStyle({ width: '580px' })
-    expect(rightPanelShell).toHaveStyle({ width: '420px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
@@ -5377,7 +5395,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(panelShell).toHaveStyle({ width: '580px' })
+      expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
     expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
@@ -5548,7 +5566,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: '580px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
@@ -5557,7 +5575,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(content).toHaveClass('transition-none')
     expect(rightPanelShell).toHaveClass('transition-none')
     expect(content).toHaveStyle({ width: '700px' })
-    expect(rightPanelShell).toHaveStyle({ width: '300px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 700px)' })
 
     fireEvent.pointerMove(document, { clientX: 902 })
 
@@ -5573,7 +5591,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(content).toHaveStyle({ width: '420px' })
-    expect(rightPanelShell).toHaveStyle({ width: '580px' })
+    expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://weibo.com/')
   })
 
@@ -5863,7 +5881,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
       expect(topBar).toHaveStyle({ width: '420px' })
-      expect(rightPanelShell).toHaveStyle({ width: '580px' })
+      expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
     expect(rightPanelShell).toHaveClass('opacity-100')
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
@@ -5967,7 +5985,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
       expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
-        width: '420px',
+        width: 'calc(100% - 580px)',
       })
     })
 
@@ -6331,7 +6349,9 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
         right: '0px',
       })
-      expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain('580px')
+      expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain(
+        'calc(100% - 420px)'
+      )
       expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
         'after:bg-transparent'
       )
@@ -8734,7 +8754,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const creationStatus = screen.getByTestId('worktree-creation-status')
-    expect(creationStatus).toHaveTextContent('正在创建工作树')
+    expect(creationStatus).toHaveTextContent('正在搭建你的独立工作树')
     expect(screen.getByTestId('desktop-chat-scroll-content')).toContainElement(creationStatus)
     expect(screen.queryByTestId('desktop-chat-scroll-sticky-footer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
@@ -8924,14 +8944,14 @@ describe('DesktopWorkbenchLayout', () => {
     const panel = screen.getByTestId('bottom-workspace-panel')
     expect(panel).toBeInTheDocument()
     expect(panel).toHaveClass(
-      'transition-[height,opacity,transform]',
+      'transition-[height]',
       'duration-300',
       'ease-out',
-      'pointer-events-auto',
-      'translate-y-0',
-      'opacity-100'
+      'pointer-events-auto'
     )
+    expect(panel).not.toHaveClass('translate-y-0', 'translate-y-3', 'opacity-0', 'opacity-100')
     expect(panel).toHaveAttribute('aria-hidden', 'false')
+    expect(panel).toHaveStyle({ flexBasis: '320px' })
     expect(screen.getByTestId('desktop-workbench-content')).not.toContainElement(panel)
     expect(screen.getByTestId('desktop-workbench-main')).toContainElement(panel)
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
@@ -8939,12 +8959,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     expect(panel).toHaveClass('transition-none')
-    expect(panel).not.toHaveClass('transition-[height,opacity,transform]')
+    expect(panel).not.toHaveClass('transition-[height]')
     fireEvent.pointerMove(document, { clientY: 620 })
     fireEvent.pointerUp(document)
 
-    expect(panel).toHaveStyle({ height: '400px' })
-    expect(panel).toHaveClass('transition-[height,opacity,transform]', 'duration-300')
+    expect(panel).toHaveStyle({ flexBasis: '400px', height: '400px' })
+    expect(panel).toHaveClass('transition-[height]', 'duration-300')
   })
 
   test('starts a terminal directly when the bottom panel opens', async () => {
@@ -9821,13 +9841,14 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     const panel = screen.getByTestId('bottom-workspace-panel')
     expect(panel).toBeInTheDocument()
-    expect(panel).toHaveClass('opacity-100')
+    expect(panel).toHaveClass('pointer-events-auto')
 
     await userEvent.click(screen.getByTestId('close-bottom-workspace-panel-button'))
 
     expect(panel).toBeInTheDocument()
     expect(panel).toHaveStyle({ height: '0px' })
-    expect(panel).toHaveClass('pointer-events-none', 'translate-y-3', 'opacity-0')
+    expect(panel).toHaveClass('pointer-events-none')
+    expect(panel).not.toHaveClass('translate-y-3', 'opacity-0')
     expect(panel).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
   })

@@ -484,7 +484,9 @@ async function main() {
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
-  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
+    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E,
+  })
   const modelSwitchVerification = []
   let app
   let appBundlePath
@@ -583,7 +585,16 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
+      WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
+      WEWORK_E2E_CLOUD_TOKEN:
+        cloudEnvironment?.authToken ??
+        desktopScenario?.authToken ??
+        'wework-desktop-e2e-cloud-token',
+      WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      WEWORK_E2E_MODEL_SERVER_URL: control.url,
+      WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
       ...(RUNS_PLUGIN_E2E
@@ -723,6 +734,22 @@ last_updated = "2026-07-30T00:00:00Z"`
         'utf8'
       )
       console.log(`Wework desktop browser-multi-tabs checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'project-automation') {
+      phase = 'project-automation-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-automation checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -2738,6 +2765,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         otherTaskRowTestId: secondTaskRowTestId,
       })
+      if (desktopScenario) {
+        phase = 'conversation-mention-switch-restore'
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
       if (shouldStopAfterDesktopCheckpoint('conversation-state')) {
         console.log(`Wework desktop conversation-state checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -3028,11 +3060,13 @@ last_updated = "2026-07-30T00:00:00Z"`
 
 async function verifyPermissionModes(control) {
   const trigger = '[data-testid="permission-mode-menu-button"]'
+  const getPermissionModeLabel = () =>
+    control.command('getAttribute', trigger, { value: 'aria-label' })
   await control.command('waitFor', trigger, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Full access|完整访问/,
     'The default permission mode was not full access'
   )
@@ -3049,7 +3083,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Workspace|工作区/,
     'Selecting workspace mode did not update the permission mode'
   )
@@ -3075,7 +3109,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Workspace|工作区/,
     'Cancelling full access changed the permission mode'
   )
@@ -3101,7 +3135,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Full access|完整访问/,
     'Confirming full access did not update the permission mode'
   )
@@ -3116,7 +3150,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Read only|只读/,
     'Selecting read-only did not update the permission mode'
   )
@@ -3131,7 +3165,7 @@ async function verifyPermissionModes(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.match(
-    await control.command('getText', trigger),
+    await getPermissionModeLabel(),
     /Workspace|工作区/,
     'Restoring workspace mode did not update the permission mode'
   )

@@ -15,7 +15,35 @@ fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) {
     link.updated_at = now_ms();
 }
 
-fn apply_local_execution_state(link: &mut RuntimeTaskLink, running: bool) {
+fn apply_local_execution_state(
+    link: &mut RuntimeTaskLink,
+    running: bool,
+    queue_position: Option<usize>,
+) {
+    if let Some(queue_position) = queue_position {
+        link.running = false;
+        link.status = "queued".to_owned();
+        link.thread_status = if link.thread_id.is_some() {
+            "idle".to_owned()
+        } else {
+            "notLoaded".to_owned()
+        };
+        if link
+            .turn_status
+            .as_deref()
+            .is_some_and(runtime_status_is_running)
+        {
+            link.turn_status = Some("completed".to_owned());
+        }
+        let mut runtime_handle = link
+            .runtime_handle
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        runtime_handle.insert("queuePosition".to_owned(), json!(queue_position + 1));
+        link.runtime_handle = Value::Object(runtime_handle);
+        return;
+    }
     if !running {
         normalize_inactive_running_codex_task(link);
         return;
@@ -364,6 +392,13 @@ fn is_cached_codex_link_hidden(
 
 fn is_codex_runtime(runtime: &str) -> bool {
     runtime.eq_ignore_ascii_case("codex")
+}
+
+fn is_claude_runtime(runtime: &str) -> bool {
+    matches!(
+        runtime.trim().to_ascii_lowercase().as_str(),
+        "claude" | "claudecode" | "claude_code"
+    )
 }
 
 fn append_unique_links(links: &mut Vec<RuntimeTaskLink>, new_links: Vec<RuntimeTaskLink>) {

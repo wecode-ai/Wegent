@@ -125,6 +125,35 @@ to the current task, that empty result must not clear the lifecycle Goal
 status. This lets an active Goal continue to constrain task lifecycle even
 when stream settlement races ahead of Goal persistence.
 
+### Claude Code Conversation Executor
+
+Claude Code uses the same ordinary runtime-task conversation UI as Codex in
+Wework. A terminal or TUI must not replace the message list. The executor
+starts each turn in Claude Code print mode, consumes `stream-json` events, and
+maps them into the shared `chat:start`, text delta, tool block, and terminal
+events. The Claude session ID returned by the first turn is stored in the
+LocalTask runtime handle. Follow-ups, Goals, and `/compact` resume that same
+session with `--resume`.
+
+The executor persists Claude Code Goal state in the LocalTask runtime handle.
+A Goal message is sent as Claude's native `/goal <objective>` command, and only
+the turn that actually executes that Goal may update it to `complete`. An
+ordinary follow-up must not complete a Goal that has not run. After turn
+settlement, Wework may synchronize the latest snapshot through
+`runtime.tasks.goal.get`, but an empty response must not overwrite an existing
+Goal. Explicit removal belongs only to the Goal clear API or a
+`runtime.goal.cleared` event. When asynchronous snapshots race, the newer
+`updatedAt` value wins; at the same timestamp, `complete` wins over a
+non-terminal status.
+
+Model and permission selections are per-turn execution parameters. Wework maps
+Claude Code permission modes to `default`, `acceptEdits`, `plan`, `auto`, or
+`bypassPermissions`, and maps the selected model to the Claude CLI `--model`
+argument. An absent model selection must not be interpreted as an explicit
+Claude runtime override. Claude Code `/compact` remains an ordinary native
+command, while Codex continues to use its app-server compact RPC; the two
+runtimes must not share the compaction implementation.
+
 ## Local Multi-Root Projects and Task Ownership
 
 A local Codex project may contain an ordered list of workspace roots. The first

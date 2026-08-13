@@ -339,7 +339,7 @@ async function configureDefaultProjectSpaceAssociation(control, localProjectId) 
     WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
-    text: '加入看板 · Task Follow-up Board',
+    text: 'Task Follow-up Board',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="add-context-button"]')

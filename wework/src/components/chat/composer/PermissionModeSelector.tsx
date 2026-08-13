@@ -12,12 +12,14 @@ import {
 interface PermissionModeSelectorProps {
   value?: RuntimePermissionMode
   disabled?: boolean
+  iconOnly?: boolean
   onChange: (mode: RuntimePermissionMode) => void
 }
 
 export function PermissionModeSelector({
   value = DEFAULT_RUNTIME_PERMISSION_MODE,
   disabled = false,
+  iconOnly = false,
   onChange,
 }: PermissionModeSelectorProps) {
   const { t } = useTranslation('common')
@@ -35,6 +37,7 @@ export function PermissionModeSelector({
     'workspace-write': t('workbench.permission_mode_workspace', '工作区'),
     'full-access': t('workbench.permission_mode_full_access', '完整访问'),
   }
+  const ariaLabel = `${t('workbench.permission_mode', '权限模式')}: ${labels[value]}`
 
   const choose = (mode: RuntimePermissionMode) => {
     if (mode === 'full-access' && value !== 'full-access') {
@@ -48,13 +51,17 @@ export function PermissionModeSelector({
     <>
       <div ref={triggerContainerRef} className="contents">
         <ActionMenu
-          ariaLabel={t('workbench.permission_mode', '权限模式')}
+          ariaLabel={ariaLabel}
           testId="permission-mode-menu-button"
           icon={value === 'read-only' ? Eye : value === 'full-access' ? ShieldAlert : FolderPen}
-          triggerLabel={labels[value]}
+          triggerLabel={iconOnly ? undefined : labels[value]}
           disabled={disabled}
           placement="bottom-end"
-          triggerClassName="flex h-8 max-w-32 items-center gap-1.5 rounded-lg px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+          triggerClassName={
+            iconOnly
+              ? 'flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-muted hover:text-text-primary'
+              : 'flex h-8 max-w-32 items-center gap-1.5 rounded-lg px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary'
+          }
           items={(['read-only', 'workspace-write', 'full-access'] as const).map(mode => ({
             label: (
               <span className="flex min-w-0 flex-1 items-center justify-between gap-3">

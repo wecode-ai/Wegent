@@ -7,7 +7,7 @@ type ConfirmClose = () => boolean
 export const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT = 'wework-close-to-tray-hint-requested'
 
 export function hasRunningRuntimeTasks(lifecycle: RuntimeTaskLifecycleStoreSnapshot): boolean {
-  return lifecycle.runningTaskKeys.size > 0
+  return lifecycle.runningTaskKeys.size > 0 || lifecycle.queuedTaskKeys.size > 0
 }
 
 export function shouldPreventRuntimeTaskClose(

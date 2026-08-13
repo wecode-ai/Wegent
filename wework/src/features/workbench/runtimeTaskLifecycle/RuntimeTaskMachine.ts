@@ -46,11 +46,12 @@ export class RuntimeTaskMachine {
       unread,
     } = this.state
     const executionKnown = executionPhase !== 'unknown'
+    const isQueued = executionPhase === 'queued'
     const isRunning =
       executionPhase === 'starting' || executionPhase === 'running' || executionPhase === 'stopping'
     const isTurnActive = turnPhase !== 'idle'
     const isThinking = turnPhase === 'submitting' || turnPhase === 'awaiting'
-    const isBusy = isRunning || isTurnActive
+    const isBusy = isQueued || isRunning || isTurnActive
 
     return {
       key: getRuntimeTaskLifecycleKey(address),
@@ -72,6 +73,7 @@ export class RuntimeTaskMachine {
       derived: {
         executionKnown,
         isRunning,
+        isQueued,
         isTurnActive,
         isThinking,
         isBusy,
