@@ -93,8 +93,8 @@ def build_warm_pool_pod_config(
         "namespace": ns,
         "task_str": "{}",
         "image": image,
-        "auth_token": "",  # Will be set via label at bind time
-        "task_id": "",  # Will be set via label at bind time
+        "auth_token": "",  # Will be set via annotation at bind time
+        "task_id": "",  # Will be set via task label at bind time
         "task_type": "online",
         "mode": "default",
         "executor_env": EXECUTOR_ENV,
@@ -112,7 +112,7 @@ def build_warm_pool_pod_config(
         "callback_url": callback_url,
         "is_sandbox": False,
         "sandbox_id": None,
-        "heartbeat_id": "",  # Will be set via label at bind time
+        "heartbeat_id": "",  # Will be set via annotation at bind time
         "heartbeat_type": None,
         "executor_manager_heartbeat_base_url": os.getenv(
             "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",

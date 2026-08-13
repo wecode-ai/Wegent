@@ -28,6 +28,47 @@ from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_WARM_POOL,
     POOL_PROFILE_EXECUTOR_STANDARD,
 )
+from executor_manager.wecode.executors.warmpool.template_builder import (
+    build_warm_pool_pod_config,
+)
+
+
+def test_warm_pool_template_uses_dynamic_runtime_binding_metadata():
+    pod = build_warm_pool_pod_config(
+        executor_name="warmpool-test",
+        executor_image="executor:test",
+        namespace="test-ns",
+    )
+    container = pod["spec"]["containers"][0]
+    env = {item["name"]: item.get("value") for item in container["env"]}
+
+    assert env["WARM_POOL_MODE"] == "true"
+    assert env["HEARTBEAT_ENABLED"] == "true"
+    assert "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL" in env
+    assert "HEARTBEAT_TYPE" not in env
+
+    annotations = pod["metadata"]["annotations"]
+    assert annotations[ANNOTATION_AUTH_TOKEN] == ""
+    assert annotations[ANNOTATION_HEARTBEAT_ID] == ""
+    assert ANNOTATION_AUTH_TOKEN not in pod["metadata"]["labels"]
+    assert ANNOTATION_HEARTBEAT_ID not in pod["metadata"]["labels"]
+
+    config_volume = next(
+        volume for volume in pod["spec"]["volumes"] if volume["name"] == "wegent-config"
+    )
+    field_paths = {
+        item["path"]: item["fieldRef"]["fieldPath"]
+        for item in config_volume["downwardAPI"]["items"]
+    }
+    assert field_paths["auth_token"] == (
+        "metadata.annotations['aigc.weibo.com/auth-token']"
+    )
+    assert field_paths["callback_url"] == (
+        "metadata.annotations['aigc.weibo.com/callback-url']"
+    )
+    assert field_paths["heartbeat_id"] == (
+        "metadata.annotations['aigc.weibo.com/heartbeat-id']"
+    )
 
 
 def test_get_pods_by_executor_name_prefers_k8s_namespace(mocker):
