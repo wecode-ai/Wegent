@@ -95,7 +95,6 @@ export function CloudProjectManageView({
   const [providerBusy, setProviderBusy] = useState(false)
   const [providerSaved, setProviderSaved] = useState(false)
 
-  const { t } = useTranslation()
   const [mrStatus, setMrStatus] = useState<GitLabMrIntegration | null>(null)
   const [mrBusy, setMrBusy] = useState(false)
   const [mrError, setMrError] = useState<string | null>(null)
