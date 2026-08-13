@@ -142,6 +142,7 @@ local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
+pnpm --filter wework e2e:desktop -- --segment local-harness
 pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
@@ -156,6 +157,14 @@ Both checkpoints establish their own minimal fixtures, so they no longer extend
 the critical path for task creation, follow-up, and background plans in
 `core-task-flow`. An unsegmented complete desktop run still executes these
 scenarios, so splitting them does not reduce coverage.
+
+`local-harness` uses the real OpenCode, Claude Code, and Kimi Code CLIs pinned
+by `.github/claude-code-cli/package-lock.json`; argument-recording shell
+fixtures are not valid substitutes. The scenario must assert real requests
+from every CLI through the Wework local model proxy. Kimi Code starts as an
+interactive TUI, so its first prompt is injected only after PTY output contains
+the readiness marker. Writing during terminal capability negotiation loses the
+input.
 
 The plugin desktop suite reuses the same segment options while keeping its
 separate Codex Home initialization environment. Its ordered segments are

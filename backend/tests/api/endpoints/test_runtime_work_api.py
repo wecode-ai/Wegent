@@ -391,6 +391,80 @@ def test_runtime_cancel_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_runtime_force_start_endpoint_dispatches_address(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "taskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "force_start_runtime_task", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/force-start",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
+
+
+def test_runtime_queue_reorder_endpoint_dispatches_position(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "taskId": "codex-3",
+            "workspacePath": "/repo/Wegent",
+            "orderedTaskIds": ["codex-3", "codex-1", "codex-2"],
+            "error": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "reorder_runtime_task_queue",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/queue/reorder",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-3",
+            "queuePosition": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["orderedTaskIds"] == ["codex-3", "codex-1", "codex-2"]
+    request = service_mock.await_args.kwargs["request"]
+    assert request.local_task_id == "codex-3"
+    assert request.queue_position == 1
+
+
 def test_runtime_guidance_endpoint_dispatches_request(
     test_client,
     test_token,

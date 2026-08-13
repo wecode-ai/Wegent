@@ -119,6 +119,7 @@ interface RightWorkspaceReviewState {
 interface RightWorkspacePanelProps {
   showWorkbenchBackground?: boolean
   visible: boolean
+  renderTabsInAppTitlebar?: boolean
   expanded?: boolean
   allowTemporaryChat?: boolean
   activeView: RightWorkspacePanelView
@@ -246,6 +247,7 @@ function RightWorkspaceBrowserPanelSlot({
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
+  renderTabsInAppTitlebar = true,
   expanded = false,
   allowTemporaryChat = true,
   activeView,
@@ -301,7 +303,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const visibleTabs = canBrowseFiles ? availableTabs : availableTabs.filter(tab => tab !== 'files')
   const showTabs = visibleTabs.length > 0
   const platform = getPlatform()
-  const renderTabsInTitlebar = isTauriRuntime() && platform !== 'win' && visible && showTabs
+  const renderTabsInTitlebar =
+    renderTabsInAppTitlebar && isTauriRuntime() && platform !== 'win' && visible && showTabs
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )

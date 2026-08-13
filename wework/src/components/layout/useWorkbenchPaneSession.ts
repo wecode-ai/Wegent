@@ -22,6 +22,7 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
@@ -157,7 +158,6 @@ const RUNTIME_TRANSCRIPT_PAGE_SIZE =
     ? configuredRuntimeTranscriptPageSize
     : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
-const noopSetInput = () => undefined
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -214,8 +214,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [browserAnnotationCommand, setBrowserAnnotationCommand] =
     useState<BrowserAnnotationCommand | null>(null)
   const browserAnnotationCommandSequenceRef = useRef(0)
-  const input = projectChat.input ?? ''
-  const scopedSetInput = projectChat.setInput ?? noopSetInput
+  const inputScopeKey = currentRuntimeTask
+    ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
+    : projectChat.scopeKey
+  const input = projectChat.inputByScope[inputScopeKey] ?? ''
+  const setInputForScope = projectChat.setInputForScope
+  const scopedSetInput = useCallback(
+    (value: string) => setInputForScope(inputScopeKey, value),
+    [inputScopeKey, setInputForScope]
+  )
   const [localError, setLocalError] = useState<string | null>(null)
   const error = projectChat.setComposerError ? (projectChat.composerError ?? null) : localError
   const setError = projectChat.setComposerError ?? setLocalError
@@ -2336,7 +2343,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return false
   }, [
     currentRuntime,
-    currentRuntimeTask,
     getRuntimeModelFields,
     goal,
     paneStatus.isBusy,
