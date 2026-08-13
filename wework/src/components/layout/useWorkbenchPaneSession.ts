@@ -1633,20 +1633,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           if (currentRuntimeTask) {
             const draftGoal = createPendingRuntimeGoal(submittedInput)
             const initialGoal = runtimeGoalCreateInput(draftGoal)
-            const queuedMessage: RuntimePaneQueuedMessage = {
+            const baseMessage: RuntimePaneQueuedMessage = {
               id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
               content: submittedInput,
               status: 'queued',
               createdAt: new Date().toISOString(),
               attachments: persistAttachmentReferences(currentAttachments),
               runtimeGoalRequest: true,
-              initialGoal,
               additionalContext: options.additionalContext,
               ...getRuntimeModelFields(),
             }
 
             projectChat.resetAttachments()
-            if (paneStatus.isBusy) {
+            if (paneStatus.isBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
@@ -1661,10 +1660,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               setRuntimeConversationGoal(currentRuntimeTask, response.goal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
               setGoalDraftActive(false)
+              setQueuedMessages(messages => [...messages, baseMessage])
+              await sendQueuedMessageAsGuidance(baseMessage)
+              return true
+            }
+
+            const queuedMessage: RuntimePaneQueuedMessage = {
+              ...baseMessage,
+              initialGoal,
+            }
+            if (paneStatus.isBusy) {
+              setInput('')
+              setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
+              lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
+              setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
-              if (options.guideWhenBusy) {
-                await sendQueuedMessageAsGuidance(queuedMessage)
-              }
               return true
             }
 
