@@ -111,16 +111,21 @@ impl LocalBackendConnectionController {
             let backend_url = connection.backend_url.clone();
             let socket_url = resolved_socket_url(connection);
             let transport = SocketIoTransport::default();
-            let mut runner = LocalBackendRunner::new(
-                LocalBackendConfig::from_device_config(config),
-                transport.clone(),
-            );
-            if let (Some(handler), Some(event_tx)) =
+            let runner = if let (Some(handler), Some(event_tx)) =
                 (&self.runtime_work_handler, &self.runtime_event_tx)
             {
-                runner =
-                    runner.with_shared_runtime_work_handler(handler.clone(), event_tx.subscribe());
-            }
+                LocalBackendRunner::new_with_shared_runtime_work_handler(
+                    LocalBackendConfig::from_device_config(config),
+                    transport.clone(),
+                    handler.clone(),
+                    event_tx.subscribe(),
+                )
+            } else {
+                LocalBackendRunner::new(
+                    LocalBackendConfig::from_device_config(config),
+                    transport.clone(),
+                )
+            };
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
