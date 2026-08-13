@@ -6,6 +6,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
+  ModelSelectionConfig,
   RuntimeSupervisorMode,
   RuntimeSupervisorState,
   RuntimeSupervisorSuggestion,
@@ -15,7 +16,7 @@ import type {
 export interface TaskSupervisorConfig {
   mode: RuntimeSupervisorMode
   instructions: string
-  modelId: string | null
+  modelSelection: ModelSelectionConfig | null
   intervalSeconds: number
 }
 
@@ -29,10 +30,11 @@ interface TaskSupervisorControlProps {
   onSet: (
     mode: RuntimeSupervisorMode,
     instructions: string,
-    modelId: string | null,
+    modelSelection: ModelSelectionConfig | null,
     intervalSeconds: number
   ) => Promise<RuntimeSupervisorState | null>
   onClear: () => Promise<void>
+  onRunNow?: () => Promise<RuntimeSupervisorState | null>
   className?: string
 }
 
@@ -45,13 +47,14 @@ export function TaskSupervisorControl({
   onOpenChange,
   onSet,
   onClear,
+  onRunNow,
   className,
 }: TaskSupervisorControlProps) {
   if (!open) return null
 
   return (
     <TaskSupervisorDialogContent
-      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelId ?? initialConfig?.modelId ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30}`}
+      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelSelection?.modelName ?? initialConfig?.modelSelection?.modelName ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30}`}
       supervisor={supervisor}
       initialConfig={initialConfig}
       defaultInstructions={defaultInstructions}
@@ -59,6 +62,7 @@ export function TaskSupervisorControl({
       onOpenChange={onOpenChange}
       onSet={onSet}
       onClear={onClear}
+      onRunNow={onRunNow}
       className={className}
     />
   )
@@ -127,37 +131,68 @@ function TaskSupervisorDialogContent({
   onOpenChange,
   onSet,
   onClear,
+  onRunNow,
   className,
 }: Omit<TaskSupervisorControlProps, 'open'>) {
   const { t } = useTranslation('common')
+  const configuredModelSelection = supervisor?.modelSelection ?? initialConfig?.modelSelection
+  const configuredModel = models.find(
+    model =>
+      model.name === configuredModelSelection?.modelName &&
+      (!configuredModelSelection.modelType || model.type === configuredModelSelection.modelType)
+  )
   const [mode, setMode] = useState<RuntimeSupervisorMode>(
-    supervisor?.mode ?? initialConfig?.mode ?? 'suggest'
+    supervisor?.mode ?? initialConfig?.mode ?? 'auto'
   )
   const [instructions, setInstructions] = useState(
     supervisor?.instructions ?? initialConfig?.instructions ?? defaultInstructions
   )
-  const [modelId, setModelId] = useState(supervisor?.modelId ?? initialConfig?.modelId ?? '')
+  const [modelKey, setModelKey] = useState(
+    configuredModel
+      ? `${configuredModel.type}:${configuredModel.name}`
+      : modelSelectionKey(models[0])
+  )
   const [intervalSeconds, setIntervalSeconds] = useState(
     supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30
   )
   const [saving, setSaving] = useState(false)
+  const [runningNow, setRunningNow] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const formatCheckTime = (timestamp: number) =>
+    new Date(timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
   const lastCheckedAt = supervisor?.lastEvaluatedAt
-    ? new Date(supervisor.lastEvaluatedAt).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      })
+    ? formatCheckTime(supervisor.lastEvaluatedAt)
     : null
-
+  const nextCheckAt = supervisor?.lastEvaluatedAt
+    ? formatCheckTime(
+        supervisor.lastEvaluatedAt + (supervisor.intervalSeconds ?? intervalSeconds) * 1_000
+      )
+    : null
   useEscapeKey(() => {
-    if (!saving) onOpenChange(false)
+    if (!saving && !runningNow) onOpenChange(false)
   })
 
   const save = async () => {
     setSaving(true)
     setError(null)
     try {
-      await onSet(mode, instructions, modelId || null, intervalSeconds)
+      const model = models.find(candidate => modelSelectionKey(candidate) === modelKey)
+      const modelSelection =
+        model && model.namespace && model.resourceUserId !== undefined
+          ? {
+              modelName: model.name,
+              modelType: model.type,
+              options: {
+                weworkCloudModelNamespace: model.namespace,
+                weworkCloudModelResourceUserId: String(model.resourceUserId),
+              },
+            }
+          : null
+      await onSet(mode, instructions, modelSelection, intervalSeconds)
       onOpenChange(false)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
@@ -179,12 +214,27 @@ function TaskSupervisorDialogContent({
     }
   }
 
+  const runNow = async () => {
+    if (!onRunNow) return
+    setRunningNow(true)
+    setError(null)
+    try {
+      await onRunNow()
+    } catch (runError) {
+      setError(
+        runError instanceof Error ? runError.message : t('workbench.supervisor_run_now_failed')
+      )
+    } finally {
+      setRunningNow(false)
+    }
+  }
+
   return createPortal(
     <div
       data-testid="task-supervisor-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4"
       onMouseDown={event => {
-        if (event.target === event.currentTarget && !saving) {
+        if (event.target === event.currentTarget && !saving && !runningNow) {
           onOpenChange(false)
         }
       }}
@@ -211,7 +261,7 @@ function TaskSupervisorDialogContent({
             type="button"
             data-testid="task-supervisor-close-button"
             autoFocus
-            disabled={saving}
+            disabled={saving || runningNow}
             onClick={() => onOpenChange(false)}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-40"
             aria-label={t('common.close', '关闭')}
@@ -221,16 +271,39 @@ function TaskSupervisorDialogContent({
         </div>
 
         {supervisor && (
-          <p
+          <div
             data-testid="task-supervisor-status"
-            className="mb-3 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-secondary"
+            className="mb-3 flex items-center justify-between gap-3 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-secondary"
           >
-            {supervisor.status === 'checking'
-              ? t('workbench.supervisor_checking_detail')
-              : lastCheckedAt
-                ? t('workbench.supervisor_last_checked', { time: lastCheckedAt })
-                : t('workbench.supervisor_waiting_first_check')}
-          </p>
+            <div className="min-w-0">
+              <p>
+                {supervisor.status === 'checking'
+                  ? t('workbench.supervisor_checking_detail')
+                  : lastCheckedAt
+                    ? t('workbench.supervisor_last_checked', { time: lastCheckedAt })
+                    : t('workbench.supervisor_waiting_first_check')}
+              </p>
+              {supervisor.status !== 'checking' && nextCheckAt && (
+                <p data-testid="task-supervisor-next-check" className="text-text-muted">
+                  {t('workbench.supervisor_next_check', { time: nextCheckAt })}
+                </p>
+              )}
+            </div>
+            {onRunNow && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="task-supervisor-run-now-button"
+                disabled={saving || runningNow || supervisor.status === 'checking'}
+                onClick={runNow}
+                className="shrink-0"
+              >
+                {runningNow && <Loader2 className="animate-spin" />}
+                {t('workbench.supervisor_run_now')}
+              </Button>
+            )}
+          </div>
         )}
 
         <div data-testid="task-supervisor-panel" className="w-full">
@@ -261,13 +334,12 @@ function TaskSupervisorDialogContent({
               {t('workbench.supervisor_model')}
               <select
                 data-testid="task-supervisor-model"
-                value={modelId}
-                onChange={event => setModelId(event.target.value)}
+                value={modelKey}
+                onChange={event => setModelKey(event.target.value)}
                 className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-primary"
               >
-                <option value="">{t('workbench.supervisor_model_current')}</option>
                 {models.map(model => (
-                  <option key={`${model.type}:${model.name}`} value={model.name}>
+                  <option key={`${model.type}:${model.name}`} value={modelSelectionKey(model)}>
                     {model.displayName || model.name}
                   </option>
                 ))}
@@ -317,7 +389,7 @@ function TaskSupervisorDialogContent({
                 variant="ghost"
                 size="sm"
                 data-testid="task-supervisor-disable-button"
-                disabled={saving}
+                disabled={saving || runningNow}
                 onClick={disable}
               >
                 {t('workbench.supervisor_disable')}
@@ -330,7 +402,7 @@ function TaskSupervisorDialogContent({
               variant="primary"
               size="sm"
               data-testid="task-supervisor-save-button"
-              disabled={saving}
+              disabled={saving || runningNow || !modelKey}
               onClick={save}
             >
               {saving && <Loader2 className="animate-spin" />}
@@ -342,6 +414,10 @@ function TaskSupervisorDialogContent({
     </div>,
     document.body
   )
+}
+
+function modelSelectionKey(model: UnifiedModel | undefined): string {
+  return model ? `${model.type}:${model.name}` : ''
 }
 
 interface SupervisorSuggestionCardsProps {

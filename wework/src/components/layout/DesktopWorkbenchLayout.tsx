@@ -39,6 +39,18 @@ import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import {
+  archiveLocalHarnessSession,
+  closeLocalTerminal,
+  isLocalHarnessAvailable,
+  listLocalHarnessSessions,
+  updateLocalHarnessSessionTitle,
+  WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT,
+} from '@/lib/local-terminal'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -51,6 +63,19 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
     if (message) return message
   }
   return fallback
+}
+
+function isSameRuntimeTask(
+  current: RuntimeTaskAddress | null | undefined,
+  next: RuntimeTaskAddress
+): boolean {
+  const currentPath = current?.workspacePath?.trim()
+  const nextPath = next.workspacePath?.trim()
+  return (
+    current?.deviceId === next.deviceId &&
+    current.taskId === next.taskId &&
+    (!currentPath || !nextPath || currentPath === nextPath)
+  )
 }
 
 function boardRouteParam(contentRoute: string, name: string): string | null {
@@ -122,9 +147,170 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const workspaceTabs = useOptionalWorkspaceTabs()
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
+  const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
+    []
+  )
+  const [activeLocalHarnessSessionId, setActiveLocalHarnessSessionId] = useState<string | null>(
+    null
+  )
+  const loadLocalHarnessSessions = useCallback(async () => {
+    const sessions = await listLocalHarnessSessions()
+    return sessions.map(session => ({
+      sessionId: session.session_id,
+      harnessId: session.harness_id,
+      title: session.title,
+      cwd: session.cwd,
+      createdAt: session.created_at,
+      isPrimary: session.is_primary,
+      projectId: session.project_id,
+      active: session.active,
+      modelKey: session.model_key,
+      pluginRoots: session.plugin_roots?.length ? session.plugin_roots : undefined,
+      proxyToken: session.proxy_token,
+    }))
+  }, [])
+
+  useEffect(() => {
+    if (!isLocalHarnessAvailable()) return
+
+    let cancelled = false
+    void loadLocalHarnessSessions()
+      .then(restored => {
+        if (cancelled) return
+        setLocalHarnessSessions(restored)
+      })
+      .catch(error => {
+        console.error('Failed to restore local harness sessions:', error)
+      })
+    const handleSessionsChanged = (event: Event) => {
+      const openSessionId = (event as CustomEvent<{ openSessionId?: string | null }>).detail
+        ?.openSessionId
+      void loadLocalHarnessSessions()
+        .then(restored => {
+          setLocalHarnessSessions(restored)
+          if (!openSessionId || !restored.some(session => session.sessionId === openSessionId))
+            return
+          setActiveLocalHarnessSessionId(openSessionId)
+          navigateTo('/')
+        })
+        .catch(error => {
+          console.error('Failed to refresh local Harness sessions:', error)
+        })
+    }
+    window.addEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
+    }
+  }, [loadLocalHarnessSessions])
   const todoOpen = currentPath === '/todo'
   const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const startNewChatOutsideHarness = useCallback(() => {
+    setActiveLocalHarnessSessionId(null)
+    onNewChat()
+  }, [onNewChat])
+  const startStandaloneChatOutsideHarness = useCallback(() => {
+    setActiveLocalHarnessSessionId(null)
+    onStartStandaloneChat()
+  }, [onStartStandaloneChat])
+  const selectProjectOutsideHarness = useCallback(
+    (projectId: number) => {
+      setActiveLocalHarnessSessionId(null)
+      onSelectProject(projectId)
+    },
+    [onSelectProject]
+  )
+  const startNewProjectChatOutsideHarness = useCallback(
+    (projectId: number) => {
+      setActiveLocalHarnessSessionId(null)
+      onStartNewProjectChat(projectId)
+    },
+    [onStartNewProjectChat]
+  )
+  const openRuntimeTaskOutsideHarness = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      setActiveLocalHarnessSessionId(null)
+      if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
+      await onOpenRuntimeTask(address)
+    },
+    [currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
+  )
+  const registerLocalHarnessSession = useCallback(
+    (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
+      setLocalHarnessSessions(current => [
+        session,
+        ...current.filter(candidate => candidate.sessionId !== session.sessionId),
+      ])
+      if (options?.activate !== false) {
+        setActiveLocalHarnessSessionId(session.sessionId)
+      }
+    },
+    []
+  )
+  const updateHarnessSessionTitle = useCallback((sessionId: string, title: string) => {
+    const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
+    if (!normalized) return
+    setLocalHarnessSessions(current =>
+      current.map(session =>
+        session.sessionId === sessionId && session.title !== normalized
+          ? { ...session, title: normalized }
+          : session
+      )
+    )
+    void updateLocalHarnessSessionTitle(sessionId, normalized).catch(error => {
+      console.warn('Failed to persist local Harness session title:', error)
+    })
+  }, [])
+  const openLocalHarnessSession = useCallback((sessionId: string) => {
+    setActiveLocalHarnessSessionId(sessionId)
+    navigateTo('/')
+  }, [])
+  const removeLocalHarnessSession = useCallback(
+    (sessionId: string) => {
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) {
+        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
+      setLocalHarnessSessions(current => current.filter(session => session.sessionId !== sessionId))
+      setActiveLocalHarnessSessionId(current => (current === sessionId ? null : current))
+    },
+    [localHarnessSessions, services?.localHarnessModelApi]
+  )
+  const markLocalHarnessSessionInactive = useCallback(
+    (sessionId: string) => {
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) {
+        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
+      setLocalHarnessSessions(current =>
+        current.map(session =>
+          session.sessionId === sessionId
+            ? { ...session, active: false, proxyToken: undefined }
+            : session
+        )
+      )
+    },
+    [localHarnessSessions, services?.localHarnessModelApi]
+  )
+  const closeLocalHarnessSession = useCallback(
+    async (sessionId: string) => {
+      const session = localHarnessSessions.find(candidate => candidate.sessionId === sessionId)
+      if (!session || (session.isPrimary && session.harnessId !== 'opencode')) return
+      if (session.harnessId === 'opencode') {
+        await archiveLocalHarnessSession(sessionId)
+      } else {
+        await closeLocalTerminal(sessionId)
+      }
+      removeLocalHarnessSession(sessionId)
+    },
+    [localHarnessSessions, removeLocalHarnessSession]
+  )
   const createPermanentWorktree = useCallback(
     async ({
       deviceId,
@@ -183,7 +369,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const openProjectSpaceRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      await onOpenRuntimeTask(address)
+      await openRuntimeTaskOutsideHarness(address)
       if (!workspaceTabs) return
       const contentRoute = buildRuntimeTaskRoute(address)
       const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
@@ -193,7 +379,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       }
       workspaceTabs.openTab('task', { contentRoute })
     },
-    [onOpenRuntimeTask, workspaceTabs]
+    [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
   const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
@@ -567,7 +753,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
-      currentRuntimeTask={state.currentRuntimeTask}
+      currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
@@ -576,6 +762,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
+      localHarnessSessions={localHarnessSessions}
+      activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
       containerTestId={containerTestId}
       hideResizeHandle={hideResizeHandle}
@@ -587,12 +775,14 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onToggleSidebar={onToggleSidebar ?? (() => updateSidebarCollapsed(!collapsed))}
-      onNewChat={onNewChat}
-      onStartStandaloneChat={onStartStandaloneChat}
+      onNewChat={startNewChatOutsideHarness}
+      onStartStandaloneChat={startStandaloneChatOutsideHarness}
+      onOpenLocalHarnessSession={openLocalHarnessSession}
+      onCloseLocalHarnessSession={closeLocalHarnessSession}
       onOpenSearch={() => setSearchOpen(true)}
-      onSelectProject={onSelectProject}
-      onStartNewProjectChat={onStartNewProjectChat}
-      onOpenRuntimeTask={onOpenRuntimeTask}
+      onSelectProject={selectProjectOutsideHarness}
+      onStartNewProjectChat={startNewProjectChatOutsideHarness}
+      onOpenRuntimeTask={openRuntimeTaskOutsideHarness}
       onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
       onRenameRuntimeTask={onRenameRuntimeTask}
       onArchiveRuntimeTask={onArchiveRuntimeTask}
@@ -697,6 +887,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               <CloudTodoWorkspace
                 user={state.user}
                 localProjects={localTodoProjects}
+                runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 activeProjectId={
@@ -757,6 +948,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 currentProject: state.currentProject,
                 standaloneChatKey: state.standaloneChatKey,
               }}
+              localHarnessSessions={localHarnessSessions}
+              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+              onLocalHarnessSessionStarted={registerLocalHarnessSession}
+              onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
+              onLocalHarnessSessionClose={closeLocalHarnessSession}
+              onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
             />
           </div>
         </div>
@@ -855,8 +1052,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         onClose={() => setSearchOpen(false)}
         onSearchRuntimeWork={onSearchRuntimeWork}
         onOpenRuntimeTask={async address => {
-          if (!onOpenRuntimeTask) return
-          await onOpenRuntimeTask(address)
+          await openRuntimeTaskOutsideHarness(address)
         }}
       />
     </div>

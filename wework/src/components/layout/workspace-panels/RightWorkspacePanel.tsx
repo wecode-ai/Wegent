@@ -10,12 +10,14 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   FileChangesReviewPanel,
   type FileChangesReviewViewOption,
 } from '@/components/chat/FileChangesReviewPanel'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
+import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
@@ -26,6 +28,7 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
+import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
@@ -57,6 +60,7 @@ function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
 
 export type RightWorkspaceChatTab = `chat:${string}`
 export type RightWorkspaceBrowserTab = `browser:${string}`
+export type RightWorkspaceHarnessTab = `harness:${string}`
 export type RightWorkspacePanelTab =
   | 'review'
   | 'terminal'
@@ -64,6 +68,7 @@ export type RightWorkspacePanelTab =
   | 'plan'
   | RightWorkspaceChatTab
   | RightWorkspaceBrowserTab
+  | RightWorkspaceHarnessTab
 export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
 
 function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
@@ -72,6 +77,14 @@ function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWork
 
 function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightWorkspaceBrowserTab {
   return tab.startsWith('browser:')
+}
+
+function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
+  return tab.startsWith('harness:')
+}
+
+function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
+  return tab.slice('harness:'.length)
 }
 
 function getRightWorkspaceChatTabSuffix(tab: RightWorkspaceChatTab) {
@@ -106,7 +119,9 @@ interface RightWorkspaceReviewState {
 interface RightWorkspacePanelProps {
   showWorkbenchBackground?: boolean
   visible: boolean
+  renderTabsInAppTitlebar?: boolean
   expanded?: boolean
+  allowTemporaryChat?: boolean
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   currentProject: ProjectWithTasks | null
@@ -118,6 +133,8 @@ interface RightWorkspacePanelProps {
   fileWorkspaceTargets?: WorkspaceTarget[]
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
+  workspaceActions?: WorkspaceAddMenuItem[]
+  harnessSessions?: LocalHarnessWorkbenchSession[]
   workspaceSessionApi?: WorkspaceSessionApi
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
@@ -131,9 +148,16 @@ interface RightWorkspacePanelProps {
     update: Partial<RightWorkspaceBrowserState>
   ) => void
   codeCommentCount?: number
+  codeCommentContexts?: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onFileDirtyChange?: (dirty: boolean) => void
   onFileSelectionChange?: (selection: FileWorkspacePanelSelection) => void
   onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
@@ -145,6 +169,8 @@ interface RightWorkspacePanelProps {
   onSelectPlan: () => void
   onSelectTab: (tab: RightWorkspacePanelTab) => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
+  onHarnessSessionTitleChange?: (sessionId: string, title: string) => void
+  onHarnessSessionExit?: (sessionId: string) => void
   onRefreshReview?: () => void
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
@@ -155,7 +181,14 @@ interface RightWorkspaceBrowserPanelSlotProps {
   active: boolean
   state: RightWorkspaceBrowserState
   codeCommentCount: number
+  codeCommentContexts: CodeCommentContext[]
+  browserAnnotationCommand?: BrowserAnnotationCommand | null
   onAddCodeComment: (context: CodeCommentContext) => void
+  onReplaceBrowserCodeComments?: (
+    scope: BrowserAnnotationScope,
+    contexts: CodeCommentContext[]
+  ) => void
+  onRemoveBrowserCodeComments?: (scope: BrowserAnnotationScope) => void
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
     update: Partial<RightWorkspaceBrowserState>
@@ -167,7 +200,11 @@ function RightWorkspaceBrowserPanelSlot({
   active,
   state,
   codeCommentCount,
+  codeCommentContexts,
+  browserAnnotationCommand,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onBrowserStateChange,
 }: RightWorkspaceBrowserPanelSlotProps) {
   const handleDownloadActivityChange = useCallback(
@@ -191,9 +228,14 @@ function RightWorkspaceBrowserPanelSlot({
     <WorkspaceBrowserPanel
       active={active}
       label={state.label}
+      browserTabId={tab}
       openRequest={state.openRequest}
       codeCommentCount={codeCommentCount}
+      codeCommentContexts={codeCommentContexts}
+      browserAnnotationCommand={browserAnnotationCommand}
       onAddCodeComment={onAddCodeComment}
+      onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
+      onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
       onDownloadActivityChange={handleDownloadActivityChange}
       onFaviconChange={handleFaviconChange}
       onTitleChange={handleTitleChange}
@@ -205,7 +247,9 @@ function RightWorkspaceBrowserPanelSlot({
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
+  renderTabsInAppTitlebar = true,
   expanded = false,
+  allowTemporaryChat = true,
   activeView,
   openTabs,
   currentProject,
@@ -217,6 +261,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   fileWorkspaceTargets,
   preferLocalTerminal = false,
   terminalContextTitle,
+  workspaceActions = [],
+  harnessSessions = [],
   workspaceSessionApi,
   workspaceFileApi,
   openFileRequest,
@@ -227,9 +273,13 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   browserStates,
   onBrowserStateChange,
   codeCommentCount = 0,
+  codeCommentContexts = [],
+  browserAnnotationCommand,
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
+  onReplaceBrowserCodeComments,
+  onRemoveBrowserCodeComments,
   onFileDirtyChange,
   onFileSelectionChange,
   onSelectFileWorkspaceTarget,
@@ -240,15 +290,24 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onSelectChat,
   onSelectTab,
   onCloseTab,
+  onHarnessSessionTitleChange,
+  onHarnessSessionExit,
   onRefreshReview,
   onRestoreConversation,
   getChatInitialInput,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
+  const availableTabs = allowTemporaryChat
+    ? openTabs
+    : openTabs.filter(tab => !isRightWorkspaceChatTab(tab))
+  const visibleTabs = canBrowseFiles ? availableTabs : availableTabs.filter(tab => tab !== 'files')
   const showTabs = visibleTabs.length > 0
   const platform = getPlatform()
-  const renderTabsInTitlebar = isTauriRuntime() && platform !== 'win' && visible && showTabs
+  const renderTabsInTitlebar =
+    renderTabsInAppTitlebar && isTauriRuntime() && platform !== 'win' && visible && showTabs
+  const harnessSessionsById = new Map(
+    harnessSessions.map(session => [session.sessionId, session] as const)
+  )
 
   useEffect(() => {
     if (!visible) return
@@ -273,7 +332,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       if (key === 'r' && canOpenReview) {
         event.preventDefault()
         onSelectReview()
-      } else if (key === 's') {
+      } else if (key === 's' && allowTemporaryChat) {
         event.preventDefault()
         onSelectChat()
       } else if (key === 'f' && canBrowseFiles) {
@@ -285,6 +344,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
+    allowTemporaryChat,
     canBrowseFiles,
     canOpenReview,
     onSelectBrowser,
@@ -303,6 +363,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       onSelectTab(tab)
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
+    ...workspaceActions,
     {
       id: 'review',
       testId: 'right-workspace-review-option',
@@ -327,14 +388,18 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       shortcut: getRightWorkspaceShortcuts(platform).browser,
       onSelect: onSelectBrowser,
     },
-    {
-      id: 'chat',
-      testId: 'right-workspace-chat-option',
-      icon: MessageCircle,
-      label: t('workbench.workspace_tab_chat', '临时聊天'),
-      shortcut: getRightWorkspaceShortcuts(platform).chat,
-      onSelect: onSelectChat,
-    },
+    ...(allowTemporaryChat
+      ? [
+          {
+            id: 'chat' as const,
+            testId: 'right-workspace-chat-option',
+            icon: MessageCircle,
+            label: t('workbench.workspace_tab_chat', '临时聊天'),
+            shortcut: getRightWorkspaceShortcuts(platform).chat,
+            onSelect: onSelectChat,
+          },
+        ]
+      : []),
     ...(canBrowseFiles
       ? [
           {
@@ -369,7 +434,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           key={tab}
           tab={tab}
           active={activeView === tab}
-          label={getRightWorkspaceTabLabel(tab, t, browserStates)}
+          label={getRightWorkspaceTabLabel(tab, t, browserStates, harnessSessionsById)}
           icon={getRightWorkspaceTabIcon(tab)}
           iconSrc={isRightWorkspaceBrowserTab(tab) ? browserStates[tab]?.faviconUrl : null}
           onSelect={getTabSelectHandler(tab)}
@@ -407,7 +472,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       ) : null}
     </header>
   ) : null
-  const chatTabs = openTabs.filter(isRightWorkspaceChatTab)
+  const chatTabs = allowTemporaryChat ? openTabs.filter(isRightWorkspaceChatTab) : []
 
   return (
     <section
@@ -424,6 +489,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           <RightWorkspaceLauncher
             canOpenReview={canOpenReview}
             canBrowseFiles={canBrowseFiles}
+            allowTemporaryChat={allowTemporaryChat}
+            workspaceActions={workspaceActions}
             onSelectReview={onSelectReview}
             onSelectBrowser={onSelectBrowser}
             onSelectFiles={onSelectFiles}
@@ -519,8 +586,33 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                 active={visible && activeView === tab}
                 state={browserState}
                 codeCommentCount={codeCommentCount}
+                codeCommentContexts={codeCommentContexts}
+                browserAnnotationCommand={browserAnnotationCommand}
                 onAddCodeComment={onAddCodeComment}
+                onReplaceBrowserCodeComments={onReplaceBrowserCodeComments}
+                onRemoveBrowserCodeComments={onRemoveBrowserCodeComments}
                 onBrowserStateChange={onBrowserStateChange}
+              />
+            </div>
+          )
+        })}
+        {openTabs.filter(isRightWorkspaceHarnessTab).map(tab => {
+          const session = harnessSessionsById.get(getRightWorkspaceHarnessSessionId(tab))
+          if (!session) return null
+          return (
+            <div
+              key={tab}
+              className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+            >
+              <CentralHarnessTerminal
+                sessionId={session.sessionId}
+                harnessId={session.harnessId}
+                title={session.title}
+                cwd={session.cwd}
+                active={visible && activeView === tab && session.active}
+                showHeader={false}
+                onTitleChange={title => onHarnessSessionTitleChange?.(session.sessionId, title)}
+                onExit={() => onHarnessSessionExit?.(session.sessionId)}
               />
             </div>
           )
@@ -609,7 +701,7 @@ function RightWorkspaceTabIcon({
   iconSrc,
   testId,
 }: {
-  icon: typeof File
+  icon: ComponentType<{ className?: string }>
   iconSrc?: string | null
   testId: string
 }) {
@@ -657,6 +749,8 @@ function PlanWorkspacePanel({ content }: { content: string }) {
 function RightWorkspaceLauncher({
   canOpenReview,
   canBrowseFiles,
+  allowTemporaryChat,
+  workspaceActions,
   onSelectReview,
   onSelectBrowser,
   onSelectFiles,
@@ -664,6 +758,8 @@ function RightWorkspaceLauncher({
 }: {
   canOpenReview: boolean
   canBrowseFiles: boolean
+  allowTemporaryChat: boolean
+  workspaceActions: WorkspaceAddMenuItem[]
   onSelectReview: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
@@ -678,6 +774,17 @@ function RightWorkspaceLauncher({
       className="flex min-h-0 flex-1 items-center justify-center px-8"
     >
       <div className="flex w-full max-w-xl flex-col gap-1.5">
+        {workspaceActions.map(action => (
+          <RightWorkspaceLauncherItem
+            key={action.id}
+            data-testid={action.testId ?? `right-workspace-${action.id}-option`}
+            icon={action.icon}
+            label={action.label}
+            shortcut={action.shortcut}
+            onClick={() => void action.onSelect()}
+            disabled={action.disabled}
+          />
+        ))}
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-review-option"
           icon={FileDiff}
@@ -693,13 +800,15 @@ function RightWorkspaceLauncher({
           shortcut={getRightWorkspaceShortcuts(platform).browser}
           onClick={onSelectBrowser}
         />
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-chat-option"
-          icon={MessageCircle}
-          label={t('workbench.workspace_tab_chat', '临时聊天')}
-          shortcut={getRightWorkspaceShortcuts(platform).chat}
-          onClick={onSelectChat}
-        />
+        {allowTemporaryChat && (
+          <RightWorkspaceLauncherItem
+            data-testid="right-workspace-chat-option"
+            icon={MessageCircle}
+            label={t('workbench.workspace_tab_chat', '临时聊天')}
+            shortcut={getRightWorkspaceShortcuts(platform).chat}
+            onClick={onSelectChat}
+          />
+        )}
         {canBrowseFiles && (
           <RightWorkspaceLauncherItem
             data-testid="right-workspace-file-option"
@@ -722,9 +831,9 @@ function RightWorkspaceLauncherItem({
   onClick,
   'data-testid': testId,
 }: {
-  icon: typeof File
+  icon: ComponentType<{ className?: string }>
   label: string
-  shortcut: string
+  shortcut?: string
   disabled?: boolean
   onClick: () => void
   'data-testid': string
@@ -739,9 +848,11 @@ function RightWorkspaceLauncherItem({
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
-        {shortcut}
-      </span>
+      {shortcut && (
+        <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+          {shortcut}
+        </span>
+      )}
     </button>
   )
 }
@@ -749,7 +860,8 @@ function RightWorkspaceLauncherItem({
 function getRightWorkspaceTabLabel(
   tab: RightWorkspacePanelTab,
   t: ReturnType<typeof useTranslation>['t'],
-  browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
+  browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>,
+  harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>
 ) {
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
   if (tab === 'terminal') return t('workbench.terminal', '终端')
@@ -757,6 +869,12 @@ function getRightWorkspaceTabLabel(
     return browserStates[tab]?.title || t('workbench.browser_new_tab', '新选项卡')
   }
   if (isRightWorkspaceChatTab(tab)) return t('workbench.workspace_tab_chat', '临时聊天')
+  if (isRightWorkspaceHarnessTab(tab)) {
+    return (
+      harnessSessionsById.get(getRightWorkspaceHarnessSessionId(tab))?.title ??
+      t('workbench.harness_session_picker_title', '新建编码会话')
+    )
+  }
   if (tab === 'plan') return t('workbench.workspace_tab_plan', '计划')
   return t('workbench.workspace_tab_files', '文件')
 }
@@ -770,6 +888,9 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
   if (isRightWorkspaceBrowserTab(tab)) {
     return `right-workspace-browser-tab-${getRightWorkspaceBrowserTabSuffix(tab)}`
   }
+  if (isRightWorkspaceHarnessTab(tab)) {
+    return `right-workspace-harness-tab-${getRightWorkspaceHarnessSessionId(tab)}`
+  }
   return `right-workspace-${tab}-tab`
 }
 
@@ -778,6 +899,7 @@ function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
   if (tab === 'terminal') return SquareTerminal
   if (isRightWorkspaceBrowserTab(tab)) return Globe2
   if (isRightWorkspaceChatTab(tab)) return MessageCircle
+  if (isRightWorkspaceHarnessTab(tab)) return SquareTerminal
   if (tab === 'plan') return ListChecks
   return File
 }

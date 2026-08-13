@@ -29,7 +29,7 @@ When Wework is connected to Wegent cloud, the plugin page also displays the Back
 
 Plugins can declare device-side authorization under `connectors[].localAuth`. `local_qr` is used for QR login, while `browser_oauth` is used when a local CLI opens an OAuth flow in the browser. Both modes must provide `health` and `start` commands relative to the plugin root; QR mode must also provide a non-blocking `poll` command. With `authPolicy: on_install`, Wework checks the login after the plugin package is synchronized to the device and opens the authorization UI when needed. Cancellation or failure aborts that installation. First-use and mid-run checks remain recovery paths for expired credentials.
 
-The connector authorization preflight before sending a message runs synchronously only for messages that explicitly reference a `plugin://` URI or contain a connector authentication hint; ordinary messages are sent immediately without reading the installed plugin list, so sending is never blocked by local plugin enumeration.
+The connector authorization preflight before sending a message runs synchronously only for messages that explicitly reference a `plugin://` URI or contain a connector authentication hint; ordinary messages are sent immediately without reading the installed plugin list, so sending is never blocked by local plugin enumeration. When a plugin reference is present, preflight only enriches the mentioned plugins with `plugin/read` and must not call full `plugin/list` / `readState` on the send path, which can stall conversation open by ~10 seconds.
 
 Browser OAuth runs as an asynchronous authorization session with `preparing`, `waiting_browser`, `verifying`, and `ok/error` states. Closing the UI calls the Executor `cancel` RPC and terminates the login process. CLI bridges must emit one status JSON object and must never include tokens, cookies, or other credentials.
 
@@ -44,7 +44,7 @@ Plugin installation is user-scoped, while CLI credentials are device-scoped. Ins
 
 Built-in application plugin identity is defined by the Backend built-in plugin registry. The current registry contains only `wegent-sites` and `weibo-miniapp-h5-develop-agent`; both use `visibility=workspace`, so their canonical marketplace name is `wegent`. `public` remains a valid visibility for ordinary plugins. Only when the built-in installation path finds one of these two system-owned `user_id=0` marketplace rows still stored as `visibility=public` does Backend treat it as a legacy row and normalize it to `workspace` before installing. This prevents the same built-in plugin from appearing as `plugin://...@wework` in old data and `plugin://...@wegent` in the current application create flow.
 
-The Applications page reads its lists through `GET /api/sites`. Sites and Mini Programs share this endpoint and pass `app_type=web` and `app_type=miniapp`, respectively. Omitting the parameter defaults to Sites for backward compatibility. The response `app_type` discriminates the fields for each application type. The page also calls `GET /api/sites/app-types` to discover the types enabled by the current Backend, their display order, and capabilities such as `create`, `publish`, `delete`, and `open_experience`. Wework only shows types that are both enabled by the server and represented by a local Definition, and hides operations that are not supported by the advertised capabilities.
+The Applications page reads its lists through `GET /api/sites`. Sites and Mini Programs share this endpoint and pass `app_type=web` and `app_type=miniapp`, respectively. Omitting the parameter defaults to Sites for backward compatibility. The response `app_type` discriminates the fields for each application type. The page also calls `GET /api/sites/app-types` to discover the types enabled by the current Backend, their display order, and capabilities such as `create`, `publish`, `edit`, `delete`, and `open_experience`. Wework only shows types that are both enabled by the server and represented by a local Definition, and hides operations that are not supported by the advertised capabilities.
 
 When Wework is connected to Wegent cloud, it calls `POST /api/users/me/wegent-runtime-token` to issue the token that local application Skills use for Backend runtime APIs, then writes it to the local Codex shell environment as `WEGENT_RUNTIME_AUTH_TOKEN`. Wework refreshes this token before the returned `expires_in`. `AUTH_TOKEN` remains the existing per-task bearer token, and `WEGENT_AUTH_TOKEN` remains reserved for executor device connections; these credentials must not be used interchangeably.
 
@@ -76,6 +76,22 @@ Custom instructions from Settings → Context are read and written through Codex
 
 The interaction style uses the same `config.toml` as its single source of truth. Selecting Friendly or Pragmatic updates personality through `config/batchWrite`; Wework no longer stores personality in localStorage or repeats it as an override on every thread or turn request.
 
+## Runtime Permission Modes
+
+The Wework composer provides three permission modes for local Codex tasks and persists the selection in `modelSelection.options.permissionMode`. New tasks and historical tasks without this field default to Workspace instead of implicitly receiving full disk access:
+
+| Permission mode | Codex permission profile | Approval policy | Behavior                                                                                                                        |
+| --------------- | ------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Read only       | `:read-only`             | `on-request`    | Reads the workspace; file writes, commands outside the permission boundary, and additional permission requests require approval |
+| Workspace       | `:workspace`             | `on-request`    | Reads and writes inside the workspace; access outside it or permission expansion requires approval                              |
+| Full access     | `:danger-full-access`    | `never`         | Accesses files, the terminal, and the network without approval; enabling it requires an explicit risk confirmation              |
+
+The frontend sends `runtime_permission_profile` with every local runtime request. The Executor applies the corresponding `permissions` and `approvalPolicy` to `thread/start`, `thread/resume`, `thread/fork`, and `turn/start`. Resuming or continuing from a task runtime handle must reconstruct the same profile from the persisted permission mode and must not fall back to a more permissive profile.
+
+Ordinary Wework Claude Code conversations run as non-interactive child processes and cannot display or complete Claude CLI approval prompts. On this execution path, the Claude Code `default` setting therefore maps to `bypassPermissions`; explicit `acceptEdits`, `plan`, `auto`, and `bypassPermissions` selections are still passed through unchanged. Interactive local terminals do not use this mapping.
+
+Codex app-server requests from `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and `item/permissions/requestApproval` are mapped to Wework `request_user_input` cards. The card preserves the order of `availableDecisions`, displays only decisions actually advertised by the protocol, and returns stable protocol values. The Executor supports one-time `accept`, session-scoped `acceptForSession`, command-rule `acceptWithExecpolicyAmendment`, network-host `applyNetworkPolicyAmendment`, `decline`, and `cancel` responses. Structured rules reuse the amendment carried by the Codex request; missing or mismatched payloads are safely declined instead of deriving broader authority from display text. Permission requests can grant turn or session scope, or enable `strictAutoReview` for the current turn so each subsequent command is reviewed; a denial grants no additional permissions.
+
 ## Model List
 
 Wework requests the model catalog from the Codex app-server's `model/list` method through the local executor, then uses the returned provider and model array order unchanged in the model picker. The frontend does not reorder official or default models or custom providers, and does not add models that Codex did not return. The request uses `includeHidden: false`, so models Codex marks as hidden are not displayed.
@@ -85,6 +101,8 @@ Wework requests the model catalog from the Codex app-server's `model/list` metho
 Wework includes the current model category in local runtime requests. Official Codex models receive the original image. Codex providers, local model interfaces, and cloud models are treated as non-official models; before sending an image, the executor creates a temporary model-input file and proportionally reduces the image's short edge to at most `720px`. The long edge is not capped, so panoramic and long screenshots preserve their full aspect ratio instead of being forced into a fixed `1280×720` box. Images whose short edge is already at most `720px` remain unchanged. The original attachment, transcript, and preview URL are never rewritten. Temporary model-input files exist only for the current turn and are removed after it finishes.
 
 ## Chat Runtime
+
+For a new chat, the composer shows the plugin entry with previews for up to three available plugins. After the conversation starts, the entry collapses to a single icon to reduce toolbar usage, while clicking the icon still opens the complete plugin picker. Narrow toolbars use the icon form as well.
 
 When a user selects a skill, app, or plugin in the composer, the editor inserts an indivisible inline mention. The cursor can only stop before or after the mention; copy and submit serialize it as Codex app-server-compatible Markdown:
 

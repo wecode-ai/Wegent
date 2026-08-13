@@ -10,7 +10,11 @@ import type { ReactNode } from 'react'
 import TeamList from '@/features/settings/components/TeamList'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { fetchBotsList } from '@/features/settings/services/bots'
-import { fetchTeamsList } from '@/features/settings/services/teams'
+import {
+  checkTeamRunningTasks,
+  deleteTeam,
+  fetchTeamsList,
+} from '@/features/settings/services/teams'
 import type { Team } from '@/types/api'
 import type { Group } from '@/types/group'
 
@@ -36,6 +40,11 @@ const mockT = (key: string, options?: Record<string, unknown>) =>
     'teams.more_actions': 'More actions',
     'teams.api_call.action': 'Call via API',
     'teams.unbind': 'Unbind',
+    'teams.delete': 'Delete Agent',
+    'teams.delete_confirm_title': 'Confirm Delete',
+    'teams.destructive_delete_warning': 'Existing references will stop working.',
+    'teams.confirm_name_label': 'Enter the current technical name',
+    'common.cancel': 'Cancel',
     'publication.published_to_library': 'Published to Resource Library',
     'settings:team.list.runOnDevice': 'Run on Device',
     'teams.new_team': 'New Team',
@@ -251,6 +260,25 @@ describe('TeamList mode filter', () => {
       expect(screen.queryByText('chat-agent')).not.toBeInTheDocument()
       expect(screen.getByText('device-agent')).toBeInTheDocument()
     })
+  })
+
+  it('deletes an owned agent with name confirmation and no running-task scan', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([makeTeam(1, 'deletable-agent', ['chat'])])
+    ;(deleteTeam as jest.Mock).mockResolvedValue(undefined)
+
+    render(<TeamList scope="personal" />)
+
+    const card = await screen.findByTestId('team-card-1')
+    fireEvent.click(within(card).getByTitle('Delete Agent'))
+    fireEvent.change(screen.getByTestId('team-identity-confirmation-input'), {
+      target: { value: 'deletable-agent' },
+    })
+    fireEvent.click(screen.getByTestId('confirm-team-identity-change'))
+
+    await waitFor(() => {
+      expect(deleteTeam).toHaveBeenCalledWith(1, 'deletable-agent')
+    })
+    expect(checkTeamRunningTasks).not.toHaveBeenCalled()
   })
 
   it('shows the owning group for group resources when listing all groups', async () => {

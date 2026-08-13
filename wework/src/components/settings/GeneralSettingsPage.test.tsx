@@ -9,6 +9,7 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -48,6 +49,8 @@ const translateMock = vi.hoisted(
 )
 const importExternalContentMock = vi.hoisted(() => vi.fn())
 const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
+const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
+const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -59,6 +62,7 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    defaultWorkspaceTab: 'task',
     systemDragEnabled: true,
     preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
@@ -137,6 +141,8 @@ describe('GeneralSettingsPage', () => {
     applyLanguagePreferenceMock.mockReset()
     importExternalContentMock.mockReset()
     getWegentUsageDisplayMock.mockReset()
+    getRuntimeSettingsMock.mockReset()
+    updateRuntimeSettingsMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -144,6 +150,8 @@ describe('GeneralSettingsPage', () => {
       importedEntries: ['config.toml'],
     })
     getAppPreferencesMock.mockResolvedValue(defaultPreferences)
+    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 3 })
+    updateRuntimeSettingsMock.mockImplementation(settings => Promise.resolve(settings))
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
     )
@@ -171,6 +179,46 @@ describe('GeneralSettingsPage', () => {
     expect(screen.getByTestId('general-language-en-button')).toBeInTheDocument()
   })
 
+  test('loads and updates the maximum parallel task count', async () => {
+    getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
+    render(
+      <WorkbenchContext.Provider
+        value={
+          {
+            services: {
+              runtimeWorkApi: {
+                getRuntimeSettings: getRuntimeSettingsMock,
+                updateRuntimeSettings: updateRuntimeSettingsMock,
+              },
+            },
+          } as unknown as WorkbenchContextValue
+        }
+      >
+        <GeneralSettingsPage />
+      </WorkbenchContext.Provider>
+    )
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('5')
+
+    await userEvent.selectOptions(select, '2')
+
+    await waitFor(() => {
+      expect(updateRuntimeSettingsMock).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
+    })
+    expect(select).toHaveValue('2')
+  })
+
+  test('uses ten parallel tasks when runtime settings are unavailable', async () => {
+    getRuntimeSettingsMock.mockResolvedValue(undefined)
+    render(<GeneralSettingsPage />)
+
+    const select = await screen.findByTestId('general-max-concurrent-tasks-select')
+    await waitFor(() => expect(select).toBeEnabled())
+    expect(select).toHaveValue('10')
+  })
+
   test('saves and applies the selected language', async () => {
     render(<GeneralSettingsPage />)
 
@@ -182,6 +230,26 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
     })
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  })
+
+  test('persists the selected default workspace tab', async () => {
+    render(<GeneralSettingsPage />)
+
+    const boardButton = await screen.findByTestId('general-default-workspace-tab-board-button')
+    await waitFor(() => expect(boardButton).toBeEnabled())
+    expect(screen.getByTestId('general-default-workspace-tab-task-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(boardButton)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        defaultWorkspaceTab: 'board',
+      })
+    })
+    expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('keeps experimental features off by default and persists enabling them', async () => {

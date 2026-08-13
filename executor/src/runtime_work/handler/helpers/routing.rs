@@ -1,5 +1,5 @@
-fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) {
-    if !is_inactive_running_codex_task(link) {
+fn normalize_inactive_running_task(link: &mut RuntimeTaskLink) {
+    if !is_inactive_running_task(link) {
         return;
     }
     link.status = "active".to_owned();
@@ -15,9 +15,37 @@ fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) {
     link.updated_at = now_ms();
 }
 
-fn apply_local_execution_state(link: &mut RuntimeTaskLink, running: bool) {
+fn apply_local_execution_state(
+    link: &mut RuntimeTaskLink,
+    running: bool,
+    queue_position: Option<usize>,
+) {
+    if let Some(queue_position) = queue_position {
+        link.running = false;
+        link.status = "queued".to_owned();
+        link.thread_status = if link.thread_id.is_some() {
+            "idle".to_owned()
+        } else {
+            "notLoaded".to_owned()
+        };
+        if link
+            .turn_status
+            .as_deref()
+            .is_some_and(runtime_status_is_running)
+        {
+            link.turn_status = Some("completed".to_owned());
+        }
+        let mut runtime_handle = link
+            .runtime_handle
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        runtime_handle.insert("queuePosition".to_owned(), json!(queue_position + 1));
+        link.runtime_handle = Value::Object(runtime_handle);
+        return;
+    }
     if !running {
-        normalize_inactive_running_codex_task(link);
+        normalize_inactive_running_task(link);
         return;
     }
 
@@ -27,8 +55,8 @@ fn apply_local_execution_state(link: &mut RuntimeTaskLink, running: bool) {
     link.turn_status = Some("inProgress".to_owned());
 }
 
-fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
-    if !link.running || !is_codex_runtime(&link.runtime) {
+fn is_inactive_running_task(link: &RuntimeTaskLink) -> bool {
+    if !link.running {
         return false;
     }
     let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();
@@ -274,13 +302,36 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
 }
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
-    ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: link.local_task_id.clone(),
         subtask_id: format!("{}-context-compact", link.local_task_id),
         project_workspace_path: Some(link.workspace_path.clone()),
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
+    };
+    if let Some(permission_mode) = link
+        .runtime_handle
+        .get("modelSelection")
+        .or_else(|| link.runtime_handle.get("model_selection"))
+        .and_then(|selection| selection.get("options"))
+        .and_then(|options| {
+            options
+                .get("permissionMode")
+                .or_else(|| options.get("permission_mode"))
+        })
+        .and_then(Value::as_str)
+    {
+        let profile = match permission_mode {
+            "read-only" => CODEX_READ_ONLY_PERMISSION_PROFILE,
+            "workspace-write" => CODEX_WORKSPACE_PERMISSION_PROFILE,
+            _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+        };
+        request.extra.insert(
+            "runtime_permission_profile".to_owned(),
+            Value::String(profile.to_owned()),
+        );
     }
+    request
 }
 
 fn runtime_project_workspace_path(
@@ -341,6 +392,13 @@ fn is_cached_codex_link_hidden(
 
 fn is_codex_runtime(runtime: &str) -> bool {
     runtime.eq_ignore_ascii_case("codex")
+}
+
+fn is_claude_runtime(runtime: &str) -> bool {
+    matches!(
+        runtime.trim().to_ascii_lowercase().as_str(),
+        "claude" | "claudecode" | "claude_code"
+    )
 }
 
 fn append_unique_links(links: &mut Vec<RuntimeTaskLink>, new_links: Vec<RuntimeTaskLink>) {

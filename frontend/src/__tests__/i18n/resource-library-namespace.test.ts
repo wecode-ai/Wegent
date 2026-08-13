@@ -14,6 +14,7 @@ describe('resource library i18n namespace', () => {
     expect(zhResourceLibrary.mine.title).toBe('我的能力')
     expect(zhResourceLibrary.sources.installed).toBe('已添加')
     expect(zhResourceLibrary.actions.open_chat).toBe('去对话')
+    expect(zhResourceLibrary.mcp_market.target_search_placeholder).toBe('搜索智能体或机器人')
     expect(enResourceLibrary.title).toBe('Resource Library')
   })
 

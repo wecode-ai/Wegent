@@ -164,6 +164,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -246,6 +247,7 @@ class GiteeProvider(RepositoryProvider):
                         "per_page": per_page,
                         "page": page,
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -280,7 +282,9 @@ class GiteeProvider(RepositoryProvider):
 
         try:
             response = requests.get(
-                f"{api_base_url}/repos/{repo_name}", params={"access_token": git_token}
+                f"{api_base_url}/repos/{repo_name}",
+                params={"access_token": git_token},
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
@@ -324,7 +328,9 @@ class GiteeProvider(RepositoryProvider):
 
         try:
             response = requests.get(
-                f"{api_base_url}/user", params={"access_token": decrypt_token}
+                f"{api_base_url}/user",
+                params={"access_token": decrypt_token},
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
 
             if response.status_code == 401:
@@ -521,6 +527,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
                 repos = response.json()
@@ -611,6 +618,7 @@ class GiteeProvider(RepositoryProvider):
                         "sort": "updated",
                         "affiliation": "owner,collaborator",
                     },
+                    timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
 
@@ -725,6 +733,7 @@ class GiteeProvider(RepositoryProvider):
             response = requests.get(
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
                 params={"access_token": git_token},
+                timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 

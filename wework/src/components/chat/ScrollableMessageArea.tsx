@@ -63,6 +63,8 @@ interface ScrollableMessageAreaProps {
   scrollerClassName?: string
   contentClassName?: string
   messageListClassName?: string
+  contentFooter?: ReactNode
+  contentFooterClassName?: string
   stickyFooter?: ReactNode
   stickyFooterClassName?: string
   scrollButtonClassName?: string
@@ -136,6 +138,10 @@ function areScrollableMessageAreaPropsEqual(
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
     previous.contentClassName !== next.contentClassName ? 'contentClassName' : null,
     previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
+    previous.contentFooter !== next.contentFooter ? 'contentFooter' : null,
+    previous.contentFooterClassName !== next.contentFooterClassName
+      ? 'contentFooterClassName'
+      : null,
     previous.stickyFooter !== next.stickyFooter ? 'stickyFooter' : null,
     previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
@@ -210,6 +216,8 @@ function ScrollableMessagePaneContent({
   scrollerClassName,
   contentClassName,
   messageListClassName,
+  contentFooter,
+  contentFooterClassName,
   stickyFooter,
   stickyFooterClassName,
   scrollButtonClassName,
@@ -1196,6 +1204,14 @@ function ScrollableMessagePaneContent({
                 onVirtualLayoutChange={handleContentLayoutChange}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
+              {contentFooter ? (
+                <div
+                  data-testid={`${scrollTestId}-content-footer`}
+                  className={contentFooterClassName}
+                >
+                  {contentFooter}
+                </div>
+              ) : null}
             </>
           )}
         </div>

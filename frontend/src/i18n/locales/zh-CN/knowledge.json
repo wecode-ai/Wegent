@@ -43,9 +43,12 @@
     "selectKnowledgeBase": "选择一个知识库查看文档",
     "selectWholeKb": "选择知识库",
     "selected": "已选择",
-    "selectedDocuments": "已选 {{count}} 个文档",
-    "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
-    "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
+    "scopeAllDocuments": "全部 · {{count}} 文档",
+    "scopeDocumentsCompact_one": "{{count}} 文档",
+    "scopeDocumentsCompact_other": "{{count}} 文档",
+    "scopeFoldersCompact_one": "{{count}} 文件夹",
+    "scopeFoldersCompact_other": "{{count}} 文件夹",
+    "scopeMixedCompact": "{{folderCount}} 文件夹 · {{documentCount}} 文档",
     "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
     "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
     "previewUnavailable": "预览地址不可用"
@@ -244,6 +247,14 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
+      "categoryFilter": {
+        "label": "知识库类别",
+        "all": "全部",
+        "document": "文档",
+        "code": "代码",
+        "emptyDocument": "暂无文档知识库",
+        "emptyCode": "暂无代码知识库"
+      },
       "currentDefaultView": "当前默认打开方式",
       "convertToNotebook": "默认打开工作台",
       "convertToClassic": "默认打开文档管理",
@@ -419,6 +430,7 @@
         "transferSuccessFolders": "已成功转移 {{folderCount}} 个文件夹",
         "transferSuccessMixed": "已成功转移 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "transferFailed": "转移失败",
+        "transferSelectionLimit": "每次最多选择 {{count}} 个文档和文件夹",
         "noOtherKbs": "没有符合转移规则的目标知识库",
         "errors": {
           "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
@@ -427,6 +439,7 @@
           "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
           "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
           "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "每次最多转移 200 个文档和文件夹",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }
@@ -1146,6 +1159,13 @@
       "emptyFailed": "上次生成没有完成",
       "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
     },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "文档管理",
+      "generatedContent": "Wiki",
+      "userContent": "文档",
+      "permissions": "权限管理"
+    },
     "history": {
       "title": "生成历史",
       "never": "尚未生成",
@@ -1167,7 +1187,10 @@
       "republished": "已恢复该版本",
       "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
       "republishConfirmTitle": "恢复这个版本？",
-      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。"
+      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",
+      "viewFailure": "查看完整错误",
+      "failureDetailsTitle": "生成错误",
+      "failureDetailsDescription": "本次生成的完整错误信息。"
     },
     "failure": {
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",

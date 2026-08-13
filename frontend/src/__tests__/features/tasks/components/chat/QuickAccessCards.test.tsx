@@ -35,6 +35,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:teams.more': 'More',
         'common:teams.select_team': 'Select team',
         'common:teams.search_team': 'Search team',
+        'common:teams.search_all_agents': 'Search all agents...',
         'common:teams.no_match': 'No match',
         'common:teams.reorder_quick_access': 'Drag to reorder',
         'teams.create_first_team': 'Create Agent',
@@ -758,6 +759,51 @@ describe('QuickAccessCards', () => {
     )
   })
 
+  test('searches all agents directly from the favorites view', async () => {
+    renderQuickAccessCards(
+      [
+        makeTeam({ id: 2, name: 'favorite-team' }),
+        makeTeam({
+          id: 3,
+          name: 'other-team',
+          displayName: 'Other Agent',
+          bind_mode: ['image'],
+        }),
+      ],
+      {
+        system_version: 2,
+        system_team_ids: [],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [
+          {
+            id: 2,
+            name: 'favorite-team',
+            display_name: 'Favorite Agent',
+            is_system: false,
+            recommended_mode: 'chat',
+          },
+        ],
+      }
+    )
+
+    fireEvent.click(await screen.findByText('More'))
+
+    expect(screen.queryByTestId('quick-access-more-team-other-team')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText('Search all agents...'), {
+      target: { value: 'Other Agent' },
+    })
+
+    expect(await screen.findByTestId('quick-access-more-team-other-team')).toHaveTextContent(
+      'Other Agent'
+    )
+
+    fireEvent.click(screen.getByTestId('quick-access-more-team-other-team'))
+
+    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=3&mode=image')
+  })
+
   test('shows generation agents in all agents and switches to their mode', async () => {
     renderQuickAccessCards(
       [
@@ -786,6 +832,51 @@ describe('QuickAccessCards', () => {
     fireEvent.click(screen.getByTestId('quick-access-more-team-image-team'))
 
     expect(routerPush).toHaveBeenCalledWith('/chat?teamId=2&mode=image')
+  })
+
+  test('shows favorite image and video agents in chat mode and opens their modes', async () => {
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [],
+      favorite_agents: [
+        makeQuickLaunchFavoriteAgent(2, 'image-team', 'Favorite Image Team'),
+        makeQuickLaunchFavoriteAgent(3, 'video-team', 'Favorite Video Team'),
+      ],
+    } satisfies QuickLaunchResponse)
+
+    renderQuickAccessCards(
+      [
+        makeTeam({ id: 2, name: 'image-team', bind_mode: ['image'] }),
+        makeTeam({ id: 3, name: 'video-team', bind_mode: ['video'] }),
+      ],
+      {
+        system_version: 2,
+        system_team_ids: [],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [
+          {
+            id: 2,
+            name: 'image-team',
+            display_name: 'Favorite Image Team',
+            is_system: false,
+            recommended_mode: 'chat',
+          },
+          {
+            id: 3,
+            name: 'video-team',
+            display_name: 'Favorite Video Team',
+            is_system: false,
+            recommended_mode: 'chat',
+          },
+        ],
+      }
+    )
+
+    fireEvent.click(await screen.findByText('Favorite Image Team'))
+    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=2&quickLauncher=agent%3A2&mode=image')
+
+    fireEvent.click(screen.getByText('Favorite Video Team'))
+    expect(routerPush).toHaveBeenCalledWith('/chat?teamId=3&quickLauncher=agent%3A3&mode=video')
   })
 
   test('opens the simple agent editor from the quick create card', async () => {

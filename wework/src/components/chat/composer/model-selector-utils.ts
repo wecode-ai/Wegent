@@ -1,6 +1,9 @@
 import {
   type ModelControlConfig,
   getControlsForModel,
+  isCodexOfficialModel,
+  isModelInterfaceModel,
+  isSameModelSelection,
   normalizeModelOptionValue,
 } from '@/lib/model-ui'
 import type { ModelCompatibilityDisabledReason, ModelOptions, UnifiedModel } from '@/types/api'
@@ -46,7 +49,9 @@ function normalizedModelId(model: UnifiedModel): string {
 }
 
 export function isCodexDefaultModel(model: UnifiedModel | null): boolean {
-  return Boolean(model && normalizedModelId(model) === CODEX_DEFAULT_MODEL_ID)
+  return Boolean(
+    model && isCodexOfficialModel(model) && normalizedModelId(model) === CODEX_DEFAULT_MODEL_ID
+  )
 }
 
 export function findCodexDefaultModel(models: UnifiedModel[]): UnifiedModel | null {
@@ -60,7 +65,9 @@ function resolvePowerSettings(
   return definitions.flatMap(definition => {
     const model = models.find(
       candidate =>
-        !candidate.compatibilityDisabled && normalizedModelId(candidate) === definition.modelId
+        !candidate.compatibilityDisabled &&
+        isCodexOfficialModel(candidate) &&
+        normalizedModelId(candidate) === definition.modelId
     )
     if (!model) return []
 
@@ -95,15 +102,16 @@ export function isSelectedPowerSetting(
 ): boolean {
   return Boolean(
     selectedModel &&
-    normalizedModelId(selectedModel) === setting.modelId &&
+    isSameModelSelection(selectedModel, setting.model) &&
     normalizeModelOptionValue('reasoning', reasoningEffort) === setting.reasoningEffort
   )
 }
 
 export function desktopModelControl(
-  control: ModelControlConfig | undefined
+  control: ModelControlConfig | undefined,
+  model: UnifiedModel | null
 ): ModelControlConfig | undefined {
-  if (!control || control.id !== 'reasoning') {
+  if (!control || control.id !== 'reasoning' || isModelInterfaceModel(model)) {
     return control
   }
 

@@ -9,10 +9,13 @@ import { AlertCircle, Database, Loader2, Plus, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { getExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import {
+  getExternalKnowledgeSourceLabel,
+  useExternalKnowledgeSources,
+} from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import { formatCompactKnowledgeScope } from '@/features/knowledge/knowledgeContextPresentation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
 import { cn } from '@/lib/utils'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { ExternalKnowledgeRef } from '@/types/context'
@@ -48,16 +51,11 @@ interface TaskKnowledgeBindingPanelProps {
 function externalRefKey(ref: ExternalKnowledgeRef) {
   const targetType = ref.target_type ?? 'knowledge_base'
   const targetId = ref.node_id ?? ref.document_id ?? 'source'
-  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
-}
-
-function providerBadgeLabel(provider: string) {
-  const source = getExternalKnowledgeSource(provider)
-  return source?.shortLabel ?? provider.toUpperCase()
+  return `external:${ref.provider}:${ref.mode}:${ref.scope ?? ''}:${ref.id}:${targetType}:${targetId}`
 }
 
 function externalDisplayName(ref: ExternalKnowledgeRef) {
-  return ref.name ?? ref.id ?? ref.provider
+  return ref.name ?? ref.id
 }
 
 function externalTargetName(ref: ExternalKnowledgeRef) {
@@ -87,6 +85,7 @@ export default function TaskKnowledgeBindingPanel({
 }: TaskKnowledgeBindingPanelProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
+  const externalSources = useExternalKnowledgeSources()
   const [internalKnowledgeBases, setInternalKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>(
     []
   )
@@ -114,14 +113,17 @@ export default function TaskKnowledgeBindingPanel({
       kind: 'external',
       key: externalRefKey(ref),
       displayName: externalDisplayName(ref),
-      providerLabel: providerBadgeLabel(ref.provider),
+      providerLabel: getExternalKnowledgeSourceLabel(
+        ref.provider,
+        externalSources.find(source => source.providerId === ref.provider)
+      ),
       targetName: externalTargetName(ref),
       detailText: t('knowledgeBinding.externalKnowledge'),
       raw: ref,
     }))
 
     return [...internalItems, ...externalItems]
-  }, [externalRefs, internalKnowledgeBases, t])
+  }, [externalRefs, externalSources, internalKnowledgeBases, t])
 
   const fetchBindings = useCallback(async () => {
     setLoading(true)
@@ -280,7 +282,7 @@ export default function TaskKnowledgeBindingPanel({
                           </Badge>
                         ) : (
                           <span className="rounded bg-surface px-1.5 py-0.5 text-xs text-text-muted">
-                            {formatDocumentCount(item.documentCount, t)}
+                            {formatCompactKnowledgeScope(0, item.documentCount, t)}
                           </span>
                         )}
                       </div>

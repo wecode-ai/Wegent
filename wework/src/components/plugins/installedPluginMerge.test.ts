@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
-import { isCloudManagedInstalledPlugin, mergeInstalledPlugins } from './installedPluginMerge'
+import {
+  isCloudManagedInstalledPlugin,
+  mergeInstalledPlugins,
+  resolveProgressiveLocalInstalledRaw,
+} from './installedPluginMerge'
 
 function cloudPlugin(
   overrides?: Partial<InstalledPlugin['spec']> & { id?: number }
@@ -51,6 +55,7 @@ function localCodexPlugin(overrides?: {
   name?: string
   pluginKey?: string
   marketplace?: string
+  version?: string
 }): InstalledPlugin {
   const id = overrides?.id ?? 'superpowers-local-id'
   const name = overrides?.name ?? 'superpowers'
@@ -72,6 +77,7 @@ function localCodexPlugin(overrides?: {
       sourceLabel: 'Codex 官方',
       displayName: name,
       description: `${name} plugin`,
+      version: overrides?.version,
       installState: 'installed',
       enabled: true,
       componentStates: {},
@@ -98,6 +104,39 @@ describe('mergeInstalledPlugins', () => {
     const merged = mergeInstalledPlugins([cloudPlugin()], [localCodexPlugin()], 'current-device')
 
     expect(merged.map(item => item.spec.displayName)).toEqual(['GitHub', 'superpowers'])
+  })
+
+  test('uses the local materialized version when a cloud update failed', () => {
+    const cloud = cloudPlugin({ installState: 'update_available' })
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: 5,
+        state: 'failed',
+        attemptCount: 1,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const local = localCodexPlugin({
+      id: 'github-local',
+      name: 'github',
+      pluginKey: 'github',
+      marketplace: 'wegent',
+      version: '0.9.0',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [local], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.spec.displayName).toBe('GitHub')
+    expect(merged[0]?.spec.releaseId).toBe(5)
+    expect(merged[0]?.spec.version).toBe('0.9.0')
+    expect(merged[0]?.spec.installState).toBe('update_available')
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({
+      releaseId: 5,
+      cloudInstalledPluginId: '4',
+    })
   })
 
   test('keeps same-name plugins from a different marketplace', () => {
@@ -202,5 +241,72 @@ describe('isCloudManagedInstalledPlugin', () => {
   test('treats only numeric cloud pluginId as cloud-managed', () => {
     expect(isCloudManagedInstalledPlugin(cloudPlugin())).toBe(true)
     expect(isCloudManagedInstalledPlugin(localCodexPlugin())).toBe(false)
+  })
+})
+
+describe('resolveProgressiveLocalInstalledRaw', () => {
+  const cached = [cloudPlugin({ id: 1 })]
+  const peeked = [localCodexPlugin()]
+  const refreshed = [localCodexPlugin({ id: 'refreshed-local' })]
+
+  test('keeps empty account cache authoritative over peek installs', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: [],
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+        cachedDeviceId: 'device-a',
+        localDeviceId: 'device-b',
+      })
+    ).toEqual([])
+  })
+
+  test('keeps non-empty account cache authoritative over peek installs', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: cached,
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+        cachedDeviceId: 'device-a',
+        localDeviceId: 'device-b',
+      })
+    ).toEqual(cached)
+  })
+
+  test('uses peek installs when they belong to the cached current device', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: cached,
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+        cachedDeviceId: 'current-device',
+        localDeviceId: 'current-device',
+      })
+    ).toEqual(peeked)
+  })
+
+  test('allows refreshed local reads to replace warm cache', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: true,
+        cachedInstalledRaw: cached,
+        localInstalledRaw: refreshed,
+        localStateIsPeek: false,
+      })
+    ).toEqual(refreshed)
+  })
+
+  test('uses peek installs when the account cache is cold', () => {
+    expect(
+      resolveProgressiveLocalInstalledRaw({
+        hasCachedSnapshot: false,
+        cachedInstalledRaw: [],
+        localInstalledRaw: peeked,
+        localStateIsPeek: true,
+      })
+    ).toEqual(peeked)
   })
 })

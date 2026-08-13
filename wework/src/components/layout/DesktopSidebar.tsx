@@ -1,6 +1,8 @@
 import {
   Archive,
   AlarmClock,
+  ArrowDown,
+  ArrowUp,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -20,11 +22,12 @@ import {
   Plus,
   RotateCw,
   Search,
+  SquareTerminal,
   Sparkles,
   UserRound,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -43,6 +46,8 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycle,
@@ -117,6 +122,7 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
+import { getWorkbenchPaneKey } from './workbenchPaneIdentity'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import {
@@ -150,6 +156,7 @@ import {
   getVisibleRuntimeSidebarTaskItems,
   hasExpandedRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
+  isRuntimeTaskQueued,
   isRuntimeTaskSelected,
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
@@ -161,6 +168,7 @@ import {
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
+import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
 
 interface DesktopSidebarProps {
   user: UserProfile | null
@@ -175,6 +183,8 @@ interface DesktopSidebarProps {
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  localHarnessSessions?: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -188,6 +198,8 @@ interface DesktopSidebarProps {
   onToggleSidebar?: () => void
   onNewChat: () => void
   onStartStandaloneChat: () => void
+  onOpenLocalHarnessSession?: (sessionId: string) => void
+  onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -1130,7 +1142,7 @@ function GlobalImNotificationBell({
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
                   {t(
                     'workbench.away_im_reminder_description',
-                    '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
+                    '锁屏或 Wework 未聚焦时，任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
                   )}
                 </p>
               </div>
@@ -1498,6 +1510,9 @@ function RuntimeTaskRow({
   const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
   const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [forceStarting, setForceStarting] = useState(false)
+  const [queueReordering, setQueueReordering] = useState(false)
+  const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
   const titleShimmerDelayRef = useRef<number | null>(null)
@@ -1509,6 +1524,11 @@ function RuntimeTaskRow({
   const repositoryLabel = getRuntimeTaskRepositoryLabel(workspace, task)
   const branchLabel = getRuntimeTaskBranch(task)
   const taskWorkspacePath = task.workspacePath || workspace.workspacePath
+  const boardOrigin = runtimeTaskBoardOrigin(task)
+  const boardOriginLabel =
+    boardOrigin === 'board_comment'
+      ? t('workbench.runtime_task_origin_board_comment', '看板评论')
+      : t('workbench.runtime_task_origin_board_task', '看板任务')
   const hostLabel =
     workspace.remoteHostId ||
     (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
@@ -1518,6 +1538,11 @@ function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const queued = isRuntimeTaskQueued(task)
+  const queuePosition =
+    queued && Number.isInteger(task.queuePosition) && Number(task.queuePosition) > 0
+      ? Number(task.queuePosition)
+      : null
   const threadId = getRuntimeTaskThreadId(task)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
@@ -1628,6 +1653,33 @@ function RuntimeTaskRow({
     if (notificationsDisabled) return
     void onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed)
   }
+  const forceStartTask = async () => {
+    if (!queued || !workbench || forceStarting) return
+    setForceStarting(true)
+    try {
+      await workbench.forceStartRuntimeTask(taskAddress)
+    } catch (forceStartError) {
+      console.error('[Wework] Failed to force start queued runtime task', forceStartError)
+      workbench.setWorkbenchError(t('workbench.runtime_task_force_start_failed'))
+    } finally {
+      setForceStarting(false)
+    }
+  }
+  const reorderQueuedTask = async (nextPosition: number) => {
+    if (!queued || !workbench || queueReordering) return
+    setQueueReordering(true)
+    try {
+      await workbench.reorderQueuedRuntimeTask({
+        ...taskAddress,
+        queuePosition: Math.max(1, nextPosition),
+      })
+    } catch (queueReorderError) {
+      console.error('[Wework] Failed to reorder queued runtime task', queueReorderError)
+      workbench.setWorkbenchError(t('workbench.runtime_task_queue_reorder_failed'))
+    } finally {
+      setQueueReordering(false)
+    }
+  }
   const notificationActionLabel = notificationsSubscribed
     ? t('workbench.unsubscribe_runtime_task_notifications', '取消任务通知')
     : t('workbench.subscribe_runtime_task_notifications', '订阅任务通知')
@@ -1678,6 +1730,7 @@ function RuntimeTaskRow({
           role="button"
           tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
+          aria-current={selected ? 'page' : undefined}
           onClick={handleOpen}
           onContextMenu={event => {
             event.preventDefault()
@@ -1707,7 +1760,7 @@ function RuntimeTaskRow({
               <span
                 data-testid={`runtime-local-task-title-${task.taskId}`}
                 className={cn(
-                  'runtime-task-title relative truncate',
+                  'runtime-task-title relative flex min-w-0 items-center gap-1 truncate',
                   titleShimmering && 'is-updated'
                 )}
               >
@@ -1716,6 +1769,13 @@ function RuntimeTaskRow({
                     aria-hidden="true"
                     className="runtime-task-title-shimmer"
                     data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
+                  />
+                ) : null}
+                {boardOrigin ? (
+                  <MessageCircle
+                    data-testid={`runtime-local-task-board-comment-${task.taskId}`}
+                    className="h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
+                    aria-label={boardOriginLabel}
                   />
                 ) : null}
                 <span
@@ -1754,6 +1814,13 @@ function RuntimeTaskRow({
                   data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
                 />
               ) : null}
+              {boardOrigin ? (
+                <MessageCircle
+                  data-testid={`runtime-local-task-board-comment-${task.taskId}`}
+                  className="mr-1 inline h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
+                  aria-label={boardOriginLabel}
+                />
+              ) : null}
               <span
                 data-sidebar-drag-activator
                 data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
@@ -1787,7 +1854,41 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
               <span className="flex h-[30px] w-[30px] items-center justify-center">
-                {taskLifecycle?.derived.shouldShowSidebarRunning ? (
+                {queued ? (
+                  <span
+                    data-testid={`runtime-local-task-queued-${task.taskId}`}
+                    role="status"
+                    title={
+                      queuePosition
+                        ? `${t('workbench.runtime_task_queued')} · ${t(
+                            'workbench.runtime_task_queue_position',
+                            'Position {{position}}',
+                            { position: queuePosition }
+                          )}`
+                        : t('workbench.runtime_task_queued')
+                    }
+                    aria-label={
+                      queuePosition
+                        ? `${t('workbench.runtime_task_queued')} · ${t(
+                            'workbench.runtime_task_queue_position',
+                            'Position {{position}}',
+                            { position: queuePosition }
+                          )}`
+                        : t('workbench.runtime_task_queued')
+                    }
+                    className="flex h-[30px] min-w-[30px] items-center justify-center gap-0.5"
+                  >
+                    <AlarmClock className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    {queuePosition ? (
+                      <span
+                        data-testid={`runtime-local-task-queue-position-${task.taskId}`}
+                        className="text-xs tabular-nums text-[rgb(var(--color-sidebar-text-muted))]"
+                      >
+                        {queuePosition}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : taskLifecycle?.derived.shouldShowSidebarRunning ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
@@ -1834,7 +1935,10 @@ function RuntimeTaskRow({
             </span>
             <span
               data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
-              className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[72px] -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+              className={cn(
+                'pointer-events-none absolute right-0 top-1/2 z-[70] flex -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100',
+                queued ? 'w-[96px]' : 'w-[72px]'
+              )}
             >
               {experimentalFeaturesEnabled &&
                 renderNotificationButton(
@@ -1845,27 +1949,89 @@ function RuntimeTaskRow({
                     ? `runtime-local-task-notify-hover-icon-${task.taskId}`
                     : `runtime-local-task-notify-icon-${task.taskId}`
                 )}
-              <button
-                type="button"
-                data-testid={`runtime-local-task-mark-${task.taskId}`}
-                onClick={handleToggleMark}
-                disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
-                className={cn(
-                  'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
-                  marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
-                )}
-                title={
-                  marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
-                }
-                aria-label={
-                  marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
-                }
-              >
-                <Pin
-                  data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
-                  className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
-                />
-              </button>
+              {queued ? (
+                <>
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-queue-up-${task.taskId}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      void reorderQueuedTask((queuePosition ?? 1) - 1)
+                    }}
+                    disabled={
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null ||
+                      queuePosition <= 1
+                    }
+                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                    title={t('workbench.runtime_task_queue_move_up')}
+                    aria-label={t('workbench.runtime_task_queue_move_up')}
+                  >
+                    <ArrowUp className="h-[15px] w-[15px]" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-queue-down-${task.taskId}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      void reorderQueuedTask((queuePosition ?? 1) + 1)
+                    }}
+                    disabled={
+                      !workspace.available ||
+                      !workbench ||
+                      queueReordering ||
+                      queuePosition === null
+                    }
+                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                    title={t('workbench.runtime_task_queue_move_down')}
+                    aria-label={t('workbench.runtime_task_queue_move_down')}
+                  >
+                    <ArrowDown className="h-[15px] w-[15px]" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`runtime-local-task-force-start-${task.taskId}`}
+                    onClick={event => {
+                      event.stopPropagation()
+                      void forceStartTask()
+                    }}
+                    disabled={!workspace.available || !workbench || forceStarting}
+                    className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+                    title={t('workbench.runtime_task_force_start')}
+                    aria-label={t('workbench.runtime_task_force_start')}
+                  >
+                    {forceStarting ? (
+                      <RotateCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-[15px] w-[15px]" />
+                    )}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  data-testid={`runtime-local-task-mark-${task.taskId}`}
+                  onClick={handleToggleMark}
+                  disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
+                  className={cn(
+                    'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                    marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
+                  )}
+                  title={
+                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
+                  }
+                  aria-label={
+                    marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task')
+                  }
+                >
+                  <Pin
+                    data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
+                    className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
+                  />
+                </button>
+              )}
               <button
                 type="button"
                 data-testid={`runtime-local-task-archive-${task.taskId}`}
@@ -1895,6 +2061,49 @@ function RuntimeTaskRow({
         onContextMenuClose={() => setTaskMenuPosition(null)}
         triggerClassName="hidden"
         items={[
+          ...(queued
+            ? [
+                {
+                  label: t('workbench.runtime_task_force_start'),
+                  icon: Sparkles,
+                  testId: `runtime-local-task-menu-force-start-${task.taskId}`,
+                  disabled: !workspace.available || !workbench || forceStarting,
+                  onSelect: forceStartTask,
+                },
+                {
+                  label: t('workbench.runtime_task_queue_move_first'),
+                  icon: ArrowUp,
+                  testId: `runtime-local-task-menu-queue-first-${task.taskId}`,
+                  disabled:
+                    !workspace.available ||
+                    !workbench ||
+                    queueReordering ||
+                    queuePosition === null ||
+                    queuePosition <= 1,
+                  onSelect: () => reorderQueuedTask(1),
+                },
+                {
+                  label: t('workbench.runtime_task_queue_move_up'),
+                  icon: ArrowUp,
+                  testId: `runtime-local-task-menu-queue-up-${task.taskId}`,
+                  disabled:
+                    !workspace.available ||
+                    !workbench ||
+                    queueReordering ||
+                    queuePosition === null ||
+                    queuePosition <= 1,
+                  onSelect: () => reorderQueuedTask((queuePosition ?? 1) - 1),
+                },
+                {
+                  label: t('workbench.runtime_task_queue_move_down'),
+                  icon: ArrowDown,
+                  testId: `runtime-local-task-menu-queue-down-${task.taskId}`,
+                  disabled:
+                    !workspace.available || !workbench || queueReordering || queuePosition === null,
+                  onSelect: () => reorderQueuedTask((queuePosition ?? 1) + 1),
+                },
+              ]
+            : []),
           {
             label: marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task'),
             icon: Pin,
@@ -1990,9 +2199,73 @@ function RuntimeTaskRow({
   )
 }
 
+function LocalHarnessSessionRow({
+  session,
+  selected,
+  indentClassName,
+  onOpen,
+  onClose,
+}: {
+  session: LocalHarnessWorkbenchSession
+  selected: boolean
+  indentClassName?: string
+  onOpen?: (sessionId: string) => void
+  onClose?: (sessionId: string) => void | Promise<void>
+}) {
+  const { t } = useTranslation('common')
+  const canArchive = session.harnessId === 'opencode'
+  const canClose = !session.isPrimary
+  const useArchiveTestId = canArchive && session.isPrimary
+
+  return (
+    <div className="group/harness-session relative flex items-center">
+      <button
+        type="button"
+        data-testid={`local-harness-session-row-${session.sessionId}`}
+        onClick={() => onOpen?.(session.sessionId)}
+        aria-current={selected ? 'page' : undefined}
+        className={cn(
+          'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] px-2.5 text-left text-sm',
+          indentClassName,
+          selected
+            ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+            : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+        )}
+      >
+        <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="truncate">{session.title}</span>
+      </button>
+      {onClose && (canArchive || canClose) && (
+        <button
+          type="button"
+          data-testid={
+            useArchiveTestId
+              ? `archive-local-harness-session-${session.sessionId}`
+              : `close-local-harness-session-${session.sessionId}`
+          }
+          onClick={event => {
+            event.stopPropagation()
+            void onClose(session.sessionId)
+          }}
+          aria-label={
+            canArchive
+              ? t('workbench.archive_harness', '归档编码会话')
+              : t('workbench.close_harness', '关闭编码工具')
+          }
+          className="absolute right-1 flex h-6 w-6 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 hover:bg-[rgb(var(--color-sidebar-hover))] group-hover/harness-session:opacity-100 focus-visible:opacity-100"
+        >
+          {canArchive ? <Archive className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ProjectItem({
   project,
   expanded,
+  localHarnessSessions,
+  activeLocalHarnessSessionId,
   onToggleProject,
   devices,
   runtimeProjectWork,
@@ -2015,9 +2288,13 @@ function ProjectItem({
   onArchiveRuntimeTask,
   onArchiveProjectConversations,
   onToggleRuntimeTaskNotification,
+  onOpenLocalHarnessSession,
+  onCloseLocalHarnessSession,
 }: {
   project: ProjectWithTasks
   expanded: boolean
+  localHarnessSessions: LocalHarnessWorkbenchSession[]
+  activeLocalHarnessSessionId: string | null
   onToggleProject: (projectId: number) => void
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
@@ -2054,6 +2331,8 @@ function ProjectItem({
     address: RuntimeTaskAddress,
     subscribed: boolean
   ) => Promise<void> | void
+  onOpenLocalHarnessSession?: (sessionId: string) => void
+  onCloseLocalHarnessSession?: (sessionId: string) => void | Promise<void>
 }) {
   const { t } = useTranslation('common')
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
@@ -2487,14 +2766,11 @@ function ProjectItem({
       <div
         data-testid={`project-local-tasks-panel-${project.id}`}
         aria-hidden={!expanded}
-        className={cn(
-          'grid overflow-hidden transition-[grid-template-rows,opacity] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
-          expanded ? 'grid-rows-[1fr] opacity-100' : 'pointer-events-none grid-rows-[0fr] opacity-0'
-        )}
+        className={cn(!expanded && 'hidden')}
       >
-        <div className="min-h-0 overflow-hidden">
+        <div>
           <div className="space-y-0.5">
-            {runtimeTaskItems.length === 0 ? (
+            {runtimeTaskItems.length === 0 && localHarnessSessions.length === 0 ? (
               <div
                 data-testid={`project-local-tasks-empty-${project.id}`}
                 className="ml-9 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
@@ -2511,6 +2787,16 @@ function ProjectItem({
                     `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
                   }
                   getLabel={({ task }) => task.title}
+                  getExternalDragData={({ workspace, task }) => ({
+                    paneKey: getWorkbenchPaneKey({
+                      currentRuntimeTask: {
+                        deviceId: workspace.deviceId,
+                        taskId: task.taskId,
+                      },
+                      currentProject: null,
+                    }),
+                    title: task.title,
+                  })}
                   canDrag={({ task }) =>
                     Boolean(
                       getRuntimeTaskThreadId(task) &&
@@ -2561,6 +2847,16 @@ function ProjectItem({
                     />
                   )}
                 />
+                {localHarnessSessions.map(session => (
+                  <LocalHarnessSessionRow
+                    key={session.sessionId}
+                    session={session}
+                    selected={activeLocalHarnessSessionId === session.sessionId}
+                    indentClassName="pl-9"
+                    onOpen={onOpenLocalHarnessSession}
+                    onClose={onCloseLocalHarnessSession}
+                  />
+                ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
                     {hasHiddenRuntimeTasks ? (
@@ -2659,8 +2955,12 @@ export function DesktopSidebar({
   unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
+  localHarnessSessions = [],
+  activeLocalHarnessSessionId = null,
   onNewChat,
   onStartStandaloneChat,
+  onOpenLocalHarnessSession,
+  onCloseLocalHarnessSession,
   onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeTask,
@@ -2861,6 +3161,27 @@ export function DesktopSidebar({
     () => sortableProjects.filter(({ runtimeProjectWork }) => !runtimeProjectWork?.project.pinned),
     [sortableProjects]
   )
+  const sidebarProjectIds = useMemo(
+    () => new Set(sidebarProjects.map(project => project.id)),
+    [sidebarProjects]
+  )
+  const standaloneLocalHarnessSessions = useMemo(
+    () =>
+      localHarnessSessions.filter(
+        session => session.projectId === null || !sidebarProjectIds.has(session.projectId)
+      ),
+    [localHarnessSessions, sidebarProjectIds]
+  )
+  const localHarnessSessionsByProjectId = useMemo(() => {
+    const sessionsByProjectId = new Map<number, LocalHarnessWorkbenchSession[]>()
+    for (const session of localHarnessSessions) {
+      if (session.projectId === null || !sidebarProjectIds.has(session.projectId)) continue
+      const sessions = sessionsByProjectId.get(session.projectId) ?? []
+      sessions.push(session)
+      sessionsByProjectId.set(session.projectId, sessions)
+    }
+    return sessionsByProjectId
+  }, [localHarnessSessions, sidebarProjectIds])
   const chatWorkspaces = useMemo(() => runtimeWork?.chats ?? [], [runtimeWork?.chats])
   const chatTaskItems = useMemo(
     () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
@@ -3107,6 +3428,16 @@ export function DesktopSidebar({
   )
   const chatSectionArchiveCount = chatSectionArchiveAddresses.length
   const selectedRuntimeProject = useMemo(() => {
+    const activeHarnessProjectId = localHarnessSessions.find(
+      session => session.sessionId === activeLocalHarnessSessionId
+    )?.projectId
+    if (activeHarnessProjectId) {
+      return {
+        autoExpandKey: `harness:${activeLocalHarnessSessionId}`,
+        id: activeHarnessProjectId,
+      }
+    }
+
     if (currentRuntimeTask) {
       const projectWork = sidebarRuntimeProjects.find(item =>
         item.deviceWorkspaces.some(workspace =>
@@ -3140,7 +3471,14 @@ export function DesktopSidebar({
           id: runtimeProjectUiId(projectWork.project),
         }
       : null
-  }, [currentRuntimeTask, sidebarRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
+  }, [
+    activeLocalHarnessSessionId,
+    currentRuntimeTask,
+    localHarnessSessions,
+    sidebarRuntimeProjects,
+    standaloneDeviceId,
+    standaloneWorkspacePath,
+  ])
   const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
   const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
@@ -3150,7 +3488,12 @@ export function DesktopSidebar({
     )
   }, [currentRuntimeTask, regularChatTaskItems])
   const displayedProjectsExpanded = projectsExpanded
-  const displayedChatsExpanded = chatsExpanded || selectedRuntimeChatVisible
+  const displayedChatsExpanded =
+    chatsExpanded ||
+    selectedRuntimeChatVisible ||
+    standaloneLocalHarnessSessions.some(
+      session => session.sessionId === activeLocalHarnessSessionId
+    )
   const isArchiveSectionSubmitting =
     archiveSectionMode === 'projects' ? isArchivingProjectSection : isArchivingChatSection
   const archiveSectionDialogTestId =
@@ -3589,6 +3932,16 @@ export function DesktopSidebar({
                           `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
                         }
                         getLabel={({ task }) => task.title}
+                        getExternalDragData={({ workspace, task }) => ({
+                          paneKey: getWorkbenchPaneKey({
+                            currentRuntimeTask: {
+                              deviceId: workspace.deviceId,
+                              taskId: task.taskId,
+                            },
+                            currentProject: null,
+                          }),
+                          title: task.title,
+                        })}
                         canDrag={({ task }) =>
                           Boolean(getRuntimeTaskThreadId(task) && onSetRuntimeTaskPinned)
                         }
@@ -3676,6 +4029,10 @@ export function DesktopSidebar({
                           <ProjectItem
                             project={project}
                             expanded={displayedExpandedProjectIds.has(project.id)}
+                            localHarnessSessions={
+                              localHarnessSessionsByProjectId.get(project.id) ?? []
+                            }
+                            activeLocalHarnessSessionId={activeLocalHarnessSessionId}
                             devices={devices}
                             runtimeProjectWork={runtimeProjectWork}
                             currentRuntimeTask={currentRuntimeTask}
@@ -3699,6 +4056,8 @@ export function DesktopSidebar({
                             onArchiveRuntimeTask={onArchiveRuntimeTask}
                             onArchiveProjectConversations={onArchiveProjectConversations}
                             onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                            onOpenLocalHarnessSession={onOpenLocalHarnessSession}
+                            onCloseLocalHarnessSession={onCloseLocalHarnessSession}
                           />
                         )}
                       />
@@ -3874,6 +4233,10 @@ export function DesktopSidebar({
                         <ProjectItem
                           project={project}
                           expanded={displayedExpandedProjectIds.has(project.id)}
+                          localHarnessSessions={
+                            localHarnessSessionsByProjectId.get(project.id) ?? []
+                          }
+                          activeLocalHarnessSessionId={activeLocalHarnessSessionId}
                           devices={devices}
                           runtimeProjectWork={runtimeProjectWork}
                           currentRuntimeTask={currentRuntimeTask}
@@ -3897,6 +4260,8 @@ export function DesktopSidebar({
                           onArchiveRuntimeTask={onArchiveRuntimeTask}
                           onArchiveProjectConversations={onArchiveProjectConversations}
                           onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                          onOpenLocalHarnessSession={onOpenLocalHarnessSession}
+                          onCloseLocalHarnessSession={onCloseLocalHarnessSession}
                         />
                       )}
                     />
@@ -3907,7 +4272,9 @@ export function DesktopSidebar({
                   <DesktopSidebarSectionHeader
                     title={t('workbench.tasks')}
                     expanded={displayedChatsExpanded}
-                    hasContent={regularChatTaskItems.length > 0}
+                    hasContent={
+                      standaloneLocalHarnessSessions.length > 0 || regularChatTaskItems.length > 0
+                    }
                     toggleTestId="runtime-chat-section-toggle"
                     iconTestId="runtime-chat-section-chevron-right"
                     onToggle={() => setChatsExpanded(expanded => !expanded)}
@@ -3946,14 +4313,15 @@ export function DesktopSidebar({
                   </DesktopSidebarSectionHeader>
                   {displayedChatsExpanded && (
                     <div className="space-y-0.5 pb-2">
-                      {regularChatTaskItems.length === 0 ? (
+                      {standaloneLocalHarnessSessions.length === 0 &&
+                      regularChatTaskItems.length === 0 ? (
                         <div
                           data-testid="runtime-chat-empty"
                           className="ml-2 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]"
                         >
                           {t('workbench.no_chats', '暂无会话')}
                         </div>
-                      ) : (
+                      ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
                           testId="runtime-chat-task-sortable-list"
                           className="space-y-0.5"
@@ -3962,6 +4330,16 @@ export function DesktopSidebar({
                             `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
                           }
                           getLabel={({ task }) => task.title}
+                          getExternalDragData={({ workspace, task }) => ({
+                            paneKey: getWorkbenchPaneKey({
+                              currentRuntimeTask: {
+                                deviceId: workspace.deviceId,
+                                taskId: task.taskId,
+                              },
+                              currentProject: null,
+                            }),
+                            title: task.title,
+                          })}
                           canDrag={({ task }) =>
                             Boolean(getRuntimeTaskThreadId(task) && onReorderRuntimeProjectTasks)
                           }
@@ -4010,7 +4388,16 @@ export function DesktopSidebar({
                             />
                           )}
                         />
-                      )}
+                      ) : null}
+                      {standaloneLocalHarnessSessions.map(session => (
+                        <LocalHarnessSessionRow
+                          key={session.sessionId}
+                          session={session}
+                          selected={activeLocalHarnessSessionId === session.sessionId}
+                          onOpen={onOpenLocalHarnessSession}
+                          onClose={onCloseLocalHarnessSession}
+                        />
+                      ))}
                     </div>
                   )}
                 </section>

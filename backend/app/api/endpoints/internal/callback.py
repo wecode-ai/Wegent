@@ -20,11 +20,10 @@ For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.db.session import SessionLocal
 from app.models.task import TaskResource
 from app.services.channels.callback import forward_event_to_channel_callbacks
 
@@ -39,6 +38,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.stores.tasks import task_store
+from shared.models import EventType
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,27 @@ router = APIRouter(prefix="/callback", tags=["execution-callback"])
 
 # Shared event parser instance
 _event_parser = ResponsesAPIEventParser()
+
+_TASK_STATUS_EVENT_TYPES = {
+    EventType.DONE.value,
+    EventType.ERROR.value,
+    EventType.CANCEL.value,
+    EventType.CANCELLED.value,
+}
+
+
+def _get_task_status_user_id(task_id: int, event_type: str) -> Optional[int]:
+    """Load task owner only for events that emit task-level status."""
+    if event_type not in _TASK_STATUS_EVENT_TYPES:
+        return None
+
+    with SessionLocal() as db:
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=[TaskResource.STATE_ACTIVE],
+        )
+        return task.user_id if task else None
 
 
 class CallbackRequest(BaseModel):
@@ -81,7 +102,6 @@ class CallbackResponse(BaseModel):
 @router.post("", response_model=CallbackResponse)
 async def handle_callback(
     request: CallbackRequest,
-    db: Session = Depends(get_db),
 ) -> CallbackResponse:
     """Handle execution callback.
 
@@ -97,8 +117,6 @@ async def handle_callback(
 
     Args:
         request: Callback request with event data in OpenAI Responses API format
-        db: Database session
-
     Returns:
         CallbackResponse indicating success
     """
@@ -122,13 +140,9 @@ async def handle_callback(
             logger.debug(f"[Callback] Skipping lifecycle event: {request.event_type}")
             return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
-        # Get user_id from task for task:status notification
-        task = task_store.get_task_by_states(
-            db,
-            task_id=request.task_id,
-            states=[TaskResource.STATE_ACTIVE],
-        )
-        user_id = task.user_id if task else None
+        # Keep database access outside the async emit path. Streaming events do
+        # not emit task-level status and therefore need no database connection.
+        user_id = _get_task_status_user_id(request.task_id, event.type)
 
         # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
         # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
@@ -182,7 +196,6 @@ async def handle_callback(
 @router.post("/batch", response_model=CallbackResponse)
 async def handle_batch_callback(
     events: list[CallbackRequest],
-    db: Session = Depends(get_db),
 ) -> CallbackResponse:
     """Handle batch execution callbacks.
 
@@ -195,8 +208,6 @@ async def handle_batch_callback(
 
     Args:
         events: List of callback requests in OpenAI Responses API format
-        db: Database session
-
     Returns:
         CallbackResponse indicating success
     """
@@ -225,16 +236,18 @@ async def handle_batch_callback(
                 skipped += 1
                 continue
 
-            # Get user_id from cache or database for task:status notification
+            # Load task owner only for terminal events. The helper closes its
+            # short-lived session before any async emit work starts.
             cache_key = request.task_id
-            if cache_key not in task_user_cache:
-                task = task_store.get_task_by_states(
-                    db,
-                    task_id=request.task_id,
-                    states=[TaskResource.STATE_ACTIVE],
-                )
-                task_user_cache[cache_key] = task.user_id if task else None
-            user_id = task_user_cache[cache_key]
+            if event.type in _TASK_STATUS_EVENT_TYPES:
+                if cache_key not in task_user_cache:
+                    task_user_cache[cache_key] = _get_task_status_user_id(
+                        request.task_id,
+                        event.type,
+                    )
+                user_id = task_user_cache[cache_key]
+            else:
+                user_id = None
 
             # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
             # StatusUpdatingEmitter handles:

@@ -334,6 +334,31 @@ describe('ChatInput', () => {
     expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
+  test('keeps the plugin picker above runtime plan progress', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        taskPlan={{
+          plan: [
+            { step: 'Inspect', status: 'inProgress' },
+            { step: 'Implement', status: 'pending' },
+          ],
+        }}
+        projectChat={projectChatControls()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+
+    expect(screen.getByTestId('runtime-plan-progress')).toHaveClass('z-0')
+    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass('z-10')
+    expect(await screen.findByTestId('composer-plugin-picker')).toHaveClass('z-popover')
+  })
+
   test('shows the plan mode pill when plan mode is selected', async () => {
     const setSelectedModelOption = vi.fn()
     render(
@@ -552,6 +577,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
       'Switching to Second Model may change how the existing context is understood.'
     )
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
@@ -1023,6 +1049,30 @@ describe('ChatInput', () => {
     )
   })
 
+  test('exposes permission modes from the compact composer context sheet', async () => {
+    const setSelectedModelOption = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({
+          selectedModelOptions: { permissionMode: 'workspace-write' },
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('mobile-permission-mode-row')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('permission-mode-menu-button'))
+    await userEvent.click(screen.getByTestId('permission-mode-read-only'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('permissionMode', 'read-only')
+  })
+
   test('shows compact pause button while the assistant is streaming', async () => {
     const onPause = vi.fn()
 
@@ -1477,7 +1527,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop model menu with real model options', async () => {
+  test('opens the desktop model menu with real model options and closes it after selection', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1588,8 +1638,9 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
 
+    await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
 
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
@@ -1826,6 +1877,221 @@ describe('ChatInput', () => {
     } finally {
       vi.restoreAllMocks()
     }
+  })
+
+  test('uses the current API model efforts without switching to same-id Codex Auth', async () => {
+    const apiModel: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'API Sol',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          modelLabel: 'API Sol',
+          reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultReasoningEffort: 'minimal',
+          controls: ['speed'],
+        },
+      },
+    }
+    const officialModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'GPT 5.6 Sol',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    const setSelectedModelAndOptions = vi.fn()
+    const setSelectedModelOption = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [officialModel, apiModel],
+          selectedModel: apiModel,
+          selectedModelOptions: { reasoning: 'xhigh', speed: 'standard' },
+          setSelectedModel,
+          setSelectedModelAndOptions,
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+
+    const submenu = screen.getByTestId('model-selector-submenu')
+    expect(within(submenu).getByTestId('model-control-reasoning-minimal')).toHaveTextContent(
+      'Minimal'
+    )
+    expect(within(submenu).getByTestId('model-control-reasoning-low')).toHaveTextContent('Low')
+    expect(within(submenu).getByTestId('model-control-reasoning-xhigh')).toHaveTextContent(
+      'Extra high'
+    )
+    expect(within(submenu).getByTestId('model-control-reasoning-max')).toHaveTextContent('Maximum')
+    expect(within(submenu).getByTestId('model-control-reasoning-ultra')).toHaveTextContent('Ultra')
+    expect(within(submenu).queryByTestId('model-control-reasoning-none')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-minimal')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-max')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-ultra')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-power-setting-gpt-5-6-sol-low')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-control-reasoning-max'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'max')
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(setSelectedModelAndOptions).not.toHaveBeenCalled()
+  })
+
+  test('hides the API advanced slider when fewer than two efforts are configured', async () => {
+    const apiModel: UnifiedModel = {
+      name: 'local-model:single-effort',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'Single effort API',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          modelLabel: 'Single effort API',
+          reasoningEfforts: ['minimal'],
+          defaultReasoningEffort: 'minimal',
+          controls: ['speed'],
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [apiModel],
+          selectedModel: apiModel,
+          selectedModelOptions: { reasoning: 'minimal', speed: 'standard' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+    expect(screen.getByTestId('model-control-reasoning-minimal')).toBeInTheDocument()
+  })
+
+  test('shows the API advanced slider when exactly two efforts are configured', async () => {
+    const apiModel: UnifiedModel = {
+      name: 'local-model:two-efforts',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'Two effort API',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          modelLabel: 'Two effort API',
+          reasoningEfforts: ['minimal', 'max'],
+          defaultReasoningEffort: 'minimal',
+          controls: ['speed'],
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [apiModel],
+          selectedModel: apiModel,
+          selectedModelOptions: { reasoning: 'minimal', speed: 'standard' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-minimal')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-max')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-low')).not.toBeInTheDocument()
+  })
+
+  test('does not treat a same-id API model as the default Codex reset target', async () => {
+    const apiSol: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      provider: 'local',
+      displayName: 'API Sol',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: ['minimal'],
+          defaultReasoningEffort: 'minimal',
+          controls: ['speed'],
+        },
+      },
+    }
+    const selectedApi: UnifiedModel = {
+      ...apiSol,
+      name: 'local-model:selected-api',
+      displayName: 'Selected API',
+      modelId: 'another-model',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [apiSol, selectedApi],
+          selectedModel: selectedApi,
+          selectedModelOptions: { reasoning: 'minimal', speed: 'standard' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-reset-default-button')).toBeDisabled()
   })
 
   test('renders the advertised ultra effort with purple summary and slider treatment', async () => {
@@ -2296,7 +2562,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('keeps the desktop model menu open after selecting a model opened by external signal', async () => {
+  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
     const model: UnifiedModel = {
       name: 'ali-qwen3-coder-plus',
       type: 'user',
@@ -2333,7 +2599,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
   test('keeps the desktop model submenu inside the viewport near the bottom edge', async () => {
@@ -3861,7 +4127,7 @@ describe('ChatInput', () => {
     expect(await screen.findAllByTestId('project-worktree-branch-option')).toHaveLength(50)
   })
 
-  test('shows one recommended plugin task and keeps other tasks secondary', async () => {
+  test('shows three common plugin tasks and keeps additional tasks secondary', async () => {
     const applyTrialTemplate = vi.fn()
     const dismissTrialGuide = vi.fn()
     const onSubmit = vi.fn()
@@ -3877,6 +4143,12 @@ describe('ChatInput', () => {
         onSubmit={onSubmit}
         projectChat={projectChatControls({
           trialPluginName: 'Documents',
+          trialPluginApp: {
+            id: 'plugin:documents',
+            name: 'Documents',
+            pluginKey: 'documents',
+            logoUrl: 'https://example.com/documents.png',
+          },
           trialTemplates,
           applyTrialTemplate,
           dismissTrialGuide,
@@ -3885,8 +4157,14 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('plugin-trial-template-strip')).toBeInTheDocument()
+    expect(screen.getByText('Documents 可以这样用')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-plugin-icon').querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/documents.png'
+    )
     expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 1')
-    expect(screen.queryByTestId('plugin-trial-template-card')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(2)
+    expect(screen.queryByText('Scenario 4')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugin-trial-other-tasks-toggle'))
 
@@ -3894,15 +4172,56 @@ describe('ChatInput', () => {
     expect(screen.getByText('Scenario 4')).toBeInTheDocument()
 
     await userEvent.click(screen.getByText('Scenario 4'))
-    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 4')
-    expect(screen.queryByTestId('plugin-trial-other-tasks')).not.toBeInTheDocument()
+    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
 
     await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
-    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
+    expect(applyTrialTemplate).toHaveBeenLastCalledWith(trialTemplates[0])
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
     expect(dismissTrialGuide).toHaveBeenCalledOnce()
+  })
+
+  test('places the caret after the task text when applying a plugin suggestion', async () => {
+    const template = {
+      name: 'Checkout flow',
+      path: 'checkout-flow',
+      description: 'Test my checkout flow on localhost',
+    }
+    const pluginReference = '[$Browser](plugin://browser@openai-bundled)'
+
+    function Harness() {
+      const [value, setValue] = useState(`${pluginReference} `)
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            trialPluginName: 'Browser',
+            trialTemplates: [template],
+            applyTrialTemplate: selectedTemplate =>
+              setValue(`${pluginReference} ${selectedTemplate.description} `),
+          })}
+        />
+      )
+    }
+
+    render(<Harness />)
+    await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
+
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    await waitFor(() => {
+      expect(editor.value).toBe(`${pluginReference} ${template.description} `)
+      expect(editor).toHaveFocus()
+    })
+
+    const trailingText = editor.querySelector('p')?.lastChild
+    expect(trailingText?.textContent).toBe(`${template.description} `)
+    expect(window.getSelection()?.anchorNode).toBe(trailingText)
+    expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })
 
   test('does not show plugin guidance without a selected plugin', () => {
@@ -3953,7 +4272,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByText('Documents 使用建议')).toBeInTheDocument()
+    expect(screen.getByText('Documents 可以这样用')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent(
       'Project memo'
     )

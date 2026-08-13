@@ -20,6 +20,8 @@ export type ResourceLibraryModelCategoryFilter = 'all' | 'llm' | 'embedding' | '
 
 export type ResourceLibraryTypeFilter = 'all' | ManagedResourceType
 
+export type ResourceNavigationType = ResourceLibraryTypeFilter | 'mcp'
+
 export type MarketplaceResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
 
 export type ManagedResourceSourceFilter = 'all' | 'mine' | 'personal' | 'group' | 'system'
@@ -125,7 +127,6 @@ export interface ResourceLibraryCreateListingRequest {
   source_id?: number
   source_name?: string
   source_namespace?: string
-  name: string
   display_name: string
   description?: string | null
   icon?: string | null

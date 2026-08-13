@@ -4,6 +4,9 @@
 
 from datetime import datetime
 
+import pytest
+from fastapi import HTTPException
+
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -115,47 +118,41 @@ def test_update_team_persists_quick_phrases_in_spec(test_db, test_user):
     ]
 
 
-def test_group_team_rename_updates_matching_tasks_for_all_members(
-    test_db, test_user, test_admin_user
+def test_team_rename_requires_confirmation_and_leaves_task_reference_unchanged(
+    test_db, test_user
 ):
-    owner_task = _create_team_task(
+    team = _create_team_kind(test_db, test_user.id)
+    task = _create_team_task(
         test_db,
         user_id=test_user.id,
-        team_name="shared-agent",
-        team_namespace="engineering",
+        team_name=team.name,
+        team_namespace=team.namespace,
         team_owner_id=test_user.id,
-    )
-    member_task = _create_team_task(
-        test_db,
-        user_id=test_admin_user.id,
-        team_name="shared-agent",
-        team_namespace="engineering",
-        team_owner_id=test_user.id,
-    )
-    other_owner_task = _create_team_task(
-        test_db,
-        user_id=test_admin_user.id,
-        team_name="shared-agent",
-        team_namespace="engineering",
-        team_owner_id=test_admin_user.id,
     )
     test_db.commit()
 
-    team_kinds_service._update_team_references_in_tasks(
-        test_db,
-        "shared-agent",
-        "engineering",
-        "renamed-agent",
-        "engineering",
-        test_user.id,
-    )
-    test_db.commit()
-    for task in (owner_task, member_task, other_owner_task):
-        test_db.refresh(task)
+    with pytest.raises(HTTPException) as exc_info:
+        team_kinds_service.update_with_user(
+            test_db,
+            team_id=team.id,
+            obj_in=TeamUpdate(name="renamed-agent"),
+            user_id=test_user.id,
+        )
 
-    assert owner_task.json["spec"]["teamRef"]["name"] == "renamed-agent"
-    assert member_task.json["spec"]["teamRef"]["name"] == "renamed-agent"
-    assert other_owner_task.json["spec"]["teamRef"]["name"] == "shared-agent"
+    assert exc_info.value.status_code == 409
+
+    result = team_kinds_service.update_with_user(
+        test_db,
+        team_id=team.id,
+        obj_in=TeamUpdate(name="renamed-agent"),
+        user_id=test_user.id,
+        force_identity_change=True,
+        confirm_name=team.name,
+    )
+
+    test_db.refresh(task)
+    assert result["name"] == "renamed-agent"
+    assert task.json["spec"]["teamRef"]["name"] == "dev-team"
 
 
 def test_update_team_moves_owned_group_agent_to_personal_scope(test_db, test_user):
@@ -190,6 +187,8 @@ def test_update_team_moves_owned_group_agent_to_personal_scope(test_db, test_use
         team_id=team.id,
         obj_in=TeamUpdate(namespace="default"),
         user_id=test_user.id,
+        force_identity_change=True,
+        confirm_name=team.name,
     )
 
     test_db.refresh(team)

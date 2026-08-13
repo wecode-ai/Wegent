@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { ModelSelectionConfig } from '@/types/api'
+import {
+  defaultLocalHarnessPreferences,
+  normalizeLocalHarnessPreferences,
+  type LocalHarnessPreference,
+} from '@/lib/local-harness'
 
 export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
 export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
@@ -16,6 +21,7 @@ export function clampContextCompactionThreshold(value: number): number {
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
+  defaultWorkspaceTab: DefaultWorkspaceTab
   systemDragEnabled: boolean
   preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
@@ -41,6 +47,7 @@ export interface AppPreferences {
   friendlyTaskTitlesEnabled: boolean
   friendlyTaskTitleModel: FriendlyTaskTitleModelConfig | null
   quickPhrases: QuickPhrase[]
+  localHarnesses: LocalHarnessPreference[]
 }
 
 export interface FriendlyTaskTitleModelConfig {
@@ -81,10 +88,12 @@ export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now())
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type BrowserLinkTarget = 'system' | 'wework'
+export type DefaultWorkspaceTab = 'task' | 'board' | 'agent'
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
+  defaultWorkspaceTab?: DefaultWorkspaceTab
   systemDragEnabled?: boolean
   preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
@@ -110,6 +119,7 @@ export interface AppPreferencesPatch {
   friendlyTaskTitlesEnabled?: boolean
   friendlyTaskTitleModel?: FriendlyTaskTitleModelConfig | null
   quickPhrases?: QuickPhrase[]
+  localHarnesses?: LocalHarnessPreference[]
 }
 
 export const defaultQuickPhrases: QuickPhrase[] = [
@@ -136,6 +146,7 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  defaultWorkspaceTab: 'task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -161,12 +172,14 @@ export const defaultAppPreferences: AppPreferences = {
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
   quickPhrases: defaultQuickPhrases,
+  localHarnesses: defaultLocalHarnessPreferences,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
 const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
+const supportedDefaultWorkspaceTabs = new Set<DefaultWorkspaceTab>(['task', 'board', 'agent'])
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -197,6 +210,11 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
+    defaultWorkspaceTab:
+      typeof record.defaultWorkspaceTab === 'string' &&
+      supportedDefaultWorkspaceTabs.has(record.defaultWorkspaceTab as DefaultWorkspaceTab)
+        ? (record.defaultWorkspaceTab as DefaultWorkspaceTab)
+        : defaultAppPreferences.defaultWorkspaceTab,
     systemDragEnabled:
       typeof record.systemDragEnabled === 'boolean'
         ? record.systemDragEnabled
@@ -301,6 +319,7 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .flatMap(item => normalizeQuickPhrase(item))
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
+    localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
   }
 }
 

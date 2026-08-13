@@ -11,7 +11,30 @@ fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
     let Some(block) = blocks.last_mut().and_then(Value::as_object_mut) else {
         return;
     };
-    block.insert("timestamp".to_owned(), json!(completed_at));
+    if block.get("type").and_then(Value::as_str) != Some("tool") {
+        block.insert("timestamp".to_owned(), json!(completed_at));
+        return;
+    }
+    let has_completed_at =
+        block.get("completedAt").is_some() || block.get("completed_at").is_some();
+    let duration_ms = block
+        .get("durationMs")
+        .or_else(|| block.get("duration_ms"))
+        .and_then(Value::as_i64)
+        .filter(|duration| *duration >= 0);
+    if !has_completed_at && duration_ms.is_none() {
+        block.insert("timestamp".to_owned(), json!(completed_at));
+        return;
+    }
+    if !has_completed_at {
+        block.insert("completedAt".to_owned(), json!(completed_at));
+    }
+    if let Some(duration_ms) = duration_ms {
+        block.insert(
+            "timestamp".to_owned(),
+            json!(completed_at.saturating_sub(duration_ms)),
+        );
+    }
 }
 
 pub(super) struct AssistantTurnAccumulation {
@@ -268,10 +291,38 @@ fn strip_leading_application_context(content: &str) -> &str {
     if !trimmed.starts_with(APPLICATION_CONTEXT_OPEN) {
         return trimmed;
     }
-    let Some(close_index) = trimmed.find(APPLICATION_CONTEXT_CLOSE) else {
+    let Some(close_index) = matching_application_context_close_index(trimmed) else {
         return trimmed;
     };
     trimmed[close_index + APPLICATION_CONTEXT_CLOSE.len()..].trim_start()
+}
+
+fn matching_application_context_close_index(content: &str) -> Option<usize> {
+    let mut depth = 1;
+    let mut offset = APPLICATION_CONTEXT_OPEN.len();
+
+    while offset < content.len() {
+        let next_open = content[offset..]
+            .find(APPLICATION_CONTEXT_OPEN)
+            .map(|index| offset + index);
+        let next_close = content[offset..]
+            .find(APPLICATION_CONTEXT_CLOSE)
+            .map(|index| offset + index)?;
+
+        if let Some(next_open) = next_open.filter(|index| *index < next_close) {
+            depth += 1;
+            offset = next_open + APPLICATION_CONTEXT_OPEN.len();
+            continue;
+        }
+
+        depth -= 1;
+        if depth == 0 {
+            return Some(next_close);
+        }
+        offset = next_close + APPLICATION_CONTEXT_CLOSE.len();
+    }
+
+    None
 }
 
 pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &Value) {
@@ -666,6 +717,10 @@ pub(super) fn item_timestamp(item: &Value) -> Option<i64> {
     timestamp_ms_field(item, "timestamp")
         .or_else(|| timestamp_ms_field(item, "createdAt"))
         .or_else(|| timestamp_ms_field(item, "created_at"))
+}
+
+pub(super) fn item_completed_at(item: &Value) -> Option<i64> {
+    timestamp_ms_field(item, "completedAt").or_else(|| timestamp_ms_field(item, "completed_at"))
 }
 
 struct AssistantMessageDraft<'a> {

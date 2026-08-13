@@ -20,6 +20,7 @@ import {
   assert,
   createSingleRootLocalProject,
   join,
+  pathExists,
   resultDir,
   selectE2EModel,
   withTimeout,
@@ -59,6 +60,7 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     taskRowsBeforeConversation,
     'WEWORK_DESKTOP_E2E_FRESH_CHAT'
   )
+  await verifyConversationRenameSpaceDoesNotDrag(control, shortConversationTaskRowTestId)
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
@@ -230,6 +232,38 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
   )
   control.setScenario('fresh_chat')
   return shortConversationTaskRowTestId
+}
+
+async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {
+  const taskId = taskRowTestId.replace('runtime-local-task-row-', '')
+  const taskRow = `[data-testid="${taskRowTestId}"]`
+  const renameMenuItem = `[data-testid="runtime-local-task-menu-rename-${taskId}"]`
+  const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
+  const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+  const sortable = `[data-sidebar-sortable-id]:has(${taskRow})`
+
+  await control.command('contextMenu', taskRow)
+  await control.command('waitFor', renameMenuItem, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', renameMenuItem)
+  await control.command('waitFor', renameInput, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', renameInput, { key: 'Space' })
+  assert.equal(
+    await control.command('getAttribute', sortable, { value: 'data-dragging' }),
+    '',
+    'Typing a space in the conversation rename input started sidebar dragging'
+  )
+  await control.command('click', renameCloseButton)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
+    'The rename dialog did not close after the space-key drag regression check'
+  )
 }
 
 function countTextOccurrences(value, search) {
@@ -773,9 +807,13 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
   assert.match(
     await control.command('getText', '[data-testid="worktree-creation-status"]'),
-    /正在创建工作树|Creating worktree/,
+    /正在搭建你的独立工作树|Building your independent worktree/,
     'The worktree creation status page did not explain the active operation'
   )
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: CHECKPOINT_TASK_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const creatingSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     creatingSnapshot.testIds.includes('desktop-floating-composer-card'),
@@ -795,16 +833,39 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
   await captureVerificationScreenshot(control, 'worktree-status-04-task-started.png')
 
-  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
-  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
-  await control.command(
-    'clickWhenEnabled',
-    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  const taskDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const worktreeTaskId = taskDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  const worktreePath = taskDebugSnapshot.workbench?.currentRuntimeTask?.workspacePath
+  assert.ok(worktreeTaskId, 'The worktree task did not expose its runtime task ID')
+  assert.ok(worktreePath, 'The worktree task did not expose its workspace path')
+  const worktreeContainer = join(worktreePath, '..')
+  assert.equal(await pathExists(worktreePath), true, 'The managed worktree was not created')
+  assert.equal(
+    await pathExists(worktreeContainer),
+    true,
+    'The managed worktree container was not created'
   )
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(projectMenuTestId),
-    'The worktree status fixture project remained after cleanup'
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="runtime-local-task-archive-toast-${worktreeTaskId}"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await withTimeout(
+    (async () => {
+      while ((await pathExists(worktreePath)) || (await pathExists(worktreeContainer))) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Archiving the worktree task left its repository or runtime container on disk'
   )
 }
 

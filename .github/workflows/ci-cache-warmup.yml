@@ -22,6 +22,7 @@ on:
       - ".github/workflows/test.yml"
       - ".github/workflows/wework-e2e.yml"
       - "backend/uv.lock"
+      - "docker/wework-e2e/desktop.Dockerfile"
       - "executor/**"
       - "executor_manager/uv.lock"
       - "frontend/e2e/fixtures/claudecode-executor/**"
@@ -125,7 +126,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
-      - name: Add Claude Code CLI to PATH
+      - name: Add local harness CLIs to PATH
         run: |
           echo "$GITHUB_WORKSPACE/.github/claude-code-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
@@ -134,13 +135,16 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: .github/claude-code-cli/node_modules
-          key: ${{ runner.os }}-node-24-claude-code-cli-v3-${{ hashFiles('.github/claude-code-cli/package-lock.json') }}
+          key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
-      - name: Install Claude Code CLI
+      - name: Install local harness CLIs
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
-        run: npm ci --prefix .github/claude-code-cli
+        run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
 
-      - name: Save shared Claude Code CLI
+      - name: Verify local harness CLIs
+        run: .github/scripts/verify-local-harness-clis.sh
+
+      - name: Save shared local harness CLIs
         if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -401,12 +405,17 @@ jobs:
             ~/.cargo/git
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
-  warm-wework-desktop-target:
-    name: Warm Wework Desktop Cargo Target
+  prepare-wework-desktop-image:
+    name: Prepare Wework Desktop E2E Image
     needs: changes
     if: needs.changes.outputs.wework_target == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      desktop_image: ${{ steps.image.outputs.desktop-ref }}
 
     steps:
       - name: Checkout code
@@ -414,39 +423,76 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set APT cache key
-        id: apt-cache-key
+      - name: Resolve Wework desktop E2E image
+        id: image
         run: |
-          week="$(date -u +'%G-%V')"
-          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
+          desktop_digest="$(
+            sha256sum docker/wework-e2e/desktop.Dockerfile | cut -d ' ' -f 1
+          )"
+          echo "desktop-ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-e2e:desktop-$desktop_digest" \
             >> "$GITHUB_OUTPUT"
 
-      - name: Restore shared Tauri system packages
-        id: wework-apt-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.apt-cache-key.outputs.key }}
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Tauri build dependencies
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Check Wework desktop E2E image
+        id: desktop-image-check
         env:
-          DEBIAN_FRONTEND: noninteractive
-        run: .github/scripts/install-wework-tauri-system-dependencies.sh full redis
+          IMAGE: ${{ steps.image.outputs.desktop-ref }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Save shared Tauri system packages
-        if: steps.wework-apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Build and publish Wework desktop E2E image
+        if: steps.desktop-image-check.outputs.exists != 'true'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
-          path: ~/.cache/wework-apt/archives
-          key: ${{ steps.wework-apt-cache.outputs.cache-primary-key }}
+          context: .
+          file: docker/wework-e2e/desktop.Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.desktop-ref }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-desktop
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-desktop,mode=max
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+  warm-wework-desktop-target:
+    name: Warm Wework Desktop Cargo Target
+    needs:
+      - changes
+      - prepare-wework-desktop-image
+    if: needs.changes.outputs.wework_target == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    env:
+      HOME: /root
+    container:
+      image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
 
       - name: Restore shared Wework desktop E2E Cargo dependencies
         id: wework-desktop-cargo-cache
@@ -457,9 +503,9 @@ jobs:
             ~/.cargo/git
             executor/target
             wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v2-
+            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'

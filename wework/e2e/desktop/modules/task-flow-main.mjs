@@ -3,6 +3,8 @@ import {
   verifyLocalExecutorUsesCloudSocketUrl,
 } from './cloud-environment.mjs'
 
+import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
+
 import {
   createCheckpointTaskFixture,
   distanceFromBottom,
@@ -112,8 +114,10 @@ import {
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
+  CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
   CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_VISION_ONLY,
   COMPLETED_FORK_ONLY,
   COMPLETION_TEXT,
   COMPOSER_PROJECT_NAME,
@@ -244,6 +248,7 @@ import {
   captureVerificationScreenshot,
   configureDefaultProjectSpaceAssociation,
   verifyExplicitlyTrackedTask,
+  verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceDocumentTabs,
   verifyWorkspaceTabIsolation,
   waitForControlSelectionOffset,
@@ -469,6 +474,7 @@ async function main() {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       executorHome,
+      homePath,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -478,7 +484,9 @@ async function main() {
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
-  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
+    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E,
+  })
   const modelSwitchVerification = []
   let app
   let appBundlePath
@@ -498,10 +506,12 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    if (CLOUD_ONLY) {
+    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
       cloudEnvironment = new RealCloudEnvironment({
         codexBinary,
         modelServerUrl: control.url,
+        scenarioConfigToml:
+          SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
         workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
@@ -575,7 +585,16 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
+      WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
+      WEWORK_E2E_CLOUD_TOKEN:
+        cloudEnvironment?.authToken ??
+        desktopScenario?.authToken ??
+        'wework-desktop-e2e-cloud-token',
+      WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      WEWORK_E2E_MODEL_SERVER_URL: control.url,
+      WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
       ...(RUNS_PLUGIN_E2E
@@ -718,30 +737,76 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
-    if (CLOUD_ONLY) {
-      phase = 'server-downlinked-socket-url'
-      await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
-      phase = 'local-connected-model-protocol-matrix'
-      await verifyConnectedModelsOnLocalExecution({
-        control,
-        cloudEnvironment,
-        setCodexUpstreamProtocol: protocol =>
-          writeCodexConfig(
-            join(executorHome, 'codex'),
-            control.url,
-            '',
-            codexUpstreamApiFormat(protocol)
-          ),
-        workspacePath,
-      })
-      phase = 'cloud-project-flow'
-      await verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath)
+    if (DESKTOP_SEGMENT === 'project-automation') {
+      phase = 'project-automation-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-automation checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
       await writeFile(
         join(resultDir, 'model-requests.json'),
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
         'utf8'
       )
-      console.log(`Wework desktop cloud-project E2E passed. Diagnostics: ${resultDir}`)
+      console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+      if (CLOUD_ONLY && SELECTED_DESKTOP_SEGMENT) {
+        phase = `cloud-${SELECTED_DESKTOP_SEGMENT}`
+        await verifyCloudCheckpoint({
+          app,
+          appIdentifier,
+          cloudEnvironment,
+          control,
+          desktopScenario,
+          restartDesktopApp,
+          setPhase: value => {
+            phase = value
+          },
+          workspacePath,
+        })
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(
+          `Wework desktop cloud checkpoint ${SELECTED_DESKTOP_SEGMENT} passed. Evidence: ${resultDir}`
+        )
+        return
+      }
+      if (CLOUD_ONLY) {
+        phase = 'server-downlinked-socket-url'
+        await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
+        phase = 'local-connected-model-protocol-matrix'
+        await verifyConnectedModelsOnLocalExecution({
+          control,
+          cloudEnvironment,
+          setCodexUpstreamProtocol: protocol =>
+            writeCodexConfig(
+              join(executorHome, 'codex'),
+              control.url,
+              '',
+              codexUpstreamApiFormat(protocol)
+            ),
+          workspacePath,
+        })
+      }
+      phase = 'cloud-project-flow'
+      await verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath, {
+        visionOnly: CLOUD_VISION_ONLY,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(
+        `Wework desktop ${CLOUD_VISION_ONLY ? 'cloud-vision' : CLOUD_FEATURES_ONLY ? 'cloud-features' : 'cloud-project'} E2E passed. Diagnostics: ${resultDir}`
+      )
       return
     }
 
@@ -1139,7 +1204,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'permission-modes') {
+      phase = 'permission-modes'
+      await verifyPermissionModes(control)
+      console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
+      phase = 'workspace-startup-tab'
+      await verifyDefaultWorkspaceStartupTab(control)
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
@@ -2691,6 +2765,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         otherTaskRowTestId: secondTaskRowTestId,
       })
+      if (desktopScenario) {
+        phase = 'conversation-mention-switch-restore'
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
       if (shouldStopAfterDesktopCheckpoint('conversation-state')) {
         console.log(`Wework desktop conversation-state checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2875,6 +2954,22 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
     }
 
+    if (shouldRunDesktopCheckpoint('local-harness')) {
+      phase = 'local-harness-scenario'
+      assert.ok(
+        desktopScenario,
+        'The local-harness checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      if (!desktopScenarioVerified) {
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
+      if (shouldStopAfterDesktopCheckpoint('local-harness')) {
+        console.log(`Wework desktop local-harness checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
     if (shouldRunDesktopCheckpoint('embedded-browser')) {
       phase = 'embedded-browser-scenario'
       assert.ok(
@@ -2961,6 +3056,119 @@ last_updated = "2026-07-30T00:00:00Z"`
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
     }
   }
+}
+
+async function verifyPermissionModes(control) {
+  const trigger = '[data-testid="permission-mode-menu-button"]'
+  const getPermissionModeLabel = () =>
+    control.command('getAttribute', trigger, { value: 'aria-label' })
+  await control.command('waitFor', trigger, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.match(
+    await getPermissionModeLabel(),
+    /Full access|完整访问/,
+    'The default permission mode was not full access'
+  )
+  await captureVerificationScreenshot(control, 'permission-01-default-full-access.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-workspace-write"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'permission-02-mode-menu.png')
+
+  await control.command('click', '[data-testid="permission-mode-workspace-write"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await getPermissionModeLabel(),
+    /Workspace|工作区/,
+    'Selecting workspace mode did not update the permission mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-03-workspace-enabled.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-full-access"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="permission-mode-full-access"]')
+  await control.command('waitFor', '[data-testid="full-access-confirm-overlay"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getText', '[data-testid="full-access-confirm-overlay"]'),
+    /Enable full access|启用完整访问/,
+    'The full-access warning dialog did not explain the requested mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-04-full-access-confirmation.png')
+
+  await control.command('click', '[data-testid="full-access-confirm-cancel"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await getPermissionModeLabel(),
+    /Workspace|工作区/,
+    'Cancelling full access changed the permission mode'
+  )
+  assert.equal(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.includes(
+      'full-access-confirm-overlay'
+    ),
+    false,
+    'Cancelling full access left the confirmation dialog open'
+  )
+  await captureVerificationScreenshot(control, 'permission-05-full-access-cancelled.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-full-access"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="permission-mode-full-access"]')
+  await control.command('waitFor', '[data-testid="full-access-confirm-submit"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="full-access-confirm-submit"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await getPermissionModeLabel(),
+    /Full access|完整访问/,
+    'Confirming full access did not update the permission mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-06-full-access-enabled.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-read-only"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="permission-mode-read-only"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await getPermissionModeLabel(),
+    /Read only|只读/,
+    'Selecting read-only did not update the permission mode'
+  )
+  await captureVerificationScreenshot(control, 'permission-07-read-only-enabled.png')
+
+  await control.command('click', trigger)
+  await control.command('waitFor', '[data-testid="permission-mode-workspace-write"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="permission-mode-workspace-write"]')
+  await control.command('waitFor', trigger, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await getPermissionModeLabel(),
+    /Workspace|工作区/,
+    'Restoring workspace mode did not update the permission mode'
+  )
 }
 
 export { main }

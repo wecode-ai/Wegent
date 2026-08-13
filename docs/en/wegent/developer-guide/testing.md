@@ -227,6 +227,20 @@ frontend/src/__tests__/
 └── components/              # Component tests
 ```
 
+## Wework Desktop Cloud Device Tests
+
+Run the cloud-device feature E2E from the repository root:
+
+```bash
+pnpm --filter wework e2e:desktop:cloud-features
+```
+
+This scenario starts a real backend, Redis, cloud-device executor, and Tauri
+application. It verifies cloud project tasks, Goal auto-continuation and unread
+state, busy-turn Goal handoff, and the local/cloud model protocol matrix. On
+failure, use the reported `wework/test-results/desktop-e2e/<run-id>/` directory
+to correlate frontend, backend, and executor logs before changing behavior.
+
 ## Continuous Integration
 
 ### GitHub Actions Workflow
@@ -273,6 +287,10 @@ CI reliability depends on these invariants:
   wait for each target element before reading attributes or asserting state.
   Visible final text does not imply that associated disclosure controls or
   timelines have mounted.
+- Wework release-note lookups for GitHub commit authors retry transient API or
+  TLS failures a limited number of times with exponential backoff. The release
+  job must still fail after retries are exhausted instead of silently omitting
+  attribution or publishing incomplete notes.
 
 ### CI Cache Ownership
 
@@ -280,14 +298,20 @@ Large caches are prewarmed and owned by `main`. Pull requests and merge-queue
 runs may restore the default-branch cache, but they do not save another copy:
 
 - Linux workspace `node_modules` has one shared cache keyed by the Node version
-  and `pnpm-lock.yaml`. Tests, Lint, platform E2E, and Wework E2E reuse it.
+  and `pnpm-lock.yaml`. Tests, Lint, and platform E2E reuse it.
+- Wework browser and desktop E2E use dependency images published to GHCR. Image
+  tags are derived from the corresponding Dockerfile content hash. The workflow
+  builds and publishes an image only when that tag is missing, then runs
+  downstream jobs directly in the image container instead of installing Node,
+  pnpm, uv, Rust, Playwright browsers, or desktop system packages per job. Local
+  debugging commands do not build these CI images.
 - uv caches downloads and build results only, not project `.venv` directories.
   Python 3.10, 3.11, and 3.12 each have one shared cache whose key includes the
   dependency lockfiles, and CI pruning runs before save.
-- Playwright browsers, the Next.js build cache, the Claude Code CLI, and desktop
+- Playwright browsers, the Next.js build cache, local harness CLIs, and desktop
   Cargo targets use explicit restore/save steps; only `refs/heads/main` saves.
-  The Claude Code CLI uses a repository `package-lock.json` to pin the complete
-  dependency graph and package integrity.
+  OpenCode, Claude Code, and Kimi Code share the integrity-locked npm install
+  defined by `.github/claude-code-cli/package-lock.json`.
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
   macOS memory gate use sccache. The `main` warmup runs the same desktop
   `--build-only` flow on `macos-14`; non-`main` jobs access the shared compiler
@@ -297,9 +321,9 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.
-- Executor and Tauri system dependency installers first check packages already
-  present on the runner. Only `main` writes the APT download cache; PRs restore
-  it read-only.
+- Outside Wework E2E, Executor and Tauri system dependency installers first
+  check packages already present on the runner. Only `main` writes the APT
+  download cache; PRs restore it read-only.
 
 `.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
 lockfile, or cache implementation changes enter `main`, and rejects manual
