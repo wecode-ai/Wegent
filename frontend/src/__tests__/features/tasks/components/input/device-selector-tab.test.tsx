@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { DeviceInfo } from '@/apis/devices'
 import DeviceSelectorTab from '@/features/tasks/components/input/DeviceSelectorTab'
 
 const mockSetSelectedDeviceId = jest.fn()
 let mockDevices: DeviceInfo[] = []
+let mockSelectedDeviceId: string | null = null
+let mockDefaultExecutionTarget: string | null = null
+const mockUpdatePreferences = jest.fn().mockResolvedValue(undefined)
 
 function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
   return {
@@ -39,6 +42,7 @@ jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: jest.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }))
 
 jest.mock('sonner', () => ({
@@ -51,7 +55,7 @@ jest.mock('sonner', () => ({
 jest.mock('@/contexts/DeviceContext', () => ({
   useDevices: () => ({
     devices: mockDevices,
-    selectedDeviceId: null,
+    selectedDeviceId: mockSelectedDeviceId,
     setSelectedDeviceId: mockSetSelectedDeviceId,
     isLoading: false,
   }),
@@ -61,10 +65,10 @@ jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({
     user: {
       preferences: {
-        default_execution_target: null,
+        default_execution_target: mockDefaultExecutionTarget,
       },
     },
-    updatePreferences: jest.fn().mockResolvedValue(undefined),
+    updatePreferences: mockUpdatePreferences,
   }),
 }))
 
@@ -84,6 +88,9 @@ jest.mock('@/components/ui/tooltip', () => ({
 describe('DeviceSelectorTab', () => {
   beforeEach(() => {
     mockSetSelectedDeviceId.mockClear()
+    mockUpdatePreferences.mockClear()
+    mockSelectedDeviceId = null
+    mockDefaultExecutionTarget = null
     mockDevices = [createDevice({})]
   })
 
@@ -146,5 +153,42 @@ describe('DeviceSelectorTab', () => {
     expect(offlineDeviceCard).toBeInTheDocument()
     expect(offlineDeviceCard).toHaveAttribute('aria-disabled', 'true')
     expect(screen.queryByText('no_devices_available')).not.toBeInTheDocument()
+  })
+
+  it('initializes a new task from the exact account default without fallback', async () => {
+    mockDefaultExecutionTarget = 'offline-default'
+    mockDevices = [
+      createDevice({ device_id: 'offline-default', status: 'offline' }),
+      createDevice({ id: 2, device_id: 'other-online', name: 'Other Online' }),
+    ]
+
+    render(<DeviceSelectorTab />)
+
+    await waitFor(() => expect(mockSetSelectedDeviceId).toHaveBeenCalledWith('offline-default'))
+    expect(mockSetSelectedDeviceId).not.toHaveBeenCalledWith('other-online')
+  })
+
+  it('renders an existing task target read-only without changing draft selection', () => {
+    mockSelectedDeviceId = 'stale-draft-device'
+    mockDevices = [createDevice({ device_id: 'task-device', name: 'Task Device' })]
+
+    render(<DeviceSelectorTab taskId={42} taskType="task" taskDeviceId="task-device" />)
+
+    expect(screen.getByText('local_device_prefixTask Device')).toBeInTheDocument()
+    expect(screen.queryByTestId('execution-target-trigger')).not.toBeInTheDocument()
+    expect(mockSetSelectedDeviceId).not.toHaveBeenCalled()
+  })
+
+  it('updates the account default only from the explicit default action', async () => {
+    render(<DeviceSelectorTab />)
+
+    fireEvent.click(screen.getByTestId('set-default-device-device-1'))
+
+    await waitFor(() =>
+      expect(mockUpdatePreferences).toHaveBeenCalledWith({
+        default_execution_target: 'device-1',
+      })
+    )
+    expect(mockSetSelectedDeviceId).not.toHaveBeenCalledWith('device-1')
   })
 })

@@ -1372,6 +1372,20 @@ button.plugin-operation-notice-dismiss {
   color: rgb(var(--color-text-muted));
 }
 
+button.plugin-operation-notice-action {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 5px 7px;
+  color: rgb(var(--color-text-primary));
+  font-weight: 600;
+}
+
+button.plugin-operation-notice-action:hover {
+  background: rgb(var(--color-text-primary) / 0.07);
+}
+
 button.plugin-operation-notice-dismiss:hover {
   background: rgb(var(--color-text-primary) / 0.07);
   color: rgb(var(--color-text-primary));
@@ -1391,6 +1405,7 @@ button.plugin-market-icon-button:focus-visible,
 button.plugin-market-filter:focus-visible,
 button.plugin-installed-strip-item:focus-visible,
 button.plugin-installed-overflow-button:focus-visible,
+button.plugin-operation-notice-action:focus-visible,
 button.plugin-operation-notice-dismiss:focus-visible,
 button.plugin-detail-action-primary:focus-visible,
 button.plugin-detail-action-secondary:focus-visible,

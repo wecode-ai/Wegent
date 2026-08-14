@@ -8,6 +8,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task } from '@/types/api'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
+import { resolveTaskExecutionDeviceId } from '@/features/devices/utils/execution-target'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -315,10 +316,21 @@ export function useChatStreamHandlers({
   // - Send device_id when in device mode (devices page or chat page with device selected) AND team is not Chat Shell
   // - For project conversations, use the project's configured device
   // - This ensures coding tasks don't get routed to devices
-  const effectiveDeviceId =
+  const persistedTaskDeviceId =
+    currentTaskId &&
+    selectedTaskDetail?.id === currentTaskId &&
+    selectedTaskDetail.task_type === 'task'
+      ? selectedTaskDetail.device_id || undefined
+      : undefined
+  const newTaskDeviceId =
     isDeviceMode && !isChatShell(selectedTeam)
       ? projectDeviceId || selectedDeviceId || undefined
       : undefined
+  const effectiveDeviceId = resolveTaskExecutionDeviceId({
+    taskId: currentTaskId,
+    persistedTaskDeviceId,
+    newTaskDeviceId,
+  })
 
   // Refs
   const selectedContextsRef = useRef(selectedContexts)

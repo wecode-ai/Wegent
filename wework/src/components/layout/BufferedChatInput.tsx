@@ -5,6 +5,7 @@ import {
   type ChatInputProps,
   type ChatSubmitOptions,
 } from '@/components/chat/ChatInput'
+import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -61,9 +62,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   }, [])
 
   const flushDraft = useCallback(
-    (nextDraft: string) => {
+    (nextDraft: string, reason: string) => {
       cancelPendingFlush()
       pendingChangeRef.current = onChange
+      recordComposerDiagnostic('draft-flush', {
+        reason,
+        draftLength: nextDraft.length,
+      })
       onChange(nextDraft)
     },
     [cancelPendingFlush, onChange]
@@ -75,6 +80,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       pendingChangeRef.current = onChange
       flushTimeoutRef.current = window.setTimeout(() => {
         flushTimeoutRef.current = null
+        recordComposerDiagnostic('draft-flush', {
+          reason: 'debounce',
+          draftLength: nextDraft.length,
+        })
         onChange(nextDraft)
       }, DRAFT_FLUSH_DELAY_MS)
     },
@@ -84,6 +93,11 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   // Sync external value changes into composer and local state.
   useEffect(() => {
     const shouldSetComposer = value !== draftRef.current
+    recordComposerDiagnostic('draft-external-sync', {
+      sourceValueLength: value.length,
+      draftLength: draftRef.current.length,
+      shouldSetComposer,
+    })
     draftRef.current = value
     committedValueRef.current = value
     setDraftState({ scopeKey, sourceValue: value, draft: value })
@@ -128,9 +142,21 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   )
 
   // Flush after the next frame so the editor state settles first.
-  const flushDraftNextFrame = useCallback(() => {
-    window.requestAnimationFrame(() => flushDraft(draftRef.current))
-  }, [flushDraft])
+  const flushDraftNextFrame = useCallback(
+    (reason: string) => {
+      recordComposerDiagnostic('draft-flush-request', {
+        reason,
+        draftLength: draftRef.current.length,
+      })
+      window.requestAnimationFrame(() => flushDraft(draftRef.current, reason))
+    },
+    [flushDraft]
+  )
+  const handleBlur = useCallback(() => flushDraftNextFrame('blur'), [flushDraftNextFrame])
+  const handleCompositionEnd = useCallback(
+    () => flushDraftNextFrame('composition-end'),
+    [flushDraftNextFrame]
+  )
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
@@ -171,8 +197,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       ref={composerRef}
       value={draft}
       onChange={setDraft}
-      onBlur={flushDraftNextFrame}
-      onCompositionEnd={flushDraftNextFrame}
+      onBlur={handleBlur}
+      onCompositionEnd={handleCompositionEnd}
       onSubmit={handleSubmit}
     />
   )
