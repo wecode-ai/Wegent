@@ -14,7 +14,7 @@ export function AssistantThinkingIndicator({
   const text = preview ? `${t('thinking.running')} · ${preview}` : t('thinking.running')
 
   return (
-    <div className="inline-flex min-w-0 max-w-full items-center text-sm" data-testid={testId}>
+    <div className="inline-flex min-w-0 max-w-full items-center text-chat" data-testid={testId}>
       <span className="waiting-thinking-text min-w-0 truncate">{text}</span>
     </div>
   )

@@ -306,6 +306,20 @@ assistant message share a timestamp, the user input must remain first.
 Canonical `turns` are the frontend transcript's only input, so restoring a
 message only in the compatibility `messages` array is insufficient.
 
+### Assistant In-Turn Display Order and Typography
+
+Final text, process text, and tool blocks within one assistant turn must be
+projected in runtime item arrival order. The UI must not group them by type and
+then render them in a fixed layout. In particular, when final text arrives
+before a later process update, that process update must appear below the final
+text, and transcript restoration must preserve the same order.
+
+The thinking indicator, process body text, and final answer body all use the
+semantic `text-chat` size. Tool summaries, timestamps, and other metadata may
+retain their compact roles, but a chat body must not change font size when it
+moves between streaming and completed states because that causes a visible
+flash.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
