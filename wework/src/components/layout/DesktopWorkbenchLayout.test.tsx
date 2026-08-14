@@ -5306,6 +5306,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+    expect(screen.getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
     expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
@@ -5810,6 +5811,77 @@ describe('DesktopWorkbenchLayout', () => {
         'workspace-cloud-device',
         '/workspace/project'
       )
+    )
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+  })
+
+  test('opens multiple terminal tabs in the right workspace panel', async () => {
+    startDeviceTerminalSessionMock
+      .mockResolvedValueOnce({
+        session_id: 'terminal-1',
+        url: '',
+        transport: 'socketio',
+        device_id: 'workspace-cloud-device',
+        path: '/workspace/project',
+      })
+      .mockResolvedValueOnce({
+        session_id: 'terminal-2',
+        url: '',
+        transport: 'socketio',
+        device_id: 'workspace-cloud-device',
+        path: '/workspace/project',
+      })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-terminal-option'))
+
+    expect(screen.queryByTestId('right-workspace-launcher')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'true')
+    await waitFor(() =>
+      expect(startDeviceTerminalSessionMock).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/project'
+      )
+    )
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-terminal-option'
+      )
+    )
+
+    await waitFor(() => expect(startDeviceTerminalSessionMock).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    expect(screen.getByTestId('right-workspace-terminal-tab-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getAllByTestId('remote-terminal')).toHaveLength(2)
+    expect(screen.getAllByTestId('remote-terminal')[0]).toHaveAttribute(
+      'data-session-id',
+      'terminal-1'
+    )
+    expect(screen.getAllByTestId('remote-terminal')[1]).toHaveAttribute(
+      'data-session-id',
+      'terminal-2'
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-terminal-tab-2-close-button'))
+
+    expect(screen.queryByTestId('right-workspace-terminal-tab-2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
     )
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
   })

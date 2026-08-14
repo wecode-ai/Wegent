@@ -77,6 +77,7 @@ import {
   type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
+  type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import {
@@ -343,8 +344,8 @@ function rightPanelTabType(
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
-  if (isRightWorkspaceHarnessTab(tab)) return 'terminal'
-  if (tab === 'review' || tab === 'terminal' || tab === 'files') return tab
+  if (isRightWorkspaceHarnessTab(tab) || isRightWorkspaceTerminalTab(tab)) return 'terminal'
+  if (tab === 'review' || tab === 'files') return tab
   return 'other'
 }
 
@@ -354,6 +355,31 @@ function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightW
 
 function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
   return tab.startsWith('harness:')
+}
+
+function isRightWorkspaceTerminalTab(
+  tab: RightWorkspacePanelView
+): tab is RightWorkspaceTerminalTab {
+  return tab.startsWith('terminal:')
+}
+
+function getRightWorkspaceTerminalNumericSuffix(tab: RightWorkspaceTerminalTab): number {
+  const parsed = Number.parseInt(tab.slice('terminal:'.length), 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeRightWorkspacePanelTab(
+  tab: RightWorkspacePanelTab | 'browser' | 'terminal'
+): RightWorkspacePanelTab {
+  if (tab === 'browser') return 'browser:1'
+  if (tab === 'terminal') return 'terminal:1'
+  return tab
+}
+
+function normalizeRightWorkspacePanelView(
+  view: RightWorkspacePanelView | 'browser' | 'terminal'
+): RightWorkspacePanelView {
+  return view === 'launcher' ? view : normalizeRightWorkspacePanelTab(view)
 }
 
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
@@ -1237,16 +1263,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       initialBlankBrowserMigration?.rightPanelView ??
       initialWorkspaceState?.rightPanelView ??
       'launcher'
-    return (restoredView as RightWorkspacePanelView | 'browser') === 'browser'
-      ? 'browser:1'
-      : restoredView
+    return normalizeRightWorkspacePanelView(
+      restoredView as RightWorkspacePanelView | 'browser' | 'terminal'
+    )
   })
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(() => {
     const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
       initialWorkspaceState?.rightPanelTabs ??
-      []) as Array<RightWorkspacePanelTab | 'browser'>
-    return restoredTabs.map(tab => (tab === 'browser' ? 'browser:1' : tab))
+      []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
+    return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const terminalTabSequence = useRef(
+    Math.max(
+      0,
+      ...rightPanelTabs
+        .filter(isRightWorkspaceTerminalTab)
+        .map(getRightWorkspaceTerminalNumericSuffix),
+      isRightWorkspaceTerminalTab(rightPanelView)
+        ? getRightWorkspaceTerminalNumericSuffix(rightPanelView)
+        : 0
+    )
+  )
   const [rightPanelImmediateLayout, setRightPanelImmediateLayout] = useState(false)
   const [temporaryChatAddresses, setTemporaryChatAddresses] = useState<
     Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
@@ -1297,6 +1334,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const allocateBrowserTab = useCallback((): RightWorkspaceBrowserTab => {
     browserTabSequence.current += 1
     return `browser:${browserTabSequence.current}` as RightWorkspaceBrowserTab
+  }, [])
+  const allocateTerminalTab = useCallback((): RightWorkspaceTerminalTab => {
+    terminalTabSequence.current += 1
+    return `terminal:${terminalTabSequence.current}` as RightWorkspaceTerminalTab
   }, [])
   const createBrowserTabState = useCallback(
     (
@@ -1521,7 +1562,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     fileWorkspaceDirty ||
     rightPanelTabs.some(
       tab =>
-        tab === 'terminal' || isRightWorkspaceBrowserTab(tab) || isRightWorkspaceHarnessTab(tab)
+        isRightWorkspaceTerminalTab(tab) ||
+        isRightWorkspaceBrowserTab(tab) ||
+        isRightWorkspaceHarnessTab(tab)
     )
   useEffect(() => {
     onPaneResourceRetained(paneKey, 'right-panel', hasPersistentRightPanelResource)
@@ -2959,8 +3002,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     openBrowserTab()
   }, [openBrowserTab])
   const selectTerminalView = useCallback(() => {
-    openRightPanelTab('terminal')
-  }, [openRightPanelTab])
+    openRightPanelTab(allocateTerminalTab())
+  }, [allocateTerminalTab, openRightPanelTab])
   const selectChatView = useCallback(() => {
     openTemporaryChatTab()
   }, [openTemporaryChatTab])
