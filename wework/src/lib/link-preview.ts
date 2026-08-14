@@ -168,7 +168,7 @@ export function getRecognizedLink(url: string): RecognizedLink | undefined {
   return undefined
 }
 
-const BARE_URL_SOURCE = 'https?://[^\\s<]+'
+const BARE_URL_SOURCE = 'https?://[^\\s<>]+'
 export const BARE_HTTP_URL_REGEX = new RegExp(BARE_URL_SOURCE, 'gi')
 const FIRST_URL_REGEX = new RegExp(BARE_URL_SOURCE, 'i')
 

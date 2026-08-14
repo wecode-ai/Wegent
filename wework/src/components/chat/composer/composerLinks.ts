@@ -62,6 +62,8 @@ export function parseComposerLinks(value: string): ParsedComposerLink[] {
 }
 
 export function applyLinkIcon(icon: HTMLImageElement, payload: ComposerLinkPayload): void {
+  const url = payload.url
+  icon.dataset.appliedLinkUrl = url
   const iconUrl =
     payload.iconUrl && payload.iconUrl !== GENERIC_LINK_ICON_SRC
       ? payload.iconUrl
@@ -72,12 +74,12 @@ export function applyLinkIcon(icon: HTMLImageElement, payload: ComposerLinkPaylo
   }
   if (payload.provider === 'web') {
     resolveAndProbeIcon(
-      payload.url,
-      resolveFavicon(payload.url),
+      url,
+      resolveFavicon(url),
       favicon => {
-        if (icon.isConnected) icon.src = favicon
+        if (icon.isConnected && icon.dataset.appliedLinkUrl === url) icon.src = favicon
       },
-      () => !icon.isConnected
+      () => !icon.isConnected || icon.dataset.appliedLinkUrl !== url
     )
   }
 }

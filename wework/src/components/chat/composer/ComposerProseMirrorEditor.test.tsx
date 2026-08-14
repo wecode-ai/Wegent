@@ -658,6 +658,14 @@ test('renders generic web URLs as recognized inline link chips', () => {
   expect(chip.querySelector('img')).toHaveAttribute('src', GENERIC_LINK_ICON_SRC)
 })
 
+test('strips angle brackets wrapping a bare URL', () => {
+  renderEditor('Visit <https://example.com/page>')
+
+  const chip = screen.getByTestId('composer-link-chip')
+  expect(chip).toHaveAttribute('data-composer-link-url', 'https://example.com/page')
+  expect(chip).toHaveTextContent('example.com/page')
+})
+
 test('upgrades the web link chip favicon when the backend resolves one', async () => {
   resolveImageOnLoad = true
   vi.mocked(resolveFavicon).mockResolvedValue('https://cdn.example.com/real-icon.png')

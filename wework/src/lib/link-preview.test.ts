@@ -28,6 +28,11 @@ describe('link preview helpers', () => {
     expect(preview?.displayUrl).toBe('en.wikipedia.org/wiki/Foo_(bar)')
   })
 
+  test('excludes angle brackets from the matched URL', () => {
+    expect(extractFirstLink('<https://example.com/page>')?.url).toBe('https://example.com/page')
+    expect(extractFirstLink('https://example.com/page>')?.url).toBe('https://example.com/page')
+  })
+
   test('returns undefined when no URL is present', () => {
     expect(extractFirstLink('Just plain text')).toBeUndefined()
   })
