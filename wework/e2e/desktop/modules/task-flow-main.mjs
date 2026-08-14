@@ -259,6 +259,7 @@ import {
   waitForFolderPickerInitialized,
   waitForPersistedComposerInput,
   waitForWorkbenchDebugState,
+  waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
 async function verifyLocalModelRouting({
