@@ -69,6 +69,7 @@ interface WorkspacePanelActionsProps {
   onManageTodo?: () => void
   supervisor?: RuntimeSupervisorState | null
   onConfigureSupervisor?: () => void
+  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   bottomPanelOpen: boolean
@@ -103,6 +104,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onManageTodo,
   supervisor,
   onConfigureSupervisor,
+  onRunSupervisorNow,
   rightPanelOpen,
   rightPanelExpanded,
   bottomPanelOpen,
@@ -305,6 +307,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onManageTodo={onManageTodo}
           supervisor={supervisor}
           onConfigureSupervisor={onConfigureSupervisor}
+          onRunSupervisorNow={onRunSupervisorNow}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (

@@ -227,6 +227,27 @@ frontend/src/__tests__/
 └── components/              # Component tests
 ```
 
+## Wework Unit Tests
+
+Run the complete Wework unit test suite from the repository root:
+
+```bash
+pnpm --dir wework test
+```
+
+When debugging one test file, pass its path or file name to the test script.
+The following forms are equivalent and collect only matching Vitest files:
+
+```bash
+pnpm --dir wework test runtimePaneMessages.test.ts
+pnpm --dir wework test -- runtimePaneMessages.test.ts
+```
+
+For compatibility, the test script removes one standalone leading `--`, then
+passes all remaining file filters and Vitest options through unchanged. For a
+focused run, confirm that the reported `Test Files` count matches the intended
+scope so an accidental full-suite run is caught immediately.
+
 ## Wework Desktop Cloud Device Tests
 
 Run the cloud-device feature E2E from the repository root:

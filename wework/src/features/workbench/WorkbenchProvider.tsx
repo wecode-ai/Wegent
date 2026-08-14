@@ -10,13 +10,13 @@ import {
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
@@ -135,7 +135,7 @@ import {
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import { defaultNewChatModelSelection } from './runtimeModelSelection'
+import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -220,6 +220,7 @@ export function WorkbenchProvider({
   services,
   onStartupReadyChange,
   workspaceTabId,
+  syncRemoteProjects = true,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -283,6 +284,7 @@ export function WorkbenchProvider({
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
   const remoteProjectSyncRevisionRef = useRef(0)
+  const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
@@ -878,16 +880,33 @@ export function WorkbenchProvider({
     []
   )
 
-  const invalidateRemoteProjectSync = useCallback(() => {
+  const invalidateRemoteProjectSync = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.add(normalizeRuntimeWorkspacePath(workspacePath))
     remoteProjectSyncRevisionRef.current += 1
+  }, [])
+
+  const clearRemoteProjectSyncRemoval = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.delete(normalizeRuntimeWorkspacePath(workspacePath))
     remoteProjectSyncSignatureRef.current = ''
   }, [])
 
   useEffect(() => {
+    if (!syncRemoteProjects) {
+      remoteProjectSyncRevisionRef.current += 1
+      remoteProjectSyncSignatureRef.current = ''
+      return
+    }
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
       localRuntimeStateDeviceId
-    ).sort((left, right) => left.id.localeCompare(right.id))
+    )
+      .filter(
+        project =>
+          !removedRemoteProjectPathsRef.current.has(
+            normalizeRuntimeWorkspacePath(project.remotePath)
+          )
+      )
+      .sort((left, right) => left.id.localeCompare(right.id))
     if (!localRuntimeStateDeviceId || projects.length === 0) {
       remoteProjectSyncSignatureRef.current = ''
       return
@@ -915,6 +934,7 @@ export function WorkbenchProvider({
     localRuntimeStateDeviceId,
     refreshWorkLists,
     state.runtimeWork,
+    syncRemoteProjects,
   ])
 
   useEffect(() => {
@@ -1160,6 +1180,7 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
+        response.roots.forEach(clearRemoteProjectSyncRemoval)
         rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
@@ -1182,6 +1203,7 @@ export function WorkbenchProvider({
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
       const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
+      clearRemoteProjectSyncRemoval(openedWorkspacePath)
       const openedDeviceId =
         resolveLocalWorkbenchDeviceId(
           devicesForResolution,
@@ -1200,7 +1222,14 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, refreshWorkLists, rememberExecutionDevice, state.devices, user.id]
+    [
+      clearRemoteProjectSyncRemoval,
+      executorClient,
+      refreshWorkLists,
+      rememberExecutionDevice,
+      state.devices,
+      user.id,
+    ]
   )
 
   const startNewChat = useCallback(() => {
@@ -1422,12 +1451,29 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
+      let taskModelSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
+      if (taskModelSelection && taskModel) {
+        const executionModel = selectedModelExecutionFields(
+          taskModel,
+          taskModelSelection.options ?? {}
+        )
+        taskModelSelection = {
+          modelName: executionModel.modelId ?? taskModelSelection.modelName,
+          modelType: executionModel.modelType ?? taskModelSelection.modelType,
+          options: executionModel.modelOptions ?? {},
+        }
+      }
       return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
         address,
         sessionKeys,
+        ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })
     },
-    [resolvedServices]
+    [modelSelection.models, resolvedServices, state.runtimeWork]
   )
 
   const getImNotificationSettings = useCallback(() => {
@@ -1476,6 +1522,7 @@ export function WorkbenchProvider({
     refreshWorkLists,
     markRuntimeProjectRemoved,
     invalidateRemoteProjectSync,
+    clearRemoteProjectSyncRemoval,
     rememberExecutionDevice,
     enqueueRemoteProjectStateMutation,
   })
@@ -2634,10 +2681,7 @@ export function WorkbenchProvider({
   return (
     <RuntimeTaskLifecycleProvider store={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
-        <WorkbenchPaneContext.Provider value={paneValue}>
-          <CloudModelCatalogSyncDialogHost />
-          {children}
-        </WorkbenchPaneContext.Provider>
+        <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>
     </RuntimeTaskLifecycleProvider>
   )

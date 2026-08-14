@@ -106,7 +106,8 @@ describe('AutomationsPage', () => {
       fireEvent.click(screen.getByTestId('automation-detail-close'))
 
       expect(screen.queryByTestId('automation-detail-panel')).not.toBeInTheDocument()
-      expect(screen.getByText('选择一个任务查看详情')).toBeInTheDocument()
+      expect(screen.getByTestId('automation-list-pane')).toHaveClass('flex-1')
+      expect(screen.queryByText('选择一个任务查看详情')).not.toBeInTheDocument()
       expect(automationApi.listAutomations).toHaveBeenCalledTimes(1)
 
       await act(() => vi.advanceTimersByTimeAsync(30_000))

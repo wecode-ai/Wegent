@@ -426,4 +426,5 @@ export interface WorkbenchProviderProps {
   services?: WorkbenchServices
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  syncRemoteProjects?: boolean
 }

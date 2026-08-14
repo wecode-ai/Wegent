@@ -1675,19 +1675,8 @@ async function prepareLocalRuntimeWorkspace(
     throw new Error('Project directory is not a Git repository')
   }
 
-  const [taskId] = createRuntimeExecutionIds(data)
-  const response = await requestWithLocalDevice<
-    RuntimeWorktreeMutationResponse,
-    RuntimeWorktreePrepareRequest
-  >('runtime.worktrees.prepare', {
-    deviceId: data.deviceId ?? LOCAL_DEVICE_ID,
-    sourcePath: sourceWorkspacePath,
-    worktreeId: taskId,
-    ...(branch ? { ref: branch } : {}),
-  })
-
   return {
-    workspacePath: response.path ?? response.worktree.path,
+    workspacePath: sourceWorkspacePath,
     workspaceSource: 'git_worktree',
     branch,
   }

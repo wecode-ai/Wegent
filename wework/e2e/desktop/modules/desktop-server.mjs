@@ -256,6 +256,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
+    this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
@@ -900,6 +901,39 @@ class DesktopE2EServer {
       return
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/im/private-sessions') {
+      json(response, 200, {
+        total: 1,
+        items: [
+          {
+            session_key: 'desktop-e2e-im-session',
+            channel_type: 'dingtalk',
+            channel_label: 'DingTalk',
+            channel_id: 77,
+            conversation_id: 'desktop-e2e-conversation',
+            sender_id: 'desktop-e2e-user',
+            display_name: 'Desktop E2E',
+            mode: 'task',
+            state: 'idle',
+            active_task_id: null,
+            last_seen_at: '2026-08-12T00:00:00.000Z',
+          },
+        ],
+      })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/runtime-work/im-sessions') {
+      const body = await readRequestBody(request)
+      this.runtimeImBindingRequests.push(body)
+      json(response, 200, {
+        address: body.address,
+        boundSessionKeys: body.sessionKeys,
+        notifiedCount: 1,
+      })
+      return
+    }
+
     // Official/local marketplace plugins may infer on_install connectors from
     // .app.json entries (e.g. openai-platform). ensureMarketplaceConnectors
     // lists Wegent connector-apps before plugin/install; stub them as already
@@ -1277,8 +1311,9 @@ class DesktopE2EServer {
       return
     }
 
+    const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
     const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses'
+      url.pathname === '/v1/responses' || url.pathname === '/responses' || cloudResponsesProxy
         ? 'responses'
         : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
           ? 'chat'
@@ -1286,7 +1321,28 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     if (request.method === 'POST' && modelProtocol) {
-      await this.handleModelResponse(request, response, modelProtocol)
+      if (cloudResponsesProxy) {
+        assert.equal(
+          request.headers['x-wegent-model-type'],
+          'public',
+          'The automation cloud model type was not forwarded to the Backend proxy'
+        )
+        assert.equal(
+          request.headers['x-wegent-model-namespace'],
+          'default',
+          'The automation cloud model namespace was not forwarded to the Backend proxy'
+        )
+        assert.equal(
+          request.headers['x-wegent-model-user-id'],
+          '0',
+          'The automation cloud model owner was not forwarded to the Backend proxy'
+        )
+      }
+      await this.handleModelResponse(request, response, modelProtocol, {
+        acceptedAuthorization: cloudResponsesProxy
+          ? 'Bearer wework-desktop-e2e-cloud-token'
+          : undefined,
+      })
       return
     }
 
@@ -1399,13 +1455,15 @@ class DesktopE2EServer {
     return false
   }
 
-  async handleModelResponse(request, response, protocol) {
+  async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
     const modelRequest = { authorization, body, scenario: this.scenario }
     this.modelRequests.push(modelRequest)
     const authenticated =
-      authorization === `Bearer ${MODEL_API_KEY}` || request.headers['x-api-key'] === MODEL_API_KEY
+      authorization === `Bearer ${MODEL_API_KEY}` ||
+      authorization === options.acceptedAuthorization ||
+      request.headers['x-api-key'] === MODEL_API_KEY
     if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return

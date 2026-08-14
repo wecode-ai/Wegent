@@ -241,6 +241,58 @@ async def test_task_mode_media_only_continues_active_task_with_empty_message(
 
 
 @pytest.mark.asyncio
+async def test_runtime_notification_reply_inherits_bound_model_selection(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    port = FakeInteractionPort()
+    session = await _session(test_db, test_user)
+    session.active_runtime_task = {
+        "deviceId": "device-1",
+        "workspacePath": "/repo/Wegent",
+        "taskId": "codex-1",
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0",
+                "permissionMode": "workspace-write",
+            },
+        },
+    }
+    await im_session_service.save_runtime_task_reply_target(
+        session=session,
+        message_id=901,
+        runtime_task={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "localTaskId": "codex-1",
+        },
+    )
+    context = _context("继续处理")
+    context.extra_data["reply_to_message_id"] = 901
+
+    handled = await im_interaction_service.route_private_message(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message_context=context,
+        port=port,
+    )
+
+    assert handled is True
+    runtime_target = port.continued_runtime_tasks[0]
+    assert runtime_target is not None
+    assert runtime_target["taskId"] == "codex-1"
+    assert runtime_target["localTaskId"] == "codex-1"
+    assert (
+        runtime_target["modelSelection"]
+        == session.active_runtime_task["modelSelection"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_pending_task_creation_creates_selected_project_task(
     test_db: Session,
     test_user: User,

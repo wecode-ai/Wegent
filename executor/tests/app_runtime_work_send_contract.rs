@@ -2258,6 +2258,119 @@ async fn concurrent_runtime_task_sends_start_only_one_turn() {
 }
 
 #[tokio::test]
+async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-queued-worktree-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-queued-worktree-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let source = temp_path("runtime-queued-worktree-source", "dir");
+    fs::create_dir_all(&source).unwrap();
+    let log_path = temp_path("runtime-queued-worktree-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.settings.update",
+            "payload": {"maxConcurrentTasks": 1}
+        }))
+        .await
+        .expect("runtime concurrency setting should update");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "active-task",
+                "workspacePath": "/tmp/project",
+                "message": "hold the only slot",
+                "executionRequest": codex_execution_request(
+                    "hold the only slot",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("active task should be accepted");
+
+    let source_path = source.display().to_string();
+    let queued = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "queued-worktree-task",
+                "workspacePath": source_path,
+                "message": "wait for a slot",
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree"
+                    }
+                },
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "prompt": "wait for a slot",
+                    "project_workspace_path": source.display().to_string(),
+                    "workspace_source": "git_worktree",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses",
+                        "protocol": "openai-responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("worktree task should be queued");
+
+    let planned_path = PathBuf::from(
+        queued["workspacePath"]
+            .as_str()
+            .expect("queued task should return its planned worktree path"),
+    );
+    assert_eq!(queued["status"], "queued");
+    assert_eq!(queued["queuePosition"], 1);
+    assert_eq!(
+        planned_path,
+        executor_home
+            .join("workspace/worktrees/queued-worktree-task")
+            .join(source.file_name().unwrap())
+    );
+    assert!(
+        !planned_path.exists(),
+        "queued task must not create a worktree before acquiring a slot"
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": planned_path.display().to_string(),
+                "taskId": "queued-worktree-task"
+            }
+        }))
+        .await
+        .expect("queued task cleanup should succeed");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "active-task"
+            }
+        }))
+        .await
+        .expect("active task cleanup should succeed");
+}
+
+#[tokio::test]
 async fn runtime_tasks_guidance_steers_running_codex_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

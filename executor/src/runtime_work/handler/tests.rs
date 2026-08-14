@@ -14,6 +14,40 @@ fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
 }
 
+#[test]
+fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut turn = SpawnTurnRequest {
+        local_task_id: "task-1".to_owned(),
+        runtime: "codex".to_owned(),
+        request: ExecutionRequest::default(),
+        direct_thread_id: None,
+        fork_thread_id: None,
+        fork_thread_path: None,
+        resume_thread_id: None,
+        initial_thread_name: None,
+        initial_thread_goal: None,
+    };
+    turn.request.extra.insert(
+        "deferred_worktree_source_path".to_owned(),
+        Value::String("/tmp/source".to_owned()),
+    );
+
+    handler.reserve_worktree_preparation(&turn);
+
+    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+    assert_eq!(
+        handler
+            .preparing_worktree_turns
+            .lock()
+            .expect("preparing worktree turn map lock should not be poisoned")
+            .get("task-1"),
+        Some(&PreparingWorktreeTurn {
+            cancellation_requested: true
+        })
+    );
+}
+
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
     let (cancel, _cancelled) = oneshot::channel();
     let (_stopped, stopped) = oneshot::channel();

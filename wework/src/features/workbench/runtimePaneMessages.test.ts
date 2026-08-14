@@ -385,6 +385,45 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'succeeded')
   })
 
+  test('ignores a canonical start that arrives after its aliased turn settled', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantStart = vi.fn()
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantStart,
+      onAssistantSettled,
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'provisional-turn',
+      deviceId: 'device-1',
+    })
+    handlers.onChatError?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'canonical-turn',
+      deviceId: 'device-1',
+      error: 'interrupted',
+      type: 'response.incomplete',
+    })
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'canonical-turn',
+      deviceId: 'device-1',
+    })
+
+    expect(onAssistantStart).toHaveBeenCalledTimes(1)
+    expect(onAssistantStart).toHaveBeenCalledWith('provisional-turn')
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'cancelled')
+    expect(actions.filter(action => action.type === 'assistant_started')).toHaveLength(1)
+  })
+
   test('settles renamed overlapping turns in their start order', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',

@@ -60,6 +60,7 @@ interface AutomationDetailWorkspaceProps {
   dirty: boolean
   running: boolean
   onChange: <K extends keyof AutomationDraft>(key: K, value: AutomationDraft[K]) => void
+  onModelChange: (model: UnifiedModel | null) => void
   onSourceChange: (source: AutomationSource) => void
   onClose: () => void
   onSave: () => void
@@ -84,6 +85,7 @@ export function AutomationDetailWorkspace({
   dirty,
   running,
   onChange,
+  onModelChange,
   onSourceChange,
   onClose,
   onSave,
@@ -96,11 +98,20 @@ export function AutomationDetailWorkspace({
   const taskOptions = buildAutomationTaskOptions(runtimeWork, new Set(localDeviceIds))
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
   const selectedModel = models.find(
-    model => (model.modelId ?? model.name) === draft.modelId && model.type === draft.modelType
+    model =>
+      model.type === draft.modelType &&
+      (model.name === draft.modelId || (model.modelId ?? model.name) === draft.modelId)
   )
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
     projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
+  const projectOptionLabel = (option: (typeof projectOptions)[number]) => {
+    if (option.workspaceKind !== 'worktree') return option.name
+    const worktreeLabel = t('workbench.project_workspace_kind_worktree', 'Worktree')
+    return option.workspaceLabel && option.workspaceLabel !== option.name
+      ? `${option.name} · ${worktreeLabel} · ${option.workspaceLabel}`
+      : `${option.name} · ${worktreeLabel}`
+  }
 
   return (
     <section
@@ -336,7 +347,7 @@ export function AutomationDetailWorkspace({
                     { value: '', label: t('workbench.none', '无') },
                     ...projectOptions.map(project => ({
                       value: project.key,
-                      label: project.name,
+                      label: projectOptionLabel(project),
                     })),
                   ]}
                 />
@@ -351,8 +362,13 @@ export function AutomationDetailWorkspace({
                   }
                   onChange={value => {
                     const [modelType, ...modelIdParts] = value.split(':')
-                    onChange('modelType', modelType)
-                    onChange('modelId', modelIdParts.join(':'))
+                    const modelId = modelIdParts.join(':')
+                    onModelChange(
+                      models.find(
+                        model =>
+                          model.type === modelType && (model.modelId ?? model.name) === modelId
+                      ) ?? null
+                    )
                   }}
                   options={[
                     { value: '', label: t('workbench.automatic', '自动') },

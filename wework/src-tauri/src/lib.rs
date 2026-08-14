@@ -601,6 +601,10 @@ struct AppPreferences {
     telemetry_enabled: bool,
     supervisor_principles: String,
     #[serde(default)]
+    supervisor_model_selection: Option<serde_json::Value>,
+    #[serde(default = "default_supervisor_interval_seconds")]
+    supervisor_interval_seconds: u32,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -628,6 +632,8 @@ struct AppPreferences {
     friendly_task_titles_enabled: bool,
     #[serde(default)]
     friendly_task_title_model: Option<serde_json::Value>,
+    #[serde(default = "default_true")]
+    change_request_status_enabled: bool,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
     #[serde(default = "default_local_harness_preferences")]
@@ -769,6 +775,10 @@ fn default_context_compaction_threshold() -> u8 {
     85
 }
 
+fn default_supervisor_interval_seconds() -> u32 {
+    30
+}
+
 #[cfg(desktop)]
 fn default_language_preference() -> String {
     "zh-CN".to_string()
@@ -811,6 +821,8 @@ impl Default for AppPreferences {
             telemetry_consent_asked: false,
             telemetry_enabled: false,
             supervisor_principles: String::new(),
+            supervisor_model_selection: None,
+            supervisor_interval_seconds: default_supervisor_interval_seconds(),
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -825,6 +837,7 @@ impl Default for AppPreferences {
             popout_window_projectless_default_enabled: false,
             friendly_task_titles_enabled: false,
             friendly_task_title_model: None,
+            change_request_status_enabled: true,
             quick_phrases: default_quick_phrases(),
             local_harnesses: default_local_harness_preferences(),
         }
@@ -869,6 +882,8 @@ struct AppPreferencesPatch {
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: Option<u32>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -885,6 +900,7 @@ struct AppPreferencesPatch {
     friendly_task_titles_enabled: Option<bool>,
     #[serde(default)]
     friendly_task_title_model: PatchField<serde_json::Value>,
+    change_request_status_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
     local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
@@ -1180,6 +1196,9 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
+    if !matches!(preferences.supervisor_interval_seconds, 10 | 30 | 60 | 300) {
+        preferences.supervisor_interval_seconds = default_supervisor_interval_seconds();
+    }
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -1486,6 +1505,12 @@ fn update_app_preferences(
     if let Some(value) = patch.supervisor_principles {
         preferences.supervisor_principles = value;
     }
+    if let Some(value) = patch.supervisor_model_selection {
+        preferences.supervisor_model_selection = Some(value);
+    }
+    if let Some(value) = patch.supervisor_interval_seconds {
+        preferences.supervisor_interval_seconds = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -1531,6 +1556,9 @@ fn update_app_preferences(
     if let PatchField::Value(value) = patch.friendly_task_title_model {
         preferences.friendly_task_title_model = value;
     }
+    if let Some(value) = patch.change_request_status_enabled {
+        preferences.change_request_status_enabled = value;
+    }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
     }
@@ -1564,6 +1592,8 @@ struct AppPreferences {
     telemetry_consent_asked: bool,
     telemetry_enabled: bool,
     supervisor_principles: String,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: u32,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -1578,6 +1608,7 @@ struct AppPreferences {
     popout_window_projectless_default_enabled: bool,
     friendly_task_titles_enabled: bool,
     friendly_task_title_model: Option<serde_json::Value>,
+    change_request_status_enabled: bool,
     quick_phrases: Vec<QuickPhrase>,
     local_harnesses: Vec<LocalHarnessPreference>,
 }
@@ -1599,6 +1630,8 @@ struct AppPreferencesPatch {
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: Option<u32>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -1613,6 +1646,7 @@ struct AppPreferencesPatch {
     popout_window_projectless_default_enabled: Option<bool>,
     friendly_task_titles_enabled: Option<bool>,
     friendly_task_title_model: Option<serde_json::Value>,
+    change_request_status_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
     local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
@@ -1634,6 +1668,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         telemetry_consent_asked: false,
         telemetry_enabled: false,
         supervisor_principles: String::new(),
+        supervisor_model_selection: None,
+        supervisor_interval_seconds: default_supervisor_interval_seconds(),
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -1648,6 +1684,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         popout_window_projectless_default_enabled: false,
         friendly_task_titles_enabled: false,
         friendly_task_title_model: None,
+        change_request_status_enabled: true,
         quick_phrases: default_quick_phrases(),
         local_harnesses: default_local_harness_preferences(),
     })
@@ -1681,6 +1718,11 @@ fn update_app_preferences(
         telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
         telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),
         supervisor_principles: patch.supervisor_principles.unwrap_or_default(),
+        supervisor_model_selection: patch.supervisor_model_selection,
+        supervisor_interval_seconds: patch
+            .supervisor_interval_seconds
+            .filter(|value| matches!(value, 10 | 30 | 60 | 300))
+            .unwrap_or_else(default_supervisor_interval_seconds),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),
@@ -1710,6 +1752,7 @@ fn update_app_preferences(
             .unwrap_or(false),
         friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
         friendly_task_title_model: patch.friendly_task_title_model,
+        change_request_status_enabled: patch.change_request_status_enabled.unwrap_or(true),
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
         local_harnesses: normalize_local_harness_preferences(
             patch
@@ -4271,7 +4314,7 @@ mod tests {
     #[cfg(desktop)]
     use super::{
         close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
-        AppPreferencesPatch, PatchField,
+        AppPreferences, AppPreferencesPatch, PatchField,
     };
     use std::collections::HashSet;
     #[cfg(desktop)]
@@ -4363,6 +4406,16 @@ mod tests {
             cleared.popout_window_shortcut,
             PatchField::Value(None)
         ));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn defaults_missing_change_request_status_preference_to_enabled() {
+        let preferences: AppPreferences =
+            serde_json::from_value(serde_json::json!({ "supervisorPrinciples": "" }))
+                .expect("preferences should parse");
+
+        assert!(preferences.change_request_status_enabled);
     }
 
     #[test]

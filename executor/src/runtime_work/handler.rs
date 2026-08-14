@@ -413,6 +413,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
+    preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
@@ -445,6 +446,11 @@ struct ActiveTurnCancellation {
     execution_id: u64,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PreparingWorktreeTurn {
+    cancellation_requested: bool,
 }
 
 #[derive(Clone)]
@@ -539,6 +545,7 @@ impl RuntimeWorkRpcHandler {
             ))),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
+            preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),

@@ -4,7 +4,7 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, the top-level tab activated when the main workspace opens, appearance, local Codex and compatible models, cloud models configured in Wegent and synchronized to Wework, proxies, local coding harnesses, context and default principles for the personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
 
 The context indicator beside the task composer shows the current model's context usage. Its used
 arc and remaining track automatically adapt their contrast for light and dark themes. When usage

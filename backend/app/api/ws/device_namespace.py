@@ -1330,11 +1330,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     db,
                     user_id=user_id,
                     device_id=device_id,
-                    reset_failed=True,
                 )
                 payload = device_capability_sync_service.build_desired_capabilities(
                     db,
                     user_id=user_id,
+                    device_id=device_id,
                 )
             result = await device_capability_sync_service.sync_device_payload(
                 user_id=user_id,
