@@ -4,6 +4,7 @@ import type { LocalLoopItemExecution } from './local/localDelivery'
 export type ProjectAutomationRunStatus =
   | 'pending'
   | 'queued'
+  | 'waiting_device'
   | 'running'
   | 'succeeded'
   | 'failed'
@@ -35,7 +36,8 @@ interface ProjectAutomationRuleBase {
 export type ProjectAutomationRule = ProjectAutomationRuleBase &
   (
     | {
-        executorType: 'project_robot'
+        assignmentMode: 'manual'
+        managerType: null
         agentId: string
         wegentTeamId: null
         model: string | null
@@ -43,7 +45,8 @@ export type ProjectAutomationRule = ProjectAutomationRuleBase &
         executionDeviceId: string | null
       }
     | {
-        executorType: 'custom'
+        assignmentMode: 'ai_managed'
+        managerType: 'custom'
         agentId: null
         wegentTeamId: null
         model: string
@@ -51,7 +54,8 @@ export type ProjectAutomationRule = ProjectAutomationRuleBase &
         executionDeviceId: string
       }
     | {
-        executorType: 'wegent_robot'
+        assignmentMode: 'ai_managed'
+        managerType: 'wegent'
         agentId: null
         wegentTeamId: number
         model: null
@@ -92,7 +96,8 @@ interface ProjectAutomationInputBase {
 export type ProjectAutomationInput = ProjectAutomationInputBase &
   (
     | {
-        executorType: 'project_robot'
+        assignmentMode: 'manual'
+        managerType: null
         agentId: string
         wegentTeamId: null
         model: null
@@ -100,7 +105,8 @@ export type ProjectAutomationInput = ProjectAutomationInputBase &
         executionDeviceId: null
       }
     | {
-        executorType: 'custom'
+        assignmentMode: 'ai_managed'
+        managerType: 'custom'
         agentId: null
         wegentTeamId: null
         model: string
@@ -108,7 +114,8 @@ export type ProjectAutomationInput = ProjectAutomationInputBase &
         executionDeviceId: string
       }
     | {
-        executorType: 'wegent_robot'
+        assignmentMode: 'ai_managed'
+        managerType: 'wegent'
         agentId: null
         wegentTeamId: number
         model: null

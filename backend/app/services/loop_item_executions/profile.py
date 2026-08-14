@@ -73,6 +73,7 @@ class WeworkExecutionProfile:
     model: str = ""
     agent_id: str = ""
     local_project_id: int = 0
+    manager_mode: bool = False
 
     @classmethod
     def for_project_robot(
@@ -95,7 +96,7 @@ class WeworkExecutionProfile:
         )
 
     @classmethod
-    def for_inline_custom(
+    def for_automation_manager(
         cls,
         *,
         owner_user_id: int,
@@ -106,7 +107,7 @@ class WeworkExecutionProfile:
         local_project_id: int = 0,
     ) -> "WeworkExecutionProfile":
         if not model:
-            raise ValueError("Inline Wework model is required")
+            raise ValueError("Custom AI manager model is required")
         return cls(
             owner_user_id=owner_user_id,
             display_name=display_name or "AI 托管",
@@ -114,10 +115,17 @@ class WeworkExecutionProfile:
             instruction=instruction,
             model=model,
             local_project_id=local_project_id,
+            manager_mode=True,
         )
 
     def identity_prompt(self) -> str:
-        base = f"你是 {self.display_name}，这个项目任务的 AI 执行者。"
+        if self.manager_mode:
+            base = (
+                f"你是 {self.display_name}，负责读取看板信息并通过工具将任务分配给"
+                "合适的项目成员或项目机器人。你不是任务执行者。"
+            )
+        else:
+            base = f"你是 {self.display_name}，这个项目任务的 AI 执行者。"
         if self.system_prompt:
             base = f"{base}\n{self.system_prompt}"
         return base
@@ -193,6 +201,8 @@ class WeworkExecutionProfile:
             "loopItemId": str(getattr(task, "id", "")),
             **origin_context,
         }
+        if self.manager_mode:
+            origin["automationRole"] = "manager"
         bot = [
             {
                 "id": bot_id,
@@ -240,15 +250,40 @@ class WeworkExecutionProfile:
             "attachments": [],
             "runtime_permission_profile": ":danger-full-access",
             # The executor uses this explicit domain origin to decide which
-            # runtime capabilities belong to the request. Wework automations
-            # carry board context directly and therefore do not receive the
-            # Wework-space MCP that ordinary interactive board tasks use.
+            # runtime capabilities belong to the request. Only automation
+            # managers receive assignment tools; project robots receive board
+            # context without manager authority.
             "origin": origin,
         }
         context_value = lambda value: {
             "kind": "application",
             "value": json.dumps(value, ensure_ascii=False, default=str),
         }
+        additional_context = {
+            "projectChatAgent": {
+                "kind": "application",
+                "value": identity,
+            },
+        }
+        if not self.manager_mode:
+            additional_context.update(
+                {
+                    "project": context_value(project_context),
+                    "task": context_value(task_context),
+                    "event": context_value(event_context),
+                    "projectChat": {
+                        "kind": "application",
+                        "value": (
+                            f"This run is bound to task cloud://projects/{project.id}/todos/"
+                            f"{getattr(task, 'id', '')}. The project, current task context, "
+                            "and trigger event are provided in separate application contexts. "
+                            "Use that context to perform the requested work. Your final response "
+                            "is a reviewable task comment."
+                        ),
+                    },
+                }
+            )
+
         payload = {
             "taskId": runtime_task_id,
             "teamId": team_id,
@@ -265,25 +300,7 @@ class WeworkExecutionProfile:
             ),
             "origin": origin,
             "standaloneChatWorkspace": self.local_project_id <= 0,
-            "additionalContext": {
-                "project": context_value(project_context),
-                "task": context_value(task_context),
-                "event": context_value(event_context),
-                "projectChat": {
-                    "kind": "application",
-                    "value": (
-                        f"This run is bound to task cloud://projects/{project.id}/todos/"
-                        f"{getattr(task, 'id', '')}. The project, current task context, and "
-                        "trigger event are provided in separate application contexts. "
-                        "Use that context to perform the requested work. Your final response "
-                        "is a reviewable task comment."
-                    ),
-                },
-                "projectChatAgent": {
-                    "kind": "application",
-                    "value": identity,
-                },
-            },
+            "additionalContext": additional_context,
         }
         if materialize_execution_request:
             payload["executionRequest"] = execution_request

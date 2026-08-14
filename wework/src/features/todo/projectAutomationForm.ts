@@ -16,7 +16,8 @@ export interface ProjectAutomationDraft {
   triggerType: 'schedule' | 'event'
   eventType: 'task.created' | null
   eventConfig: Record<string, unknown>
-  executorType: ProjectAutomationInput['executorType']
+  assignmentMode: ProjectAutomationInput['assignmentMode']
+  managerType: 'custom' | 'wegent' | null
   cronExpression: string | null
   timezone: string
   agentId: string | null
@@ -29,7 +30,10 @@ export interface ProjectAutomationDraft {
 
 export type ProjectAutomationTemplate = Pick<ProjectAutomationDraft, 'name' | 'prompt'> &
   Partial<
-    Pick<ProjectAutomationDraft, 'triggerType' | 'eventType' | 'executorType' | 'agentId'>
+    Pick<
+      ProjectAutomationDraft,
+      'triggerType' | 'eventType' | 'assignmentMode' | 'managerType' | 'agentId'
+    >
   > & {
     schedule?: VisualSchedule
   }
@@ -159,7 +163,8 @@ export const customConfigurationIsSelectable = (
   devices: DeviceInfo[]
 ): boolean => {
   if (
-    draft.executorType !== 'custom' ||
+    draft.assignmentMode !== 'ai_managed' ||
+    draft.managerType !== 'custom' ||
     !draft.model ||
     !draft.executionEnvironment ||
     !draft.executionDeviceId
@@ -178,12 +183,13 @@ export const projectRobotIsSelectable = (
   draft: ProjectAutomationDraft,
   agents: ProjectChatAgent[]
 ): boolean =>
-  draft.executorType === 'project_robot' &&
+  draft.assignmentMode === 'manual' &&
   Boolean(draft.agentId) &&
   agents.some(agent => agent.id === draft.agentId)
 
-export const wegentRobotIsSelectable = (draft: ProjectAutomationDraft, teams: Team[]): boolean =>
-  draft.executorType === 'wegent_robot' &&
+export const wegentManagerIsSelectable = (draft: ProjectAutomationDraft, teams: Team[]): boolean =>
+  draft.assignmentMode === 'ai_managed' &&
+  draft.managerType === 'wegent' &&
   draft.wegentTeamId != null &&
   teams.some(team => team.id === draft.wegentTeamId)
 
@@ -200,7 +206,8 @@ export const defaultInput = (defaultPrompt: string): ProjectAutomationDraft => (
   triggerType: 'schedule',
   eventType: null,
   eventConfig: {},
-  executorType: 'project_robot',
+  assignmentMode: 'manual',
+  managerType: null,
   cronExpression: '0 3 * * *',
   timezone: 'Asia/Shanghai',
   agentId: null,
@@ -210,6 +217,29 @@ export const defaultInput = (defaultPrompt: string): ProjectAutomationDraft => (
   executionDeviceId: null,
   enabled: true,
 })
+
+export const draftFromTemplate = (
+  template: ProjectAutomationTemplate | undefined,
+  agents: ProjectChatAgent[],
+  models: UnifiedModel[],
+  devices: DeviceInfo[]
+): { draft: ProjectAutomationDraft; schedule: VisualSchedule } => {
+  const draft = defaultInput('')
+  draft.agentId = agents[0]?.id ?? null
+  if (template) {
+    draft.name = template.name
+    draft.prompt = template.prompt
+    draft.triggerType = template.triggerType ?? draft.triggerType
+    draft.eventType = template.eventType ?? draft.eventType
+    draft.assignmentMode = template.assignmentMode ?? draft.assignmentMode
+    draft.managerType = template.managerType ?? draft.managerType
+    draft.agentId = draft.assignmentMode === 'manual' ? (template.agentId ?? draft.agentId) : null
+  }
+  if (draft.assignmentMode === 'ai_managed' && draft.managerType === 'custom') {
+    Object.assign(draft, defaultCustomConfiguration(models, devices))
+  }
+  return { draft, schedule: template?.schedule ?? defaultSchedule() }
+}
 
 export const buildAutomationInput = (
   draft: ProjectAutomationDraft,
@@ -226,10 +256,11 @@ export const buildAutomationInput = (
     timezone: draft.timezone,
     enabled: draft.enabled,
   }
-  if (draft.executorType === 'project_robot' && draft.agentId) {
+  if (draft.assignmentMode === 'manual' && draft.agentId) {
     return {
       ...common,
-      executorType: 'project_robot',
+      assignmentMode: 'manual',
+      managerType: null,
       agentId: draft.agentId,
       wegentTeamId: null,
       model: null,
@@ -238,14 +269,16 @@ export const buildAutomationInput = (
     }
   }
   if (
-    draft.executorType === 'custom' &&
+    draft.assignmentMode === 'ai_managed' &&
+    draft.managerType === 'custom' &&
     draft.model &&
     draft.executionEnvironment &&
     draft.executionDeviceId
   ) {
     return {
       ...common,
-      executorType: 'custom',
+      assignmentMode: 'ai_managed',
+      managerType: 'custom',
       agentId: null,
       wegentTeamId: null,
       model: draft.model,
@@ -253,10 +286,15 @@ export const buildAutomationInput = (
       executionDeviceId: draft.executionDeviceId,
     }
   }
-  if (draft.executorType === 'wegent_robot' && draft.wegentTeamId != null) {
+  if (
+    draft.assignmentMode === 'ai_managed' &&
+    draft.managerType === 'wegent' &&
+    draft.wegentTeamId != null
+  ) {
     return {
       ...common,
-      executorType: 'wegent_robot',
+      assignmentMode: 'ai_managed',
+      managerType: 'wegent',
       agentId: null,
       wegentTeamId: draft.wegentTeamId,
       model: null,

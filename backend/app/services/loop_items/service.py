@@ -1153,6 +1153,8 @@ class LoopItemService:
                 target_id=str(target_user_id),
                 agent=None,
                 priority=item.priority,
+                automation_context=automation_context,
+                instruction=instruction,
             )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
@@ -1890,6 +1892,7 @@ class LoopItemService:
         from app.models.loop_item_execution import LoopItemExecution
 
         cancelled_runs = []
+        preserve_run_id = str((automation_context or {}).get("run_id") or "")
         active = (
             db.query(LoopItemExecution)
             .filter(
@@ -1901,6 +1904,12 @@ class LoopItemService:
             .all()
         )
         for execution in active:
+            if (
+                preserve_run_id
+                and execution.executor_type == "automation_manager"
+                and str(execution.automation_run_id or "") == preserve_run_id
+            ):
+                continue
             execution.status = "cancelled"
             execution.completed_at = self._now()
             execution.execution_note = (

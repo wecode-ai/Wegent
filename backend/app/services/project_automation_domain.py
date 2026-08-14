@@ -23,7 +23,8 @@ from app.services.loop_item_executions.profile import (
 )
 from app.services.share import team_share_service
 
-EXECUTOR_TYPES = {"project_robot", "custom", "wegent_robot"}
+ASSIGNMENT_MODES = {"manual", "ai_managed"}
+MANAGER_TYPES = {"custom", "wegent"}
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled", "skipped"}
 
 
@@ -81,10 +82,19 @@ def text(value: object) -> str | None:
     return str(value) if isinstance(value, str) and value else None
 
 
-def executor_type(value: dict) -> str:
-    configured = value.get("executor_type")
-    if configured not in EXECUTOR_TYPES:
-        raise ValueError("Automation executor type is missing or invalid")
+def assignment_mode(value: dict) -> str:
+    configured = value.get("assignment_mode")
+    if configured in ASSIGNMENT_MODES:
+        return str(configured)
+    raise ValueError("Automation assignment mode is missing or invalid")
+
+
+def manager_type(value: dict) -> str | None:
+    configured = value.get("manager_type")
+    if configured is None:
+        return None
+    if configured not in MANAGER_TYPES:
+        raise ValueError("Automation manager type is invalid")
     return str(configured)
 
 
@@ -133,31 +143,36 @@ def runnable_wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind
     return team
 
 
-def validate_executor(
+def validate_assignment(
     db: Session,
     *,
     project_id: str,
     user_id: int,
-    executor: str,
+    mode: str,
+    manager: str | None,
     agent_id: str | None,
     wegent_team_id: int | None,
     model: str | None,
     environment: str | None,
     device_id: str | None,
 ) -> None:
-    if executor == "project_robot":
+    if mode == "manual":
         if not agent_id:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "agent_id is required for a project robot",
+                "agent_id is required for manual assignment",
             )
         project_agent(db, project_id, agent_id)
         return
-    if executor == "custom":
+    if mode != "ai_managed":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignment mode"
+        )
+    if manager == "custom":
         if not model or not environment or not device_id:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Custom Wework execution configuration is incomplete",
+                "Custom AI manager configuration is incomplete",
             )
         validate_wework_execution_target(
             db,
@@ -166,12 +181,10 @@ def validate_executor(
             execution_device_id=device_id,
         )
         return
-    if executor == "wegent_robot":
+    if manager == "wegent":
         runnable_wegent_team(db, user_id, wegent_team_id)
         return
-    raise HTTPException(
-        status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown automation executor"
-    )
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown AI manager type")
 
 
 def validate_trigger(

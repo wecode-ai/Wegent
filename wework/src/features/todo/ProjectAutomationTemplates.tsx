@@ -35,7 +35,8 @@ export function ProjectAutomationTemplates({
                   prompt: t(DEFAULT_AI_MANAGED_PROMPT_KEY),
                   triggerType: 'event',
                   eventType: 'task.created',
-                  executorType: 'custom',
+                  assignmentMode: 'ai_managed',
+                  managerType: 'custom',
                   agentId: null,
                 })
               }

@@ -17,7 +17,9 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
+from app.services.project_automation_execution import project_automation_execution
 from app.services.project_chat.service import project_chat_service
+from app.stores.tasks import task_store
 
 
 def _project(db: Session, project_id: str, user_id: int) -> CloudProject:
@@ -66,6 +68,37 @@ def _task_view(values: LoopItem | dict[str, object]) -> dict[str, Any]:
     return _provider_item_view(values)
 
 
+def _manager_run_id(
+    db: Session,
+    token_info: MCPAuthInfo,
+    *,
+    project_id: str,
+    task_id: str,
+) -> str:
+    """Resolve the automation run from the authenticated Wegent Task labels."""
+
+    if token_info.auth_type != "task" or token_info.task_id is None:
+        raise ValueError("AI-managed assignment requires task authentication")
+    backend_task = task_store.get_by_id(db, task_id=token_info.task_id)
+    task_json = (
+        backend_task.json
+        if backend_task and isinstance(backend_task.json, dict)
+        else {}
+    )
+    metadata = task_json.get("metadata")
+    labels = metadata.get("labels") if isinstance(metadata, dict) else None
+    if not isinstance(labels, dict) or labels.get("source") != "project_automation":
+        raise ValueError("Authenticated task is not an AI-managed automation")
+    if str(labels.get("weworkSpaceProjectId") or "") != str(project_id):
+        raise ValueError("Project does not match the authenticated automation")
+    if str(labels.get("weworkSpaceTaskId") or "") != str(task_id):
+        raise ValueError("Task does not match the authenticated automation")
+    run_id = labels.get("projectAutomationRunId")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("Automation run label is missing")
+    return run_id
+
+
 @mcp_tool(server="wework_space")
 def get_project(token_info: MCPAuthInfo, project_id: str) -> dict[str, Any]:
     """Read one project space and its assignable members and robots."""
@@ -92,6 +125,7 @@ def get_project(token_info: MCPAuthInfo, project_id: str) -> dict[str, Any]:
                     "id": member["user_id"],
                     "name": member["user_name"],
                     "role": member["role"],
+                    "capability": member.get("capability_description") or "",
                 }
                 for member in members
             ],
@@ -99,7 +133,7 @@ def get_project(token_info: MCPAuthInfo, project_id: str) -> dict[str, Any]:
                 {
                     "id": agent.id,
                     "name": agent.name or "AI",
-                    "description": agent.description or "",
+                    "capability": agent.capability_description or "",
                 }
                 for agent in agents
             ],
@@ -165,34 +199,19 @@ def assign_task(
         require_cloud_project_role(
             db, project.id, token_info.user_id, BaseRole.Maintainer
         )
-        values: LoopItem | dict[str, object]
-        if project.task_provider in {"github", "gitlab"}:
-            current = external_loop_item_provider.get(db, task_id, token_info.user_id)
-            if str(current.get("cloud_project_id")) != str(project.id):
-                raise ValueError("Task not found")
-            values = external_loop_item_provider.assign(
-                db,
-                task_id,
-                token_info.user_id,
-                LoopItemAssign(
-                    version=int(current.get("version") or 0),
-                    assignee_type=assignee_type,
-                    assignee_id=assignee_id,
-                ),
-            )
-        else:
-            item = loop_item_service.get(db, task_id, token_info.user_id)
-            if str(item.cloud_project_id) != str(project.id):
-                raise ValueError("Task not found")
-            values = loop_item_service.assign(
-                db,
-                project_id=int(str(project.id)),
-                item_id=item.id,
-                user_id=token_info.user_id,
-                values=LoopItemAssign(
-                    version=item.version,
-                    assignee_type=assignee_type,
-                    assignee_id=assignee_id,
-                ),
-            )
+        run_id = _manager_run_id(
+            db,
+            token_info,
+            project_id=str(project.id),
+            task_id=task_id,
+        )
+        values = project_automation_execution.assign_from_manager(
+            db,
+            run_id=run_id,
+            user_id=token_info.user_id,
+            project_id=str(project.id),
+            task_id=task_id,
+            assignee_type=assignee_type,
+            assignee_id=assignee_id,
+        )
         return _task_view(values)

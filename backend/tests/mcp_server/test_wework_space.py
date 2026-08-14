@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
@@ -83,11 +84,22 @@ def test_project_details_expose_assignable_members(
     test_db: Session, test_user: User, monkeypatch
 ) -> None:
     project = _project(test_db, test_user, provider="local")
+    project.metadata_json = {
+        **dict(project.metadata_json or {}),
+        "member_capabilities": {str(test_user.id): "Owns product decisions"},
+    }
+    test_db.commit()
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(
         wework_space.project_chat_service,
         "list_agents",
-        lambda *_args, **_kwargs: [],
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                id="robot-1",
+                name="Backend robot",
+                capability_description="Builds Python APIs",
+            )
+        ],
     )
 
     details = wework_space.get_project(_token(test_user), str(project.id))
@@ -97,9 +109,16 @@ def test_project_details_expose_assignable_members(
             "id": test_user.id,
             "name": test_user.user_name,
             "role": "Owner",
+            "capability": "Owns product decisions",
         }
     ]
-    assert details["robots"] == []
+    assert details["robots"] == [
+        {
+            "id": "robot-1",
+            "name": "Backend robot",
+            "capability": "Builds Python APIs",
+        }
+    ]
 
 
 def test_external_project_tools_route_list_read_and_assignment_to_provider(
@@ -129,14 +148,21 @@ def test_external_project_tools_route_list_read_and_assignment_to_provider(
         calls.append(("get", (requested_id, user_id)))
         return dict(current)
 
-    def assign_item(_db, requested_id, user_id, values):
-        calls.append(("assign", (requested_id, user_id, values)))
-        return {**current, "assignee_user_id": int(values.assignee_id)}
+    def assign_from_manager(_db, **values):
+        calls.append(("assign", values))
+        return {**current, "assignee_user_id": int(values["assignee_id"])}
 
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(wework_space.external_loop_item_provider, "list", list_items)
     monkeypatch.setattr(wework_space.external_loop_item_provider, "get", get_item)
-    monkeypatch.setattr(wework_space.external_loop_item_provider, "assign", assign_item)
+    monkeypatch.setattr(
+        wework_space, "_manager_run_id", lambda *_args, **_kwargs: "run-1"
+    )
+    monkeypatch.setattr(
+        wework_space.project_automation_execution,
+        "assign_from_manager",
+        assign_from_manager,
+    )
 
     listed = wework_space.list_tasks(_token(test_user), str(project.id))
     detail = wework_space.get_task(_token(test_user), str(project.id), item_id)
@@ -151,7 +177,8 @@ def test_external_project_tools_route_list_read_and_assignment_to_provider(
     assert listed[0]["description"] == "Provider-owned details"
     assert detail["id"] == item_id
     assert assigned["assignee_user_id"] == test_user.id
-    assert [name for name, _ in calls] == ["list", "get", "get", "assign"]
-    assign_values = calls[-1][1][2]
-    assert assign_values.version == 7
-    assert assign_values.assignee_type == "user"
+    assert [name for name, _ in calls] == ["list", "get", "assign"]
+    assign_values = calls[-1][1]
+    assert assign_values["run_id"] == "run-1"
+    assert assign_values["assignee_type"] == "user"
+    assert assign_values["task_id"] == item_id

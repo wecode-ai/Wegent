@@ -10,7 +10,8 @@ const rule = {
   triggerType: 'schedule' as const,
   eventType: null,
   eventConfig: {},
-  executorType: 'project_robot' as const,
+  assignmentMode: 'manual' as const,
+  managerType: null,
   webhookEventId: null,
   webhookSecret: null,
   cronExpression: '0 3 * * *',
@@ -86,7 +87,7 @@ describe('ProjectAutomationRulesSection', () => {
     )
   })
 
-  it('prefills the board management template as event-driven custom AI', async () => {
+  it('prefills the board management template as AI-managed custom dispatch', async () => {
     const api = {
       list: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
@@ -141,6 +142,9 @@ describe('ProjectAutomationRulesSection', () => {
       'workbench.project_automation_task_created_trigger'
     )
     expect(screen.getByTestId('project-automation-executor-type')).toHaveTextContent(
+      'workbench.project_automation_ai_managed'
+    )
+    expect(screen.getByTestId('project-automation-manager-type')).toHaveTextContent(
       'workbench.project_automation_custom_ai'
     )
     expect((screen.getByTestId('project-automation-prompt') as HTMLTextAreaElement).value).toBe(
@@ -306,10 +310,11 @@ describe('ProjectAutomationRulesSection', () => {
     expect(screen.getByText('Wegent team catalog unavailable')).toBeInTheDocument()
   })
 
-  it('keeps custom AI settings across executor switches and routes remote devices to cloud', async () => {
+  it('keeps custom manager settings across assignment switches and routes remote devices to cloud', async () => {
     const customRule = {
       ...rule,
-      executorType: 'custom' as const,
+      assignmentMode: 'ai_managed' as const,
+      managerType: 'custom' as const,
       agentId: null,
       agentName: 'AI 托管',
       model: 'model-1',
@@ -369,7 +374,10 @@ describe('ProjectAutomationRulesSection', () => {
       target: { value: 'Remote custom AI' },
     })
     fireEvent.click(screen.getByTestId('project-automation-executor-type'))
-    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-custom'))
+    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-ai_managed'))
+    expect(screen.getByTestId('project-automation-prompt')).toHaveValue(
+      'workbench.project_automation_default_managed_prompt'
+    )
     fireEvent.click(screen.getByTestId('project-automation-model'))
     expect(
       screen.queryByTestId('project-automation-model-option-local-model')
@@ -379,9 +387,9 @@ describe('ProjectAutomationRulesSection', () => {
     fireEvent.click(screen.getByTestId('project-automation-device-option-remote-device'))
 
     fireEvent.click(screen.getByTestId('project-automation-executor-type'))
-    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-project_robot'))
+    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-manual'))
     fireEvent.click(screen.getByTestId('project-automation-executor-type'))
-    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-custom'))
+    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-ai_managed'))
 
     expect(screen.getByTestId('project-automation-model')).toHaveTextContent('Model 1')
     expect(screen.getByTestId('project-automation-device')).toHaveTextContent('Remote executor')
@@ -391,7 +399,8 @@ describe('ProjectAutomationRulesSection', () => {
       expect(api.create).toHaveBeenCalledWith(
         '1',
         expect.objectContaining({
-          executorType: 'custom',
+          assignmentMode: 'ai_managed',
+          managerType: 'custom',
           agentId: null,
           wegentTeamId: null,
           model: 'model-1',
@@ -402,10 +411,11 @@ describe('ProjectAutomationRulesSection', () => {
     )
   })
 
-  it('stores the selected accessible Wegent robot by stable team ID', async () => {
+  it('stores the selected accessible Wegent manager by stable team ID', async () => {
     const wegentRule = {
       ...rule,
-      executorType: 'wegent_robot' as const,
+      assignmentMode: 'ai_managed' as const,
+      managerType: 'wegent' as const,
       agentId: null,
       wegentTeamId: 42,
       agentName: 'Shared robot',
@@ -469,7 +479,9 @@ describe('ProjectAutomationRulesSection', () => {
       target: { value: 'Use shared robot' },
     })
     fireEvent.click(screen.getByTestId('project-automation-executor-type'))
-    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-wegent_robot'))
+    fireEvent.click(screen.getByTestId('project-automation-executor-type-option-ai_managed'))
+    fireEvent.click(screen.getByTestId('project-automation-manager-type'))
+    fireEvent.click(screen.getByTestId('project-automation-manager-type-option-wegent'))
     fireEvent.click(screen.getByTestId('project-automation-wegent-robot'))
     expect(
       screen.queryByTestId('project-automation-wegent-robot-option-43')
@@ -484,7 +496,8 @@ describe('ProjectAutomationRulesSection', () => {
       expect(api.create).toHaveBeenCalledWith(
         '1',
         expect.objectContaining({
-          executorType: 'wegent_robot',
+          assignmentMode: 'ai_managed',
+          managerType: 'wegent',
           agentId: null,
           wegentTeamId: 42,
           model: null,

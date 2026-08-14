@@ -41,6 +41,7 @@ export function ProjectChatAgentsSection({
   const [agentName, setAgentName] = useState('')
   const [agentModel, setAgentModel] = useState('')
   const [agentSystemPrompt, setAgentSystemPrompt] = useState('')
+  const [agentCapabilityDescription, setAgentCapabilityDescription] = useState('')
   const [agentVisibility, setAgentVisibility] =
     useState<ProjectChatAgent['visibility']>('creator_admin')
   const [agentExecutionEnvironment, setAgentExecutionEnvironment] =
@@ -158,6 +159,7 @@ export function ProjectChatAgentsSection({
     setAgentName(t('workbench.project_chat_new_agent'))
     setAgentModel('')
     setAgentSystemPrompt('')
+    setAgentCapabilityDescription('')
     setAgentVisibility('creator_admin')
     setAgentExecutionEnvironment('local')
     setAgentExecutionMode('auto')
@@ -188,6 +190,7 @@ export function ProjectChatAgentsSection({
     setAgentName(agent.name)
     setAgentModel(agent.model ?? '')
     setAgentSystemPrompt(agent.systemPrompt)
+    setAgentCapabilityDescription(agent.capabilityDescription ?? '')
     setAgentVisibility(agent.visibility)
     setAgentExecutionEnvironment(localProjectOnly ? 'local' : agent.executionEnvironment)
     setAgentExecutionMode(agent.executionMode)
@@ -221,6 +224,7 @@ export function ProjectChatAgentsSection({
           runtime: 'codex',
           model: agentModel.trim(),
           systemPrompt: agentSystemPrompt,
+          capabilityDescription: agentCapabilityDescription.trim(),
           visibility: agentVisibility,
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
@@ -235,6 +239,7 @@ export function ProjectChatAgentsSection({
           name: agentName.trim(),
           model: agentModel.trim(),
           systemPrompt: agentSystemPrompt,
+          capabilityDescription: agentCapabilityDescription.trim(),
           visibility: agentVisibility,
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
@@ -280,7 +285,7 @@ export function ProjectChatAgentsSection({
       </div>
       <div className="space-y-2" data-testid="cloud-project-chat-agent-list">
         {activeChatAgents.length === 0 ? (
-          <div className="flex min-h-36 flex-col items-center justify-center rounded-xl border border-dashed border-border px-4 text-center">
+          <div className="mt-5 flex min-h-36 flex-col items-center justify-center rounded-xl border border-dashed border-border px-4 text-center">
             <Bot className="mb-2 h-5 w-5 text-text-tertiary" />
             <p className="text-sm text-text-muted">{t('workbench.project_chat_agents_empty')}</p>
           </div>
@@ -335,6 +340,11 @@ export function ProjectChatAgentsSection({
                       })}`
                     : ''}
                 </span>
+                {agent.capabilityDescription ? (
+                  <span className="mt-1 block truncate text-xs text-text-secondary">
+                    {agent.capabilityDescription}
+                  </span>
+                ) : null}
               </span>
               {canManage ? (
                 <span
@@ -385,6 +395,20 @@ export function ProjectChatAgentsSection({
                 onChange={event => setAgentName(event.target.value)}
                 placeholder={t('workbench.project_chat_agent_name')}
                 className="w-full border-0 bg-transparent p-0 text-heading-lg font-semibold tracking-[-0.03em] text-text-primary outline-none placeholder:text-text-tertiary"
+              />
+              <label
+                htmlFor="cloud-project-chat-agent-capability-field"
+                className="mt-6 text-sm font-medium text-text-secondary"
+              >
+                {t('workbench.project_chat_agent_capability')}
+              </label>
+              <textarea
+                id="cloud-project-chat-agent-capability-field"
+                data-testid="cloud-project-chat-agent-capability"
+                value={agentCapabilityDescription}
+                onChange={event => setAgentCapabilityDescription(event.target.value)}
+                placeholder={t('workbench.project_chat_agent_capability_placeholder')}
+                className="mt-2 min-h-24 resize-none rounded-2xl border border-border bg-background px-5 py-4 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
               />
               <label
                 htmlFor="cloud-project-chat-agent-system-prompt-field"
@@ -572,6 +596,7 @@ export function ProjectChatAgentsSection({
           <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-6 py-3">
             <button
               type="button"
+              data-testid="cloud-project-chat-agent-cancel"
               onClick={() => {
                 setCreatingChatAgent(false)
                 setEditingChatAgent(null)

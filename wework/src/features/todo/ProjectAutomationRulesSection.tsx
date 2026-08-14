@@ -10,7 +10,6 @@ import {
   Plus,
   RefreshCw,
   Trash2,
-  X,
 } from 'lucide-react'
 import type {
   ProjectAutomationInput,
@@ -29,14 +28,15 @@ import type { Team, UnifiedModel } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
 import { executionDisplayStatus, isExecutionFailed, isExecutionRunning } from './executionStatus'
 import { ProjectAutomationTemplates } from './ProjectAutomationTemplates'
+import { ProjectAutomationRunDetailDialog } from './ProjectAutomationRunDetailDialog'
 import {
   DEFAULT_AI_MANAGED_PROMPT_KEY,
   buildAutomationInput,
   cronToSchedule,
   customConfigurationIsSelectable,
   defaultCustomConfiguration,
-  defaultInput,
   defaultSchedule,
+  draftFromTemplate,
   executionEnvironmentForDevice,
   formatSchedule,
   formatTimestamp,
@@ -44,7 +44,7 @@ import {
   projectRobotIsSelectable,
   timezoneLabel,
   timezoneOptions,
-  wegentRobotIsSelectable,
+  wegentManagerIsSelectable,
   wegentTeamLabel,
   weekdayOptions,
   type ProjectAutomationDraft,
@@ -169,14 +169,15 @@ export function ProjectAutomationRulesSection({
       triggerType: rule.triggerType,
       eventType: rule.eventType,
       eventConfig: rule.eventConfig,
-      executorType: rule.executorType,
+      assignmentMode: rule.assignmentMode,
+      managerType: rule.managerType,
       cronExpression: rule.cronExpression,
       timezone: rule.timezone,
-      agentId: rule.executorType === 'project_robot' ? rule.agentId : null,
-      wegentTeamId: rule.executorType === 'wegent_robot' ? rule.wegentTeamId : null,
-      model: rule.executorType === 'custom' ? rule.model : null,
-      executionEnvironment: rule.executorType === 'custom' ? rule.executionEnvironment : null,
-      executionDeviceId: rule.executorType === 'custom' ? rule.executionDeviceId : null,
+      agentId: rule.assignmentMode === 'manual' ? rule.agentId : null,
+      wegentTeamId: rule.managerType === 'wegent' ? rule.wegentTeamId : null,
+      model: rule.managerType === 'custom' ? rule.model : null,
+      executionEnvironment: rule.managerType === 'custom' ? rule.executionEnvironment : null,
+      executionDeviceId: rule.managerType === 'custom' ? rule.executionDeviceId : null,
       enabled: rule.enabled,
     })
     setSchedule(cronToSchedule(rule.cronExpression ?? '0 3 * * *'))
@@ -190,25 +191,12 @@ export function ProjectAutomationRulesSection({
   }
 
   const createRule = (template?: ProjectAutomationTemplate) => {
-    const input = defaultInput(t(DEFAULT_AI_MANAGED_PROMPT_KEY))
-    input.agentId = agents[0]?.id ?? null
-    if (template) {
-      input.name = template.name
-      input.prompt = template.prompt
-      input.triggerType = template.triggerType ?? input.triggerType
-      input.eventType = template.eventType ?? input.eventType
-      input.executorType = template.executorType ?? input.executorType
-      input.agentId =
-        input.executorType === 'project_robot' ? (template.agentId ?? input.agentId) : null
-    }
-    if (input.executorType === 'custom') {
-      Object.assign(input, defaultCustomConfiguration(models, devices))
-    }
+    const next = draftFromTemplate(template, agents, models, devices)
     setSelected(null)
     setRuns([])
     setCreatedWebhook(null)
-    setDraft(input)
-    setSchedule(template?.schedule ?? defaultSchedule())
+    setDraft(next.draft)
+    setSchedule(next.schedule)
   }
 
   const save = async () => {
@@ -216,10 +204,13 @@ export function ProjectAutomationRulesSection({
     if (
       !draft.name.trim() ||
       !draft.prompt.trim() ||
-      (draft.executorType === 'project_robot' && !projectRobotIsSelectable(draft, agents)) ||
-      (draft.executorType === 'custom' &&
+      (draft.assignmentMode === 'manual' && !projectRobotIsSelectable(draft, agents)) ||
+      (draft.assignmentMode === 'ai_managed' &&
+        draft.managerType === 'custom' &&
         !customConfigurationIsSelectable(draft, models, devices)) ||
-      (draft.executorType === 'wegent_robot' && !wegentRobotIsSelectable(draft, wegentTeams))
+      (draft.assignmentMode === 'ai_managed' &&
+        draft.managerType === 'wegent' &&
+        !wegentManagerIsSelectable(draft, wegentTeams))
     ) {
       setError(t('workbench.project_automation_required_fields'))
       return
@@ -667,12 +658,16 @@ export function ProjectAutomationRulesSection({
                   <SettingsRow label={t('workbench.project_automation_execution_mode')}>
                     <MenuSelect
                       testId="project-automation-executor-type"
-                      value={draft.executorType}
+                      value={draft.assignmentMode}
                       pill
                       onChange={value => {
-                        const executorType = value as ProjectAutomationInput['executorType']
+                        const assignmentMode = value as ProjectAutomationInput['assignmentMode']
                         const customConfiguration = customConfigurationIsSelectable(
-                          { ...draft, executorType: 'custom' },
+                          {
+                            ...draft,
+                            assignmentMode: 'ai_managed',
+                            managerType: 'custom',
+                          },
                           models,
                           devices
                         )
@@ -684,28 +679,35 @@ export function ProjectAutomationRulesSection({
                           : defaultCustomConfiguration(models, devices)
                         setDraft({
                           ...draft,
-                          executorType,
+                          assignmentMode,
+                          prompt:
+                            assignmentMode === 'ai_managed' && !draft.prompt.trim()
+                              ? t(DEFAULT_AI_MANAGED_PROMPT_KEY)
+                              : draft.prompt,
+                          managerType:
+                            assignmentMode === 'ai_managed'
+                              ? (draft.managerType ?? 'custom')
+                              : null,
                           agentId:
-                            executorType === 'project_robot'
+                            assignmentMode === 'manual'
                               ? (draft.agentId ?? agents[0]?.id ?? null)
                               : draft.agentId,
-                          ...(executorType === 'custom' ? customConfiguration : {}),
+                          ...(assignmentMode === 'ai_managed' ? customConfiguration : {}),
                         })
                       }}
                       options={[
                         {
-                          value: 'project_robot',
-                          label: t('workbench.project_automation_project_robot'),
+                          value: 'manual',
+                          label: t('workbench.project_automation_manual_assignment'),
                         },
-                        { value: 'custom', label: t('workbench.project_automation_custom_ai') },
                         {
-                          value: 'wegent_robot',
-                          label: t('workbench.project_automation_wegent_robot'),
+                          value: 'ai_managed',
+                          label: t('workbench.project_automation_ai_managed'),
                         },
                       ]}
                     />
                   </SettingsRow>
-                  {draft.executorType === 'project_robot' ? (
+                  {draft.assignmentMode === 'manual' ? (
                     <SettingsRow label={t('workbench.project_automation_robot')}>
                       <MenuSelect
                         testId="project-automation-agent"
@@ -719,7 +721,32 @@ export function ProjectAutomationRulesSection({
                       />
                     </SettingsRow>
                   ) : null}
-                  {draft.executorType === 'custom' ? (
+                  {draft.assignmentMode === 'ai_managed' ? (
+                    <SettingsRow label={t('workbench.project_automation_manager_source')}>
+                      <MenuSelect
+                        testId="project-automation-manager-type"
+                        value={draft.managerType ?? 'custom'}
+                        pill
+                        onChange={value =>
+                          setDraft({
+                            ...draft,
+                            managerType: value as 'custom' | 'wegent',
+                          })
+                        }
+                        options={[
+                          {
+                            value: 'custom',
+                            label: t('workbench.project_automation_custom_ai'),
+                          },
+                          {
+                            value: 'wegent',
+                            label: t('workbench.project_automation_wegent_manager'),
+                          },
+                        ]}
+                      />
+                    </SettingsRow>
+                  ) : null}
+                  {draft.assignmentMode === 'ai_managed' && draft.managerType === 'custom' ? (
                     <>
                       <SettingsRow label={t('workbench.project_automation_model')}>
                         <MenuSelect
@@ -789,8 +816,8 @@ export function ProjectAutomationRulesSection({
                       </SettingsRow>
                     </>
                   ) : null}
-                  {draft.executorType === 'wegent_robot' ? (
-                    <SettingsRow label={t('workbench.project_automation_wegent_robot')}>
+                  {draft.assignmentMode === 'ai_managed' && draft.managerType === 'wegent' ? (
+                    <SettingsRow label={t('workbench.project_automation_wegent_manager')}>
                       <MenuSelect
                         testId="project-automation-wegent-robot"
                         value={draft.wegentTeamId == null ? '' : String(draft.wegentTeamId)}
@@ -804,7 +831,7 @@ export function ProjectAutomationRulesSection({
                         options={[
                           {
                             value: '',
-                            label: t('workbench.project_automation_select_wegent_robot'),
+                            label: t('workbench.project_automation_select_wegent_manager'),
                           },
                           ...wegentTeams.map(team => ({
                             value: String(team.id),
@@ -941,12 +968,13 @@ export function ProjectAutomationRulesSection({
                 busy ||
                 !draft.name.trim() ||
                 !draft.prompt.trim() ||
-                (draft.executorType === 'project_robot' &&
-                  !projectRobotIsSelectable(draft, agents)) ||
-                (draft.executorType === 'custom' &&
+                (draft.assignmentMode === 'manual' && !projectRobotIsSelectable(draft, agents)) ||
+                (draft.assignmentMode === 'ai_managed' &&
+                  draft.managerType === 'custom' &&
                   !customConfigurationIsSelectable(draft, models, devices)) ||
-                (draft.executorType === 'wegent_robot' &&
-                  !wegentRobotIsSelectable(draft, wegentTeams))
+                (draft.assignmentMode === 'ai_managed' &&
+                  draft.managerType === 'wegent' &&
+                  !wegentManagerIsSelectable(draft, wegentTeams))
               }
               onClick={() => void save()}
               className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background disabled:opacity-50"
@@ -955,44 +983,11 @@ export function ProjectAutomationRulesSection({
             </button>
           </footer>
           {detailRun ? (
-            <div
-              className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
-              onClick={event => {
-                if (event.target === event.currentTarget) setDetailRun(null)
-              }}
-            >
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="project-automation-run-detail-title"
-                data-testid="project-automation-run-detail-dialog"
-                className="w-full max-w-xl rounded-[20px] border border-border bg-popover p-5 shadow-xl"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 id="project-automation-run-detail-title" className="heading-small">
-                      {t('workbench.project_automation_run_details')}
-                    </h2>
-                    <p className="mt-1 text-sm text-text-muted">
-                      {formatTimestamp(detailRun.scheduledFor, detailRun.timezone)} ·{' '}
-                      {timezoneLabel(detailRun.timezone, t)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    data-testid="project-automation-run-detail-close"
-                    aria-label={t('workbench.close')}
-                    onClick={() => setDetailRun(null)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-surface"
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-                <pre className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-surface p-4 text-code text-text-primary">
-                  {detailRun.error || t('workbench.project_automation_run_succeeded')}
-                </pre>
-              </div>
-            </div>
+            <ProjectAutomationRunDetailDialog
+              run={detailRun}
+              onClose={() => setDetailRun(null)}
+              t={t}
+            />
           ) : null}
         </CloudTodoModal>
       ) : null}

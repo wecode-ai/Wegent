@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Allow Wework executions without a persisted project robot.
+"""Allow AI-manager transport runs without a persisted project robot.
 
 Revision ID: c8d9e0f1a2b3
-Revises: d9e0f1a2b3c4
+Revises: b7c6d5e4f3a2
 Create Date: 2026-08-13
 """
 
@@ -15,24 +15,24 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c8d9e0f1a2b3"
-down_revision: Union[str, Sequence[str], None] = "d9e0f1a2b3c4"
+down_revision: Union[str, Sequence[str], None] = "b7c6d5e4f3a2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-MIGRATE_PROJECT_ROBOT_RULES_SQL = """
+MIGRATE_ASSIGNMENT_RULES_SQL = """
 UPDATE loop_items
-SET metadata = JSON_SET(
-        COALESCE(metadata, JSON_OBJECT()),
-        '$.executor_type',
-        'project_robot'
+SET metadata = JSON_REMOVE(
+        JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.assignment_mode', 'manual'),
+        '$.manager_type',
+        '$.executor_type'
     ),
     version = version + 1,
     updated_at = CURRENT_TIMESTAMP
 WHERE resource_type = 'automation_rule'
   AND deleted_at IS NULL
+  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.assignment_mode')) IS NULL
   AND COALESCE(assignee_agent_id, '') <> ''
-  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.executor_type')) IS NULL
 """
 
 
@@ -42,14 +42,14 @@ SET status = 'disabled',
     metadata = JSON_SET(
         COALESCE(metadata, JSON_OBJECT()),
         '$.migration_error',
-        'Legacy automation has no assigned project robot; choose an executor.'
+        'Legacy automation has no valid assignment configuration; choose an assignment mode.'
     ),
     version = version + 1,
     updated_at = CURRENT_TIMESTAMP
 WHERE resource_type = 'automation_rule'
   AND deleted_at IS NULL
+  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.assignment_mode')) IS NULL
   AND COALESCE(assignee_agent_id, '') = ''
-  AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.executor_type')) IS NULL
 """
 
 
@@ -60,16 +60,6 @@ def upgrade() -> None:
         existing_type=sa.String(64),
         nullable=True,
         server_default=None,
-    )
-    op.add_column(
-        "loop_item_executions",
-        sa.Column(
-            "executor_type",
-            sa.String(32),
-            nullable=False,
-            server_default="project_robot",
-            comment="Wework executor type (project_robot/inline_custom)",
-        ),
     )
     op.add_column(
         "loop_item_executions",
@@ -96,22 +86,27 @@ def upgrade() -> None:
         "SET execution.executor_owner_user_id = "
         "COALESCE(agent.created_by_user_id, execution.assigner_user_id, 0)"
     )
-    op.execute(MIGRATE_PROJECT_ROBOT_RULES_SQL)
+    op.alter_column(
+        "loop_item_executions",
+        "executor_owner_user_id",
+        existing_type=sa.Integer(),
+        server_default=None,
+    )
+    op.execute(MIGRATE_ASSIGNMENT_RULES_SQL)
     op.execute(DISABLE_UNMAPPABLE_RULES_SQL)
     op.create_index(
-        "uniq_exec_automation_run_id",
+        "idx_exec_automation_run_id",
         "loop_item_executions",
         ["automation_run_id"],
-        unique=True,
+        unique=False,
     )
 
 
 def downgrade() -> None:
-    op.drop_index("uniq_exec_automation_run_id", table_name="loop_item_executions")
+    op.drop_index("idx_exec_automation_run_id", table_name="loop_item_executions")
     op.execute("UPDATE loop_item_executions SET agent_id = '' WHERE agent_id IS NULL")
     op.drop_column("loop_item_executions", "automation_run_id")
     op.drop_column("loop_item_executions", "executor_owner_user_id")
-    op.drop_column("loop_item_executions", "executor_type")
     op.alter_column(
         "loop_item_executions",
         "agent_id",

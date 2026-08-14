@@ -27,6 +27,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     runtime: Literal["codex"] = "codex"
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str = Field(default="", max_length=20_000)
+    capability_description: str = Field(default="", max_length=2_000)
     visibility: BotVisibility = "creator_admin"
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
@@ -39,6 +40,7 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default=None, max_length=20_000)
+    capability_description: str | None = Field(default=None, max_length=2_000)
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
     execution_environment: BotExecutionEnvironment | None = None
@@ -54,6 +56,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     runtime: Literal["codex"]
     model: str | None
     system_prompt: str
+    capability_description: str
     status: Literal["active", "archived"]
     visibility: BotVisibility
     execution_environment: BotExecutionEnvironment

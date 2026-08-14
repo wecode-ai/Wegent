@@ -30,10 +30,12 @@ from app.models.delivery import (
 )
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
+from app.models.user import User
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
     validate_wework_execution_target,
 )
+from app.services.project_automation_domain import assignment_mode, manager_type
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +179,7 @@ class LoopItemExecutionService:
             requires_approval=mode == "manual_approval",
         )
 
-    def enqueue_custom(
+    def enqueue_automation_manager(
         self,
         db: Session,
         *,
@@ -191,13 +193,13 @@ class LoopItemExecutionService:
         automation_context: dict[str, Any] | None = None,
         requires_approval: bool = False,
     ) -> LoopItemExecution:
-        """Queue an inline custom automation on the ordinary Wework lifecycle."""
+        """Queue a custom AI manager on the ordinary Wework transport."""
 
         return self._enqueue(
             db,
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
-            executor_type="inline_custom",
+            executor_type="automation_manager",
             owner_user_id=owner_user_id,
             agent_id=None,
             assigner_user_id=assigner_user_id,
@@ -229,10 +231,10 @@ class LoopItemExecutionService:
         # Project robots keep the shipped assignment semantics: their target
         # is validated when the robot is configured, and legacy local targets
         # may be represented by the App rather than a backend device row.
-        # Inline custom execution has no robot entity, so the rule target is
+        # A custom manager has no robot entity, so the rule target is
         # its only source of truth and must be validated here as well as when
         # the rule is saved.
-        if executor_type == "inline_custom":
+        if executor_type == "automation_manager":
             validate_wework_execution_target(
                 db,
                 user_id=owner_user_id,
@@ -258,7 +260,6 @@ class LoopItemExecutionService:
         row = LoopItemExecution(
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
-            executor_type=executor_type,
             executor_owner_user_id=owner_user_id,
             agent_id=agent_id,
             automation_run_id=automation_run_id,
@@ -420,7 +421,6 @@ class LoopItemExecutionService:
         already_running = (
             db.query(LoopItemExecution.id)
             .filter(
-                LoopItemExecution.executor_type == "project_robot",
                 LoopItemExecution.agent_id == agent_id,
                 LoopItemExecution.status == STATUS_RUNNING,
             )
@@ -432,7 +432,6 @@ class LoopItemExecutionService:
         query = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.executor_type == "project_robot",
                 LoopItemExecution.agent_id == agent_id,
                 LoopItemExecution.execution_device_id == execution_device_id,
                 LoopItemExecution.execution_environment == environment,
@@ -513,7 +512,6 @@ class LoopItemExecutionService:
             LoopItemExecution.execution_device_id == execution_device_id,
             LoopItemExecution.execution_environment == environment,
             LoopItemExecution.status == STATUS_RUNNING,
-            LoopItemExecution.executor_type == "project_robot",
             LoopItemExecution.agent_id.is_not(None),
         )
         if owner_user_id is not None:
@@ -543,8 +541,7 @@ class LoopItemExecutionService:
             (
                 row
                 for row in query.all()
-                if row.executor_type != "project_robot"
-                or row.agent_id not in running_agent_ids
+                if not row.agent_id or row.agent_id not in running_agent_ids
             ),
             None,
         )
@@ -616,7 +613,6 @@ class LoopItemExecutionService:
             LoopItemExecution.execution_device_id == execution_device_id,
             LoopItemExecution.execution_environment == environment,
             LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
-            LoopItemExecution.executor_type == "project_robot",
             LoopItemExecution.agent_id.is_not(None),
         )
         if owner_user_id is not None:
@@ -650,7 +646,7 @@ class LoopItemExecutionService:
         for candidate in candidates:
             if len(claimable) >= slots:
                 break
-            if candidate.executor_type == "project_robot":
+            if candidate.agent_id:
                 if not candidate.agent_id:
                     continue
                 if (
@@ -724,7 +720,6 @@ class LoopItemExecutionService:
             for (agent_id,) in db.query(LoopItemExecution.agent_id)
             .filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.executor_type == "project_robot",
                 LoopItemExecution.status == STATUS_RUNNING,
                 LoopItemExecution.agent_id.is_not(None),
             )
@@ -735,7 +730,6 @@ class LoopItemExecutionService:
             .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
             .filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.executor_type == "project_robot",
                 LoopItemExecution.execution_environment == "local",
                 LoopItemExecution.status == STATUS_QUEUED,
                 or_(
@@ -1014,15 +1008,16 @@ class LoopItemExecutionService:
         agent = (
             db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
         )
-        project_chat_service._set_task_ai_state(
-            db,
-            row=row,
-            trigger=None,
-            agent=agent,
-            status_value="running",
-            prompt=prompt or profile.runtime_prompt(),
-            user_id=execution.executor_owner_user_id,
-        )
+        if execution.executor_type != "automation_manager":
+            project_chat_service._set_task_ai_state(
+                db,
+                row=row,
+                trigger=None,
+                agent=agent,
+                status_value="running",
+                prompt=prompt or profile.runtime_prompt(),
+                user_id=execution.executor_owner_user_id,
+            )
         db.commit()
         db.refresh(row)
         view = project_chat_service.to_view(row)
@@ -1050,13 +1045,30 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
-        return self._transition_terminal(
+        previous = db.get(LoopItemExecution, execution_id)
+        was_active_manager = bool(
+            previous is not None
+            and previous.status in ACTIVE_STATUSES
+            and previous.executor_type == "automation_manager"
+        )
+        result = self._transition_terminal(
             db,
             execution_id=execution_id,
             terminal_status=STATUS_COMPLETED,
             note=note,
             content=content if content is not None else note,
         )
+        if (
+            was_active_manager
+            and result is not None
+            and result.status == STATUS_COMPLETED
+        ):
+            self._finalize_manager_transport(
+                db,
+                execution=result,
+                content=content if content is not None else note,
+            )
+        return result
 
     def fail(
         self,
@@ -1259,10 +1271,43 @@ class LoopItemExecutionService:
         """Apply the elected execution outcome without committing or pushing."""
 
         from app.models.delivery import ProjectAutomationRun
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
         from app.services.project_chat.service import project_chat_service
 
         activity = self._linked_activity(db, execution)
-        if activity is not None:
+        manager_assignment_recorded = bool(
+            execution.executor_type == "automation_manager"
+            and execution.automation_run_id
+            and project_automation_execution.has_recorded_manager_assignment(
+                db, run_id=execution.automation_run_id
+            )
+        )
+        if activity is not None and execution.executor_type == "automation_manager":
+            if terminal_status != STATUS_COMPLETED and manager_assignment_recorded:
+                activity.status = STATUS_COMPLETED
+                activity.message_type = "text"
+                activity.content = "AI 调度员已完成分派，但调度结果回传失败。" + (
+                    f" {error}" if error else ""
+                )
+                activity_metadata = dict(activity.metadata_json or {})
+                activity.metadata_json = {
+                    **activity_metadata,
+                    "run_status": STATUS_COMPLETED,
+                    **({"transport_error": str(error)} if error else {}),
+                }
+            elif terminal_status != STATUS_COMPLETED:
+                activity.status = terminal_status
+                activity.message_type = "text"
+                activity.content = str(content or error or "AI manager failed")
+                activity_metadata = dict(activity.metadata_json or {})
+                activity.metadata_json = {
+                    **activity_metadata,
+                    "run_status": terminal_status,
+                    **({"error": str(error)} if error else {}),
+                }
+        elif activity is not None:
             project_chat_service._finish_activity(
                 db,
                 activity,
@@ -1279,6 +1324,10 @@ class LoopItemExecutionService:
         if execution.automation_run_id:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
+                if execution.executor_type == "automation_manager" and (
+                    terminal_status == STATUS_COMPLETED or manager_assignment_recorded
+                ):
+                    return activity
                 run_status = {
                     STATUS_COMPLETED: "succeeded",
                     STATUS_FAILED: "failed",
@@ -1294,6 +1343,39 @@ class LoopItemExecutionService:
                 run.completed_at = completed_at
                 run.version += 1
         return activity
+
+    @staticmethod
+    def _finalize_manager_transport(
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        content: str | None,
+    ) -> None:
+        if not execution.automation_run_id:
+            raise WeworkRuntimeConfigurationError(
+                "AI manager execution is not linked to an automation run"
+            )
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        try:
+            project_automation_execution.finalize_manager_result(
+                db,
+                run_id=execution.automation_run_id,
+                content=content if isinstance(content, str) else None,
+            )
+        except Exception as exc:
+            logger.exception(
+                "[LoopItemExecution] AI manager finalization failed execution=%s",
+                execution.id,
+            )
+            db.rollback()
+            project_automation_execution._fail_run(
+                db,
+                run_id=execution.automation_run_id,
+                error=str(exc) or "AI manager finalization failed",
+            )
 
     def _apply_requeued_projection(
         self,
@@ -1458,7 +1540,12 @@ class LoopItemExecutionService:
                 )
                 .first()
             )
-            if row is not None:
+            row_metadata = (
+                row.metadata_json
+                if row is not None and isinstance(row.metadata_json, dict)
+                else {}
+            )
+            if row is not None and row_metadata.get("execution_id") == execution.id:
                 return row
         if not execution.runtime_device_id or not execution.runtime_task_id:
             runtime_row = None
@@ -1748,7 +1835,11 @@ class LoopItemExecutionService:
                     "Project robot owner no longer matches the queued execution"
                 )
             if run is not None and rule is not None:
-                instruction = str(getattr(rule, "description", "") or "")
+                # Automation only decides who receives the task. Once a
+                # project robot is assigned it must execute through the same
+                # role + live task-context contract as an ordinary assignment;
+                # the manager's scheduling prompt is not an execution prompt.
+                instruction = ""
                 origin_context = self._automation_runtime_context(run, rule)
             else:
                 origin_context, instruction = self._task_automation_context(
@@ -1762,37 +1853,58 @@ class LoopItemExecutionService:
                 origin_context,
             )
 
-        if execution.executor_type != "inline_custom":
+        if execution.executor_type != "automation_manager":
             raise WeworkRuntimeConfigurationError(
                 f"Unknown Wework executor type '{execution.executor_type}'"
             )
         if run is None or rule is None:
             raise WeworkRuntimeConfigurationError(
-                "Custom automation run or rule is unavailable"
+                "AI manager automation run or rule is unavailable"
             )
         owner_user_id = int(getattr(rule, "created_by_user_id", 0) or 0)
         if owner_user_id != execution.executor_owner_user_id:
             raise WeworkRuntimeConfigurationError(
-                "Custom automation owner no longer matches the queued execution"
+                "AI manager owner no longer matches the queued execution"
             )
         rule_metadata = getattr(rule, "metadata_json", None)
         rule_metadata = rule_metadata if isinstance(rule_metadata, dict) else {}
-        if rule_metadata.get("executor_type") != "custom":
+        if (
+            assignment_mode(rule_metadata) != "ai_managed"
+            or manager_type(rule_metadata) != "custom"
+        ):
             raise WeworkRuntimeConfigurationError(
-                "Automation is no longer configured for custom Wework execution"
+                "Automation is no longer configured for a custom AI manager"
             )
         model = rule_metadata.get("model")
         if not isinstance(model, str) or not model:
             raise WeworkRuntimeConfigurationError(
-                "Custom automation model is unavailable"
+                "Custom AI manager model is unavailable"
             )
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        project = db.get(CloudProject, execution.cloud_project_id)
+        owner = db.get(User, owner_user_id)
+        if project is None or owner is None:
+            raise WeworkRuntimeConfigurationError(
+                "Automation project or owner is unavailable"
+            )
+        manager_prompt = project_automation_execution._managed_prompt(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            context=self._automation_runtime_context(run, rule),
+        )
         return (
-            WeworkExecutionProfile.for_inline_custom(
+            WeworkExecutionProfile.for_automation_manager(
                 owner_user_id=owner_user_id,
-                display_name="AI 托管",
-                instruction=str(getattr(rule, "description", "") or ""),
+                display_name="自定义 AI 调度员",
+                instruction=manager_prompt,
                 model=model,
-                system_prompt="你是当前看板自动化规则的 AI 执行者。",
+                system_prompt="你只负责选择项目成员或项目机器人，不执行原始任务。",
             ),
             self._automation_runtime_context(run, rule),
         )

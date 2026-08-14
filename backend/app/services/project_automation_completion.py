@@ -22,7 +22,7 @@ from app.stores.tasks import task_store
 logger = logging.getLogger(__name__)
 
 _REGISTERED_BUSES: weakref.WeakSet[EventBus] = weakref.WeakSet()
-_TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled"}
+_TERMINAL_RUN_STATUSES = {"succeeded", "failed", "cancelled", "skipped"}
 
 
 @dataclass(frozen=True)
@@ -179,14 +179,6 @@ def _apply_terminal_state(
         metadata.pop("error", None)
     message.metadata_json = metadata
 
-    project_chat_service._set_task_ai_state(
-        db,
-        row=message,
-        trigger=None,
-        agent=None,
-        status_value=message_status,
-        error=error,
-    )
     run.status = run_status
     run.backend_task_id = task_id
     run.completed_at = datetime.now()
@@ -211,19 +203,79 @@ async def handle_project_automation_task_completed(
         )
         if activity is None:
             return
-        changed = _apply_terminal_state(
-            db,
-            activity=activity,
-            task_id=event.task_id,
-            status=event.status,
-            result=event.result,
-            error=event.error,
-        )
+        if event.status.upper() == "COMPLETED":
+            content = _result_text(event.result)
+            from app.services.project_automation_execution import (
+                project_automation_execution,
+            )
+
+            try:
+                changed = project_automation_execution.finalize_manager_result(
+                    db,
+                    run_id=str(activity.run.id),
+                    content=content,
+                    backend_task_id=event.task_id,
+                    activity_message_id=activity.message.message_id,
+                    push_activity=False,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "[ProjectAutomationCompletion] Manager finalization failed "
+                    "task_id=%s run_id=%s",
+                    event.task_id,
+                    activity.run.id,
+                )
+                db.rollback()
+                activity = _managed_activity(
+                    db,
+                    task_id=event.task_id,
+                    subtask_id=event.subtask_id,
+                    user_id=event.user_id,
+                )
+                changed = bool(
+                    activity
+                    and _apply_terminal_state(
+                        db,
+                        activity=activity,
+                        task_id=event.task_id,
+                        status="FAILED",
+                        result=None,
+                        error=str(exc) or "AI manager finalization failed",
+                    )
+                )
+        else:
+            from app.services.project_automation_execution import (
+                project_automation_execution,
+            )
+
+            if project_automation_execution.has_recorded_manager_assignment(
+                db, run_id=str(activity.run.id)
+            ):
+                changed = project_automation_execution.finalize_manager_result(
+                    db,
+                    run_id=str(activity.run.id),
+                    content="AI 调度员已完成分派，但调度结果回传失败。",
+                    backend_task_id=event.task_id,
+                    activity_message_id=activity.message.message_id,
+                    push_activity=False,
+                )
+            else:
+                changed = _apply_terminal_state(
+                    db,
+                    activity=activity,
+                    task_id=event.task_id,
+                    status=event.status,
+                    result=event.result,
+                    error=event.error,
+                )
         if not changed:
             return
         db.commit()
-        db.refresh(activity.message)
-        message_view = project_chat_service.to_view(activity.message).model_dump(
+        refreshed = _managed_activity(db, task_id=event.task_id)
+        if refreshed is None:
+            return
+        db.refresh(refreshed.message)
+        message_view = project_chat_service.to_view(refreshed.message).model_dump(
             by_alias=True
         )
 
@@ -276,13 +328,6 @@ def mark_project_automation_dispatch_started(*, task_id: int) -> bool:
         ):
             activity.message.status = "streaming"
             activity.message.metadata_json = next_metadata
-            project_chat_service._set_task_ai_state(
-                db,
-                row=activity.message,
-                trigger=None,
-                agent=None,
-                status_value="running",
-            )
             changed = True
         if not changed:
             return False

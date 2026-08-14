@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     Header,
     HTTPException,
@@ -30,14 +31,17 @@ from app.models.delivery import (
 )
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_automation import (
     ProjectAutomationCreate,
+    ProjectAutomationManagerAssign,
     ProjectAutomationRunView,
     ProjectAutomationUpdate,
     ProjectAutomationView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.external_provider import external_loop_item_provider
+from app.services.project_automation_execution import project_automation_execution
 from app.services.project_automations import (
     ProjectAutomationEvent,
     project_automation_processor,
@@ -310,3 +314,43 @@ async def cancel_run(
     return await project_automation_service.cancel_run(
         db, project_id, run_id, current_user.id
     )
+
+
+@router.post(
+    "/{project_id}/automation-runs/{run_id}/assign",
+    response_model=LoopItemResponse,
+)
+def assign_from_ai_manager(
+    project_id: str,
+    run_id: str,
+    values: ProjectAutomationManagerAssign,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse:
+    """Apply the assignment selected by a Wework MCP manager."""
+
+    run = db.get(ProjectAutomationRun, run_id)
+    if run is None or not run.task_id or str(run.cloud_project_id) != str(project_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Maintainer)
+    if run.created_by_user_id != current_user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Automation manager access denied"
+        )
+    try:
+        assigned = project_automation_execution.assign_from_manager(
+            db,
+            run_id=run_id,
+            user_id=current_user.id,
+            project_id=project_id,
+            task_id=str(run.task_id),
+            assignee_type=values.assignee_type,
+            assignee_id=values.assignee_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    from app.tasks.robot_queue_tasks import consume_queues_background
+
+    background_tasks.add_task(consume_queues_background)
+    return LoopItemResponse.model_validate(assigned)

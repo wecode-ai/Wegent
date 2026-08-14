@@ -22,25 +22,34 @@ function draftWithAllExecutorFields() {
 }
 
 describe('projectAutomationForm', () => {
-  it('normalizes every executor mode to its exact API contract', () => {
+  it('normalizes manual assignment and both AI manager sources', () => {
     const projectRobot = buildAutomationInput(
-      { ...draftWithAllExecutorFields(), executorType: 'project_robot' },
+      { ...draftWithAllExecutorFields(), assignmentMode: 'manual', managerType: null },
       schedule,
       {}
     )
     const custom = buildAutomationInput(
-      { ...draftWithAllExecutorFields(), executorType: 'custom' },
+      {
+        ...draftWithAllExecutorFields(),
+        assignmentMode: 'ai_managed',
+        managerType: 'custom',
+      },
       schedule,
       {}
     )
     const wegentRobot = buildAutomationInput(
-      { ...draftWithAllExecutorFields(), executorType: 'wegent_robot' },
+      {
+        ...draftWithAllExecutorFields(),
+        assignmentMode: 'ai_managed',
+        managerType: 'wegent',
+      },
       schedule,
       {}
     )
 
     expect(projectRobot).toMatchObject({
-      executorType: 'project_robot',
+      assignmentMode: 'manual',
+      managerType: null,
       agentId: 'project-agent',
       wegentTeamId: null,
       model: null,
@@ -48,7 +57,8 @@ describe('projectAutomationForm', () => {
       executionDeviceId: null,
     })
     expect(custom).toMatchObject({
-      executorType: 'custom',
+      assignmentMode: 'ai_managed',
+      managerType: 'custom',
       agentId: null,
       wegentTeamId: null,
       model: 'gpt-5-codex',
@@ -56,7 +66,8 @@ describe('projectAutomationForm', () => {
       executionDeviceId: 'remote-device',
     })
     expect(wegentRobot).toMatchObject({
-      executorType: 'wegent_robot',
+      assignmentMode: 'ai_managed',
+      managerType: 'wegent',
       agentId: null,
       wegentTeamId: 42,
       model: null,

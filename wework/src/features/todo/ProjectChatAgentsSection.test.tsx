@@ -102,6 +102,10 @@ describe('ProjectChatAgentsSection', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
     await userEvent.type(screen.getByTestId('cloud-project-chat-agent-name'), '新机器人')
+    await userEvent.type(
+      screen.getByTestId('cloud-project-chat-agent-capability'),
+      '擅长前端交互与可访问性实现'
+    )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
     await userEvent.click(
       await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
@@ -120,7 +124,10 @@ describe('ProjectChatAgentsSection', () => {
     await waitFor(() =>
       expect(mock.create).toHaveBeenCalledWith(
         project.id,
-        expect.objectContaining({ model: MODEL_NAME })
+        expect.objectContaining({
+          model: MODEL_NAME,
+          capabilityDescription: '擅长前端交互与可访问性实现',
+        })
       )
     )
     expect(await screen.findByTestId('cloud-project-chat-agent-agent-created')).toHaveTextContent(

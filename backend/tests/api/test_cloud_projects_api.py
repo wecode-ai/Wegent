@@ -4,6 +4,7 @@
 
 """API tests for cloud projects, TODOs, and local task associations."""
 
+import base64
 import hashlib
 import hmac
 import io
@@ -23,6 +24,7 @@ from app.models.delivery import (
     DeliveryAsset,
     LoopItem,
     ProjectAutomationRule,
+    ProjectAutomationRun,
     ProjectChatAgent,
 )
 from app.models.kind import Kind
@@ -1138,6 +1140,7 @@ def test_loop_item_ai_assignee_is_project_scoped_and_exclusive(
             "runtime": "codex",
             "model": None,
             "systemPrompt": "Verify before reporting completion.",
+            "capabilityDescription": "Reviews backend changes and test evidence.",
             "executionEnvironment": "cloud",
             "executionDeviceId": "api-cloud-dev-1",
         },
@@ -1152,6 +1155,9 @@ def test_loop_item_ai_assignee_is_project_scoped_and_exclusive(
     assert item.json()["assignee_agent_id"] == agent["id"]
     assert item.json()["assignee_agent_name"] == "Reviewer"
     assert item.json()["assignee_user_id"] is None
+    assert agent["capabilityDescription"] == (
+        "Reviews backend changes and test evidence."
+    )
 
     reassigned = test_client.patch(
         f"/api/v1/loop-items/{item.json()['id']}",
@@ -1356,9 +1362,9 @@ def test_project_automation_webhook_verifies_github_signature(
     assert old_secret_response.status_code == 401
 
     tampered_credential = dict(stored_credential)
-    ciphertext = str(tampered_credential["ciphertext"])
-    replacement = "A" if ciphertext[-2] != "A" else "B"
-    tampered_credential["ciphertext"] = ciphertext[:-2] + replacement + ciphertext[-1]
+    ciphertext = bytearray(base64.b64decode(tampered_credential["ciphertext"]))
+    ciphertext[0] ^= 0x01
+    tampered_credential["ciphertext"] = base64.b64encode(ciphertext).decode()
     stored_metadata["webhook_secret_encrypted"] = tampered_credential
     stored_rule.metadata_json = stored_metadata
     test_db.commit()
@@ -1566,7 +1572,8 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         json={
             "name": "Custom AI",
             "prompt": "Read the project and handle the event.",
-            "executorType": "custom",
+            "assignmentMode": "ai_managed",
+            "managerType": "custom",
             "model": "model-a",
             "executionEnvironment": "local",
             "executionDeviceId": "desktop-a",
@@ -1574,7 +1581,8 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         },
     )
     assert custom.status_code == 201, custom.text
-    assert custom.json()["executorType"] == "custom"
+    assert custom.json()["assignmentMode"] == "ai_managed"
+    assert custom.json()["managerType"] == "custom"
     assert custom.json()["model"] == "model-a"
     assert custom.json()["executionDeviceId"] == "desktop-a"
     assert custom.json()["agentId"] is None
@@ -1590,13 +1598,15 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         json={
             "name": "Reusable robot",
             "prompt": "Read the project and handle the event.",
-            "executorType": "wegent_robot",
+            "assignmentMode": "ai_managed",
+            "managerType": "wegent",
             "wegentTeamId": team.id,
             "cronExpression": "0 4 * * *",
         },
     )
     assert wegent.status_code == 201, wegent.text
-    assert wegent.json()["executorType"] == "wegent_robot"
+    assert wegent.json()["assignmentMode"] == "ai_managed"
+    assert wegent.json()["managerType"] == "wegent"
     assert wegent.json()["wegentTeamId"] == team.id
     assert wegent.json()["agentId"] is None
 
@@ -1617,7 +1627,8 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         json={
             "name": "Broken reusable robot",
             "prompt": "This request must be rejected before dispatch.",
-            "executorType": "wegent_robot",
+            "assignmentMode": "ai_managed",
+            "managerType": "wegent",
             "wegentTeamId": team.id,
             "cronExpression": "0 4 * * *",
         },
@@ -1627,7 +1638,8 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         headers=_auth(test_token),
         json={
             "version": custom.json()["version"],
-            "executorType": "wegent_robot",
+            "assignmentMode": "ai_managed",
+            "managerType": "wegent",
             "wegentTeamId": team.id,
         },
     )
@@ -1654,7 +1666,8 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         json={
             "name": "Inactive robot",
             "prompt": "This request must be rejected.",
-            "executorType": "wegent_robot",
+            "assignmentMode": "ai_managed",
+            "managerType": "wegent",
             "wegentTeamId": inactive_team.id,
             "cronExpression": "0 5 * * *",
         },
@@ -1667,7 +1680,8 @@ def test_cloud_project_automation_supports_managed_executor_sources(
         json={
             "name": "Legacy executor fields",
             "prompt": "This request must be rejected.",
-            "executorType": "wegent_robot",
+            "assignmentMode": "ai_managed",
+            "managerType": "wegent",
             "wegentTeamName": team.name,
             "wegentTeamNamespace": team.namespace,
             "cronExpression": "0 5 * * *",
@@ -1774,6 +1788,61 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
     assert activated["taskId"]
 
 
+def test_ai_manager_assignment_endpoint_applies_tool_selected_member(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "managedassign", "name": "Managed assignment"},
+    ).json()
+    task = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Choose an owner"},
+    ).json()
+    rule = ProjectAutomationRule(
+        id="api-manager-rule",
+        cloud_project_id=project["id"],
+        title="AI manager",
+        description="Match the task to project capabilities.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+        },
+    )
+    run = ProjectAutomationRun(
+        id="api-manager-run",
+        cloud_project_id=project["id"],
+        parent_id=rule.id,
+        task_id=task["id"],
+        title="AI manager run",
+        status="running",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger": "task_created"},
+    )
+    test_db.add_all([rule, run])
+    test_db.commit()
+
+    assigned = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automation-runs/{run.id}/assign",
+        headers=_auth(test_token),
+        json={"assigneeType": "user", "assigneeId": str(test_user.id)},
+    )
+
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["assignee_user_id"] == test_user.id
+    stored = test_db.get(LoopItem, task["id"])
+    assert stored is not None
+    assert stored.assignee_user_id == test_user.id
+    assert stored.assignee_agent_id == ""
+
+
 def test_cloud_project_owner_can_manage_members(
     test_client: TestClient,
     test_db: Session,
@@ -1799,16 +1868,33 @@ def test_cloud_project_owner_can_manage_members(
     added = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
-        json={"user_id": member_user.id, "role": "Developer"},
+        json={
+            "user_id": member_user.id,
+            "role": "Developer",
+            "capability_description": "Frontend implementation",
+        },
     )
     assert added.status_code == 201
     updated = test_client.patch(
         f"/api/v1/cloud-projects/{project['id']}/members/{member_user.id}",
         headers=_auth(test_token),
-        json={"role": "Reporter"},
+        json={
+            "role": "Reporter",
+            "capability_description": "Product acceptance and release checks",
+        },
     )
     assert updated.status_code == 200
     assert updated.json()["role"] == "Reporter"
+    assert updated.json()["capability_description"] == (
+        "Product acceptance and release checks"
+    )
+    owner_updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/members/{test_user.id}",
+        headers=_auth(test_token),
+        json={"capability_description": "Owns product scope and priorities"},
+    )
+    assert owner_updated.status_code == 200
+    assert owner_updated.json()["role"] == "Owner"
     members = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/members",
         headers=_auth(test_token),
@@ -1816,6 +1902,12 @@ def test_cloud_project_owner_can_manage_members(
     assert members.status_code == 200
     members = members.json()
     assert {member["user_id"] for member in members} == {test_user.id, member_user.id}
+    assert {
+        member["user_id"]: member["capability_description"] for member in members
+    } == {
+        test_user.id: "Owns product scope and priorities",
+        member_user.id: "Product acceptance and release checks",
+    }
 
     removed = test_client.delete(
         f"/api/v1/cloud-projects/{project['id']}/members/{member_user.id}",

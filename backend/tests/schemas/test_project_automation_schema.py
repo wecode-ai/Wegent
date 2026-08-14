@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Schema tests for the project automation executor contract."""
+"""Schema tests for board assignment strategies and AI managers."""
 
 from datetime import datetime
 
@@ -19,87 +19,95 @@ from app.schemas.project_automation import (
 def _base_create() -> dict[str, object]:
     return {
         "name": "Board automation",
-        "prompt": "Handle the current board event.",
+        "prompt": "Choose the best project robot.",
         "cronExpression": "0 3 * * *",
     }
 
 
 @pytest.mark.parametrize(
-    "executor",
+    ("configuration", "mode", "manager"),
     [
-        {"executorType": "project_robot", "agentId": "agent-1"},
-        {
-            "executorType": "custom",
-            "model": "model-a",
-            "executionEnvironment": "local",
-            "executionDeviceId": "device-a",
-        },
-        {"executorType": "wegent_robot", "wegentTeamId": 42},
+        ({"assignmentMode": "manual", "agentId": "agent-1"}, "manual", None),
+        (
+            {
+                "assignmentMode": "ai_managed",
+                "managerType": "custom",
+                "model": "model-a",
+                "executionEnvironment": "local",
+                "executionDeviceId": "device-a",
+            },
+            "ai_managed",
+            "custom",
+        ),
+        (
+            {
+                "assignmentMode": "ai_managed",
+                "managerType": "wegent",
+                "wegentTeamId": 42,
+            },
+            "ai_managed",
+            "wegent",
+        ),
     ],
 )
-def test_create_accepts_exactly_one_executor_source(
-    executor: dict[str, object],
+def test_create_accepts_two_assignment_modes_and_two_manager_sources(
+    configuration: dict[str, object], mode: str, manager: str | None
 ) -> None:
-    value = ProjectAutomationCreate.model_validate({**_base_create(), **executor})
+    value = ProjectAutomationCreate.model_validate({**_base_create(), **configuration})
 
-    assert value.executor_type == executor["executorType"]
+    assert value.assignment_mode == mode
+    assert value.manager_type == manager
 
 
 @pytest.mark.parametrize(
-    "legacy_field,legacy_value",
+    ("field", "value"),
     [
-        ("assignmentMode", "automatic"),
+        ("executorType", "custom"),
         ("wegentTeamName", "shared-agent"),
         ("wegentTeamNamespace", "default"),
     ],
 )
-def test_create_rejects_removed_executor_fields(
-    legacy_field: str,
-    legacy_value: str,
-) -> None:
+def test_create_rejects_removed_executor_contract(field: str, value: str) -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         ProjectAutomationCreate.model_validate(
             {
                 **_base_create(),
+                "assignmentMode": "manual",
                 "agentId": "agent-1",
-                legacy_field: legacy_value,
+                field: value,
             }
         )
 
 
-def test_create_rejects_fields_from_another_executor_source() -> None:
-    with pytest.raises(
-        ValidationError, match="inline AI configuration is only valid for custom AI"
-    ):
+def test_manual_assignment_rejects_manager_configuration() -> None:
+    with pytest.raises(ValidationError, match="manager_type is only valid"):
         ProjectAutomationCreate.model_validate(
             {
                 **_base_create(),
-                "executorType": "wegent_robot",
-                "wegentTeamId": 42,
-                "model": "model-a",
-                "executionEnvironment": "local",
-                "executionDeviceId": "device-a",
+                "assignmentMode": "manual",
+                "managerType": "custom",
+                "agentId": "agent-1",
             }
         )
 
 
-def test_partial_update_does_not_require_resending_executor_config() -> None:
+def test_partial_update_does_not_require_assignment_configuration() -> None:
     update = ProjectAutomationUpdate.model_validate({"version": 2, "enabled": False})
 
-    assert update.executor_type is None
+    assert update.assignment_mode is None
 
 
-def test_partial_update_requires_executor_type_when_changing_its_config() -> None:
-    with pytest.raises(ValidationError, match="executor_type is required"):
+def test_partial_update_requires_mode_when_changing_manager_configuration() -> None:
+    with pytest.raises(ValidationError, match="assignment_mode is required"):
         ProjectAutomationUpdate.model_validate(
             {"version": 2, "executionDeviceId": "device-b"}
         )
 
 
-def test_switching_executor_requires_the_new_source_config() -> None:
-    with pytest.raises(ValidationError, match="wegent_team_id is required"):
+def test_ai_managed_requires_manager_source() -> None:
+    with pytest.raises(ValidationError, match="manager_type is required"):
         ProjectAutomationUpdate.model_validate(
-            {"version": 2, "executorType": "wegent_robot"}
+            {"version": 2, "assignmentMode": "ai_managed"}
         )
 
 
@@ -109,19 +117,20 @@ def test_views_accept_managed_wegent_environment_and_queued_run() -> None:
         {
             "id": "rule-1",
             "projectId": "project-1",
-            "name": "Wegent rule",
-            "prompt": "Handle it.",
+            "name": "Wegent manager rule",
+            "prompt": "Choose a robot.",
             "triggerType": "schedule",
             "eventType": None,
             "eventConfig": {},
-            "executorType": "wegent_robot",
+            "assignmentMode": "ai_managed",
+            "managerType": "wegent",
             "webhookEventId": None,
             "cronExpression": "0 3 * * *",
             "timezone": "Asia/Shanghai",
             "agentId": None,
             "wegentTeamId": 42,
             "model": None,
-            "agentName": "Shared robot",
+            "agentName": "Shared agent",
             "executionEnvironment": "managed",
             "executionDeviceId": None,
             "enabled": True,
@@ -151,5 +160,6 @@ def test_views_accept_managed_wegent_environment_and_queued_run() -> None:
         }
     )
 
+    assert rule.manager_type == "wegent"
     assert rule.execution_environment == "managed"
     assert run.status == "queued"

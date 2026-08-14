@@ -28,10 +28,12 @@ from app.schemas.project_automation import (
     ProjectAutomationUpdate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_domain import (
     ProjectAutomationEvent,
-    executor_type,
+    assignment_mode,
     integer,
+    manager_type,
 )
 from app.services.project_automation_domain import metadata as _metadata
 from app.services.project_automation_domain import next_run as _next_run
@@ -41,7 +43,7 @@ from app.services.project_automation_domain import (
 from app.services.project_automation_domain import utc_aware as _utc_aware
 from app.services.project_automation_domain import (
     utcnow,
-    validate_executor,
+    validate_assignment,
     validate_trigger,
 )
 from app.services.project_automation_execution import (
@@ -78,12 +80,14 @@ class ProjectAutomationService:
         values: ProjectAutomationCreate,
     ) -> dict:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-        configured_executor = values.executor_type
-        validate_executor(
+        configured_mode = values.assignment_mode
+        configured_manager = values.manager_type
+        validate_assignment(
             db,
             project_id=project_id,
             user_id=user_id,
-            executor=configured_executor,
+            mode=configured_mode,
+            manager=configured_manager,
             agent_id=values.agent_id,
             wegent_team_id=values.wegent_team_id,
             model=values.model,
@@ -105,14 +109,15 @@ class ProjectAutomationService:
             title=values.name,
             description=values.prompt,
             assignee_agent_id=(
-                str(values.agent_id) if configured_executor == "project_robot" else ""
+                str(values.agent_id) if configured_mode == "manual" else ""
             ),
             status="enabled" if values.enabled else "disabled",
             due_at=next_run_at if values.enabled else None,
             created_by_user_id=user_id,
             updated_by_user_id=user_id,
-            metadata_json=self._executor_metadata(
-                executor_type=configured_executor,
+            metadata_json=self._assignment_metadata(
+                assignment_mode=configured_mode,
+                manager_type=configured_manager,
                 wegent_team_id=values.wegent_team_id,
                 model=values.model,
                 environment=values.execution_environment,
@@ -184,26 +189,29 @@ class ProjectAutomationService:
             expression = None
         validate_trigger(trigger_type, event_type, expression)
 
-        if values.executor_type is None:
-            configured_executor = executor_type(rule_metadata)
+        if values.assignment_mode is None:
+            configured_mode = assignment_mode(rule_metadata)
+            configured_manager = manager_type(rule_metadata)
             agent_id = row.assignee_agent_id or None
             wegent_team_id = integer(rule_metadata.get("wegent_team_id"))
             model = text(rule_metadata.get("model"))
             environment = text(rule_metadata.get("execution_environment"))
             device_id = text(rule_metadata.get("execution_device_id"))
         else:
-            configured_executor = values.executor_type
+            configured_mode = values.assignment_mode
+            configured_manager = values.manager_type
             agent_id = values.agent_id
             wegent_team_id = values.wegent_team_id
             model = values.model
             environment = values.execution_environment
             device_id = values.execution_device_id
 
-        validate_executor(
+        validate_assignment(
             db,
             project_id=project_id,
             user_id=row.created_by_user_id,
-            executor=configured_executor,
+            mode=configured_mode,
+            manager=configured_manager,
             agent_id=agent_id,
             wegent_team_id=wegent_team_id,
             model=model,
@@ -211,7 +219,7 @@ class ProjectAutomationService:
             device_id=device_id,
         )
         row.assignee_agent_id = (
-            str(agent_id) if configured_executor == "project_robot" and agent_id else ""
+            str(agent_id) if configured_mode == "manual" and agent_id else ""
         )
         if values.name is not None:
             row.title = values.name
@@ -233,8 +241,9 @@ class ProjectAutomationService:
                 "timezone": timezone_name,
             }
         )
-        row.metadata_json = self._executor_metadata(
-            executor_type=configured_executor,
+        row.metadata_json = self._assignment_metadata(
+            assignment_mode=configured_mode,
+            manager_type=configured_manager,
             wegent_team_id=wegent_team_id,
             model=model,
             environment=environment,
@@ -338,7 +347,7 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
-        if run.status not in {"pending", "queued", "running"}:
+        if run.status not in {"pending", "queued", "waiting_device", "running"}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"
             )
@@ -349,6 +358,30 @@ class ProjectAutomationService:
             if rule is not None
             else "Asia/Shanghai"
         )
+        # An AI-managed run may retain the manager's Backend Task id after the
+        # manager has selected a project robot. The selected robot is then the
+        # only active executor, so always stop the active Wework execution
+        # before considering the (already terminal) manager Task.
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.automation_run_id == str(run.id),
+                LoopItemExecution.status.in_(
+                    ["pending_approval", "queued", "claimed", "running"]
+                ),
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is not None:
+            loop_item_execution_service.cancel(
+                db,
+                execution_id=execution.id,
+                note="Automation run cancelled by user",
+            )
+            db.refresh(run)
+            return self._run_view(run, timezone_name)
+
         if run.backend_task_id:
             from app.services.project_automation_managed_execution import (
                 project_automation_managed_execution_service,
@@ -376,20 +409,6 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            return self._run_view(run, timezone_name)
-
-        execution = (
-            db.query(LoopItemExecution)
-            .filter(LoopItemExecution.automation_run_id == str(run.id))
-            .one_or_none()
-        )
-        if execution is not None:
-            loop_item_execution_service.cancel(
-                db,
-                execution_id=execution.id,
-                note="Automation run cancelled by user",
-            )
-            db.refresh(run)
             return self._run_view(run, timezone_name)
 
         run.status = "cancelled"
@@ -476,9 +495,10 @@ class ProjectAutomationService:
         return dispatched
 
     @staticmethod
-    def _executor_metadata(
+    def _assignment_metadata(
         *,
-        executor_type: str,
+        assignment_mode: str,
+        manager_type: str | None,
         wegent_team_id: int | None,
         model: str | None,
         environment: str | None,
@@ -487,14 +507,16 @@ class ProjectAutomationService:
     ) -> dict:
         rule_metadata = dict(base)
         for key in (
+            "manager_type",
             "wegent_team_id",
             "model",
             "execution_environment",
             "execution_device_id",
         ):
             rule_metadata.pop(key, None)
-        rule_metadata["executor_type"] = executor_type
-        if executor_type == "custom":
+        rule_metadata["assignment_mode"] = assignment_mode
+        if assignment_mode == "ai_managed" and manager_type == "custom":
+            rule_metadata["manager_type"] = "custom"
             rule_metadata.update(
                 {
                     "model": model,
@@ -502,7 +524,8 @@ class ProjectAutomationService:
                     "execution_device_id": device_id,
                 }
             )
-        elif executor_type == "wegent_robot":
+        elif assignment_mode == "ai_managed" and manager_type == "wegent":
+            rule_metadata["manager_type"] = "wegent"
             rule_metadata["wegent_team_id"] = wegent_team_id
         return rule_metadata
 
@@ -536,15 +559,16 @@ class ProjectAutomationService:
         webhook_secret: str | None = None,
     ) -> dict:
         rule_metadata = _metadata(row)
-        configured_executor = executor_type(rule_metadata)
+        configured_mode = assignment_mode(rule_metadata)
+        configured_manager = manager_type(rule_metadata)
         agent = (
             db.get(ProjectChatAgent, row.assignee_agent_id)
-            if configured_executor == "project_robot" and row.assignee_agent_id
+            if configured_mode == "manual" and row.assignee_agent_id
             else None
         )
         team_id = integer(rule_metadata.get("wegent_team_id"))
         team = None
-        if configured_executor == "wegent_robot" and team_id is not None:
+        if configured_manager == "wegent" and team_id is not None:
             team = team_share_service.get_resource(
                 db, team_id, int(row.created_by_user_id or 0)
             )
@@ -555,19 +579,19 @@ class ProjectAutomationService:
             .first()
         )
         config = bot_config(agent) if agent else {}
-        if configured_executor == "project_robot":
+        if configured_mode == "manual":
             display_name = str(agent.title or agent.name or "AI") if agent else "AI"
             environment = str(config.get("execution_environment") or "local")
             device_id = text(config.get("execution_device_id"))
             model = text(config.get("model"))
-        elif configured_executor == "custom":
-            display_name = "AI 托管"
+        elif configured_manager == "custom":
+            display_name = "自定义 AI 调度员"
             environment = str(rule_metadata.get("execution_environment") or "local")
             device_id = text(rule_metadata.get("execution_device_id"))
             model = text(rule_metadata.get("model"))
         else:
             display_name = (
-                str(team.name or "Wegent 机器人") if team else "Wegent 机器人"
+                str(team.name or "Wegent 智能体") if team else "Wegent 智能体"
             )
             environment = "managed"
             device_id = None
@@ -581,7 +605,8 @@ class ProjectAutomationService:
             "trigger_type": str(rule_metadata.get("trigger_type") or "schedule"),
             "event_type": rule_metadata.get("event_type"),
             "event_config": rule_metadata.get("event_config") or {},
-            "executor_type": configured_executor,
+            "assignment_mode": configured_mode,
+            "manager_type": configured_manager,
             "webhook_event_id": (
                 row.id if rule_metadata.get("trigger_type") == "event" else None
             ),

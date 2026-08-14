@@ -27,6 +27,7 @@ const AGENT = {
   runtime: 'codex',
   model: null,
   systemPrompt: '',
+  capabilityDescription: '定位并修复可复现的软件缺陷',
   executionEnvironment: 'local',
   executionDeviceId: 'desktop-e2e-local-device',
   executionMode: 'auto',
@@ -63,7 +64,8 @@ const RULE = {
   triggerType: 'schedule',
   eventType: null,
   eventConfig: {},
-  executorType: 'project_robot',
+  assignmentMode: 'manual',
+  managerType: null,
   webhookEventId: null,
   webhookSecret: null,
   cronExpression: '0 3 * * *',
@@ -97,7 +99,7 @@ async function readJson(request) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const rules = [RULE]
   const runs = []
-  let createdPayload = null
+  const createdPayloads = []
   let cancelRequested = false
   let modelRequests = 0
 
@@ -126,6 +128,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         json(response, 200, { data: [MODEL] })
         return true
       }
+      if (request.method === 'GET' && url.pathname === '/api/teams') {
+        json(response, 200, { items: [], total: 0 })
+        return true
+      }
       if (
         request.method === 'GET' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/automations`
@@ -137,10 +143,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         request.method === 'POST' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/automations`
       ) {
-        createdPayload = await readJson(request)
+        const createdPayload = await readJson(request)
+        createdPayloads.push(createdPayload)
         const created = {
           ...RULE,
-          id: 'automation-rule-created',
+          id:
+            createdPayload.assignmentMode === 'ai_managed'
+              ? 'automation-rule-managed'
+              : 'automation-rule-created',
           ...createdPayload,
           agentName: AGENT.name,
           executionEnvironment: AGENT.executionEnvironment,
@@ -267,9 +277,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         }
       )
-      assert.equal(createdPayload?.name, '凌晨回归扫描')
-      assert.equal(createdPayload?.agentId, AGENT_ID)
+      assert.equal(createdPayloads[0]?.name, '凌晨回归扫描')
+      assert.equal(createdPayloads[0]?.assignmentMode, 'manual')
+      assert.equal(createdPayloads[0]?.managerType, null)
+      assert.equal(createdPayloads[0]?.agentId, AGENT_ID)
       await captureScreenshot(control, 'project-automation-01-created-rule.png')
+
+      await control.command('click', '[data-testid="project-automation-create"]')
+      await control.command('fill', '[data-testid="project-automation-name"]', {
+        value: '新任务 AI 分配',
+      })
+      await control.command('click', '[data-testid="project-automation-executor-type"]')
+      await control.command(
+        'click',
+        '[data-testid="project-automation-executor-type-option-ai_managed"]'
+      )
+      await control.command('waitFor', '[data-testid="project-automation-manager-type"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'project-automation-02-ai-managed-dialog.png')
+      await control.command('click', '[data-testid="project-automation-save"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="project-automation-rule-automation-rule-managed"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(createdPayloads[1]?.assignmentMode, 'ai_managed')
+      assert.equal(createdPayloads[1]?.managerType, 'custom')
+      assert.equal(createdPayloads[1]?.agentId, null)
+      assert.ok(createdPayloads[1]?.model, 'AI-managed automation must select a model')
+      assert.equal(createdPayloads[1]?.executionDeviceId, 'local-device')
 
       await control.command(
         'click',
@@ -293,48 +330,79 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         await new Promise(resolve => setTimeout(resolve, 50))
       }
       assert.equal(cancelRequested, true)
-      await control.command('click', '[data-testid="cloud-project-automation-view"]')
-      await control.command('waitFor', '[data-testid="project-automation-rules"]', {
-        timeoutMs: uiTimeoutMs,
+      await captureScreenshot(control, 'project-automation-03-cancelled-run.png')
+      await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
+      await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+        visible: true,
       })
-      await captureScreenshot(control, 'project-automation-02-cancelled-run.png')
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agents"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
 
       await control.command('scrollIntoView', '[data-testid="cloud-project-chat-agent-add"]')
-      await control.command('click', '[data-testid="cloud-project-chat-agent-add"]')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-add"]', {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-model"]', {
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      await control.command('click', '[data-testid="cloud-project-chat-agent-model"]')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-model"]', {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-model-menu"]', {
         text: 'GPT-5 Codex',
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      await control.command('click', '[data-testid="cloud-project-chat-agent-model"]')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-model"]', {
+        visible: true,
+      })
       await control.command('fill', '[data-testid="cloud-project-chat-agent-name"]', {
         value: '回归巡检机器人',
+        visible: true,
       })
-      await control.command('click', '[data-testid="cloud-project-chat-agent-device"]')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-device"]', {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-device-menu"]', {
         text: 'local-device',
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
       await control.command(
         'click',
-        '[data-testid="cloud-project-chat-agent-device-option-local-device"]'
+        '[data-testid="cloud-project-chat-agent-device-option-local-device"]',
+        { visible: true }
       )
       const saveWithoutModel = await control.command(
         'getAttribute',
         '[data-testid="cloud-project-chat-agent-save"]',
-        { value: 'disabled' }
+        { value: 'disabled', visible: true }
       )
       assert.equal(saveWithoutModel, '', 'save must stay disabled while no model is selected')
-      await captureScreenshot(control, 'project-automation-03-robot-model-required.png')
+      await captureScreenshot(control, 'project-automation-04-robot-model-required.png')
+
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
+        visible: true,
+      })
+      await control.command('click', `[data-testid="cloud-project-chat-agent-${AGENT_ID}"]`, {
+        visible: true,
+      })
+      const configuredCapability = await control.command(
+        'getValue',
+        '[data-testid="cloud-project-chat-agent-capability"]',
+        { visible: true }
+      )
+      assert.equal(configuredCapability, AGENT.capabilityDescription)
+      await captureScreenshot(control, 'project-automation-05-robot-capability.png')
     },
 
     diagnostics() {
       return {
         cancelRequested,
-        createdPayload,
+        createdPayloads,
         modelRequests,
         rules,
         runs,

@@ -35,18 +35,7 @@ class LoopItemExecution(Base):
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
     loop_item_id = Column(String(64), nullable=False, default="", server_default="")
     cloud_project_id = Column(String(64), nullable=False, default="", server_default="")
-    # Inline custom automation has no ProjectChatAgent row. The executor type
-    # distinguishes that path while project robots continue to use agent_id as
-    # their canonical identity and resolve the live agent configuration.
-    executor_type = Column(
-        String(32),
-        nullable=False,
-        default="project_robot",
-        server_default="project_robot",
-    )
-    executor_owner_user_id = Column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    executor_owner_user_id = Column(Integer, nullable=False)
     agent_id = Column(String(64), nullable=True)
     automation_run_id = Column(String(64), nullable=True)
     # Where the robot actually executes. "local" runs on the creator's App,
@@ -135,13 +124,15 @@ class LoopItemExecution(Base):
             "queued_at",
         ),
         Index("idx_exec_agent_status", "agent_id", "status"),
-        Index(
-            "uniq_exec_automation_run_id",
-            "automation_run_id",
-            unique=True,
-        ),
+        Index("idx_exec_automation_run_id", "automation_run_id"),
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
+
+    @property
+    def executor_type(self) -> str:
+        """Return the transport role without persisting redundant state."""
+
+        return "project_robot" if self.agent_id else "automation_manager"

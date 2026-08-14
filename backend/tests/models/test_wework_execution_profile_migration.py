@@ -34,33 +34,40 @@ def test_upgrade_only_adds_minimal_execution_identity() -> None:
 
     migration.upgrade()
 
-    assert migration.down_revision == "d9e0f1a2b3c4"
+    assert migration.down_revision == "b7c6d5e4f3a2"
     added_columns = [call.args[1].name for call in operation.add_column.call_args_list]
     assert added_columns == [
-        "executor_type",
         "executor_owner_user_id",
         "automation_run_id",
     ]
+    removed_defaults = {
+        call.args[1]
+        for call in operation.alter_column.call_args_list
+        if len(call.args) > 1 and call.kwargs.get("server_default") is None
+    }
+    assert {"executor_owner_user_id"} <= removed_defaults
     statements = [call.args[0] for call in operation.execute.call_args_list]
     assert len(statements) == 3
     assert "created_by_user_id" in statements[0]
-    assert "'$.executor_type'" in statements[1]
-    assert "'project_robot'" in statements[1]
+    assert "'$.assignment_mode'" in statements[1]
+    assert "'manual'" in statements[1]
     assert "COALESCE(assignee_agent_id, '') <> ''" in statements[1]
+    assert "JSON_REMOVE" in statements[1]
     assert (
-        "JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.executor_type')) IS NULL"
+        "JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.assignment_mode')) IS NULL"
         in statements[1]
     )
     assert "status = 'disabled'" in statements[2]
     assert "migration_error" in statements[2]
+    assert "COALESCE(assignee_agent_id, '') = ''" in statements[2]
     assert "deleted_at =" not in statements[2]
     assert all("status = 'cancelled'" not in statement for statement in statements)
     operation.drop_column.assert_not_called()
     operation.create_index.assert_called_once_with(
-        "uniq_exec_automation_run_id",
+        "idx_exec_automation_run_id",
         "loop_item_executions",
         ["automation_run_id"],
-        unique=True,
+        unique=False,
     )
 
 
@@ -80,6 +87,5 @@ def test_downgrade_restores_required_agent_without_changing_run_state() -> None:
     assert dropped_columns == [
         "automation_run_id",
         "executor_owner_user_id",
-        "executor_type",
     ]
     operation.add_column.assert_not_called()

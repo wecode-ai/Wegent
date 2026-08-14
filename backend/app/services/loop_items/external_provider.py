@@ -531,7 +531,12 @@ class ExternalLoopItemProvider:
         return None
 
     @staticmethod
-    def _cancel_active_executions(db: Session, item_id: str) -> list:
+    def _cancel_active_executions(
+        db: Session,
+        item_id: str,
+        *,
+        preserve_automation_run_id: str = "",
+    ) -> list:
         """Cancel any active runs of one issue (assignee changed/unassigned).
 
         Returns the runs that were cancelled and already handed to a device so
@@ -553,6 +558,12 @@ class ExternalLoopItemProvider:
         )
         now = utcnow()
         for execution in active:
+            if (
+                preserve_automation_run_id
+                and execution.executor_type == "automation_manager"
+                and str(execution.automation_run_id or "") == preserve_automation_run_id
+            ):
+                continue
             execution.status = "cancelled"
             execution.completed_at = now
             execution.execution_note = (
@@ -738,7 +749,13 @@ class ExternalLoopItemProvider:
             assignee_name=assignee_name,
             user_id=user_id,
         )
-        cancelled_runs = self._cancel_active_executions(db, item_id)
+        cancelled_runs = self._cancel_active_executions(
+            db,
+            item_id,
+            preserve_automation_run_id=str(
+                (automation_context or {}).get("run_id") or ""
+            ),
+        )
         if agent is not None:
             self._create_execution_for_agent(
                 db,
@@ -1176,7 +1193,7 @@ class ExternalLoopItemProvider:
             "agent_id": getattr(execution, "agent_id", None),
             "agent_name": (
                 "AI 托管"
-                if executor_type == "inline_custom"
+                if executor_type == "automation_manager"
                 else (agent.title or agent.name if agent is not None else None)
             ),
             "runtime_device_id": (

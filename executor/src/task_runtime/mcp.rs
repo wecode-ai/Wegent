@@ -27,14 +27,15 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
     // context. They deliberately reuse the ordinary Wework robot execution
     // path and must not gain project-space tools merely because the execution
     // is associated with a cloud project.
-    if request
+    let automation_origin = request
         .extra
         .get("origin")
         .and_then(Value::as_object)
-        .and_then(|origin| origin.get("type"))
-        .and_then(Value::as_str)
-        == Some("project_automation")
-    {
+        .filter(|origin| origin.get("type").and_then(Value::as_str) == Some("project_automation"));
+    let is_automation_manager = automation_origin.is_some_and(|origin| {
+        origin.get("automationRole").and_then(Value::as_str) == Some("manager")
+    });
+    if automation_origin.is_some() && !is_automation_manager {
         log_executor_event(
             "space mcp injection skipped for project automation",
             &[("task_id", request.task_id.clone())],
@@ -113,6 +114,13 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
     });
     if let Some(project_id) = bound_project_id {
         server["env"] = json!({"WEWORK_SPACE_ID": project_id});
+    }
+    if let Some(run_id) = automation_origin
+        .and_then(|origin| origin.get("run_id"))
+        .and_then(id_value)
+        .filter(|value| !value.is_empty())
+    {
+        server["env"]["WEWORK_AUTOMATION_RUN_ID"] = json!(run_id);
     }
     if let Some(backend_url) = request
         .backend_url
@@ -236,6 +244,12 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
 }
 
 async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
+    if is_automation_manager() && !is_automation_manager_tool(name) {
+        return text_result(
+            format!("AI-managed automation cannot call wework_space tool: {name}"),
+            true,
+        );
+    }
     let default_project_id = env::var("WEWORK_SPACE_ID").ok();
     let requested_project_id = arguments
         .get("space_id")
@@ -355,6 +369,9 @@ async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
         }
+        "get_assignment_candidates" | "assign_board_item" => Err(super::TaskRuntimeError::Invalid(
+            "AI-managed assignment requires a backend project space".to_owned(),
+        )),
         "create_board_item" => {
             let project_id = string_argument(&arguments, "space_id");
             let input = parse(
@@ -657,6 +674,8 @@ fn is_task_provider_tool(name: &str) -> bool {
         "list_board_items"
             | "search_board_items"
             | "get_board_item"
+            | "get_assignment_candidates"
+            | "assign_board_item"
             | "create_board_item"
             | "update_board_item"
             | "add_board_item_comment"
@@ -733,6 +752,45 @@ async fn call_backend_tool(
             return Ok(filter_backend_tasks(response, arguments));
         }
         "get_board_item" => client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?))),
+        "get_assignment_candidates" => {
+            let members = backend_json(
+                client
+                    .get(format!("{base}/cloud-projects/{project_id}/members"))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            let robots = backend_json(
+                client
+                    .get(format!("{base}/cloud-projects/{project_id}/chat-agents"))
+                    .bearer_auth(auth_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+            .await?;
+            return Ok(normalize_assignment_candidates(members, robots));
+        }
+        "assign_board_item" => {
+            let run_id = env::var("WEWORK_AUTOMATION_RUN_ID")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    "assign_board_item is only available to an AI-managed automation"
+                        .to_owned()
+                })?;
+            client
+                .post(format!(
+                    "{base}/cloud-projects/{project_id}/automation-runs/{}/assign",
+                    encode_segment(&run_id)
+                ))
+                .json(&json!({
+                    "assignee_type": arguments.get("assignee_type").and_then(Value::as_str).unwrap_or_default(),
+                    "assignee_id": arguments.get("assignee_id").and_then(Value::as_str).unwrap_or_default(),
+                }))
+        }
         "create_board_item" => client
             .post(format!("{base}/cloud-projects/{project_id}/loop-items"))
             .json(arguments.get("item").unwrap_or(arguments)),
@@ -984,6 +1042,41 @@ async fn backend_json(response: reqwest::Response) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|error| error.to_string())
 }
 
+fn normalize_assignment_candidates(members: Value, robots: Value) -> Value {
+    let members = members
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|member| {
+            json!({
+                "id": member.get("user_id").cloned().unwrap_or(Value::Null),
+                "name": member.get("user_name").cloned().unwrap_or(Value::Null),
+                "role": member.get("role").cloned().unwrap_or(Value::Null),
+                "capability": member
+                    .get("capability_description")
+                    .cloned()
+                    .unwrap_or_else(|| json!("")),
+            })
+        })
+        .collect::<Vec<_>>();
+    let robots = robots
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|robot| {
+            json!({
+                "id": robot.get("id").cloned().unwrap_or(Value::Null),
+                "name": robot.get("name").cloned().unwrap_or(Value::Null),
+                "capability": robot
+                    .get("capabilityDescription")
+                    .cloned()
+                    .unwrap_or_else(|| json!("")),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"members": members, "robots": robots})
+}
+
 fn filter_backend_tasks(response: Value, arguments: &Value) -> Value {
     let tasks = response
         .get("items")
@@ -1160,6 +1253,29 @@ fn tools() -> Vec<Value> {
                     "item_id": {"type": "string"}
                 },
                 "required": ["space_id", "item_id"]
+            }),
+        ),
+        tool(
+            "get_assignment_candidates",
+            "List assignable project members and robots with their capability descriptions",
+            json!({
+                "type": "object",
+                "properties": {"space_id": {"type": "string"}},
+                "required": ["space_id"]
+            }),
+        ),
+        tool(
+            "assign_board_item",
+            "Assign the current AI-managed board item to one project member or robot",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "assignee_type": {"enum": ["user", "agent"]},
+                    "assignee_id": {"type": "string"}
+                },
+                "required": ["space_id", "item_id", "assignee_type", "assignee_id"]
             }),
         ),
         tool(
@@ -1393,8 +1509,29 @@ fn tools() -> Vec<Value> {
 }
 
 fn visible_tools(runtime: &TaskRuntime) -> Vec<Value> {
+    if is_automation_manager() {
+        return tools()
+            .into_iter()
+            .filter(|tool| {
+                tool["name"]
+                    .as_str()
+                    .is_some_and(is_automation_manager_tool)
+            })
+            .collect();
+    }
     let bound_project_id = env::var("WEWORK_SPACE_ID").ok();
     tools_for_bound_project(runtime, bound_project_id.as_deref())
+}
+
+fn is_automation_manager() -> bool {
+    env::var("WEWORK_AUTOMATION_RUN_ID").is_ok_and(|value| !value.trim().is_empty())
+}
+
+fn is_automation_manager_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_board_item" | "get_assignment_candidates" | "assign_board_item"
+    )
 }
 
 fn tools_for_bound_project(runtime: &TaskRuntime, project_id: Option<&str>) -> Vec<Value> {
@@ -1583,6 +1720,31 @@ mod tests {
         ensure_space_mcp_server(&mut request);
 
         assert!(request.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn injects_assignment_tools_for_project_automation_manager() {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
+        request.extra.insert(
+            "origin".to_owned(),
+            json!({
+                "type": "project_automation",
+                "automationRole": "manager",
+                "run_id": "run-1"
+            }),
+        );
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "cloud-42");
+        assert_eq!(
+            request.mcp_servers[0]["env"]["WEWORK_AUTOMATION_RUN_ID"],
+            "run-1"
+        );
     }
 
     #[test]
@@ -1881,6 +2043,8 @@ mod tests {
         for required in [
             "list_spaces",
             "get_board_item",
+            "get_assignment_candidates",
+            "assign_board_item",
             "list_item_attachments",
             "read_item_attachment",
             "list_space_files",
@@ -1888,6 +2052,66 @@ mod tests {
         ] {
             assert!(serialized.contains(required), "missing {required}");
         }
+    }
+
+    #[test]
+    fn automation_manager_has_only_read_and_assign_tools() {
+        let names = tools()
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
+            .filter(|name| is_automation_manager_tool(name))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "get_board_item",
+                "get_assignment_candidates",
+                "assign_board_item",
+            ]
+        );
+        for forbidden in [
+            "create_board_item",
+            "update_board_item",
+            "add_board_item_comment",
+            "delete_item_attachment",
+        ] {
+            assert!(!is_automation_manager_tool(forbidden));
+        }
+    }
+
+    #[test]
+    fn normalizes_assignment_candidates_to_one_capability_contract() {
+        let result = normalize_assignment_candidates(
+            json!([{
+                "user_id": 7,
+                "user_name": "Alice",
+                "role": "Developer",
+                "capability_description": "Frontend implementation"
+            }]),
+            json!([{
+                "id": "agent-9",
+                "name": "Review bot",
+                "capabilityDescription": "Code review and release checks"
+            }]),
+        );
+
+        assert_eq!(
+            result,
+            json!({
+                "members": [{
+                    "id": 7,
+                    "name": "Alice",
+                    "role": "Developer",
+                    "capability": "Frontend implementation"
+                }],
+                "robots": [{
+                    "id": "agent-9",
+                    "name": "Review bot",
+                    "capability": "Code review and release checks"
+                }]
+            })
+        );
     }
 
     #[tokio::test]

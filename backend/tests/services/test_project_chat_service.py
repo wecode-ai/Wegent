@@ -16,6 +16,7 @@ from app.api.ws.device_namespace import _project_chat_runtime_event_sync
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRun,
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
@@ -660,7 +661,6 @@ def test_alive_execution_keeps_task_ai_state_running(
     execution = LoopItemExecution(
         loop_item_id=task.id,
         cloud_project_id=project.id,
-        executor_type="project_robot",
         executor_owner_user_id=test_user.id,
         agent_id="12",
         execution_environment="local",
@@ -1606,6 +1606,56 @@ def test_response_completed_extracts_openai_response_output_text(
     assert completed[0].message_id == response.message_id
     assert completed[0].content == "Completed from response"
     assert completed[0].status == "completed"
+
+
+def test_ai_manager_comment_does_not_finish_robot_assignment_run(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        task_id="MANAGED-1",
+        title="Managed assignment",
+        description="",
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id="MANAGED-1",
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="Custom AI manager",
+        message_type="agent_status",
+        content="",
+        metadata_json={
+            "automation_run_id": str(run.id),
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+        },
+        agent_id="",
+        runtime_device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        status="streaming",
+    )
+    test_db.add_all([run, activity])
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        event_name="response.completed",
+        payload={"data": {"output_text": "Assigned to the implementation bot."}},
+    )
+
+    assert projected is not None
+    test_db.refresh(run)
+    assert run.status == "queued"
 
 
 def test_device_runtime_projection_accepts_local_task_id(

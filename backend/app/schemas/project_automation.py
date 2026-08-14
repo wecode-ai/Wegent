@@ -13,58 +13,73 @@ from app.schemas.project_chat import ProjectChatSchema
 AutomationRunStatus = Literal[
     "pending",
     "queued",
+    "waiting_device",
     "running",
     "succeeded",
     "failed",
     "skipped",
     "cancelled",
 ]
-AutomationExecutorType = Literal["project_robot", "custom", "wegent_robot"]
+AutomationAssignmentMode = Literal["manual", "ai_managed"]
+AutomationManagerType = Literal["custom", "wegent"]
 
 
-class ProjectAutomationExecutorSchema(ProjectChatSchema):
-    """Strict public contract for one automation executor source."""
+class ProjectAutomationManagerAssign(ProjectChatSchema):
+    """Assignment selected and applied by an authenticated AI manager."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assignee_type: Literal["user", "agent"]
+    assignee_id: str = Field(min_length=1, max_length=128)
+
+
+class ProjectAutomationAssignmentSchema(ProjectChatSchema):
+    """Strict public contract for one automation assignment strategy."""
 
     model_config = ConfigDict(extra="forbid")
 
 
-def _validate_executor_fields(
+def _validate_assignment_fields(
     *,
-    executor_type: AutomationExecutorType,
+    assignment_mode: AutomationAssignmentMode,
+    manager_type: AutomationManagerType | None,
     agent_id: str | None,
     wegent_team_id: int | None,
     model: str | None,
     execution_environment: Literal["local", "cloud"] | None,
     execution_device_id: str | None,
 ) -> None:
-    if executor_type == "project_robot":
+    if assignment_mode == "manual":
         if not agent_id:
-            raise ValueError("agent_id is required for a project robot")
+            raise ValueError("agent_id is required for manual assignment")
+        if manager_type is not None:
+            raise ValueError("manager_type is only valid for AI-managed assignment")
         if wegent_team_id is not None:
-            raise ValueError("wegent_team_id is only valid for a Wegent robot")
+            raise ValueError("wegent_team_id is only valid for a Wegent manager")
         if model or execution_environment or execution_device_id:
-            raise ValueError("inline AI configuration is only valid for custom AI")
+            raise ValueError("custom manager configuration requires AI management")
         return
-    if executor_type == "custom":
-        if agent_id:
-            raise ValueError("agent_id is only valid for a project robot")
+    if agent_id:
+        raise ValueError("agent_id is only valid for manual assignment")
+    if manager_type == "custom":
         if wegent_team_id is not None:
-            raise ValueError("wegent_team_id is only valid for a Wegent robot")
+            raise ValueError("wegent_team_id is only valid for a Wegent manager")
         if not model or not execution_environment or not execution_device_id:
             raise ValueError(
                 "model, execution_environment, and execution_device_id are required "
-                "for custom AI"
+                "for a custom AI manager"
             )
         return
-    if agent_id:
-        raise ValueError("agent_id is only valid for a project robot")
-    if wegent_team_id is None:
-        raise ValueError("wegent_team_id is required for a Wegent robot")
-    if model or execution_environment or execution_device_id:
-        raise ValueError("inline AI configuration is only valid for custom AI")
+    if manager_type == "wegent":
+        if wegent_team_id is None:
+            raise ValueError("wegent_team_id is required for a Wegent manager")
+        if model or execution_environment or execution_device_id:
+            raise ValueError("custom manager configuration is not valid for Wegent")
+        return
+    raise ValueError("manager_type is required for AI-managed assignment")
 
 
-class ProjectAutomationCreate(ProjectAutomationExecutorSchema):
+class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event"] = "schedule"
@@ -72,7 +87,8 @@ class ProjectAutomationCreate(ProjectAutomationExecutorSchema):
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
-    executor_type: AutomationExecutorType = "project_robot"
+    assignment_mode: AutomationAssignmentMode = "manual"
+    manager_type: AutomationManagerType | None = None
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
     wegent_team_id: int | None = Field(default=None, ge=1)
     model: str | None = Field(default=None, max_length=255)
@@ -81,9 +97,10 @@ class ProjectAutomationCreate(ProjectAutomationExecutorSchema):
     enabled: bool = True
 
     @model_validator(mode="after")
-    def validate_executor(self) -> Self:
-        _validate_executor_fields(
-            executor_type=self.executor_type,
+    def validate_assignment(self) -> Self:
+        _validate_assignment_fields(
+            assignment_mode=self.assignment_mode,
+            manager_type=self.manager_type,
             agent_id=self.agent_id,
             wegent_team_id=self.wegent_team_id,
             model=self.model,
@@ -93,14 +110,15 @@ class ProjectAutomationCreate(ProjectAutomationExecutorSchema):
         return self
 
 
-class ProjectAutomationUpdate(ProjectAutomationExecutorSchema):
+class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     prompt: str | None = Field(default=None, min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event"] | None = None
     event_type: Literal["task.created"] | None = None
     event_config: dict[str, Any] | None = None
-    executor_type: AutomationExecutorType | None = None
+    assignment_mode: AutomationAssignmentMode | None = None
+    manager_type: AutomationManagerType | None = None
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     agent_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -111,22 +129,24 @@ class ProjectAutomationUpdate(ProjectAutomationExecutorSchema):
     enabled: bool | None = None
 
     @model_validator(mode="after")
-    def validate_executor_switch(self) -> Self:
-        executor_fields = {
+    def validate_assignment_switch(self) -> Self:
+        assignment_fields = {
+            "manager_type",
             "agent_id",
             "wegent_team_id",
             "model",
             "execution_environment",
             "execution_device_id",
         }
-        if self.executor_type is None:
-            if executor_fields.intersection(self.model_fields_set):
+        if self.assignment_mode is None:
+            if assignment_fields.intersection(self.model_fields_set):
                 raise ValueError(
-                    "executor_type is required when changing executor configuration"
+                    "assignment_mode is required when changing assignment configuration"
                 )
             return self
-        _validate_executor_fields(
-            executor_type=self.executor_type,
+        _validate_assignment_fields(
+            assignment_mode=self.assignment_mode,
+            manager_type=self.manager_type,
             agent_id=self.agent_id,
             wegent_team_id=self.wegent_team_id,
             model=self.model,
@@ -144,7 +164,8 @@ class ProjectAutomationView(ProjectChatSchema):
     trigger_type: Literal["schedule", "event"]
     event_type: Literal["task.created"] | None
     event_config: dict[str, Any]
-    executor_type: AutomationExecutorType
+    assignment_mode: AutomationAssignmentMode
+    manager_type: AutomationManagerType | None
     webhook_event_id: str | None
     webhook_secret: str | None = None
     cron_expression: str | None

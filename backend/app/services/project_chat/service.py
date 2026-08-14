@@ -177,6 +177,7 @@ class ProjectChatService:
             created_by_user_id=user_id,
             updated_by_user_id=user_id,
             status="active",
+            description=request.capability_description.strip(),
             device_id=request.execution_device_id,
             local_project_id=request.local_project_id,
             metadata_json={
@@ -221,6 +222,8 @@ class ProjectChatService:
             metadata["model"] = request.model
         if request.system_prompt is not None:
             metadata["system_prompt"] = request.system_prompt
+        if request.capability_description is not None:
+            row.description = request.capability_description.strip()
         if request.execution_device_id is not None:
             self._validate_execution_device(
                 db,
@@ -714,6 +717,15 @@ class ProjectChatService:
         event_name: str,
     ) -> None:
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        # An AI manager's runtime owns only the audit comment. Its successful
+        # terminal event means the assignment decision was made, not that the
+        # original task was executed. The manager finalizer reads the durable
+        # task assignment and either waits for the selected project robot or
+        # closes the run for a human/unassigned outcome.
+        if metadata.get("assignment_mode") == "ai_managed" and metadata.get(
+            "manager_type"
+        ) in {"custom", "wegent"}:
+            return
         run_id = metadata.get("automation_run_id")
         if not isinstance(run_id, str) or not run_id:
             return
@@ -1299,24 +1311,9 @@ class ProjectChatService:
             if task.assignee_agent_id != row.agent_id:
                 return
         else:
-            metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
-            execution_id = metadata.get("execution_id")
-            if metadata.get("executor_type") != "inline_custom" or not isinstance(
-                execution_id, int
-            ):
-                return
-            from app.models.loop_item_execution import LoopItemExecution
-
-            execution = db.get(LoopItemExecution, execution_id)
-            if (
-                execution is None
-                or execution.executor_type != "inline_custom"
-                or execution.agent_id is not None
-                or execution.status != "completed"
-                or execution.loop_item_id != row.task_id
-                or execution.cloud_project_id != row.project_id
-            ):
-                return
+            # AI managers are audit-only comments. Only an assigned project
+            # robot can complete work and advance the task to review.
+            return
         task_metadata = (
             dict(task.metadata_json) if isinstance(task.metadata_json, dict) else {}
         )
@@ -1542,6 +1539,7 @@ class ProjectChatService:
                 if isinstance(config.get("system_prompt"), str)
                 else ""
             ),
+            capability_description=row.description or "",
             status="archived" if row.status == "archived" else "active",
             visibility=config.get("visibility") or BOT_DEFAULT_VISIBILITY,
             execution_environment=(

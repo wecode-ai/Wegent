@@ -60,15 +60,16 @@ The queue can be filtered by execution state (pending approval, queued, claimed,
 
 Automation rules can run on a schedule or be triggered by project events such as task creation and by webhooks. Rules can be enabled or disabled, run immediately, inspected through their run history, and cancelled while unfinished. Scheduling runs on the server, so the Wework client does not need to remain online.
 
-Each rule selects one execution method:
+Each rule selects one assignment strategy:
 
-- **Project robot** assigns the board task to an existing project robot and uses that robot's current model, execution device, and code workspace configuration.
-- **Custom AI** does not create a robot resource. The rule directly selects a prompt, model, and local or cloud execution device. Wework resolves the current model configuration and credentials only when execution starts.
-- **Wegent agent** selects a fully configured Wegent agent that the current user can access. The Backend creates a standard Task/Subtask and routes its bots through Chat Shell or a temporary Executor according to their Shell. This method receives a board MCP scoped to the current project and task, so it can inspect the board and assign work.
+- **Manual selection** fixes one project robot. When the rule fires, the original board task is assigned directly to that robot through the same execution flow used by an ordinary human assignment.
+- **AI managed** lets an AI manager use a restricted MCP to read the original task and the capability descriptions of currently available project members and project robots, then directly assign the best candidate. If none is suitable, the task stays unassigned. The manager never executes or owns the original task; its final text is an audit record and is never parsed as an assignment.
 
-Project robots and custom AI use the existing board-assignment queue. A local run remains **Queued** while its device is offline and is claimed by Wework after the device returns; the Backend dispatches cloud runs to the device bound by the rule. Configuration is not copied into execution records. A run that has not started yet uses the current robot or rule configuration when it is claimed.
+AI management supports two manager sources. **Custom AI** selects a model and a local or cloud Wework device and uses the existing Wework runtime transport with exactly three MCP operations: read the task, list assignment candidates, and assign the task. **Wegent agent** uses an accessible, fully configured Wegent agent; the Backend creates a standard Task/Subtask and provides an equivalent MCP scoped to the current project, task, and automation run. If a project robot is selected, that robot is the business-task executor; if a project member is selected, automation only changes the assignee.
 
-Each effective run creates an independent board task. Its parent comment carries the queued, running, completed, or failed state and receives the final result. Completed work still requires human acceptance. Every run has its own execution session, which can be continued from the task comments.
+After a robot is selected, automation calls the same board-assignment path as a person. The robot keeps its current model, device, code workspace, and execution mode. Local work stays **Queued** while its device is unavailable and is claimed when Wework reconnects; the Backend dispatches cloud work. Execution records do not store model credentials; runtime configuration is resolved when execution starts.
+
+The manager's decision is shown in its own parent comment. When the selected project robot starts, it creates a separate execution comment. Only the project robot's completion can move the original task to review; completing the manager decision does not complete the task.
 
 The Automation tab is available for local, GitHub, and GitLab project spaces. DingTalk AI Table project spaces keep their data in the external table and do not show the tab.
 
