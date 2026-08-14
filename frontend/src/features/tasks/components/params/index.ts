@@ -1,6 +1,5 @@
 export { default as DifyParamsForm } from './DifyParamsForm'
 export { default as ExternalApiParamsInput } from './ExternalApiParamsInput'
 export { default as TaskParamSync } from './TaskParamSync'
-export { default as DeviceTaskSync } from './DeviceTaskSync'
 export { default as DeviceParamSync } from './DeviceParamSync'
 export { default as QueryParamAutoSend } from './QueryParamAutoSend'

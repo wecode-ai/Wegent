@@ -104,8 +104,8 @@ async def test_create_device_chat_task_creates_new_task_and_schedules_ai(
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "resolve_chat_task_dispatch_device_id",
-        AsyncMock(return_value="device-1"),
+        "resolve_chat_task_device_id",
+        MagicMock(return_value="device-1"),
     )
     monkeypatch.setattr(
         device_chat_task_service,
@@ -171,8 +171,8 @@ async def test_create_device_chat_task_continues_existing_task(
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "resolve_chat_task_dispatch_device_id",
-        AsyncMock(return_value="device-new"),
+        "resolve_chat_task_device_id",
+        MagicMock(return_value="device-old"),
     )
     monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
     monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
@@ -183,16 +183,17 @@ async def test_create_device_chat_task_continues_existing_task(
         request=DeviceChatTaskRequest(
             teamId=team.id,
             taskId=existing_task.id,
+            deviceId="device-new",
             message="Continue task",
         ),
     )
 
     assert response.task_id == existing_task.id
     assert response.message_id == 5
-    assert response.device_id == "device-new"
+    assert response.device_id == "device-old"
     call_kwargs = create_chat_task.await_args.kwargs
     assert call_kwargs["task_id"] == existing_task.id
-    assert call_kwargs["params"].device_id == "device-new"
+    assert call_kwargs["params"].device_id == "device-old"
 
 
 @pytest.mark.asyncio
@@ -220,8 +221,8 @@ async def test_create_device_chat_task_continuation_uses_existing_client_origin(
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "resolve_chat_task_dispatch_device_id",
-        AsyncMock(return_value="device-old"),
+        "resolve_chat_task_device_id",
+        MagicMock(return_value="device-old"),
     )
     monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
     monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
@@ -287,8 +288,8 @@ async def test_create_device_chat_task_uses_default_local_device_when_not_specif
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "resolve_chat_task_dispatch_device_id",
-        AsyncMock(return_value=None),
+        "resolve_chat_task_device_id",
+        MagicMock(return_value=None),
     )
     monkeypatch.setattr(
         device_chat_task_service.device_service,
@@ -297,8 +298,8 @@ async def test_create_device_chat_task_uses_default_local_device_when_not_specif
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "resolve_online_local_executor_device_id",
-        AsyncMock(return_value="device-default"),
+        "resolve_local_executor_device_id",
+        MagicMock(return_value="device-default"),
     )
     monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
     monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
@@ -334,8 +335,8 @@ async def test_create_device_chat_task_applies_wework_defaults_for_new_task(
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "resolve_chat_task_dispatch_device_id",
-        AsyncMock(return_value="device-wework"),
+        "resolve_chat_task_device_id",
+        MagicMock(return_value="device-wework"),
     )
     monkeypatch.setattr(
         device_chat_task_service,

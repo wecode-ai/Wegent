@@ -2027,6 +2027,77 @@ describe('DesktopSidebar', () => {
     ).toBeInTheDocument()
   })
 
+  test('marks every active split group member and distinguishes the focused member', () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-14/split-group'
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'split-one',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Split one',
+                runtime: 'codex',
+              },
+              {
+                taskId: 'split-two',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Split two',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        taskId: 'split-one',
+        workspacePath: chatPath,
+      },
+      splitGroupMemberships: {
+        'runtime:local-device:split-one': {
+          groupId: 'group-one',
+          displayNumber: 1,
+          active: true,
+          focused: true,
+        },
+        'runtime:local-device:split-two': {
+          groupId: 'group-one',
+          displayNumber: 1,
+          active: true,
+          focused: false,
+        },
+      },
+      onOpenRuntimeTask: vi.fn(),
+    })
+
+    const firstRow = screen.getByTestId('runtime-local-task-row-split-one')
+    const secondRow = screen.getByTestId('runtime-local-task-row-split-two')
+    expect(firstRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
+    expect(secondRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
+    expect(firstRow).toHaveAttribute('aria-current', 'page')
+    expect(secondRow).not.toHaveAttribute('aria-current')
+    expect(screen.getByTestId('runtime-local-task-split-group-split-one')).toHaveAccessibleName(
+      '分屏 1'
+    )
+    expect(screen.getByTestId('runtime-local-task-split-group-split-two')).toHaveAttribute(
+      'data-split-group',
+      'group-one'
+    )
+  })
+
   test('removes pinned chat tasks from the task section without highlighted styling', () => {
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/pinned'
     renderSidebar({

@@ -25,6 +25,11 @@ from celery.exceptions import Ignore, Retry
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.stores.tasks import subtask_store, task_store
+from shared.telemetry.context import (
+    get_request_id,
+    init_request_context,
+    set_request_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +98,12 @@ def dispatch_video_polling_task(
     """
     # Use fixed task_id based on subtask_id to prevent duplicate tasks
     celery_task_id = f"{VIDEO_POLL_TASK_ID_PREFIX}{subtask_id}"
+    request_id = get_request_id() or init_request_context()
 
     logger.info(
         f"[video_tasks] Dispatching polling task: "
-        f"celery_task_id={celery_task_id}, subtask_id={subtask_id}, job_id={job_id}"
+        f"celery_task_id={celery_task_id}, subtask_id={subtask_id}, job_id={job_id}, "
+        f"request_id={request_id}"
     )
 
     poll_video_job.apply_async(
@@ -112,6 +119,7 @@ def dispatch_video_polling_task(
             "intent_result": intent_result,
             "poll_count": poll_count,
             "last_progress": last_progress,
+            "request_id": request_id,
         },
         task_id=celery_task_id,
     )
@@ -339,6 +347,7 @@ def poll_video_job(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
+    request_id: Optional[str] = None,
 ):
     """
     Poll video generation job status.
@@ -364,7 +373,13 @@ def poll_video_job(
         intent_result: Intent analysis result (merged_prompt, reference_image, etc.)
         poll_count: Current poll count (for retry tracking)
         last_progress: Last progress value
+        request_id: Request ID propagated across Celery retries
     """
+    if request_id:
+        set_request_context(request_id)
+    else:
+        request_id = init_request_context()
+
     from app.services.execution.agents.video.providers import get_video_provider
     from app.tasks.video_websocket import (
         emit_video_cancelled,
@@ -509,6 +524,7 @@ def poll_video_job(
                 "intent_result": intent_result,
                 "poll_count": poll_count,
                 "last_progress": current_progress,
+                "request_id": request_id,
             },
         )
 
@@ -598,23 +614,42 @@ def _handle_completion(
         status="streaming",
     )
 
-    # Upload attachment
-    from app.services.execution.agents.video.attachment_uploader import (
-        upload_video_attachment,
+    from app.services.execution.agents.video.extensions import (
+        PreparedVideoArtifact,
+        prepare_extended_video_result,
     )
 
-    attachment_id = _run_async(
-        upload_video_attachment(
-            video_url=result.video_url,
+    artifact = prepare_extended_video_result(
+        result=result,
+        user_id=user_id,
+        task_id=task_id,
+        subtask_id=subtask_id,
+    )
+    if artifact is None:
+        from app.services.execution.agents.video.attachment_uploader import (
+            upload_video_attachment,
+        )
+
+        attachment_id = _run_async(
+            upload_video_attachment(
+                video_url=result.video_url,
+                thumbnail=result.thumbnail,
+                duration=result.duration,
+                user_id=user_id,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
+        )
+        from app.services.context import context_service
+
+        playback_url = context_service.build_attachment_url(attachment_id)
+        artifact = PreparedVideoArtifact(
+            video_url=playback_url,
+            websocket_video_url=playback_url,
+            attachment_id=attachment_id,
             thumbnail=result.thumbnail,
             duration=result.duration,
-            user_id=user_id,
-            task_id=task_id,
-            subtask_id=subtask_id,
         )
-    )
-
-    playback_url = result.video_url
 
     # Build final video block
     final_video_block = {
@@ -622,32 +657,34 @@ def _handle_completion(
         "type": "video",
         "status": "done",
         "is_placeholder": False,
-        "video_url": playback_url,
-        "video_thumbnail": result.thumbnail,
-        "video_duration": result.duration,
-        "video_attachment_id": attachment_id,
+        "video_url": artifact.video_url,
+        "video_thumbnail": artifact.thumbnail,
+        "video_duration": artifact.duration,
+        "video_attachment_id": artifact.attachment_id,
         "video_progress": 100,
         "timestamp": int(time.time() * 1000),
+        **artifact.block_metadata,
     }
 
-    # Result data for database (stores raw URL)
+    # Persist the stable URL selected by the active result storage implementation.
     db_result_data = {
         "value": "Video generation completed",
-        "image": result.thumbnail,
+        "image": artifact.thumbnail,
         "blocks": [final_video_block.copy()],
     }
 
-    # Result data for WebSocket (will have signed URL)
+    # The WebSocket representation may use a freshly signed playback URL.
     ws_result_data = {
         "value": "Video generation completed",
-        "image": result.thumbnail,
+        "image": artifact.thumbnail,
         "blocks": [final_video_block.copy()],
     }
+    ws_result_data["blocks"][0]["video_url"] = artifact.websocket_video_url
 
     logger.info(
         f"[video_tasks] Video done data: task_id={task_id}, subtask_id={subtask_id}, "
-        f"playback_url={playback_url}, video_block_id={video_block_id}, "
-        f"attachment_id={attachment_id}"
+        f"playback_url={artifact.video_url}, video_block_id={video_block_id}, "
+        f"attachment_id={artifact.attachment_id}"
     )
 
     emit_video_done(
@@ -657,7 +694,6 @@ def _handle_completion(
         result_data=ws_result_data,
     )
 
-    # Update subtask status with raw URL
     _update_subtask_status_sync(subtask_id, "COMPLETED", result=db_result_data)
 
     # Update task status
@@ -665,7 +701,7 @@ def _handle_completion(
 
     logger.info(
         f"[video_tasks] Completed: task_id={task_id}, subtask_id={subtask_id}, "
-        f"attachment_id={attachment_id}"
+        f"attachment_id={artifact.attachment_id}"
     )
 
 

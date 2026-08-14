@@ -270,13 +270,16 @@ impl CodexNotificationEventMapper {
                     self.remember_subagent_item(notification.params);
                     return;
                 }
-                emit_tool_start(
+                let emitted_tool = emit_tool_start(
                     event_tx,
                     device_id,
                     local_task_id,
                     request,
                     notification.params,
                 );
+                if !emitted_tool {
+                    self.finish_process_text_before_item(&emit_context, notification.params);
+                }
             }
             "item/tool/requestUserInput" => {
                 emit_request_user_input(
@@ -643,13 +646,24 @@ impl CodexNotificationEventMapper {
         if let Some((block_id, mut updates)) = tool_update_from_notification(params) {
             let had_streamed_output = self.tool_output_deltas.remove(&block_id).is_some();
             normalize_tool_done_updates(&mut updates, had_streamed_output);
+            let block = workbench_block_from_notification(
+                params,
+                &emit_context.request.subtask_id,
+                emit_context.device_id,
+                emit_context.request.cwd().unwrap_or_default(),
+                Some("done"),
+            );
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
                 "response.block.updated",
                 emit_context.local_task_id,
                 emit_context.request,
-                json!({"block_id": block_id, "updates": updates}),
+                json!({
+                    "block_id": block_id,
+                    "updates": updates,
+                    "block": block,
+                }),
             );
         }
     }
@@ -1073,6 +1087,35 @@ impl CodexNotificationEventMapper {
         self.process_text = None;
     }
 
+    fn finish_process_text_before_item(
+        &mut self,
+        emit_context: &EventEmitContext<'_>,
+        params: &Value,
+    ) {
+        let next_item_id = notification_item_id(params);
+        let Some(process_text) = self.process_text.as_ref() else {
+            return;
+        };
+        if process_text.item_id == next_item_id {
+            return;
+        }
+
+        emit_response_event(
+            emit_context.event_tx,
+            emit_context.device_id,
+            "response.block.updated",
+            emit_context.local_task_id,
+            emit_context.request,
+            json!({
+                "block_id": process_text.id,
+                "updates": {
+                    "status": "done",
+                }
+            }),
+        );
+        self.reset_process_text();
+    }
+
     fn remember_subagent_item(&mut self, params: &Value) {
         if let Some(item_id) = notification_item_id(params) {
             self.subagent_item_ids.insert(item_id);
@@ -1308,7 +1351,7 @@ fn emit_tool_start(
     local_task_id: &str,
     request: &ExecutionRequest,
     params: &Value,
-) {
+) -> bool {
     if let Some(block) = workbench_block_from_notification(
         params,
         &request.subtask_id,
@@ -1324,7 +1367,9 @@ fn emit_tool_start(
             request,
             json!({"block": block}),
         );
+        return true;
     }
+    false
 }
 
 fn emit_request_user_input(
@@ -2458,6 +2503,72 @@ mod tests {
             created["payload"]["data"]["block"]["id"]
         );
         assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn completes_streamed_process_text_when_the_next_codex_item_starts() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        for message in [
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-commentary",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": ""
+                    }
+                }
+            }),
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-commentary",
+                    "delta": "I will inspect."
+                }
+            }),
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "reasoning-1",
+                        "type": "reasoning"
+                    }
+                }
+            }),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                message,
+            );
+        }
+
+        let created = event_rx
+            .try_recv()
+            .expect("streamed process text should be emitted");
+        let completed = event_rx
+            .try_recv()
+            .expect("the next item should settle the process text");
+
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(created["payload"]["data"]["block"]["status"], "streaming");
+        assert_eq!(completed["event"], "response.block.updated");
+        assert_eq!(
+            completed["payload"]["data"]["block_id"],
+            created["payload"]["data"]["block"]["id"]
+        );
+        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -3894,6 +4005,9 @@ mod tests {
             .try_recv()
             .expect("commentary process event should be emitted");
         let tool = event_rx.try_recv().expect("tool event should be emitted");
+        let process_completed = event_rx
+            .try_recv()
+            .expect("the final item should settle commentary");
         let final_text = event_rx
             .try_recv()
             .expect("final process event should be emitted");
@@ -3908,6 +4022,15 @@ mod tests {
         assert_eq!(
             tool["payload"]["data"]["block"]["tool_name"],
             "exec_command"
+        );
+        assert_eq!(process_completed["event"], "response.block.updated");
+        assert_eq!(
+            process_completed["payload"]["data"]["block_id"],
+            process["payload"]["data"]["block"]["id"]
+        );
+        assert_eq!(
+            process_completed["payload"]["data"]["updates"]["status"],
+            "done"
         );
         assert_eq!(final_text["event"], "response.block.created");
         assert_eq!(
@@ -4454,6 +4577,18 @@ mod tests {
         assert_eq!(
             first_tool_done["payload"]["data"]["updates"]["status"],
             "done"
+        );
+        assert_eq!(
+            first_tool_done["payload"]["data"]["block"]["id"],
+            first_tool_done["payload"]["data"]["block_id"]
+        );
+        assert_eq!(
+            first_tool_done["payload"]["data"]["block"]["status"],
+            "done"
+        );
+        assert_eq!(
+            first_tool_done["payload"]["data"]["block"]["tool_output"],
+            "/workspace\n"
         );
         assert!(event_rx.try_recv().is_err());
     }

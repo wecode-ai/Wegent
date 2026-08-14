@@ -169,6 +169,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          activeHandle?.focus()
+        },
         getValue: () => {
           const activeHandle = fullscreenInputOpen
             ? fullscreenComposerRef.current

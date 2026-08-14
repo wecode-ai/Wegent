@@ -4,6 +4,7 @@ export interface RuntimeConfig {
   appBasePath: string
   apiBaseUrl: string
   feedbackUrl: string
+  plantumlServerUrl: string
   socketBaseUrl: string
   socketPath: string
   wegentBackendUrl: string
@@ -155,6 +156,11 @@ export function getRuntimeConfig(): RuntimeConfig {
     appBasePath,
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     feedbackUrl: trimTrailingSlash(import.meta.env.VITE_WEWORK_FEEDBACK_URL?.trim() || ''),
+    plantumlServerUrl: trimTrailingSlash(
+      runtimeString(overrides, 'plantumlServerUrl') ||
+        import.meta.env.VITE_WEWORK_PLANTUML_SERVER_URL?.trim() ||
+        'https://www.plantuml.com/plantuml/svg'
+    ),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
     wegentBackendUrl,

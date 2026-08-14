@@ -446,6 +446,69 @@
   --plugin-source-external-accent: 202 208 219;
 }
 
+/* Keep embedded diagram renderers aligned with Wework theme and available space. */
+.wework-diagram-preview .drawing-scroll,
+.wework-diagram-preview .drawing-canvas,
+.wework-diagram-preview .drawing-diagram-shell {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+}
+
+.wework-diagram-preview .drawing-scroll {
+  overflow: hidden;
+  padding: 12px;
+}
+
+.wework-diagram-preview .drawing-diagram-pan {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 16px;
+  width: 100%;
+}
+
+.wework-diagram-preview .drawing-canvas .drawing-diagram-svg {
+  height: auto;
+  max-height: 100%;
+  max-width: 100%;
+  width: auto;
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-viewer {
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-toolbar {
+  background: rgb(var(--color-bg-surface) / 0.94);
+  border-color: rgb(var(--color-border));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-title strong {
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-actions button {
+  background: rgb(var(--color-bg-base));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-actions span {
+  color: rgb(var(--color-text-secondary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-diagram-shell {
+  background: linear-gradient(135deg, rgb(var(--color-bg-base)), rgb(var(--color-bg-surface)));
+  box-shadow: none;
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-canvas .drawing-diagram-svg {
+  background: transparent;
+}
+
 [data-sidebar-translucent='false'] {
   --color-sidebar: 246 246 246;
 }
@@ -1374,6 +1437,20 @@ button.plugin-operation-notice-dismiss {
   color: rgb(var(--color-text-muted));
 }
 
+button.plugin-operation-notice-action {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 5px 7px;
+  color: rgb(var(--color-text-primary));
+  font-weight: 600;
+}
+
+button.plugin-operation-notice-action:hover {
+  background: rgb(var(--color-text-primary) / 0.07);
+}
+
 button.plugin-operation-notice-dismiss:hover {
   background: rgb(var(--color-text-primary) / 0.07);
   color: rgb(var(--color-text-primary));
@@ -1393,6 +1470,7 @@ button.plugin-market-icon-button:focus-visible,
 button.plugin-market-filter:focus-visible,
 button.plugin-installed-strip-item:focus-visible,
 button.plugin-installed-overflow-button:focus-visible,
+button.plugin-operation-notice-action:focus-visible,
 button.plugin-operation-notice-dismiss:focus-visible,
 button.plugin-detail-action-primary:focus-visible,
 button.plugin-detail-action-secondary:focus-visible,

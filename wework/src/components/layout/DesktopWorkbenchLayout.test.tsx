@@ -61,6 +61,9 @@ const deliveryApiMock = vi.hoisted(() => ({
   listLoopItems: vi.fn(),
   listDeliveries: vi.fn(),
 }))
+const embeddedBrowserMocks = vi.hoisted(() => ({
+  setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
+}))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
 
@@ -95,6 +98,14 @@ vi.mock('@extensions/cloud-desktop', () => ({
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
+
+vi.mock('@/lib/embedded-browser', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/embedded-browser')>()
+  return {
+    ...actual,
+    setEmbeddedBrowserActiveTab: embeddedBrowserMocks.setEmbeddedBrowserActiveTab,
+  }
+})
 
 vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
@@ -639,7 +650,7 @@ describe('DesktopWorkbenchLayout', () => {
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
-    startLocalHarnessMock.mockResolvedValue('local-harness-1')
+    startLocalHarnessMock.mockReset().mockResolvedValue('local-harness-1')
     updateLocalHarnessSessionTitleMock.mockResolvedValue(undefined)
     resolveLocalHarnessLaunchMock.mockImplementation(async harnessId => ({
       modelId:
@@ -1190,7 +1201,6 @@ describe('DesktopWorkbenchLayout', () => {
       unsubscribeRuntimeTaskNotifications:
         props.onUnsubscribeRuntimeTaskNotifications ??
         vi.fn().mockResolvedValue({ subscribed: false }),
-      rememberExecutionDevice: vi.fn(),
       refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
       getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
@@ -3251,17 +3261,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalled())
     expect(screen.queryByTestId('workbench-harness-experimental-badge')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('workbench-harness-selector'))
+    fireEvent.click(screen.getByTestId('workbench-harness-selector'))
     const openCodeOption = screen.getByTestId('workbench-harness-option-opencode')
     await waitFor(() => expect(openCodeOption).not.toBeDisabled())
     expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
-    await userEvent.click(openCodeOption)
+    fireEvent.click(openCodeOption)
     expect(screen.getByTestId('workbench-harness-selector')).toHaveTextContent('OpenCode')
     expect(screen.getByTestId('project-work-bar')).toContainElement(
       screen.getByTestId('workbench-harness-selector')
     )
-    await userEvent.click(screen.getByTestId('workbench-harness-model-selector'))
-    await userEvent.click(screen.getByTestId('workbench-harness-model-option-opencode-1'))
+    fireEvent.click(screen.getByTestId('workbench-harness-model-selector'))
+    fireEvent.click(screen.getByTestId('workbench-harness-model-option-opencode-1'))
     expect(screen.getByTestId('workbench-harness-model-selector')).toHaveTextContent(
       'Second Test Model'
     )
@@ -3317,7 +3327,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('archive-local-harness-session-local-harness-1')
     ).toHaveAccessibleName('归档编码会话')
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.queryByTestId('right-workspace-chat-option')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-add-harness-option')).toHaveTextContent(
@@ -3327,7 +3337,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.keyDown(window, { key: 's', altKey: true, metaKey: true })
     expect(screen.queryByTestId('right-workspace-chat-panel')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
     await waitFor(() =>
       expect(startLocalTerminalMock).toHaveBeenCalledWith(
@@ -3340,15 +3350,15 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
 
-    await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
+    fireEvent.click(screen.getByTestId('workspace-add-harness-option'))
     expect(screen.getByTestId('harness-session-picker')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('harness-session-picker-option-opencode'))
+    fireEvent.click(screen.getByTestId('harness-session-picker-option-opencode'))
     expect(screen.getByTestId('harness-session-picker-model-selector')).toHaveTextContent(
       'Second Test Model'
     )
-    await userEvent.click(screen.getByTestId('harness-session-picker-model-selector'))
-    await userEvent.click(screen.getByTestId('harness-session-picker-model-option-opencode-0'))
-    await userEvent.click(screen.getByTestId('harness-session-picker-create-button'))
+    fireEvent.click(screen.getByTestId('harness-session-picker-model-selector'))
+    fireEvent.click(screen.getByTestId('harness-session-picker-model-option-opencode-0'))
+    fireEvent.click(screen.getByTestId('harness-session-picker-create-button'))
     await waitFor(() =>
       expect(resolveLocalHarnessLaunchMock).toHaveBeenLastCalledWith(
         'opencode',
@@ -3395,9 +3405,7 @@ describe('DesktopWorkbenchLayout', () => {
       '归档编码会话'
     )
 
-    await userEvent.click(
-      screen.getByTestId('right-workspace-harness-tab-local-harness-2-close-button')
-    )
+    fireEvent.click(screen.getByTestId('right-workspace-harness-tab-local-harness-2-close-button'))
 
     await waitFor(() =>
       expect(archiveLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-2')
@@ -3409,10 +3417,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
 
     startLocalHarnessMock.mockRejectedValueOnce(new Error('Right session failed'))
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('workspace-add-harness-option'))
-    await userEvent.click(screen.getByTestId('harness-session-picker-create-button'))
+    fireEvent.click(screen.getByTestId('workspace-add-harness-option'))
+    fireEvent.click(screen.getByTestId('harness-session-picker-create-button'))
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('Right session failed')
     expect(screen.getByTestId('central-harness-terminal')).toBeInTheDocument()
   })

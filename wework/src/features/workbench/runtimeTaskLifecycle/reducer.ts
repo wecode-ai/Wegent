@@ -14,6 +14,8 @@ export function reduceRuntimeTaskLifecycle(
       const snapshotConfirmsActiveTurn =
         snapshotRunning === true &&
         (isRunningTaskStatus(event.task.threadStatus) || isRunningTaskStatus(event.task.turnStatus))
+      const snapshotConfirmsNewActiveTurn =
+        snapshotConfirmsActiveTurn && event.task.completedAt == null
       const settledLocalHarness =
         snapshotRunning === false &&
         state.turnPhase !== 'streaming' &&
@@ -24,7 +26,7 @@ export function reduceRuntimeTaskLifecycle(
         snapshotRunning !== expectedRunning &&
         !queuedStatus &&
         (!terminalStatus || hasIdentifiedActiveTurn) &&
-        !snapshotConfirmsActiveTurn &&
+        !snapshotConfirmsNewActiveTurn &&
         !settledLocalHarness
       if (shouldIgnoreStaleSnapshot) return state
 

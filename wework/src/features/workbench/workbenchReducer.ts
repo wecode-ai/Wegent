@@ -112,7 +112,6 @@ export type WorkbenchAction =
       startFreshChat?: boolean
     }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
-  | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | { type: 'blank_chat_committed' }
   | {
       type: 'runtime_task_opened'
@@ -1180,12 +1179,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
               preferences: action.preferences,
             }
           : state.user,
-      }
-    case 'standalone_device_preference_changed':
-      return {
-        ...state,
-        standaloneDeviceId: action.standaloneDeviceId,
-        standaloneWorkspacePath: null,
       }
     case 'blank_chat_committed':
       return {

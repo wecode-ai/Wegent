@@ -156,6 +156,8 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
+import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
   useWorkbenchPaneActive,
   useWorkbenchPaneId,
@@ -464,6 +466,7 @@ function createInitialBrowserWorkspaceState({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  splitGroups: WorkbenchSplitGroupsController
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   visible?: boolean
@@ -527,7 +530,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
-  const { services, workspaceTabId, openRuntimeTask } = useWorkbench()
+  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const {
     onLocalHarnessSessionStarted,
@@ -539,7 +542,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
-  const [splitMode, setSplitMode] = useState(false)
+  const splitMode = props.splitGroups.splitMode
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
@@ -748,19 +751,37 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       updateHarnessSessionTitle,
     ]
   )
+  const {
+    focusPane: focusSplitGroupPane,
+    closePane: closeSplitGroupPane,
+    splitPane: splitSplitGroupPane,
+    placeTask: placeSplitGroupTask,
+    updateSizes: updateSplitGroupSizes,
+  } = props.splitGroups
+  const focusSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(focusSplitGroupPane(paneId)),
+    [focusSplitGroupPane]
+  )
+  const closeSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(closeSplitGroupPane(paneId)),
+    [closeSplitGroupPane]
+  )
   const paneStack = (
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
-      storageKey={`wework:workbench-split-layout:v2:${workspaceTabId ?? 'popout'}`}
+      layout={props.splitGroups.activeLayout}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
-      runtimeKeysReady={state.runtimeWork !== null}
       activeTestId="desktop-workbench-main"
       workbenchVisible={props.visible ?? true}
       resolvePane={resolvePane}
       getPaneTitle={getPaneTitle}
       onPaneFocus={focusPane}
-      onSplitModeChange={setSplitMode}
+      onLayoutFocus={focusSplitPane}
+      onLayoutClose={closeSplitPane}
+      onLayoutSplit={splitSplitGroupPane}
+      onLayoutPlace={placeSplitGroupTask}
+      onLayoutSizesChange={updateSplitGroupSizes}
       renderPane={renderWorkbenchPane}
     />
   )
@@ -887,7 +908,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const paneSession = useWorkbenchPaneSession({
+    currentRuntimeTask,
+    debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
+  })
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -1039,14 +1063,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services?.runtimeWorkApi &&
     (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
-  const supervisorModels = projectChat.models.filter(
-    model =>
-      model.isActive !== false &&
-      ['public', 'user', 'group'].includes(model.type) &&
-      Boolean(model.namespace) &&
-      model.resourceUserId !== undefined
-  )
-
   const runtimeWorkApi = services?.runtimeWorkApi
   const setSupervisorForAddress = useCallback(
     async (address: RuntimeTaskAddress, config: TaskSupervisorConfig) => {
@@ -4402,7 +4418,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
           defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
-          models={supervisorModels}
+          models={projectChat.models}
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}

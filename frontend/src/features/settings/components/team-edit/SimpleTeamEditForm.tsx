@@ -29,12 +29,13 @@ import { RichSkillSelector } from '@/features/settings/components/skills/RichSki
 import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
+import type { KnowledgeBaseDefaultRef, TaskType, TeamInputPlaceholder } from '@/types/api'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
 import QuickPhraseEditor from './QuickPhraseEditor'
+import InputPlaceholderEditor from './InputPlaceholderEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
@@ -50,6 +51,8 @@ interface SimpleTeamEditFormProps {
   setDescription: (value: string) => void
   quickPhrases: string[]
   onQuickPhrasesChange: (value: string[]) => void
+  inputPlaceholder: TeamInputPlaceholder
+  onInputPlaceholderChange: (value: TeamInputPlaceholder) => void
   bindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
@@ -142,6 +145,8 @@ export default function SimpleTeamEditForm({
   setDescription,
   quickPhrases,
   onQuickPhrasesChange,
+  inputPlaceholder,
+  onInputPlaceholderChange,
   bindMode,
   setBindMode,
   icon,
@@ -316,6 +321,10 @@ export default function SimpleTeamEditForm({
             align="start"
           >
             <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
+          </SimpleConfigRow>
+
+          <SimpleConfigRow label={t('settings:team.input_placeholder.label')} align="start">
+            <InputPlaceholderEditor value={inputPlaceholder} onChange={onInputPlaceholderChange} />
           </SimpleConfigRow>
 
           <SimpleConfigRow

@@ -9,6 +9,11 @@ const bundledMarketplaceManifests = [
   'bundled-plugins/wework-personal/.claude-plugin/marketplace.json',
 ]
 
+const bundledPluginExampleManifests = [
+  'bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json',
+  'bundled-plugins/wework-plugin-example/.mcp.json',
+]
+
 const temporaryDirectories: string[] = []
 
 afterEach(() => {
@@ -27,6 +32,10 @@ describe('bundled plugin resources', () => {
     }
 
     for (const manifest of bundledMarketplaceManifests) {
+      expect(config.bundle.resources).toContain(manifest)
+      expect(existsSync(resolve(tauriDirectory, manifest))).toBe(true)
+    }
+    for (const manifest of bundledPluginExampleManifests) {
       expect(config.bundle.resources).toContain(manifest)
       expect(existsSync(resolve(tauriDirectory, manifest))).toBe(true)
     }

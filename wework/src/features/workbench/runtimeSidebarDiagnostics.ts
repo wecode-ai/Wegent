@@ -9,10 +9,6 @@ export function debugRuntimeSidebarState(event: string, details: Record<string, 
   })
 }
 
-export function warnRuntimeSidebarMismatch(details: Record<string, unknown>): void {
-  console.warn('[Wework] Runtime sidebar selected task is hidden', details)
-}
-
 export function summarizeRuntimeWorkTaskIds(runtimeWork: RuntimeWorkListResponse | null) {
   if (!runtimeWork) return { projects: [], chats: [] }
 

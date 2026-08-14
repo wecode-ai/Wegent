@@ -324,6 +324,7 @@ export function useChatAreaState({
     maxAttachments: effectiveMaxAttachments,
     maxByType: maxAttachmentsByType,
     validateFile: validateAttachmentFile,
+    storagePurpose: taskType === 'video' ? 'video_reference' : 'default',
   })
 
   // Refs for random indices (stable across taskType changes)
