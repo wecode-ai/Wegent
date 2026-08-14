@@ -10,6 +10,7 @@ import {
   type LocalExecutorCloudConnection,
 } from './localExecutorCloudConnection'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
+import { setLocalExecutorCloudConnectionStatus } from './localExecutorCloudConnectionStatus'
 
 const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
 
@@ -94,7 +95,16 @@ export function LocalExecutorCloudBridge({
         ) {
           scheduleRefresh(result.runtimeAuthTokenExpiresIn)
         }
+        setLocalExecutorCloudConnectionStatus({
+          apiBaseUrl: result.connected ? apiBaseUrl || '' : '',
+          connected: result.connected,
+        })
       } catch (error) {
+        if (!isCurrentConnectionAttempt()) return
+        setLocalExecutorCloudConnectionStatus({
+          apiBaseUrl: apiBaseUrl || '',
+          connected: false,
+        })
         if (connected) {
           console.error('[CloudConnection] Failed to connect runtime task service to cloud', error)
           scheduleRetry()
@@ -107,6 +117,10 @@ export function LocalExecutorCloudBridge({
       }
     }
 
+    setLocalExecutorCloudConnectionStatus({
+      apiBaseUrl: apiBaseUrl || '',
+      connected: false,
+    })
     void applyConnection()
     return () => {
       cancelled = true

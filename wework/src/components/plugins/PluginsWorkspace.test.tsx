@@ -9,6 +9,10 @@ import {
 } from '@/api/local/codexPlugins'
 import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
 import {
+  resetLocalExecutorCloudConnectionStatus,
+  setLocalExecutorCloudConnectionStatus,
+} from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
+import {
   clearPluginMarketplaceCache,
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
@@ -1061,7 +1065,44 @@ describe('PluginsWorkspace', () => {
     clearPluginDeviceAutoSyncAttempts()
     clearLocalCodexPluginsReadStateCache()
     resetLocalExecutorStateForTests()
+    resetLocalExecutorCloudConnectionStatus()
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    window.history.replaceState({}, '', '/')
     mockSystemSkillsFetch()
+  })
+
+  test('keeps the user on the plugin page when the current device is disconnected', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    mockCodexAppServerInvoke()
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+
+    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
+      '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
+    )
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'error'
+    )
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+    ).toBe(false)
+    expect(window.location.pathname).toBe('/')
+
+    await userEvent.click(screen.getByTestId('plugin-operation-notice-action'))
+
+    expect(window.location.pathname).toBe('/settings/connections')
+    expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
   })
 
   test('renders a Codex-style plugin marketplace page', async () => {

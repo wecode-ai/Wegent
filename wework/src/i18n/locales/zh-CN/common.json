@@ -1259,6 +1259,8 @@
     "plugins_syncing_installation": "同步中...",
     "plugins_installed": "已安装",
     "plugins_login_required": "安装插件需要登录 Wegent 账户。是否前往登录？",
+    "plugins_install_device_disconnected": "当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。",
+    "plugins_open_connection_settings": "连接设置",
     "plugins_uninstall": "卸载",
     "plugins_update": "更新",
     "plugins_update_confirm": "更新将同步到当前设备。若失败，本机将保留当前已安装版本。是否继续？",

@@ -1260,6 +1260,8 @@
     "plugins_syncing_installation": "Syncing...",
     "plugins_installed": "Installed",
     "plugins_login_required": "Installing plugins requires a Wegent account. Go to login?",
+    "plugins_install_device_disconnected": "This device is not connected to the cloud, so the plugin cannot be installed right now. Restore the connection and try again.",
+    "plugins_open_connection_settings": "Connection settings",
     "plugins_uninstall": "Uninstall",
     "plugins_update": "Update",
     "plugins_update_confirm": "This update syncs to the current device. If it fails, the installed version on this device stays unchanged. Continue?",

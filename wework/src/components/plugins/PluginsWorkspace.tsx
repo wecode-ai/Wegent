@@ -36,6 +36,7 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { useLocalExecutorCloudConnectionStatus } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import {
   notifyLocalPluginSkillsChanged,
   queuePluginPromptTrial,
@@ -1284,6 +1285,11 @@ export function PluginsWorkspace({
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
+  const runtimeCloudConnection = useLocalExecutorCloudConnectionStatus()
+  const runtimeCloudConnected =
+    runtimeCloudConnection.connected &&
+    runtimeCloudConnection.apiBaseUrl.replace(/\/+$/, '') ===
+      (cloudApiBaseUrl ?? '').replace(/\/+$/, '')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const [query, setQuery] = useState('')
   const [searchResultWindow, setSearchResultWindow] = useState({ query: '', limit: 0 })
@@ -2343,14 +2349,30 @@ export function PluginsWorkspace({
 
     const installFromLocal = isLocalMarketplaceItem(item)
 
-    // 检查是否已登录（未登录时没有 deviceId 或 token）
-    if (!installFromLocal && (!cloudToken || !currentDeviceId)) {
+    if (!installFromLocal && !cloudToken) {
       const shouldLogin = window.confirm(
         t('workbench.plugins_login_required', '安装插件需要登录 Wegent 账户。是否前往登录？')
       )
       if (shouldLogin) {
         navigateTo('/settings/connections')
       }
+      return
+    }
+
+    if (!installFromLocal && (!runtimeCloudConnected || !currentDeviceId)) {
+      setPluginOperationNotice({
+        id: `install-device-disconnected-${item.id}`,
+        kind: 'error',
+        message: t(
+          'workbench.plugins_install_device_disconnected',
+          '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
+        ),
+        actionLabel: t('workbench.plugins_open_connection_settings', '连接设置'),
+        onAction: () => {
+          setPluginOperationNotice(null)
+          navigateTo('/settings/connections')
+        },
+      })
       return
     }
 
