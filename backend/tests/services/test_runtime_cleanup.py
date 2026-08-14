@@ -252,6 +252,12 @@ async def test_scheduled_cleanup_releases_read_transaction_before_external_delet
         ),
         patch.object(
             job_service,
+            "_get_cleanup_subtasks_for_executors",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service,
             "_archive_workspace",
             new_callable=AsyncMock,
             return_value=True,
@@ -427,9 +433,7 @@ async def test_cleanup_archives_workspace_for_chat_task_type() -> None:
             new_callable=AsyncMock,
             return_value=True,
         ) as archive_workspace,
-        patch.object(
-            job_service, "_mark_executor_deleted", new_callable=AsyncMock
-        ),
+        patch.object(job_service, "_mark_executor_deleted", new_callable=AsyncMock),
         patch(
             "app.services.adapters.executor_job.executor_kinds_service"
         ) as executor_service,
@@ -547,9 +551,7 @@ async def test_cleanup_archives_every_task_sharing_one_executor() -> None:
         )
 
     assert archive_workspace.await_count == 2
-    archived_tasks = [
-        call.kwargs["task"] for call in archive_workspace.await_args_list
-    ]
+    archived_tasks = [call.kwargs["task"] for call in archive_workspace.await_args_list]
     assert archived_tasks == [task_a, task_b]
     executor_service.delete_executor_task_async.assert_awaited_once_with(
         "executor-shared", "default"

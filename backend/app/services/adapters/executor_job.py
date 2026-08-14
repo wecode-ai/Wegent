@@ -751,15 +751,40 @@ class JobService(BaseService[Kind, None, None]):
             for subtask in subtasks:
                 if not subtask.executor_name:
                     continue
-                key = (subtask.executor_namespace, subtask.executor_name)
+                key = (subtask.executor_namespace or "", subtask.executor_name)
                 group = executor_groups.setdefault(
-                    key, {"tasks": {}, "subtask_ids": [], "updated_at": None}
+                    key,
+                    {
+                        "tasks": {},
+                        "subtask_ids": set(),
+                        "updated_at": None,
+                        "filtered_task_ids": set(),
+                    },
                 )
                 group["tasks"][task_id] = task
-                group["subtask_ids"].append(subtask.id)
+                group["subtask_ids"].add(subtask.id)
                 group["updated_at"] = self._latest_datetime(
                     group["updated_at"], subtask.updated_at
                 )
+
+        # An executor can be shared by tasks outside the valid candidate set
+        # (filtered by preserveExecutor, recent activity, and so on). Resolve
+        # every undeleted subtask of the candidate executors so such tasks
+        # block deletion instead of losing their workspace without an archive.
+        shared_subtasks = await self._get_cleanup_subtasks_for_executors(
+            db, list(executor_groups.keys())
+        )
+        for subtask in shared_subtasks:
+            key = (subtask.executor_namespace or "", subtask.executor_name or "")
+            group = executor_groups.get(key)
+            if group is None:
+                continue
+            group["subtask_ids"].add(subtask.id)
+            group["updated_at"] = self._latest_datetime(
+                group["updated_at"], subtask.updated_at
+            )
+            if subtask.task_id not in group["tasks"]:
+                group["filtered_task_ids"].add(subtask.task_id)
 
         await self._release_cleanup_read_transaction(db)
 
@@ -776,6 +801,16 @@ class JobService(BaseService[Kind, None, None]):
                     logger.info(
                         "[executor_job] Skipping device executor cleanup "
                         f"task_ids={group_task_ids} ns={namespace} name={name}"
+                    )
+                    continue
+
+                if group["filtered_task_ids"]:
+                    logger.info(
+                        "[executor_job] Skipping executor deletion because it is "
+                        "shared with filtered tasks "
+                        f"task_ids={group_task_ids} "
+                        f"filtered_task_ids={sorted(group['filtered_task_ids'])} "
+                        f"ns={namespace} name={name}"
                     )
                     continue
 
@@ -834,7 +869,7 @@ class JobService(BaseService[Kind, None, None]):
                         f"task_ids={group_task_ids} ns={namespace} name={name} "
                         f"detail={delete_error.detail}"
                     )
-                await self._mark_executor_deleted(group["subtask_ids"])
+                await self._mark_executor_deleted(sorted(group["subtask_ids"]))
                 await db.commit()
                 deleted_count += 1
             except Exception as e:
@@ -918,6 +953,17 @@ class JobService(BaseService[Kind, None, None]):
             lambda sync_db: task_stores.subtask_store.list_cleanup_subtasks_for_task(
                 sync_db,
                 task_id=task_id,
+            )
+        )
+
+    async def _get_cleanup_subtasks_for_executors(
+        self, db: AsyncSession, executors: List[Tuple[str, str]]
+    ) -> List[Subtask]:
+        """Load undeleted subtasks for executor (namespace, name) keys."""
+        return await db.run_sync(
+            lambda sync_db: task_stores.subtask_store.list_cleanup_subtasks_for_executors(
+                sync_db,
+                executors=executors,
             )
         )
 
