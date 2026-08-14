@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AdminPublicTeam, AdminPublicTeamUpdate } from '@/apis/admin'
-import type { PipelineContextPassing, TaskType } from '@/types/api'
+import type { PipelineContextPassing, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { TeamMode } from '@/features/settings/components/team-modes'
 
 export const buildPublicTeamJson = (data: {
@@ -14,6 +14,7 @@ export const buildPublicTeamJson = (data: {
   bindMode: TaskType[]
   icon: string | null
   requiresWorkspace: boolean | null
+  inputPlaceholder?: TeamInputPlaceholder | null
   mode: TeamMode
   members: {
     botName: string
@@ -54,6 +55,7 @@ export const buildPublicTeamJson = (data: {
       description: data.description || undefined,
       icon: data.icon || undefined,
       requiresWorkspace: data.requiresWorkspace ?? true,
+      inputPlaceholder: data.inputPlaceholder || undefined,
       ...(baseCapability && {
         capability: {
           ...baseCapability,
