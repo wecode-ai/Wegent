@@ -11,6 +11,7 @@ import orjson
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
+from sqlalchemy.orm import Session
 from starlette.applications import Starlette
 
 from app.db.session import get_db_session
@@ -41,16 +42,45 @@ _ap_request_token_info: contextvars.ContextVar[TaskTokenInfo | None] = (
 
 
 @ap_knowledge_mcp_server.tool()
+async def ks_kb_list_nodes(
+    knowledge_base_id: str,
+    folder_id: str | None = None,
+    recursive: bool = False,
+    limit: Annotated[int, Field(ge=1, le=500)] = 100,
+    offset: Annotated[int, Field(ge=0)] = 0,
+) -> str:
+    """List folders and documents in one selected WeiboAP knowledge base."""
+    normalized_kb_id = str(knowledge_base_id or "").strip()
+    normalized_folder_id = str(folder_id or "").strip() or None
+    if not normalized_kb_id:
+        _raise_tool_error("knowledge_base_id is required")
+
+    try:
+        with get_db_session() as db:
+            user = _get_authenticated_user(db)
+            result = await external_knowledge_service.list_nodes(
+                db,
+                user,
+                "ap",
+                kb_id=normalized_kb_id,
+                folder_id=normalized_folder_id,
+                recursive=recursive,
+                limit=limit,
+                offset=offset,
+            )
+    except ExternalKnowledgeError as exc:
+        _raise_tool_error(str(exc), exc.code)
+
+    return result.model_dump_json(exclude_none=True)
+
+
+@ap_knowledge_mcp_server.tool()
 async def ap_kb_search_knowledge_base(
     knowledge_base_id: str,
     query: str,
     max_results: Annotated[int, Field(ge=1, le=50)] = 10,
 ) -> str:
     """Search one explicitly selected WeiboAP knowledge base."""
-    token_info = _ap_request_token_info.get()
-    if token_info is None:
-        _raise_tool_error("Authentication required", "unauthorized")
-
     normalized_kb_id = str(knowledge_base_id or "").strip()
     normalized_query = str(query or "").strip()
     if not normalized_kb_id:
@@ -62,13 +92,7 @@ async def ap_kb_search_knowledge_base(
 
     try:
         with get_db_session() as db:
-            user = (
-                db.query(User)
-                .filter(User.id == token_info.user_id, User.is_active.is_(True))
-                .first()
-            )
-            if user is None:
-                _raise_tool_error("User not found", "unauthorized")
+            user = _get_authenticated_user(db)
             result = await external_knowledge_service.search(
                 db,
                 user,
@@ -81,6 +105,20 @@ async def ap_kb_search_knowledge_base(
         _raise_tool_error(str(exc), exc.code)
 
     return result.model_dump_json()
+
+
+def _get_authenticated_user(db: Session) -> User:
+    token_info = _ap_request_token_info.get()
+    if token_info is None:
+        _raise_tool_error("Authentication required", "unauthorized")
+    user = (
+        db.query(User)
+        .filter(User.id == token_info.user_id, User.is_active.is_(True))
+        .first()
+    )
+    if user is None:
+        _raise_tool_error("User not found", "unauthorized")
+    return user
 
 
 def build_ap_knowledge_mcp_app(
