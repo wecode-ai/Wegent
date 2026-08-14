@@ -71,7 +71,8 @@ export function ChatPageMobile() {
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
-  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+  const persistedTaskDeviceId =
+    selectedTaskDetail?.task_type === 'task' ? selectedTaskDetail.device_id || null : null
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -104,6 +105,8 @@ export function ChatPageMobile() {
   // Check if a task is currently open (support multiple parameter formats)
   const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
   const hasOpenTask = !!taskId
+  const activeDeviceId = hasOpenTask ? persistedTaskDeviceId : selectedDeviceId
+  const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
 
   const taskType: TaskType = resolveChatPageTaskType({
     taskId,
@@ -132,7 +135,7 @@ export function ChatPageMobile() {
   // Compute disabled reason for device mode
   const disabledReason =
     taskType === 'task' &&
-    selectedDeviceId &&
+    activeDeviceId &&
     (!selectedDevice || selectedDevice.status === 'offline')
       ? t('devices:device_offline_cannot_send')
       : undefined
@@ -142,12 +145,9 @@ export function ChatPageMobile() {
     if (selectedTaskDetail?.task_type === 'task' && taskId) {
       const params = new URLSearchParams()
       params.set('taskId', String(taskId))
-      if (selectedTaskDetail.device_id) {
-        params.set('deviceId', selectedTaskDetail.device_id)
-      }
       router.replace(`/devices/chat?${params.toString()}`)
     }
-  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router])
+  }, [selectedTaskDetail?.task_type, taskId, router])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)

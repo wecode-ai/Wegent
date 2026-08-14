@@ -190,7 +190,6 @@ interface UseWorkbenchRuntimeMessagingOptions {
   modelSelection: RuntimeMessagingModelSelection
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
-  rememberExecutionDevice: (deviceId: string) => void
 }
 
 function runtimeSendError(error: unknown, fallback: string): string {
@@ -275,7 +274,6 @@ export function useWorkbenchRuntimeMessaging({
   modelSelection,
   skillSelection,
   refreshWorkLists,
-  rememberExecutionDevice,
 }: UseWorkbenchRuntimeMessagingOptions) {
   const appPreferences = useAppPreferencesState()
   const preferences = appPreferences?.preferences
@@ -982,7 +980,6 @@ export function useWorkbenchRuntimeMessaging({
         ? (state.projects.find(project => project.id === projectId) ?? state.currentProject)
         : null
 
-      if (optimisticAddress.deviceId) rememberExecutionDevice(optimisticAddress.deviceId)
       debugRuntimeCreateFlow('create-optimistic-open', {
         taskId,
         runtime,
@@ -1125,7 +1122,6 @@ export function useWorkbenchRuntimeMessaging({
             selectedModel,
             selectedModelOptions
           )
-          if (address.deviceId) rememberExecutionDevice(address.deviceId)
           debugRuntimeCreateFlow('create-final-open', {
             taskId: address.taskId,
             runtime,
@@ -1218,7 +1214,6 @@ export function useWorkbenchRuntimeMessaging({
       lifecycleStore,
       modelSelection,
       refreshWorkLists,
-      rememberExecutionDevice,
       reportError,
       reportSendBlocked,
       runtimeTasks,
