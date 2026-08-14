@@ -329,6 +329,7 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workspaceP
   const requests = []
   let active = false
   let cloudEnvironment = null
+  let lateCancellationCompleted = false
   let releaseCancellation
   const cancellationRelease = new Promise(resolvePromise => {
     releaseCancellation = resolvePromise
@@ -391,6 +392,7 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workspaceP
               .join('')
           )
         }
+        lateCancellationCompleted = true
         return true
       }
 
@@ -486,7 +488,15 @@ export async function createDesktopScenario({ resultDir, uiTimeoutMs, workspaceP
         timeoutMs: uiTimeoutMs,
       })
       releaseCancellation()
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+      await waitFor(
+        () => lateCancellationCompleted,
+        'The mock did not complete the post-cancellation stream attempt',
+        runtimeTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
+        stableMs: 500,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         (await control.command('getText', 'body')).includes(LOCAL_CANCELLATION_COMPLETION),
         false,
