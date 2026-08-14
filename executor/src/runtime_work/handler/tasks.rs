@@ -424,7 +424,9 @@ impl RuntimeWorkRpcHandler {
                 .get("initialSupervisor")
                 .or_else(|| payload.get("initial_supervisor"))
             {
-                link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+                let configured = super::supervisor::configured_supervisor(supervisor, None)?;
+                self.configure_supervisor_model(&local_task_id, &configured, supervisor)?;
+                link.supervisor = Some(configured);
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
@@ -459,6 +461,10 @@ impl RuntimeWorkRpcHandler {
                 .await
             {
                 self.store.delete_task(&local_task_id);
+                self.supervisor_model_configs
+                    .lock()
+                    .expect("supervisor model config map lock should not be poisoned")
+                    .remove(&local_task_id);
                 return Err(error);
             }
         }

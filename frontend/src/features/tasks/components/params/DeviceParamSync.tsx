@@ -37,15 +37,9 @@ export default function DeviceParamSync() {
 
     const taskId =
       searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
-    const isLoadedCloudTask =
-      !!taskId &&
-      String(selectedTaskDetail?.id) === taskId &&
-      selectedTaskDetail?.task_type !== 'task'
+    const isLoadedTask = !!taskId && String(selectedTaskDetail?.id) === taskId
 
-    if (isLoadedCloudTask) {
-      if (selectedDeviceIdRef.current) {
-        setSelectedDeviceId(null)
-      }
+    if (isLoadedTask) {
       const nextParams = new URLSearchParams(searchParams.toString())
       nextParams.delete('deviceId')
       nextParams.delete('device_id')
@@ -71,7 +65,15 @@ export default function DeviceParamSync() {
     if (deviceExists) {
       setSelectedDeviceId(deviceId)
       syncedParamRef.current = deviceId
+      return
     }
+
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.delete('deviceId')
+    nextParams.delete('device_id')
+    const query = nextParams.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname)
+    syncedParamRef.current = null
   }, [searchParams, pathname, router, devices, selectedTaskDetail, setSelectedDeviceId])
 
   return null

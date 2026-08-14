@@ -9,7 +9,7 @@ import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useTeamContext } from '@/contexts/TeamContext'
 import OnboardingTour from '@/features/onboarding/OnboardingTour'
-import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
+import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { TeamShareHandler, TaskShareHandler } from '@/features/tasks/components/share'
 import { InviteJoinHandler } from '@/features/tasks/components/group-chat'
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
@@ -103,7 +103,6 @@ export default function ChatPage() {
       <OidcTokenHandler />
       <Suspense>
         <TaskParamSync />
-        <DeviceTaskSync />
         <DeviceParamSync />
       </Suspense>
       <Suspense>

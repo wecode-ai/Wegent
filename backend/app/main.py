@@ -62,6 +62,10 @@ FORWARDED_LOG_HEADER_NAMES = (
     "forwarded",
 )
 MAX_LOGGED_HEADER_VALUE_LENGTH = 512
+HIGH_FREQUENCY_HTTP_PATHS = {
+    "/api/internal/callback",
+    "/api/internal/callback/batch",
+}
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
@@ -705,7 +709,11 @@ def create_app():
             f"request : {request.method} {request.url.path} {request.query_params} "
             f"{request_id} {client_ip} [{username}]{forwarded_headers_log}"
         )
-        logger.info(request_log_message)
+        high_frequency_request = request.url.path in HIGH_FREQUENCY_HTTP_PATHS
+        if high_frequency_request:
+            logger.debug(request_log_message)
+        else:
+            logger.info(request_log_message)
 
         # Process request
         response = await call_next(request)
@@ -781,7 +789,10 @@ def create_app():
             f"{request_id} {client_ip} [{username}]{forwarded_headers_log} "
             f"{response.status_code} {process_time:.2f}ms"
         )
-        logger.info(response_log_message)
+        if high_frequency_request and response.status_code < 400:
+            logger.debug(response_log_message)
+        else:
+            logger.info(response_log_message)
 
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id

@@ -302,7 +302,6 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     updateGlobalImNotification: vi.fn().mockResolvedValue(createDefaultImNotificationSettings()),
     subscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({ subscribed: true }),
     unsubscribeRuntimeTaskNotifications: vi.fn().mockResolvedValue({ subscribed: false }),
-    rememberExecutionDevice: vi.fn(),
     refreshWorkLists: props.onRefreshWorkLists ?? vi.fn().mockResolvedValue(undefined),
     refreshDevices: vi.fn().mockResolvedValue(undefined),
     getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
