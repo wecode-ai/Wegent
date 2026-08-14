@@ -93,6 +93,22 @@ def _format_forwarded_headers_for_log(headers) -> str:
     return f" headers={{{', '.join(forwarded_headers)}}}"
 
 
+def _request_context_fields(request_body: str) -> tuple[object, object, object]:
+    """Extract trace context only from JSON object request bodies."""
+
+    try:
+        body_json = json.loads(request_body)
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None
+    if not isinstance(body_json, dict):
+        return None, None, None
+    return (
+        body_json.get("task_id"),
+        body_json.get("subtask_id"),
+        body_json.get("user_id"),
+    )
+
+
 def _load_system_initialization_state(logger: logging.Logger) -> None:
     from app.services.admin_password_bootstrap import (
         load_admin_password_setup_state,
@@ -663,20 +679,11 @@ def create_app():
             if is_telemetry_enabled():
                 # Extract task_id and subtask_id from request body for tracing
                 if request_body:
-                    try:
-                        import json
-
-                        body_json = json.loads(request_body)
-                        task_id = body_json.get("task_id")
-                        subtask_id = body_json.get("subtask_id")
-                        if task_id is not None or subtask_id is not None:
-                            set_task_context(task_id=task_id, subtask_id=subtask_id)
-                        # Extract user_id from request body if available
-                        user_id = body_json.get("user_id")
-                        if user_id is not None:
-                            set_user_context(user_id=str(user_id))
-                    except (json.JSONDecodeError, TypeError):
-                        pass  # Not JSON or invalid format, skip task context extraction
+                    task_id, subtask_id, user_id = _request_context_fields(request_body)
+                    if task_id is not None or subtask_id is not None:
+                        set_task_context(task_id=task_id, subtask_id=subtask_id)
+                    if user_id is not None:
+                        set_user_context(user_id=str(user_id))
 
                 # Add request body to current span
                 if request_body:

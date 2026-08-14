@@ -4,6 +4,8 @@ const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
 const RULE_ID = 'automation-rule-1'
 const MODEL_NAME = 'gpt-5-codex'
+const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -115,6 +117,36 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
 }
 
+async function requestJson(baseUrl, authToken, pathname, options = {}) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  })
+  const text = await response.text()
+  const body = text ? JSON.parse(text) : null
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${pathname} failed with HTTP ${response.status}: ${text}`
+  )
+  return body
+}
+
+async function waitForValue(read, predicate, message, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let value
+  while (Date.now() < deadline) {
+    value = await read()
+    if (predicate(value)) return value
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const rules = [RULE]
   const runs = [
@@ -141,8 +173,194 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let cancelRequested = false
   let retryRequested = false
   let modelRequests = 0
+  let cloudApi = null
+  let cloudProject = null
+  let cloudAgent = null
+
+  const cloudRequest = (pathname, options) => {
+    assert.ok(cloudApi, 'Real cloud API was not prepared')
+    return requestJson(cloudApi.backendUrl, cloudApi.authToken, pathname, options)
+  }
+
+  async function verifyRealCloud(control) {
+    assert.ok(cloudProject?.id, 'Real cloud project fixture is missing')
+    const projectId = String(cloudProject.id)
+    await waitForValue(
+      () => cloudRequest('/api/devices'),
+      response =>
+        response.items?.some(
+          device => device.device_id === CLOUD_DEVICE_ID && device.status === 'online'
+        ),
+      'Cloud execution device did not register before project automation verification',
+      uiTimeoutMs
+    )
+    cloudAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: AGENT.name,
+        runtime: 'codex',
+        model: CLOUD_MODEL_NAME,
+        systemPrompt: '',
+        capabilityDescription: AGENT.capabilityDescription,
+        visibility: 'creator_admin',
+        executionEnvironment: 'cloud',
+        executionMode: 'auto',
+        executionDeviceId: CLOUD_DEVICE_ID,
+        localProjectId: null,
+      }),
+    })
+    assert.equal(
+      cloudAgent.executionDeviceId,
+      CLOUD_DEVICE_ID,
+      'Cloud robot response lost its persisted execution device'
+    )
+
+    await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-add"]')
+    await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-add-board"]')
+    await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    const projectSelector = `[data-testid="cloud-sidebar-project-${projectId}"]`
+    await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
+    await control.command('click', projectSelector)
+    await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="cloud-project-automation-view"]')
+    await control.command('waitFor', '[data-testid="project-automation-rules"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+
+    await control.command('click', '[data-testid="project-automation-create"]')
+    await control.command('fill', '[data-testid="project-automation-name"]', {
+      value: '凌晨回归扫描',
+    })
+    await control.command('fill', '[data-testid="project-automation-prompt"]', {
+      value: '扫描回归 Bug，并为每个 Bug 创建独立修复任务。',
+    })
+    await control.command('click', '[data-testid="project-automation-agent"]')
+    await control.command(
+      'click',
+      `[data-testid="project-automation-agent-option-${cloudAgent.id}"]`
+    )
+    await captureScreenshot(control, 'project-automation-00-create-dialog.png')
+    await control.command('click', '[data-testid="project-automation-save"]')
+    const manualRule = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`),
+      items => items.find(item => item.name === '凌晨回归扫描'),
+      'Manual project automation was not persisted by the real backend',
+      uiTimeoutMs
+    ).then(items => items.find(item => item.name === '凌晨回归扫描'))
+    assert.equal(manualRule.assignmentMode, 'manual')
+    assert.equal(manualRule.agentId, cloudAgent.id)
+    assert.equal(manualRule.executionDeviceId, CLOUD_DEVICE_ID)
+    const manualRuleSelector = `[data-testid="project-automation-rule-${manualRule.id}"]`
+    await control.command('waitFor', manualRuleSelector, { timeoutMs: uiTimeoutMs })
+    await captureScreenshot(control, 'project-automation-01-created-rule.png')
+
+    await control.command('click', '[data-testid="project-automation-create"]')
+    await control.command('fill', '[data-testid="project-automation-name"]', {
+      value: '新任务 AI 分配',
+    })
+    await control.command('click', '[data-testid="project-automation-executor-type"]')
+    await control.command(
+      'click',
+      '[data-testid="project-automation-executor-type-option-ai_managed"]'
+    )
+    await control.command('waitFor', '[data-testid="project-automation-manager-type"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await captureScreenshot(control, 'project-automation-02-ai-managed-dialog.png')
+    await control.command('click', '[data-testid="project-automation-save"]')
+    const managedRule = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`),
+      items => items.find(item => item.name === '新任务 AI 分配'),
+      'AI-managed project automation was not persisted by the real backend',
+      uiTimeoutMs
+    ).then(items => items.find(item => item.name === '新任务 AI 分配'))
+    assert.equal(managedRule.assignmentMode, 'ai_managed')
+    assert.equal(managedRule.managerType, 'custom')
+    assert.equal(managedRule.agentId, null)
+    assert.ok(managedRule.model, 'AI-managed automation must persist a model')
+    assert.ok(
+      managedRule.executionDeviceId,
+      'AI-managed automation must persist an execution device'
+    )
+    await control.command('waitFor', `[data-testid="project-automation-rule-${managedRule.id}"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+
+    await control.command('click', manualRuleSelector)
+    await control.command('waitFor', '[data-testid="project-automation-run-now"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="project-automation-run-now"]')
+    const runs = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${manualRule.id}/runs`),
+      items => items.length > 0 && Boolean(items[0].taskId),
+      'Manual automation did not create a durable task through the real backend',
+      uiTimeoutMs
+    )
+    assert.ok(
+      ['queued', 'waiting_device', 'running', 'succeeded'].includes(runs[0].status),
+      `Manual automation entered an unexpected state: ${runs[0].status}`
+    )
+    await control.command('waitFor', `[data-testid="project-automation-run-task-${runs[0].id}"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await captureScreenshot(control, 'project-automation-03-real-run.png')
+
+    await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
+    await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="cloud-project-chat-agents"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', `[data-testid="cloud-project-chat-agent-${cloudAgent.id}"]`, {
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="cloud-project-chat-agent-capability"]', {
+        visible: true,
+      }),
+      AGENT.capabilityDescription
+    )
+    assert.equal(
+      await control.command(
+        'getAttribute',
+        '[data-testid="cloud-project-chat-agent-device"] [data-selection-state]',
+        { value: 'data-selection-state', visible: true }
+      ),
+      'selected'
+    )
+    await captureScreenshot(control, 'project-automation-04-real-robot-binding.png')
+  }
 
   return {
+    async prepareCloud({ authToken, backendUrl }) {
+      cloudApi = { authToken, backendUrl }
+      cloudProject = await requestJson(backendUrl, authToken, '/api/v1/cloud-projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          projectKey: 'AUTO',
+          name: PROJECT.name,
+          description: PROJECT.description,
+          taskProvider: 'local',
+          providerConfig: {},
+          visibility: 'private',
+        }),
+      })
+      assert.ok(cloudProject?.id, 'Real cloud project fixture did not return an id')
+    },
+
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: [PROJECT] })
@@ -297,6 +515,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     },
 
     async verify(control) {
+      if (cloudApi) {
+        await verifyRealCloud(control)
+        return
+      }
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
         timeoutMs: uiTimeoutMs,
       })

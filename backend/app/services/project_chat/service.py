@@ -1533,11 +1533,7 @@ class ProjectChatService:
                 config.get("execution_environment") or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             ),
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
-            execution_device_id=(
-                config.get("execution_device_id")
-                if isinstance(config.get("execution_device_id"), str)
-                else None
-            ),
+            execution_device_id=row.device_id,
             local_project_id=row.local_project_id,
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,
