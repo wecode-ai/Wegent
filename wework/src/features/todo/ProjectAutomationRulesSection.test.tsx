@@ -61,6 +61,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -97,6 +98,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -177,6 +179,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -234,6 +237,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -286,6 +290,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -330,6 +335,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -431,6 +437,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -532,6 +539,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -601,6 +609,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([waitingRun]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -648,6 +657,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([finishedRun]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -666,6 +676,8 @@ describe('ProjectAutomationRulesSection', () => {
       'Robot is unavailable'
     )
     expect(screen.queryByTestId('project-automation-cancel-run-run-2')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('project-automation-retry-run-run-2'))
+    await waitFor(() => expect(api.retryRun).toHaveBeenCalledWith('1', 'run-2'))
   })
 
   it('keeps an active run synchronized until the backend reports its terminal state', async () => {
@@ -695,6 +707,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValueOnce([queuedRun]).mockResolvedValue([completedRun]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -739,6 +752,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([managedRun]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),
@@ -777,6 +791,7 @@ describe('ProjectAutomationRulesSection', () => {
       runNow: vi.fn(),
       listRuns: vi.fn().mockResolvedValue([]),
       cancelRun: vi.fn(),
+      retryRun: vi.fn(),
     }
     const agentApi = {
       list: vi.fn().mockResolvedValue([agent]),

@@ -317,6 +317,22 @@ async def cancel_run(
 
 
 @router.post(
+    "/{project_id}/automation-runs/{run_id}/retry",
+    response_model=ProjectAutomationRunView,
+    status_code=status.HTTP_201_CREATED,
+)
+async def retry_run(
+    project_id: str,
+    run_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationRunView:
+    return await project_automation_service.retry_run(
+        db, project_id, run_id, current_user.id
+    )
+
+
+@router.post(
     "/{project_id}/automation-runs/{run_id}/assign",
     response_model=LoopItemResponse,
 )

@@ -244,6 +244,7 @@
     "project_automation_run_succeeded_details": "Run succeeded, view details",
     "project_automation_run_succeeded": "This run succeeded.",
     "project_automation_cancel_run": "Cancel run",
+    "project_automation_retry_run": "Retry run",
     "project_automation_required_fields": "Enter a name and instructions, then complete the required settings for the selected execution method.",
     "automation_queue_title": "Execution queue",
     "task_activity_ai_execution": "AI execution",

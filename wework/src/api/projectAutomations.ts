@@ -259,5 +259,11 @@ export function createProjectAutomationApi(client: HttpClient) {
         {}
       )
     },
+    retryRun(projectId: string, runId: string) {
+      return client.post<ProjectAutomationRun>(
+        `/v1/cloud-projects/${projectId}/automation-runs/${runId}/retry`,
+        {}
+      )
+    },
   }
 }

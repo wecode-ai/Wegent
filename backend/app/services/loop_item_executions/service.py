@@ -35,7 +35,11 @@ from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
     validate_wework_execution_target,
 )
-from app.services.project_automation_domain import assignment_mode, manager_type
+from app.services.project_automation_domain import (
+    TERMINAL_RUN_STATUSES,
+    assignment_mode,
+    manager_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1257,6 +1261,157 @@ class LoopItemExecutionService:
         activity = self._linked_activity(db, execution)
         self._push_activity_after_commit(db, activity)
 
+    def reconcile_automation_run_projection(
+        self,
+        db: Session,
+        *,
+        run_id: str,
+    ) -> bool:
+        """Repair a run whose newest execution already has a terminal outcome.
+
+        ``LoopItemExecution`` is the execution aggregate root. The automation
+        run and activity are durable projections of its newest execution. This
+        method is intentionally idempotent so a healthy worker can repair a
+        write interrupted by an older process or a crash without reopening or
+        rewriting the terminal execution.
+        """
+
+        from app.models.delivery import ProjectAutomationRun
+
+        run = db.get(ProjectAutomationRun, run_id)
+        if run is None:
+            return False
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.automation_run_id == run_id)
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is None or execution.status not in TERMINAL_STATUSES:
+            return False
+        if (
+            execution.executor_type == "automation_manager"
+            and self._manager_assignment_recorded(db, run_id=run_id)
+        ):
+            return False
+
+        activity = self._linked_activity(db, execution)
+        before = self._projection_fingerprint(run, activity)
+        content, error = self._terminal_projection_content(execution)
+        projected = self._apply_terminal_projection(
+            db,
+            execution=execution,
+            terminal_status=execution.status,
+            content=content,
+            error=error,
+            summary_note=execution.execution_note or None,
+            completed_at=(
+                execution.completed_at
+                if not loop_datetime_value_is_unset(execution.completed_at)
+                else utcnow()
+            ),
+        )
+        if before == self._projection_fingerprint(run, projected):
+            return False
+        db.commit()
+        db.refresh(execution)
+        self._push_activity_after_commit(db, projected)
+        logger.warning(
+            "[LoopItemExecutions] Reconciled terminal automation projection "
+            "run=%s execution=%s execution_status=%s run_status=%s",
+            run_id,
+            execution.id,
+            execution.status,
+            run.status,
+        )
+        return True
+
+    def reconcile_terminal_automation_projections(
+        self,
+        db: Session,
+        *,
+        limit: int = 100,
+    ) -> int:
+        """Repair active automation runs backed by terminal executions."""
+
+        from app.models.delivery import ProjectAutomationRun
+
+        latest_executions = (
+            db.query(
+                LoopItemExecution.automation_run_id.label("automation_run_id"),
+                func.max(LoopItemExecution.id).label("execution_id"),
+            )
+            .filter(LoopItemExecution.automation_run_id != "")
+            .group_by(LoopItemExecution.automation_run_id)
+            .subquery()
+        )
+        run_ids = [
+            str(run_id)
+            for (run_id,) in (
+                db.query(ProjectAutomationRun.id)
+                .join(
+                    latest_executions,
+                    latest_executions.c.automation_run_id == ProjectAutomationRun.id,
+                )
+                .join(
+                    LoopItemExecution,
+                    LoopItemExecution.id == latest_executions.c.execution_id,
+                )
+                .filter(
+                    ProjectAutomationRun.status.notin_(TERMINAL_RUN_STATUSES),
+                    LoopItemExecution.status.in_(TERMINAL_STATUSES),
+                )
+                .limit(limit)
+                .all()
+            )
+        ]
+        repaired = 0
+        for run_id in run_ids:
+            if self.reconcile_automation_run_projection(db, run_id=run_id):
+                repaired += 1
+        return repaired
+
+    @staticmethod
+    def _projection_fingerprint(
+        run: object, activity: ProjectChatMessage | None
+    ) -> tuple[object, ...]:
+        activity_metadata = (
+            activity.metadata_json
+            if activity is not None and isinstance(activity.metadata_json, dict)
+            else {}
+        )
+        return (
+            getattr(run, "status", None),
+            getattr(run, "description", None),
+            getattr(run, "completed_at", None),
+            getattr(activity, "status", None),
+            getattr(activity, "message_type", None),
+            getattr(activity, "content", None),
+            activity_metadata.get("run_status"),
+            activity_metadata.get("error"),
+        )
+
+    @staticmethod
+    def _terminal_projection_content(
+        execution: LoopItemExecution,
+    ) -> tuple[str, str | None]:
+        if execution.status == STATUS_FAILED:
+            error = execution.error_message or "Automation execution failed"
+            return error, error
+        if execution.status == STATUS_CANCELLED:
+            return execution.execution_note or "Automation run cancelled", None
+        return execution.execution_note or "Automation run completed", None
+
+    @staticmethod
+    def _manager_assignment_recorded(db: Session, *, run_id: str) -> bool:
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        return project_automation_execution.has_recorded_manager_assignment(
+            db, run_id=run_id
+        )
+
     def _apply_terminal_projection(
         self,
         db: Session,
@@ -1336,12 +1491,18 @@ class LoopItemExecutionService:
                 summary = summary_note
                 if terminal_status == STATUS_FAILED:
                     summary = error or summary_note
-                run.status = run_status
-                run.description = (
+                description = (
                     str(summary).strip()[:2000] if summary else f"Run {run_status}."
                 )
-                run.completed_at = completed_at
-                run.version += 1
+                if (
+                    run.status != run_status
+                    or run.description != description
+                    or run.completed_at != completed_at
+                ):
+                    run.status = run_status
+                    run.description = description
+                    run.completed_at = completed_at
+                    run.version += 1
         return activity
 
     @staticmethod
@@ -2091,6 +2252,12 @@ class LoopItemExecutionService:
         exceeded its retry budget, otherwise it is marked failed.
         """
 
+        projection_repairs = self.reconcile_terminal_automation_projections(db)
+        if projection_repairs:
+            logger.warning(
+                "[LoopItemExecutions] Repaired %s terminal automation projection(s)",
+                projection_repairs,
+            )
         current = now or utcnow()
         # A healthy run renews its lease on every runtime event, so a run is
         # stale shortly after its lease expires. Do not wait another full

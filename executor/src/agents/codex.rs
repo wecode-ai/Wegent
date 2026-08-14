@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -1113,8 +1113,60 @@ async fn read_persistent_codex_app_server_stdout(
             }
         }
 
+        log_codex_mcp_startup_status(&message);
+
         let _ = notifications.send(message);
     }
+}
+
+fn log_codex_mcp_startup_status(message: &Value) {
+    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
+        return;
+    }
+    let params = message.get("params").unwrap_or(message);
+    log_executor_event(
+        "codex MCP startup status",
+        &[
+            (
+                "thread_id",
+                params
+                    .get("threadId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "server_name",
+                params
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "status",
+                params
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error_present",
+                params
+                    .get("error")
+                    .is_some_and(|value| !value.is_null())
+                    .to_string(),
+            ),
+            (
+                "failure_reason_present",
+                params
+                    .get("failureReason")
+                    .is_some_and(|value| !value.is_null())
+                    .to_string(),
+            ),
+        ],
+    );
 }
 
 fn notify_shared_process_closed(notifications: &broadcast::Sender<Value>, message: &str) {
@@ -1318,6 +1370,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             CodexThreadStart::Request { operation, params } => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
                 thread_fields.push(("operation", operation.to_owned()));
+                thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
                 let response = client.request(operation, params).await?;
                 let thread_id = thread_id_from_response(
@@ -1478,6 +1531,36 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     cleanup_generated_files(&prepared.generated_files);
     result
+}
+
+fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
+    let Some(config) = params.get("config").and_then(Value::as_object) else {
+        return vec![
+            ("mcp_config_key_count", "0".to_owned()),
+            ("mcp_server_names", String::new()),
+        ];
+    };
+    let mcp_keys = config
+        .keys()
+        .filter(|key| key.starts_with("mcp_servers."))
+        .collect::<Vec<_>>();
+    let server_names = mcp_keys
+        .iter()
+        .filter_map(|key| {
+            key.strip_prefix("mcp_servers.")?
+                .split('.')
+                .next()
+                .map(|name| name.trim_matches('"').to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(",");
+    vec![
+        ("mcp_config_key_count", mcp_keys.len().to_string()),
+        ("mcp_server_names", server_names),
+    ]
 }
 
 pub async fn run_codex_app_server_turn_with_cancel(

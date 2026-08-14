@@ -111,3 +111,37 @@ async def test_cancel_managed_wegent_run_never_emits_wework_runtime_cancel(
 
     assert result.backend_task_id == 12345
     cancel.assert_awaited_once_with(test_db, "project-1", run.id, test_user.id)
+
+
+@pytest.mark.asyncio
+async def test_retry_run_delegates_to_the_automation_service(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = ProjectAutomationRun(
+        id="failed-run-1",
+        task_id="board-task-1",
+        title="Failed automation run",
+        description="manager failed",
+        status="failed",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add(run)
+    test_db.commit()
+
+    retry = AsyncMock(return_value=_run_view(run))
+    monkeypatch.setattr(
+        project_automations.project_automation_service, "retry_run", retry
+    )
+
+    result = await project_automations.retry_run(
+        project_id="project-1",
+        run_id=run.id,
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert result.id == run.id
+    retry.assert_awaited_once_with(test_db, "project-1", run.id, test_user.id)

@@ -5,7 +5,7 @@
 """Focused contracts for robot queue execution records (claim/capacity/lease)."""
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -817,6 +817,174 @@ def test_claimed_lease_expiry_recovery_requeues_then_fails(
     test_db.refresh(re_claimed)
     assert re_claimed.status == "failed"
     assert "lease" in re_claimed.error_message
+
+
+def test_recovery_scan_repairs_terminal_automation_projection(
+    test_db: Session, test_user: User
+) -> None:
+    """A terminal execution must repair its run and activity after a crash."""
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed assignment",
+        description="Choose an assignee.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+            "model": "test-model",
+            "execution_environment": "cloud",
+            "execution_device_id": "cloud-device-1",
+        },
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Managed run",
+        description="",
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger": "event"},
+    )
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id="automation_manager:pending",
+        sender_name="Custom AI manager",
+        message_type="agent_status",
+        content="",
+        metadata_json={"run_status": "queued"},
+        status="pending",
+    )
+    test_db.add_all([rule, run, activity])
+    test_db.flush()
+    execution = loop_item_execution_service.enqueue_automation_manager(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority="medium",
+        automation_context={"run_id": str(run.id)},
+    )
+    run.metadata_json = {
+        "trigger": "event",
+        "activity_message_id": message_id,
+    }
+    activity.metadata_json = {
+        "execution_id": execution.id,
+        "run_status": "queued",
+    }
+    execution.status = "failed"
+    execution.retry_attempt = execution.max_retries
+    execution.error_message = "manager dispatch failed"
+    execution.completed_at = datetime(2026, 8, 14, 8, 22, 40)
+    test_db.commit()
+
+    requeued, failed = loop_item_execution_service.recovery_scan(test_db)
+
+    assert (requeued, failed) == (0, 0)
+    test_db.refresh(run)
+    test_db.refresh(activity)
+    assert run.status == "failed"
+    assert run.description == "manager dispatch failed"
+    assert run.completed_at == execution.completed_at
+    assert activity.status == "failed"
+    assert activity.message_type == "text"
+    assert activity.content == "manager dispatch failed"
+    assert activity.metadata_json["run_status"] == "failed"
+    repaired_version = run.version
+
+    loop_item_execution_service.recovery_scan(test_db)
+
+    test_db.refresh(run)
+    assert run.version == repaired_version
+
+
+@pytest.mark.asyncio
+async def test_retry_run_creates_new_auditable_run_for_same_task(
+    test_db: Session, test_user: User
+) -> None:
+    from app.services.project_automations import project_automation_service
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed assignment",
+        description="Choose an assignee.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+            "model": "test-model",
+            "execution_environment": "cloud",
+            "execution_device_id": "cloud-device-1",
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    failed_run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Failed run",
+        description="manager failed",
+        source="event",
+        status="failed",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger": "event",
+            "event": {
+                "type": "task.created",
+                "subject_id": item.id,
+                "payload": {"title": item.title},
+            },
+        },
+    )
+    test_db.add_all([rule, failed_run])
+    test_db.commit()
+
+    with patch.object(
+        project_automation_execution,
+        "dispatch",
+        new_callable=AsyncMock,
+    ) as dispatch:
+        view = await project_automation_service.retry_run(
+            test_db,
+            str(project.id),
+            str(failed_run.id),
+            test_user.id,
+        )
+
+    retried = test_db.get(ProjectAutomationRun, view["id"])
+    assert retried is not None
+    assert retried.id != failed_run.id
+    assert retried.task_id == item.id
+    assert retried.status == "pending"
+    assert retried.source == "manual"
+    assert retried.metadata_json["retry_of_run_id"] == str(failed_run.id)
+    assert retried.metadata_json["original_trigger"] == "event"
+    assert retried.metadata_json["event"]["subject_id"] == item.id
+    test_db.refresh(failed_run)
+    assert failed_run.status == "failed"
+    dispatch.assert_awaited_once_with(test_db, rule, retried)
 
 
 def test_stall_scan_fails_runs_without_ai_output(

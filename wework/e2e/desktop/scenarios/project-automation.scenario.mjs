@@ -98,10 +98,26 @@ async function readJson(request) {
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const rules = [RULE]
-  const runs = []
+  const runs = [
+    {
+      id: 'automation-run-failed',
+      automationId: 'automation-rule-created',
+      projectId: PROJECT_ID,
+      trigger: 'schedule',
+      status: 'failed',
+      scheduledFor: '2026-08-11T09:00:00',
+      expiresAt: null,
+      taskId: 'AUTO-101',
+      deviceId: AGENT.executionDeviceId,
+      error: 'The worker stopped after recording the execution result.',
+      createdAt: '2026-08-11T09:00:00',
+      updatedAt: '2026-08-11T09:01:00',
+    },
+  ]
   const createdPayloads = []
   let archivedAgentPayload = null
   let cancelRequested = false
+  let retryRequested = false
   let modelRequests = 0
 
   return {
@@ -213,6 +229,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         cancelRequested = true
         runs[0] = { ...runs[0], status: 'cancelled' }
         json(response, 200, runs[0])
+        return true
+      }
+      const retryMatch = url.pathname.match(
+        new RegExp(`^/api/v1/cloud-projects/${PROJECT_ID}/automation-runs/([^/]+)/retry$`)
+      )
+      if (request.method === 'POST' && retryMatch) {
+        const failedRun = runs.find(run => run.id === retryMatch[1])
+        assert.equal(failedRun?.status, 'failed')
+        retryRequested = true
+        const retriedRun = {
+          ...failedRun,
+          id: 'automation-run-retried',
+          trigger: 'manual',
+          status: 'queued',
+          error: null,
+          createdAt: '2026-08-11T10:02:00',
+          updatedAt: '2026-08-11T10:02:00',
+        }
+        runs.unshift(retriedRun)
+        json(response, 201, retriedRun)
         return true
       }
       if (
@@ -340,6 +376,22 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
       assert.equal(cancelRequested, true)
       await captureScreenshot(control, 'project-automation-03-cancelled-run.png')
+      await control.command(
+        'waitFor',
+        '[data-testid="project-automation-retry-run-automation-run-failed"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        '[data-testid="project-automation-retry-run-automation-run-failed"]'
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="project-automation-cancel-run-automation-run-retried"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(retryRequested, true)
+      await captureScreenshot(control, 'project-automation-04-retried-run.png')
       await control.command('click', '[data-testid="cloud-todo-modal-close"]', { visible: true })
       await control.command('click', '[data-testid="cloud-project-automation-view"]', {
         visible: true,
@@ -448,7 +500,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         }),
         'true'
       )
-      await captureScreenshot(control, 'project-automation-04-robot-model-required.png')
+      await captureScreenshot(control, 'project-automation-05-robot-model-required.png')
 
       await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
         visible: true,
@@ -462,7 +514,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         { visible: true }
       )
       assert.equal(configuredCapability, AGENT.capabilityDescription)
-      await captureScreenshot(control, 'project-automation-05-robot-capability.png')
+      await captureScreenshot(control, 'project-automation-06-robot-capability.png')
 
       await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
         visible: true,
@@ -478,7 +530,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         visible: true,
       })
       assert.equal(archivedAgentPayload?.status, 'archived')
-      await captureScreenshot(control, 'project-automation-06-robot-templates.png')
+      await captureScreenshot(control, 'project-automation-07-robot-templates.png')
       await control.command('click', '[data-testid="project-chat-agent-template-development"]', {
         visible: true,
       })
@@ -500,7 +552,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(templateName, '开发实现机器人')
       assert.equal(templateCapability, '编写代码、修复问题并完成必要验证')
       assert.match(templatePrompt ?? '', /完成被指派的开发任务/)
-      await captureScreenshot(control, 'project-automation-07-robot-template-dialog.png')
+      await captureScreenshot(control, 'project-automation-08-robot-template-dialog.png')
     },
 
     diagnostics() {
@@ -509,6 +561,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         cancelRequested,
         createdPayloads,
         modelRequests,
+        retryRequested,
         rules,
         runs,
       }

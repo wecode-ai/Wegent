@@ -322,6 +322,52 @@ class ProjectAutomationService:
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
+    async def retry_run(
+        self, db: Session, project_id: str, run_id: str, user_id: int
+    ) -> dict:
+        """Create a new run for the same task and preserve the failed audit."""
+
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        run = db.get(ProjectAutomationRun, run_id)
+        if run is None or str(run.cloud_project_id) != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+
+        # A previous process may have written only the execution outcome. Repair
+        # the aggregate before deciding whether this run is retryable.
+        loop_item_execution_service.reconcile_automation_run_projection(
+            db, run_id=run_id
+        )
+        db.expire_all()
+        run = db.get(ProjectAutomationRun, run_id)
+        if run is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+        if run.status != "failed":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Only failed automation runs can be retried"
+            )
+
+        rule = self._rule(db, project_id, str(run.parent_id))
+        retried = self._create_run(db, rule, "manual", utcnow(), commit=False)
+        retried.task_id = run.task_id
+        source_metadata = _metadata(run)
+        retry_metadata = _metadata(retried)
+        retry_metadata.update(
+            {
+                "retry_of_run_id": str(run.id),
+                "original_trigger": source_metadata.get("trigger") or run.source,
+            }
+        )
+        event = source_metadata.get("event")
+        if isinstance(event, dict):
+            retry_metadata["event"] = event
+        retried.metadata_json = retry_metadata
+        db.commit()
+        db.refresh(retried)
+        await project_automation_execution.dispatch(db, rule, retried)
+        return self._run_view(
+            retried, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+        )
+
     def list_runs(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> list[dict]:
@@ -347,6 +393,22 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+        if loop_item_execution_service.reconcile_automation_run_projection(
+            db, run_id=run_id
+        ):
+            db.expire_all()
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Automation run not found"
+                )
+            rule = db.get(ProjectAutomationRule, run.parent_id)
+            timezone_name = (
+                str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+                if rule is not None
+                else "Asia/Shanghai"
+            )
+            return self._run_view(run, timezone_name)
         if run.status not in {"pending", "queued", "waiting_device", "running"}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"

@@ -181,14 +181,38 @@ fn id_value(value: &Value) -> Option<String> {
 
 pub async fn run() -> Result<(), String> {
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
+    eprintln!(
+        "[wework-space-mcp] lifecycle=start pid={} manager_mode={} space_id_present={} backend_url_present={} auth_token_present={}",
+        std::process::id(),
+        is_automation_manager(),
+        env_value_present("WEWORK_SPACE_ID"),
+        env_value_present("WEWORK_SPACE_BACKEND_URL"),
+        env_value_present("WEWORK_SPACE_AUTH_TOKEN"),
+    );
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
+    let mut request_count = 0_u64;
     while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
         if line.trim().is_empty() {
             continue;
         }
+        request_count += 1;
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(request) => handle_request(&runtime, &request).await,
+            Ok(request) => {
+                let method = request
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing>");
+                let tool = request
+                    .pointer("/params/name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("-");
+                eprintln!(
+                    "[wework-space-mcp] request={} stage=received method={} tool={}",
+                    request_count, method, tool,
+                );
+                handle_request(&runtime, &request).await
+            }
             Err(error) => Some(error_response(Value::Null, -32700, &error.to_string())),
         };
         if let Some(response) = response {
@@ -201,7 +225,16 @@ pub async fn run() -> Result<(), String> {
             stdout.flush().await.map_err(|error| error.to_string())?;
         }
     }
+    eprintln!(
+        "[wework-space-mcp] lifecycle=stdin_closed pid={} requests={}",
+        std::process::id(),
+        request_count,
+    );
     Ok(())
+}
+
+fn env_value_present(key: &str) -> bool {
+    env::var(key).is_ok_and(|value| !value.trim().is_empty())
 }
 
 async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value> {
@@ -226,7 +259,21 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
             )
         }),
         "ping" => id.map(|id| result_response(id, json!({}))),
-        "tools/list" => id.map(|id| result_response(id, json!({"tools": visible_tools(runtime)}))),
+        "tools/list" => id.map(|id| {
+            let tools = visible_tools(runtime);
+            let names = tools
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!(
+                "[wework-space-mcp] stage=tools_list manager_mode={} tool_count={} tools={}",
+                is_automation_manager(),
+                tools.len(),
+                names,
+            );
+            result_response(id, json!({"tools": tools}))
+        }),
         "tools/call" => {
             let id = id?;
             let name = request.pointer("/params/name").and_then(Value::as_str)?;
@@ -234,6 +281,14 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            let argument_keys = arguments
+                .as_object()
+                .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
+                .unwrap_or_default();
+            eprintln!(
+                "[wework-space-mcp] stage=tool_call tool={} argument_keys={}",
+                name, argument_keys,
+            );
             Some(result_response(
                 id,
                 call_tool(runtime, name, arguments).await,

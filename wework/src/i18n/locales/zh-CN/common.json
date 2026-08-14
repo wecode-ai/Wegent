@@ -245,6 +245,7 @@
     "project_automation_run_succeeded_details": "运行成功，查看详情",
     "project_automation_run_succeeded": "本次运行成功。",
     "project_automation_cancel_run": "取消运行",
+    "project_automation_retry_run": "重试运行",
     "project_automation_required_fields": "请填写名称和任务要求，并补全当前执行方式的必填配置。",
     "automation_queue_title": "执行队列",
     "task_activity_ai_execution": "AI 执行",

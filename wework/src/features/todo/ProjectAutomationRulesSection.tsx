@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
 } from 'lucide-react'
 import type {
@@ -320,6 +321,20 @@ export function ProjectAutomationRulesSection({
       setRuns(await api.listRuns(projectId, selected.id))
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : String(cancelError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const retryRun = async (runId: string) => {
+    if (!api || !selected) return
+    setBusy(true)
+    setError('')
+    try {
+      await api.retryRun(projectId, runId)
+      setRuns(await api.listRuns(projectId, selected.id))
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : String(retryError))
     } finally {
       setBusy(false)
     }
@@ -907,6 +922,18 @@ export function ProjectAutomationRulesSection({
                               className="shrink-0 text-blue-600 hover:underline"
                             >
                               {t('workbench.project_automation_open_task')}
+                            </button>
+                          ) : null}
+                          {failed ? (
+                            <button
+                              type="button"
+                              data-testid={`project-automation-retry-run-${run.id}`}
+                              disabled={busy}
+                              onClick={() => void retryRun(run.id)}
+                              className="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-text-muted hover:bg-surface disabled:opacity-40"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                              {t('workbench.project_automation_retry_run')}
                             </button>
                           ) : null}
                           {isExecutionRunning(run.status) ? (
