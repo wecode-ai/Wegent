@@ -259,6 +259,16 @@ Codex 可能从 Provider transcript 的 `items` 中过滤初始用户输入，�
 assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不能只把补回消息
 留在兼容 `messages` 数组中。
 
+### Assistant 轮内显示顺序与字号
+
+同一个 assistant turn 内的最终文本、过程文本和工具块必须按 runtime item 的到达顺序
+投影到界面，不能先按类型分组再固定渲染。特别是最终文本先到、过程文本后到时，后到
+的过程文本必须显示在最终文本下方；刷新 transcript 后也应保持同一顺序。
+
+思考提示、过程正文和最终正文统一使用语义化的 `text-chat` 字号。工具摘要、时间和其他
+元数据可以继续使用各自的紧凑字号，但不能让同一段聊天正文因 streaming/完成态切换而
+改变字号并产生跳闪。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
