@@ -53,17 +53,22 @@ describe('runtimeTaskSidebarHelpers', () => {
         title: `Ordered ${index + 1}`,
         runtime: 'codex' as const,
         sidebarOrder: index,
-        completedAt: `2026-08-12T0${index + 1}:00:00.000Z`,
-        running: index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1,
+        completedAt:
+          index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1
+            ? '2026-08-11T00:00:00.000Z'
+            : `2026-08-12T0${index + 1}:00:00.000Z`,
       })),
     }
 
     const items = getRuntimeSidebarTaskItems([workspace])
 
     expect(
-      getVisibleRuntimeSidebarTaskItems(items, RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, 'ordered-6').map(
-        item => item.task.taskId
-      )
+      getVisibleRuntimeSidebarTaskItems(
+        items,
+        RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
+        'ordered-6',
+        item => item.task.taskId === 'ordered-7'
+      ).map(item => item.task.taskId)
     ).toEqual([
       'ordered-1',
       'ordered-2',

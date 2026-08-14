@@ -2366,9 +2366,18 @@ function ProjectItem({
       getVisibleRuntimeSidebarTaskItems(
         prioritizedRuntimeTaskItems,
         runtimeTaskVisibleLimit,
-        currentRuntimeTask?.taskId
+        currentRuntimeTask?.taskId,
+        ({ workspace, task }) =>
+          lifecycleSnapshot.runningTaskKeys.has(
+            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+          )
       ),
-    [currentRuntimeTask?.taskId, prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit]
+    [
+      currentRuntimeTask?.taskId,
+      lifecycleSnapshot.runningTaskKeys,
+      prioritizedRuntimeTaskItems,
+      runtimeTaskVisibleLimit,
+    ]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,

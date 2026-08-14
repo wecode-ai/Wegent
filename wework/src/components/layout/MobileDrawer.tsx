@@ -658,7 +658,11 @@ export function MobileDrawer({
                           const visibleTaskItems = getVisibleRuntimeSidebarTaskItems(
                             taskItems,
                             runtimeTaskVisibleLimit,
-                            currentRuntimeTask?.taskId
+                            currentRuntimeTask?.taskId,
+                            ({ workspace, task }) =>
+                              lifecycleSnapshot.runningTaskKeys.has(
+                                getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+                              )
                           )
                           const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
                             taskItems,
