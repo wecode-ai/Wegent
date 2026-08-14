@@ -707,7 +707,21 @@ class ProjectChatService:
         from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
 
         run = db.get(ProjectAutomationRun, run_id)
-        return run is not None and run.status in TERMINAL_RUN_STATUSES
+        if run is None or run.status not in TERMINAL_RUN_STATUSES:
+            return False
+        if (
+            run.status == "succeeded"
+            and metadata.get("executor_type") == "project_robot"
+        ):
+            from app.services.project_automation_execution import (
+                project_automation_execution,
+            )
+
+            if project_automation_execution.has_recorded_manager_assignment(
+                db, run_id=run_id
+            ):
+                return False
+        return True
 
     @staticmethod
     def _update_project_automation_run(
@@ -719,9 +733,8 @@ class ProjectChatService:
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
         # An AI manager's runtime owns only the audit comment. Its successful
         # terminal event means the assignment decision was made, not that the
-        # original task was executed. The manager finalizer reads the durable
-        # task assignment and either waits for the selected project robot or
-        # closes the run for a human/unassigned outcome.
+        # original task was executed. The manager finalizer closes the rule run
+        # from that durable decision; a selected robot executes independently.
         if metadata.get("assignment_mode") == "ai_managed" and metadata.get(
             "manager_type"
         ) in {"custom", "wegent"}:

@@ -195,12 +195,14 @@ class ProjectAutomationRunView(ProjectChatSchema):
     scheduled_for: datetime
     expires_at: datetime | None
     task_id: str | None
+    task_title: str | None = None
     backend_task_id: int | None = None
     device_id: str | None
     error: str | None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
+    retryable: bool = False
     trigger_type: Literal["schedule", "event"] | None = None
     event_type: Literal["task.created"] | None = None
     event_config: dict[str, Any] | None = None

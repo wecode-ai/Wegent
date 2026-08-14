@@ -1479,8 +1479,25 @@ class LoopItemExecutionService:
         if execution.automation_run_id:
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
-                if execution.executor_type == "automation_manager" and (
-                    terminal_status == STATUS_COMPLETED or manager_assignment_recorded
+                if (
+                    execution.executor_type == "automation_manager"
+                    and manager_assignment_recorded
+                ):
+                    if run.status not in TERMINAL_RUN_STATUSES:
+                        run.status = "succeeded"
+                        run.completed_at = completed_at
+                        run.version += 1
+                    return activity
+                if (
+                    execution.executor_type == "automation_manager"
+                    and terminal_status == STATUS_COMPLETED
+                ):
+                    return activity
+                if (
+                    execution.executor_type == "project_robot"
+                    and project_automation_execution.has_recorded_manager_assignment(
+                        db, run_id=execution.automation_run_id
+                    )
                 ):
                     return activity
                 run_status = {

@@ -871,7 +871,7 @@ export function ProjectAutomationRulesSection({
                     {t('workbench.project_automation_runs')}
                   </h3>
                   <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border px-4">
-                    {runs.slice(0, 5).map(run => {
+                    {runs.map(run => {
                       const finished = !isExecutionRunning(run.status)
                       const failed = isExecutionFailed(run.status) || Boolean(run.error)
                       return (
@@ -906,9 +906,17 @@ export function ProjectAutomationRulesSection({
                                 : statusLabel[executionDisplayStatus(run.status) ?? 'running']}
                             </span>
                           )}
-                          <span className="min-w-0 flex-1 truncate text-text-muted">
-                            {formatTimestamp(run.scheduledFor, run.timezone)} ·{' '}
-                            {timezoneLabel(run.timezone, t)}
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className="block truncate text-text-secondary"
+                              data-testid={`project-automation-run-task-${run.id}`}
+                            >
+                              {run.taskTitle || run.taskId || t('workbench.project_automation_run')}
+                            </span>
+                            <span className="block truncate text-xs text-text-muted">
+                              {formatTimestamp(run.scheduledFor, run.timezone)} ·{' '}
+                              {timezoneLabel(run.timezone, t)}
+                            </span>
                           </span>
                           {run.taskId && onOpenTask ? (
                             <button
@@ -924,7 +932,7 @@ export function ProjectAutomationRulesSection({
                               {t('workbench.project_automation_open_task')}
                             </button>
                           ) : null}
-                          {failed ? (
+                          {(run.retryable ?? failed) ? (
                             <button
                               type="button"
                               data-testid={`project-automation-retry-run-${run.id}`}

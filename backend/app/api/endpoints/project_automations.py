@@ -319,7 +319,6 @@ async def cancel_run(
 @router.post(
     "/{project_id}/automation-runs/{run_id}/retry",
     response_model=ProjectAutomationRunView,
-    status_code=status.HTTP_201_CREATED,
 )
 async def retry_run(
     project_id: str,

@@ -108,10 +108,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       scheduledFor: '2026-08-11T09:00:00',
       expiresAt: null,
       taskId: 'AUTO-101',
+      taskTitle: '待恢复的失败任务',
       deviceId: AGENT.executionDeviceId,
       error: 'The worker stopped after recording the execution result.',
       createdAt: '2026-08-11T09:00:00',
       updatedAt: '2026-08-11T09:01:00',
+      retryable: true,
     },
   ]
   const createdPayloads = []
@@ -240,15 +242,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         retryRequested = true
         const retriedRun = {
           ...failedRun,
-          id: 'automation-run-retried',
-          trigger: 'manual',
           status: 'queued',
           error: null,
-          createdAt: '2026-08-11T10:02:00',
           updatedAt: '2026-08-11T10:02:00',
+          retryable: false,
         }
-        runs.unshift(retriedRun)
-        json(response, 201, retriedRun)
+        runs.splice(runs.indexOf(failedRun), 1, retriedRun)
+        json(response, 200, retriedRun)
         return true
       }
       if (
@@ -387,7 +387,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       await control.command(
         'waitFor',
-        '[data-testid="project-automation-cancel-run-automation-run-retried"]',
+        '[data-testid="project-automation-cancel-run-automation-run-failed"]',
         { timeoutMs: uiTimeoutMs }
       )
       assert.equal(retryRequested, true)

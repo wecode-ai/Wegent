@@ -642,12 +642,22 @@ describe('ProjectAutomationRulesSection', () => {
       scheduledFor: '2026-08-11T19:00:00Z',
       expiresAt: null,
       taskId: null,
+      taskTitle: '回归失败任务',
       backendTaskId: null,
       deviceId: null,
       error: 'Robot is unavailable',
+      retryable: true,
       createdAt: '2026-08-11T19:00:00Z',
       updatedAt: '2026-08-11T19:00:00Z',
     }
+    const failedRuns = [
+      finishedRun,
+      ...Array.from({ length: 5 }, (_, index) => ({
+        ...finishedRun,
+        id: `run-older-${index + 1}`,
+        taskTitle: `更早失败任务 ${index + 1}`,
+      })),
+    ]
     const api = {
       list: vi.fn().mockResolvedValue([rule]),
       create: vi.fn(),
@@ -655,7 +665,7 @@ describe('ProjectAutomationRulesSection', () => {
       delete: vi.fn(),
       rotateWebhookSecret: vi.fn(),
       runNow: vi.fn(),
-      listRuns: vi.fn().mockResolvedValue([finishedRun]),
+      listRuns: vi.fn().mockResolvedValue(failedRuns),
       cancelRun: vi.fn(),
       retryRun: vi.fn(),
     }
@@ -670,14 +680,20 @@ describe('ProjectAutomationRulesSection', () => {
     fireEvent.click(await screen.findByTestId('project-automation-rule-rule-1'))
 
     expect(await screen.findByTestId('project-automation-runs')).toBeInTheDocument()
+    expect(screen.getByTestId('project-automation-run-task-run-2')).toHaveTextContent(
+      '回归失败任务'
+    )
+    expect(screen.getByTestId('project-automation-run-task-run-older-5')).toHaveTextContent(
+      '更早失败任务 5'
+    )
     expect(screen.queryByText('Robot is unavailable')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('project-automation-run-detail-run-2'))
     expect(screen.getByTestId('project-automation-run-detail-dialog')).toHaveTextContent(
       'Robot is unavailable'
     )
     expect(screen.queryByTestId('project-automation-cancel-run-run-2')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('project-automation-retry-run-run-2'))
-    await waitFor(() => expect(api.retryRun).toHaveBeenCalledWith('1', 'run-2'))
+    fireEvent.click(screen.getByTestId('project-automation-retry-run-run-older-5'))
+    await waitFor(() => expect(api.retryRun).toHaveBeenCalledWith('1', 'run-older-5'))
   })
 
   it('keeps an active run synchronized until the backend reports its terminal state', async () => {

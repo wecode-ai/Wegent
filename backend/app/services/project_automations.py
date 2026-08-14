@@ -47,6 +47,7 @@ from app.services.project_automation_domain import (
     validate_trigger,
 )
 from app.services.project_automation_execution import (
+    AutomationRunNotRetryable,
     ProjectAutomationProcessor,
     project_automation_execution,
 )
@@ -325,7 +326,7 @@ class ProjectAutomationService:
     async def retry_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
     ) -> dict:
-        """Create a new run for the same task and preserve the failed audit."""
+        """Re-dispatch the same failed processor record for its existing task."""
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         run = db.get(ProjectAutomationRun, run_id)
@@ -341,31 +342,17 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
-        if run.status != "failed":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Only failed automation runs can be retried"
-            )
-
         rule = self._rule(db, project_id, str(run.parent_id))
-        retried = self._create_run(db, rule, "manual", utcnow(), commit=False)
-        retried.task_id = run.task_id
-        source_metadata = _metadata(run)
-        retry_metadata = _metadata(retried)
-        retry_metadata.update(
-            {
-                "retry_of_run_id": str(run.id),
-                "original_trigger": source_metadata.get("trigger") or run.source,
-            }
-        )
-        event = source_metadata.get("event")
-        if isinstance(event, dict):
-            retry_metadata["event"] = event
-        retried.metadata_json = retry_metadata
-        db.commit()
-        db.refresh(retried)
-        await project_automation_execution.dispatch(db, rule, retried)
+        try:
+            run = await project_automation_processor.retry(
+                db,
+                run_id=str(run.id),
+                requested_by_user_id=user_id,
+            )
+        except AutomationRunNotRetryable as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         return self._run_view(
-            retried, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
     def list_runs(
@@ -698,7 +685,8 @@ class ProjectAutomationService:
 
     @staticmethod
     def _run_view(
-        row: ProjectAutomationRun, fallback_timezone: str = "Asia/Shanghai"
+        row: ProjectAutomationRun,
+        fallback_timezone: str = "Asia/Shanghai",
     ) -> dict:
         run_metadata = _metadata(row)
         scheduled = run_metadata.get("scheduled_for")
@@ -714,7 +702,8 @@ class ProjectAutomationService:
             ),
             "expires_at": None,
             "task_id": row.task_id,
-            "backend_task_id": row.backend_task_id,
+            "task_title": getattr(row, "task_title", None) or None,
+            "backend_task_id": row.backend_task_id or None,
             "device_id": row.device_id or None,
             "error": (
                 row.description if row.status == "failed" and row.description else None
@@ -722,6 +711,7 @@ class ProjectAutomationService:
             "created_at": _utc_aware(row.created_at),
             "updated_at": _utc_aware(row.updated_at),
             "completed_at": _utc_aware(row.completed_at),
+            "retryable": row.status == "failed",
         }
 
     @staticmethod

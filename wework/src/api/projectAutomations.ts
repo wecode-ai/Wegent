@@ -74,12 +74,14 @@ export interface ProjectAutomationRun {
   scheduledFor: string
   expiresAt: string | null
   taskId: string | null
+  taskTitle?: string | null
   backendTaskId: number | null
   deviceId: string | null
   error: string | null
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  retryable?: boolean
 }
 
 interface ProjectAutomationInputBase {

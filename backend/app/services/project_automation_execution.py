@@ -21,6 +21,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectChatAgent,
     loop_datetime_is_unset,
+    loop_unset_datetime_for_connection,
 )
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -50,6 +51,10 @@ from app.services.project_chat.service import project_chat_service
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+
+class AutomationRunNotRetryable(RuntimeError):
+    """The persisted run is not a failed, idle processor record."""
 
 
 class AutomationRunFactory(Protocol):
@@ -182,6 +187,8 @@ class ProjectAutomationExecution:
         if not item_id:
             raise RuntimeError("Automation task carrier was not created")
         run.task_id = str(item_id)
+        item_title = routed.values.get("title")
+        run.task_title = str(item_title) if item_title else ""
         run.version += 1
         db.commit()
         db.refresh(run)
@@ -473,7 +480,7 @@ class ProjectAutomationExecution:
             .with_for_update()
             .one_or_none()
         )
-        if run is None or run.status in TERMINAL_RUN_STATUSES:
+        if run is None:
             raise RuntimeError("AI-managed automation run is not active")
         rule = db.get(ProjectAutomationRule, run.parent_id)
         owner = db.get(User, run.created_by_user_id)
@@ -511,6 +518,8 @@ class ProjectAutomationExecution:
             if assignee_type == "agent" and robot_execution is None:
                 raise RuntimeError("AI manager robot execution is unavailable")
             return current_task
+        if run.status in TERMINAL_RUN_STATUSES:
+            raise RuntimeError("AI-managed automation run is not active")
         if robot_execution is not None:
             raise RuntimeError("AI manager has already assigned this task to a robot")
 
@@ -566,10 +575,6 @@ class ProjectAutomationExecution:
             else:
                 raise RuntimeError("Automation task carrier is unavailable")
             run.assignee_agent_id = ""
-            if run.status not in TERMINAL_RUN_STATUSES:
-                run.status = "succeeded"
-                run.completed_at = utcnow()
-                run.version += 1
 
         activity = self._activity(db, run)
         if activity is not None:
@@ -652,30 +657,42 @@ class ProjectAutomationExecution:
             selected_agent_id or selected_user_id
         ):
             raise RuntimeError("AI manager assignment no longer matches the task")
-        if activity is not None and activity.status == "completed":
-            if (
+        projection_already_completed = bool(
+            activity is not None
+            and activity.status == "completed"
+            and (
                 backend_task_id is None
                 or activity_metadata.get("backend_task_id") == backend_task_id
-            ):
-                return False
+            )
+        )
         audit = (content or "").strip()
         if selected_agent_id:
             if self._project_robot_execution_for_run(db, run_id) is None:
                 raise RuntimeError(
                     "AI manager assignment did not create a robot execution"
                 )
-        elif selected_user_id:
+        run_changed = False
+        if selected_agent_id or selected_user_id:
             if run.status not in TERMINAL_RUN_STATUSES:
                 run.status = "succeeded"
                 run.completed_at = utcnow()
                 run.version += 1
+                run_changed = True
         elif run.status not in TERMINAL_RUN_STATUSES:
             run.status = "skipped"
             run.completed_at = utcnow()
             run.version += 1
+            run_changed = True
 
-        if backend_task_id is not None:
+        if backend_task_id is not None and run.backend_task_id != backend_task_id:
             run.backend_task_id = backend_task_id
+            run_changed = True
+        if projection_already_completed:
+            if run_changed:
+                db.commit()
+                if push_activity:
+                    self._push_activity(db, run)
+            return run_changed
         if activity is not None:
             activity.status = "completed"
             activity.message_type = "text"
@@ -814,11 +831,15 @@ class ProjectAutomationExecution:
     def _project_robot_execution_for_run(
         db: Session, run_id: str
     ) -> LoopItemExecution | None:
+        run = db.get(ProjectAutomationRun, run_id)
+        run_metadata = metadata(run) if run is not None else {}
+        execution_floor_id = integer(run_metadata.get("retry_execution_floor_id")) or 0
         return (
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.automation_run_id == run_id,
                 LoopItemExecution.agent_id != "",
+                LoopItemExecution.id > execution_floor_id,
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
@@ -846,6 +867,81 @@ class ProjectAutomationProcessor:
         from app.services.project_automations import project_automation_service
 
         return project_automation_service._create_run(db, rule, trigger, scheduled_for)
+
+    async def retry(
+        self,
+        db: Session,
+        *,
+        run_id: str,
+        requested_by_user_id: int,
+    ) -> ProjectAutomationRun:
+        """Re-dispatch the same failed processor record and board task."""
+
+        run = (
+            db.query(ProjectAutomationRun)
+            .filter(ProjectAutomationRun.id == run_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if run is None:
+            raise RuntimeError("Automation run is unavailable")
+        if run.status != "failed":
+            raise AutomationRunNotRetryable(
+                "Only a failed automation run can be retried"
+            )
+        active_execution = (
+            db.query(LoopItemExecution.id)
+            .filter(
+                LoopItemExecution.automation_run_id == run_id,
+                LoopItemExecution.status.in_(
+                    {"pending_approval", "queued", "claimed", "running"}
+                ),
+            )
+            .first()
+        )
+        if active_execution is not None:
+            raise AutomationRunNotRetryable(
+                "Automation run already has an active execution"
+            )
+        latest_execution_id = (
+            db.query(LoopItemExecution.id)
+            .filter(LoopItemExecution.automation_run_id == run_id)
+            .order_by(LoopItemExecution.id.desc())
+            .limit(1)
+            .scalar()
+            or 0
+        )
+        rule = db.get(ProjectAutomationRule, run.parent_id)
+        if rule is None or str(rule.cloud_project_id) != str(run.cloud_project_id):
+            raise RuntimeError("Automation rule is unavailable")
+
+        run_metadata = metadata(run)
+        run_metadata.pop("activity_message_id", None)
+        run_metadata.update(
+            {
+                "retry_count": (integer(run_metadata.get("retry_count")) or 0) + 1,
+                "retry_execution_floor_id": int(latest_execution_id),
+                "last_retried_at": utcnow().isoformat(),
+                "last_retried_by_user_id": requested_by_user_id,
+            }
+        )
+        run.metadata_json = run_metadata
+        run.status = "pending"
+        run.description = ""
+        run.completed_at = loop_unset_datetime_for_connection(
+            db.connection(), "completed_at"
+        )
+        run.backend_task_id = 0
+        run.assignee_agent_id = ""
+        run.device_id = ""
+        run.version += 1
+        db.commit()
+        db.refresh(run)
+
+        await project_automation_execution.dispatch(db, rule, run)
+        db.refresh(run)
+        return run
 
     @trace_async(
         span_name="project_automation.event.process",
@@ -886,6 +982,8 @@ class ProjectAutomationProcessor:
                 continue
             run = self._create_run(db, rule, "event", utcnow())
             run.task_id = event.subject_id
+            event_title = event.payload.get("title")
+            run.task_title = str(event_title) if event_title else ""
             run_metadata = metadata(run)
             run_metadata["event"] = {
                 "type": event.event_type,

@@ -914,7 +914,7 @@ def test_recovery_scan_repairs_terminal_automation_projection(
 
 
 @pytest.mark.asyncio
-async def test_retry_run_creates_new_auditable_run_for_same_task(
+async def test_retry_run_redispatches_the_same_processor_record_and_task(
     test_db: Session, test_user: User
 ) -> None:
     from app.services.project_automations import project_automation_service
@@ -975,16 +975,148 @@ async def test_retry_run_creates_new_auditable_run_for_same_task(
 
     retried = test_db.get(ProjectAutomationRun, view["id"])
     assert retried is not None
-    assert retried.id != failed_run.id
+    assert retried.id == failed_run.id
     assert retried.task_id == item.id
     assert retried.status == "pending"
-    assert retried.source == "manual"
-    assert retried.metadata_json["retry_of_run_id"] == str(failed_run.id)
-    assert retried.metadata_json["original_trigger"] == "event"
+    assert retried.source == "event"
+    assert retried.metadata_json["retry_count"] == 1
+    assert retried.metadata_json["retry_execution_floor_id"] == 0
     assert retried.metadata_json["event"]["subject_id"] == item.id
+    assert retried.description == ""
     test_db.refresh(failed_run)
-    assert failed_run.status == "failed"
+    assert failed_run.status == "pending"
     dispatch.assert_awaited_once_with(test_db, rule, retried)
+
+
+@pytest.mark.asyncio
+async def test_retry_run_rejects_a_second_retry_while_same_record_is_active(
+    test_db: Session, test_user: User
+) -> None:
+    from app.services.project_automations import project_automation_service
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed assignment",
+        description="Choose an assignee.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"timezone": "Asia/Shanghai"},
+    )
+    failed_run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Failed run",
+        description="manager failed",
+        source="event",
+        status="failed",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger": "event"},
+    )
+    test_db.add_all([rule, failed_run])
+    test_db.commit()
+
+    with patch.object(
+        project_automation_execution,
+        "dispatch",
+        new_callable=AsyncMock,
+    ) as dispatch:
+        await project_automation_service.retry_run(
+            test_db,
+            str(project.id),
+            str(failed_run.id),
+            test_user.id,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await project_automation_service.retry_run(
+                test_db,
+                str(project.id),
+                str(failed_run.id),
+                test_user.id,
+            )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Only a failed automation run can be retried"
+    dispatch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_processor_uses_only_executions_from_the_current_attempt(
+    test_db: Session, test_user: User
+) -> None:
+    from app.services.project_automations import project_automation_processor
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed assignment",
+        description="Choose an assignee.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    failed_run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Failed run",
+        description="robot failed",
+        source="event",
+        status="failed",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger": "event"},
+    )
+    test_db.add_all([rule, failed_run])
+    test_db.commit()
+    previous_execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context={"run_id": str(failed_run.id)},
+    )
+    previous_execution.status = "failed"
+    test_db.commit()
+
+    with patch.object(
+        project_automation_execution,
+        "dispatch",
+        new_callable=AsyncMock,
+    ):
+        await project_automation_processor.retry(
+            test_db,
+            run_id=str(failed_run.id),
+            requested_by_user_id=test_user.id,
+        )
+
+    assert failed_run.metadata_json["retry_execution_floor_id"] == previous_execution.id
+    assert (
+        project_automation_execution._project_robot_execution_for_run(
+            test_db, str(failed_run.id)
+        )
+        is None
+    )
+
+    current_execution = _make_execution(
+        test_db,
+        item,
+        bot,
+        test_user,
+        automation_context={"run_id": str(failed_run.id)},
+    )
+
+    assert (
+        project_automation_execution._project_robot_execution_for_run(
+            test_db, str(failed_run.id)
+        )
+        == current_execution
+    )
 
 
 def test_stall_scan_fails_runs_without_ai_output(
@@ -2006,6 +2138,8 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
 ) -> None:
     """The MCP assignment, not the manager's final text, is authoritative."""
 
+    from app.services.project_chat.service import project_chat_service
+
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user, title="Managed task")
     item.description = "Implement the task described by the product owner."
@@ -2135,7 +2269,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     assert item.assignee_agent_id == agent.id
     assert item.status != "in_review"
     assert "ai_state" not in dict(item.metadata_json or {})
-    assert run.status == "queued"
+    assert run.status == "succeeded"
     assert run.assignee_agent_id == agent.id
     assert activity.status == "completed"
     assert activity.agent_id == ""
@@ -2173,6 +2307,14 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     assert robot_activity is not None
     assert robot_activity.message_id != activity.message_id
     assert robot_activity.agent_id == agent.id
+    robot_activity_row = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == robot_activity.message_id)
+        .one()
+    )
+    assert not project_chat_service._project_automation_activity_is_terminal(
+        test_db, robot_activity_row
+    )
     test_db.refresh(item)
     assert item.status == "in_progress"
 
@@ -2185,6 +2327,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     test_db.refresh(item)
     test_db.refresh(run)
     assert item.status == "in_review"
+    assert run.status == "succeeded"
 
 
 def test_manager_assigns_project_member_without_parsing_final_output(
@@ -2246,7 +2389,7 @@ def test_manager_assigns_project_member_without_parsing_final_output(
         assignee_id=str(test_user.id),
     )
     test_db.refresh(run)
-    assert run.status == "succeeded"
+    assert run.status == "running"
     project_automation_execution.finalize_manager_result(
         test_db,
         run_id=str(run.id),
@@ -2265,6 +2408,75 @@ def test_manager_assigns_project_member_without_parsing_final_output(
         == 0
     )
     assert run.status == "succeeded"
+
+
+def test_completed_manager_comment_repairs_stale_queued_rule_run(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    agent = _make_bot(test_db, project, test_user)
+    item.assignee_agent_id = agent.id
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Wegent dispatcher",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
+    )
+    run = ProjectAutomationRun(
+        id=f"run-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Stale queued run",
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id=item.id,
+        sender_type="agent",
+        sender_id="wegent_team:1",
+        sender_name="Wegent dispatcher",
+        message_type="text",
+        content="Assigned to the backend robot.",
+        metadata_json={
+            "automation_run_id": str(run.id),
+            "run_status": "completed",
+            "selected_assignee_type": "agent",
+            "selected_assignee_id": agent.id,
+        },
+        status="completed",
+    )
+    test_db.add_all([rule, run, activity])
+    test_db.flush()
+    run.metadata_json = {"activity_message_id": message_id}
+    test_db.commit()
+    _make_execution(
+        test_db,
+        item,
+        agent,
+        test_user,
+        automation_context={"run_id": str(run.id)},
+    )
+
+    changed = project_automation_execution.finalize_manager_result(
+        test_db,
+        run_id=str(run.id),
+        content=None,
+        push_activity=False,
+    )
+
+    test_db.refresh(run)
+    assert changed is True
+    assert run.status == "succeeded"
+    assert run.completed_at is not None
 
 
 def test_manager_does_not_treat_default_creator_as_an_mcp_assignment(
