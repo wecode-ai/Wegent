@@ -11,7 +11,7 @@ import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from '
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { createHttpClient } from '@/api/http'
+import { ApiError, createHttpClient } from '@/api/http'
 import {
   applyInstalledPluginsToMarketplaceItems,
   createLocalCodexPluginApi,
@@ -47,7 +47,10 @@ import {
   isBuiltInMarketplaceId,
   isOpenAiOfficialMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
-import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import {
+  isPersonalMarketplaceId,
+  WEWORK_PERSONAL_MARKETPLACE_ID,
+} from '@/features/plugins/builtinPlugins'
 import {
   marketplaceSearchScore,
   normalizeMarketplaceSearchQuery,
@@ -83,18 +86,21 @@ import type {
   PluginAccessResponse,
   PluginAccessUpdateRequest,
   PluginMarketplaceItem,
+  PluginDeleteImpactResponse,
 } from '@/types/api'
 import { connectorDisplayName } from './connectorDisplayName'
 import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketplaceInstalls'
 import { retainMarketplaceInstallHints } from './retainMarketplaceInstallHints'
 import { type InstalledPluginItem } from './PluginManagementRows'
 import { PluginCreateMenu } from './PluginCreateMenu'
+import { PluginImportDialog } from './PluginImportDialog'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginShareDialog } from './PluginShareDialog'
 import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
+import { DeletePersonalPluginDialog } from './plugin-dialogs/DeletePersonalPluginDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { useOptionalAppearance } from '@/features/appearance'
 import { resolvePluginLogo, resolvePreferredPluginLogo } from './plugin-assets'
@@ -1315,6 +1321,16 @@ export function PluginsWorkspace({
     id: string | number
     name: string
   } | null>(null)
+  const [pendingPersonalPluginDelete, setPendingPersonalPluginDelete] = useState<{
+    pluginName: string
+    displayName: string
+    marketplacePath: string | null
+    installedId: string | number | null
+    cloudPluginId: string | number | null
+    deleteLocalSource: boolean
+    impact: PluginDeleteImpactResponse | null
+  } | null>(null)
+  const [isDeletingPersonalPlugin, setIsDeletingPersonalPlugin] = useState(false)
   const [pendingLocalConnectorAuth, setPendingLocalConnectorAuth] = useState<{
     target: LocalConnectorAuthTarget
     title: string
@@ -1333,6 +1349,7 @@ export function PluginsWorkspace({
   const [marketplaceLoadingMessage, setMarketplaceLoadingMessage] = useState('')
   const [marketplaceRefreshTick, setMarketplaceRefreshTick] = useState(0)
   const [showAddMarketDialog, setShowAddMarketDialog] = useState(false)
+  const [showPluginImportDialog, setShowPluginImportDialog] = useState(false)
   const [addMarketForm, setAddMarketForm] = useState<AddMarketFormData>({
     source: '',
     gitRef: '',
@@ -2775,6 +2792,145 @@ export function PluginsWorkspace({
     setPendingPluginUninstall(null)
     setUninstallingPluginIds(previous => new Set(previous).add(id))
     uninstallInstalledPlugin(id, name)
+  }
+
+  const requestDeletePersonalPlugin = async (input: {
+    pluginName: string
+    displayName: string
+    marketplacePath?: string | null
+    installedId?: string | number | null
+    cloudPluginId?: string | number | null
+    deleteLocalSource?: boolean
+  }) => {
+    const pending = {
+      pluginName: input.pluginName,
+      displayName: input.displayName,
+      marketplacePath: input.marketplacePath?.trim() || null,
+      installedId: input.installedId ?? null,
+      cloudPluginId: input.cloudPluginId ?? null,
+      deleteLocalSource: input.deleteLocalSource ?? true,
+      impact: null,
+    }
+    setPendingPersonalPluginDelete(pending)
+    if (pending.cloudPluginId === null) return
+    try {
+      const impact = await pluginApi.getMarketplacePluginDeleteImpact(pending.cloudPluginId)
+      setPendingPersonalPluginDelete(current =>
+        current && String(current.cloudPluginId) === String(pending.cloudPluginId)
+          ? { ...current, impact }
+          : current
+      )
+    } catch {
+      setPendingPersonalPluginDelete(null)
+      setPluginOperationNotice({
+        id: `delete-impact-error-${pending.pluginName}`,
+        kind: 'error',
+        message: t('workbench.plugins_delete_impact_failed', '无法检查插件使用情况，请稍后重试'),
+      })
+    }
+  }
+
+  const confirmDeletePersonalPlugin = async () => {
+    if (!pendingPersonalPluginDelete || isDeletingPersonalPlugin) return
+    const pending = pendingPersonalPluginDelete
+    if (pending.cloudPluginId !== null && !pending.impact) return
+    setIsDeletingPersonalPlugin(true)
+    try {
+      if (pending.cloudPluginId !== null) {
+        await pluginApi.deleteMarketplacePlugin(pending.cloudPluginId, {
+          impactRevision: pending.impact!.impactRevision,
+          revokeAndDelete:
+            pending.impact!.affectedUserCount > 0 || pending.impact!.sharedTargetCount > 0,
+        })
+      }
+      if (pending.installedId !== null) {
+        const installed = installedPluginsRef.current.find(
+          plugin => String(plugin.id) === String(pending.installedId)
+        )
+        if (installed) await logoutLocalConnectorsForPlugin(installed.raw).catch(() => undefined)
+        await localPluginApi.uninstallInstalledPlugin(pending.installedId)
+      }
+      if (pending.deleteLocalSource) {
+        await localPluginApi.deletePersonalPlugin(
+          pending.pluginName,
+          pending.marketplacePath ?? undefined
+        )
+      }
+
+      const normalizedName = pending.pluginName.trim().toLowerCase()
+      const matchesInstalled = (plugin: InstalledPluginItem) =>
+        plugin.distribution === 'personal' &&
+        [plugin.raw.spec.source.pluginKey, plugin.raw.spec.manifest.name, plugin.name]
+          .filter(Boolean)
+          .some(name => String(name).trim().toLowerCase() === normalizedName)
+      const matchesMarketplace = (item: PluginMarketplaceItem) =>
+        (pending.cloudPluginId !== null && String(item.id) === String(pending.cloudPluginId)) ||
+        (isPersonalMarketplaceId(marketplaceItemMarketplaceId(item) || '') &&
+          item.name.trim().toLowerCase() === normalizedName)
+      const nextInstalled = installedPluginsRef.current.filter(plugin => !matchesInstalled(plugin))
+      setInstalledPlugins(nextInstalled)
+      setPluginMarketplaceState(previous => ({
+        ...previous,
+        items: previous.items.filter(item => !matchesMarketplace(item)),
+        error: null,
+      }))
+      const cached = getPluginMarketplaceCache(marketplaceCacheKeyValue)
+      if (cached) {
+        setPluginMarketplaceCache({
+          ...cached,
+          marketplaceItems: cached.marketplaceItems.filter(item => !matchesMarketplace(item)),
+          installedPlugins: cached.installedPlugins.filter(plugin => !matchesInstalled(plugin)),
+          fetchedAt: Date.now(),
+        })
+      }
+      setSelectedPluginId(null)
+      setSelectedMarketplacePluginId(null)
+      setPendingPersonalPluginDelete(null)
+      notifyLocalPluginSkillsChanged()
+      setMarketplaceRefreshTick(previous => previous + 1)
+      setPluginOperationNotice({
+        id: `deleted-${pending.pluginName}`,
+        kind: 'success',
+        message: t('workbench.plugins_delete_success', '{{name}} 已删除', {
+          name: pending.displayName,
+          defaultValue: `${pending.displayName} 已删除`,
+        }),
+      })
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && pending.cloudPluginId !== null) {
+        try {
+          const impact = await pluginApi.getMarketplacePluginDeleteImpact(pending.cloudPluginId)
+          setPendingPersonalPluginDelete(current =>
+            current && String(current.cloudPluginId) === String(pending.cloudPluginId)
+              ? { ...current, impact }
+              : current
+          )
+          setPluginOperationNotice({
+            id: `delete-impact-changed-${pending.pluginName}`,
+            kind: 'error',
+            message: t(
+              'workbench.plugins_delete_impact_changed',
+              '插件使用情况已变化，请确认最新影响后重试'
+            ),
+          })
+          return
+        } catch {
+          // Fall through to the recoverable generic error below.
+        }
+      }
+      console.error('[Wework plugins] delete personal plugin failed', {
+        pluginName: pending.pluginName,
+        marketplacePath: pending.marketplacePath,
+        error: getErrorMessage(error, 'unknown error'),
+      })
+      setPluginOperationNotice({
+        id: `delete-error-${pending.pluginName}`,
+        kind: 'error',
+        message: t('workbench.plugins_delete_failed', '删除插件失败，请稍后重试'),
+      })
+    } finally {
+      setIsDeletingPersonalPlugin(false)
+    }
   }
 
   const promptLocalConnectorAuth = (input: { target: LocalConnectorAuthTarget; title: string }) =>
@@ -4346,6 +4502,19 @@ export function PluginsWorkspace({
           onConfirm={confirmUninstallPlugin}
         />
       )}
+      {pendingPersonalPluginDelete && (
+        <DeletePersonalPluginDialog
+          pluginName={pendingPersonalPluginDelete.displayName}
+          installed={pendingPersonalPluginDelete.installedId !== null}
+          published={pendingPersonalPluginDelete.cloudPluginId !== null}
+          impact={pendingPersonalPluginDelete.impact}
+          deleting={isDeletingPersonalPlugin}
+          onCancel={() => {
+            if (!isDeletingPersonalPlugin) setPendingPersonalPluginDelete(null)
+          }}
+          onConfirm={() => void confirmDeletePersonalPlugin()}
+        />
+      )}
       {pendingLocalConnectorAuth ? (
         <LocalConnectorAuthDialog
           open
@@ -4362,6 +4531,22 @@ export function PluginsWorkspace({
             pending.reject(
               new Error(t('workbench.plugins_local_auth_cancelled', '已取消授权，安装已终止'))
             )
+          }}
+        />
+      ) : null}
+      {showPluginImportDialog ? (
+        <PluginImportDialog
+          pluginApi={localPluginApi}
+          onCancel={() => setShowPluginImportDialog(false)}
+          onImported={() => {
+            setShowPluginImportDialog(false)
+            notifyLocalPluginSkillsChanged()
+            setPluginOperationNotice({
+              id: 'plugin-import-complete',
+              kind: 'success',
+              message: t('workbench.plugins_import_success', '插件已导入并安装。'),
+            })
+            refreshMarketplace()
           }}
         />
       ) : null}
@@ -4501,6 +4686,22 @@ export function PluginsWorkspace({
               ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
               : undefined
           }
+          deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
+          deleteActionDisabled={headerBusy}
+          onDeleteAction={
+            packableCreated
+              ? () =>
+                  void requestDeletePersonalPlugin({
+                    pluginName: packableCreated.raw.spec.source.pluginKey,
+                    displayName: selectedPlugin.name,
+                    marketplacePath:
+                      typeof packableCreated.raw.spec.sourcePayload?.marketplacePath === 'string'
+                        ? packableCreated.raw.spec.sourcePayload.marketplacePath
+                        : null,
+                    installedId: packableCreated.id,
+                  })
+              : undefined
+          }
           onToggle={() => {
             const isLocalMarketplaceOnly =
               selectedPlugin.raw.spec.source.type === 'marketplace' &&
@@ -4600,6 +4801,7 @@ export function PluginsWorkspace({
       : isInstalled
         ? 'try'
         : 'install'
+    const detailMarketplaceId = marketplaceItemMarketplaceId(selectedMarketplacePlugin) || ''
     const ownedListing =
       selectedMarketplacePlugin.accessRole === 'owner' ? selectedMarketplacePlugin : null
     const packableCreated =
@@ -4609,6 +4811,15 @@ export function PluginsWorkspace({
         installedDetail?.raw.spec.source.pluginKey,
         installedDetail?.name,
       ]) ?? (installedDetail?.origin === 'created' ? installedDetail : null)
+    const isOwnedPersonalListing =
+      selectedMarketplacePlugin.accessRole === 'owner' &&
+      selectedMarketplacePlugin.visibility === 'personal'
+    const hasDeletablePersonalSource =
+      selectedMarketplacePlugin.accessRole !== 'recipient' &&
+      (Boolean(packableCreated) ||
+        Boolean(selectedMarketplacePlugin.localPersonalSource) ||
+        (isPersonalMarketplaceId(detailMarketplaceId) &&
+          selectedMarketplacePlugin.latestReleaseId == null))
     const marketplaceOwnerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
       ownedListing,
@@ -4668,6 +4879,31 @@ export function PluginsWorkspace({
               ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
               : undefined
           }
+          deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
+          deleteActionDisabled={isActionPending}
+          onDeleteAction={
+            isOwnedPersonalListing || hasDeletablePersonalSource
+              ? () =>
+                  void requestDeletePersonalPlugin({
+                    pluginName:
+                      selectedMarketplacePlugin.localPersonalSource?.pluginName ||
+                      selectedMarketplacePlugin.name,
+                    displayName:
+                      selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name,
+                    marketplacePath:
+                      typeof packableCreated?.raw.spec.sourcePayload?.marketplacePath === 'string'
+                        ? packableCreated.raw.spec.sourcePayload.marketplacePath
+                        : selectedMarketplacePlugin.localPersonalSource?.marketplacePath
+                          ? selectedMarketplacePlugin.localPersonalSource.marketplacePath
+                          : typeof selectedMarketplacePlugin.manifest.marketplacePath === 'string'
+                            ? selectedMarketplacePlugin.manifest.marketplacePath
+                            : null,
+                    installedId: packableCreated?.id ?? null,
+                    cloudPluginId: isOwnedPersonalListing ? selectedMarketplacePlugin.id : null,
+                    deleteLocalSource: hasDeletablePersonalSource,
+                  })
+              : undefined
+          }
           isExternalSource={
             selectedMarketplacePlugin.sourceProvider === 'codex' ||
             marketplacePluginDistribution(selectedMarketplacePlugin) === 'public'
@@ -4699,7 +4935,6 @@ export function PluginsWorkspace({
                       : t('workbench.plugins_install_plugin', '安装插件')
           }
           primaryActionIcon={marketplacePrimaryIcon}
-          actionMenuBeforePrimary={showDetailActionMenu}
           primaryActionDisabled={isActionPending}
           tertiaryActionLabel={
             selectedMarketplacePlugin.accessRole === 'recipient' &&
@@ -4881,6 +5116,10 @@ export function PluginsWorkspace({
                 isOpen={isCreateMenuOpen}
                 onToggle={() => setIsCreateMenuOpen(previous => !previous)}
                 onCreatePlugin={openPluginCreator}
+                onImportPlugin={() => {
+                  setIsCreateMenuOpen(false)
+                  setShowPluginImportDialog(true)
+                }}
                 onAddMarket={() => {
                   setIsCreateMenuOpen(false)
                   setShowAddMarketDialog(true)

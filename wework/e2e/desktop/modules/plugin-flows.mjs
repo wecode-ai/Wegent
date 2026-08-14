@@ -505,6 +505,25 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
 
   await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-import-plugin-option"]')
+  await control.command('waitFor', '[data-testid="plugin-import-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const importSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    importSnapshot.testIds.includes('plugin-import-select') &&
+      importSnapshot.testIds.includes('plugin-import-download-example'),
+    'The plugin import dialog did not expose package selection and the example download'
+  )
+  assert.ok(
+    importSnapshot.text.includes('.codex-plugin/plugin.json') &&
+      importSnapshot.text.includes('skills/<slug>/SKILL.md'),
+    'The plugin import dialog did not explain the standard Wework plugin package structure'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
+  await control.command('click', '[data-testid="plugin-import-close"]')
+
+  await control.command('click', '[data-testid="plugins-create-button"]')
   await control.command('click', '[data-testid="plugins-create-plugin-option"]')
   await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -695,6 +714,14 @@ async function verifyMarketplacePluginLifecycle({
     manageOpenedDetail.testIds.includes('plugin-management-page-content'),
     false,
     'Marketplace manage opened the management list instead of the plugin detail'
+  )
+  const detailActionMenuTestId = `plugin-detail-actions-${pluginId}`
+  const detailPrimaryActionTestId = `plugin-detail-toggle-${pluginId}`
+  assert.ok(
+    manageOpenedDetail.testIds.indexOf(detailActionMenuTestId) >= 0 &&
+      manageOpenedDetail.testIds.indexOf(detailActionMenuTestId) <
+        manageOpenedDetail.testIds.indexOf(detailPrimaryActionTestId),
+    'The plugin detail overflow menu was not placed before the primary action'
   )
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', actionsSelector, {
