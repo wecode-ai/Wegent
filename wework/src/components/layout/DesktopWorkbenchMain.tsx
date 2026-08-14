@@ -244,6 +244,7 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  temporaryChatAddresses?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
@@ -1247,6 +1248,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return restoredTabs.map(tab => (tab === 'browser' ? 'browser:1' : tab))
   })
   const [rightPanelImmediateLayout, setRightPanelImmediateLayout] = useState(false)
+  const [temporaryChatAddresses, setTemporaryChatAddresses] = useState<
+    Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
+  >(() => initialWorkspaceState?.temporaryChatAddresses ?? {})
   const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
     string | null
   >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
@@ -1339,6 +1343,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      temporaryChatAddresses,
       browserStates,
       reviewState,
       selectedFileWorkspaceTargetKey,
@@ -1351,6 +1356,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    temporaryChatAddresses,
     browserStates,
     reviewState,
     selectedFileWorkspaceTargetKey,
@@ -2775,6 +2781,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
     if (tab.startsWith('chat:')) {
       temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+      setTemporaryChatAddresses(current => {
+        if (!current[tab as RightWorkspaceChatTab]) return current
+        const next = { ...current }
+        delete next[tab as RightWorkspaceChatTab]
+        return next
+      })
     }
     if (isRightWorkspaceHarnessTab(tab)) {
       void onLocalHarnessSessionClose(getRightWorkspaceHarnessSessionId(tab))
@@ -4216,6 +4228,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
+              getChatInitialAddress={tab => temporaryChatAddresses[tab]}
+              onChatAddressChange={(tab, address) => {
+                setTemporaryChatAddresses(current => {
+                  if (!address) {
+                    if (!current[tab]) return current
+                    const next = { ...current }
+                    delete next[tab]
+                    return next
+                  }
+                  if (
+                    current[tab]?.taskId === address.taskId &&
+                    current[tab]?.deviceId === address.deviceId
+                  ) {
+                    return current
+                  }
+                  return { ...current, [tab]: address }
+                })
+              }}
             />
           )}
         </div>

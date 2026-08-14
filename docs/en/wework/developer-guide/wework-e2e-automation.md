@@ -117,7 +117,7 @@ The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
 `automation-lifecycle`, `model-routing`, `core-task-flow`, `window-lifecycle`,
 `goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
-`workspace-attachments`, `rendering-extensions`, `browser-multi-tabs`, and
+`temporary-chat`, `workspace-attachments`, `rendering-extensions`, `browser-multi-tabs`, and
 `embedded-browser`. `--segment <checkpoint>` performs common startup and project
 initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
@@ -146,6 +146,7 @@ pnpm --filter wework e2e:desktop -- --segment local-harness
 pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --segment temporary-chat
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
 
@@ -157,6 +158,12 @@ Both checkpoints establish their own minimal fixtures, so they no longer extend
 the critical path for task creation, follow-up, and background plans in
 `core-task-flow`. An unsegmented complete desktop run still executes these
 scenarios, so splitting them does not reduce coverage.
+
+`temporary-chat` creates an independent local project and real Codex ephemeral
+thread, holds a follow-up response open, verifies that the user message appears
+above the Thinking indicator, and confirms that the temporary-chat content is
+restored from the runtime conversation cache after switching the main
+conversation away and back.
 
 `local-harness` uses the real OpenCode, Claude Code, and Kimi Code CLIs pinned
 by `.github/claude-code-cli/package-lock.json`; argument-recording shell

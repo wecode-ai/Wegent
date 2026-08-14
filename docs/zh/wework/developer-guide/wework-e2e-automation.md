@@ -117,7 +117,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `workspace-tabs`、`priority-filter`、`telemetry-consent`、
 `automation-lifecycle`、`model-routing`、`core-task-flow`、
 `window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
-`conversation-state`、`workspace-attachments`、`rendering-extensions`、
+`conversation-state`、`temporary-chat`、`workspace-attachments`、`rendering-extensions`、
 `browser-multi-tabs` 和 `embedded-browser`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
@@ -141,6 +141,7 @@ pnpm --filter wework e2e:desktop -- --segment local-harness
 pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --segment temporary-chat
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 ```
 
@@ -149,6 +150,10 @@ pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 sidecar 和本地模型协议矩阵。两者都建立自身最小 fixture，因此不会拉长
 `core-task-flow` 的任务创建、追问和后台计划关键路径。无参数运行完整桌面流程时，
 这些场景仍会执行，不会因为分段而减少覆盖。
+
+`temporary-chat` 使用独立本地项目和真实 Codex ephemeral thread，保持 follow-up
+回复处于流式运行状态，验证 user message 在“正在思考”之前显示，并在切换主会话后
+验证临时聊天内容仍从运行时会话缓存恢复。
 
 `local-harness` 使用 `.github/claude-code-cli/package-lock.json` 固定的真实
 OpenCode、Claude Code 和 Kimi Code CLI，不允许用只记录参数的 shell fixture
