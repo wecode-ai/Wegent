@@ -72,6 +72,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { BrowserAnnotationScope } from '@/types/browser-annotation'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import { resolveAppearanceMode } from '@/features/appearance/applyAppearance'
 import { track } from '@/telemetry/client'
 import { browserAnnotationInjectionScript as createBrowserAnnotationInjectionScript } from './browser-annotation/injection-script'
 import type {
@@ -760,6 +761,7 @@ export function WorkspaceBrowserTabPanel({
         createBrowserAnnotationInjectionScript({
           browserTabId,
           uiFontSize: appearance.uiFontSize,
+          isDark: resolveAppearanceMode(appearance.mode) === 'dark',
           strings: {
             placeholder: t('workbench.browser_annotation_placeholder'),
             publish: t('workbench.browser_annotation_publish'),
@@ -837,6 +839,7 @@ export function WorkspaceBrowserTabPanel({
     }
   }, [
     active,
+    appearance.mode,
     appearance.uiFontSize,
     currentUrl,
     cleanupInvalidatedAnnotationRequest,
