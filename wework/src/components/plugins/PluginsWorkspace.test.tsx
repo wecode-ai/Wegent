@@ -382,9 +382,16 @@ function mockSystemSkillsFetch(
     marketplaceName: string
     marketplaceDisplayName: string
     deviceAutoSyncSucceeds: boolean
+    marketplaceUpdateAvailable: boolean
+    marketplaceUpdatePolicy: 'manual' | 'auto'
+    autoUpdateBatchSizes: number[]
   }> = {}
 ) {
-  let marketplaceUpdateAvailable = false
+  let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
+  let marketplaceLatestReleaseId = marketplaceUpdateAvailable ? 1002 : 1001
+  let marketplaceUpdatePolicy = overrides.marketplaceUpdatePolicy ?? 'manual'
+  const autoUpdateBatchSizes = [...(overrides.autoUpdateBatchSizes ?? [])]
+  let autoUpdateBatchCalls = 0
   let cloudMarketplacePluginInstalled = Boolean(overrides.marketplaceInstalled)
   let marketplaceDeviceState: 'installed' | 'failed' | 'pending' =
     overrides.marketplaceDeviceState ?? 'installed'
@@ -638,7 +645,7 @@ function mockSystemSkillsFetch(
     },
     createdAt: null,
     updatedAt: null,
-    latestReleaseId: 1001,
+    latestReleaseId: marketplaceLatestReleaseId,
     currentDeviceInstallation: cloudMarketplacePluginInstalled
       ? {
           deviceId: 'current-device',
@@ -713,6 +720,7 @@ function mockSystemSkillsFetch(
         visibility: marketplaceRow.visibility,
         pluginId: 101,
         releaseId: 1001,
+        updatePolicy: marketplaceUpdatePolicy,
         componentStates: {},
         components: marketplaceRow.components,
         interface: {
@@ -889,6 +897,28 @@ function mockSystemSkillsFetch(
             }),
         })
       }
+      if (requestUrl.pathname === '/api/plugins/installed/auto-update-batch') {
+        autoUpdateBatchCalls += 1
+        const updatedCount = autoUpdateBatchSizes.shift() ?? 0
+        const remainingCount = autoUpdateBatchSizes.reduce((total, count) => total + count, 0)
+        if (remainingCount === 0) marketplaceUpdateAvailable = false
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              updated: Array.from({ length: updatedCount }, (_, index) => ({
+                installedPluginId: index + 101,
+                pluginId: index + 201,
+                fromReleaseId: index + 301,
+                toReleaseId: index + 401,
+                version: '2.0.0',
+              })),
+              updatedCount,
+              remainingCount,
+            }),
+        })
+      }
       if (requestUrl.pathname === '/api/plugins/marketplace') {
         const keyword = requestUrl.searchParams.get('q')
         const currentMarketplacePlugins = buildMarketplacePlugins().map((plugin, index) =>
@@ -896,7 +926,7 @@ function mockSystemSkillsFetch(
             ? {
                 ...plugin,
                 version: '1.1.0',
-                latestReleaseId: 1002,
+                latestReleaseId: marketplaceLatestReleaseId,
                 updateAvailable: true,
               }
             : plugin
@@ -933,6 +963,17 @@ function mockSystemSkillsFetch(
             })
           }, 10)
         })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'PUT') {
+        const body = init.body ? JSON.parse(String(init.body)) : {}
+        if (body.updatePolicy === 'manual' || body.updatePolicy === 'auto') {
+          marketplaceUpdatePolicy = body.updatePolicy
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve(buildInstalledMarketplacePlugin()),
+          })
+        }
       }
       if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'DELETE') {
         cloudMarketplacePluginInstalled = false
@@ -990,9 +1031,11 @@ function mockSystemSkillsFetch(
 
   return {
     publishMarketplaceUpdate: () => {
+      marketplaceLatestReleaseId += 1
       marketplaceUpdateAvailable = true
     },
     getSyncDeviceCalls: () => syncDeviceCalls,
+    getAutoUpdateBatchCalls: () => autoUpdateBatchCalls,
   }
 }
 
@@ -1721,6 +1764,109 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    )
+  })
+
+  test('automatically updates cloud plugins in bounded serial batches', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'auto',
+      autoUpdateBatchSizes: [5, 1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(2))
+    await waitFor(() => expect(marketplace.getSyncDeviceCalls()).toBe(2))
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('已自动更新 6 个插件')
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'success'
+    )
+  })
+
+  test('automatically retries when a newer release follows a failed release', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'auto',
+      autoUpdateBatchSizes: [1, 1],
+      deviceAutoSyncSucceeds: false,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(1))
+    await screen.findByText(/插件自动更新失败/)
+
+    marketplace.publishMarketplaceUpdate()
+    fireEvent.focus(window)
+
+    await waitFor(() => expect(marketplace.getAutoUpdateBatchCalls()).toBe(2))
+    expect(marketplace.getSyncDeviceCalls()).toBe(2)
+  })
+
+  test('does not automatically update a marketplace plugin with manual policy', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdateAvailable: true,
+      marketplaceUpdatePolicy: 'manual',
+      autoUpdateBatchSizes: [1],
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(await screen.findByTestId('plugin-detail-toggle-101')).toHaveTextContent('更新')
+    expect(marketplace.getAutoUpdateBatchCalls()).toBe(0)
+    expect(marketplace.getSyncDeviceCalls()).toBe(0)
+  })
+
+  test('lets users explicitly opt in to automatic marketplace plugin updates', async () => {
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceUpdatePolicy: 'manual',
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    const toggle = await screen.findByTestId('plugin-auto-update-toggle-101')
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'))
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({ updatePolicy: 'auto' }),
+      })
     )
   })
 

@@ -51,4 +51,46 @@ describe('useResizableBottomPanel', () => {
     requestAnimationFrameSpy.mockRestore()
     cancelAnimationFrameSpy.mockRestore()
   })
+
+  test('allows resizing the terminal down to one visible row', () => {
+    function Harness() {
+      const { height, panelRef, handleResizeStart } = useResizableBottomPanel()
+
+      return (
+        <section ref={panelRef} data-testid="panel" style={{ height }}>
+          <div data-testid="handle" onPointerDown={handleResizeStart} />
+        </section>
+      )
+    }
+
+    render(<Harness />)
+    fireEvent.pointerDown(screen.getByTestId('handle'), { clientY: 700 })
+    fireEvent.pointerMove(document, { clientY: 1000 })
+    fireEvent.pointerUp(document)
+
+    expect(screen.getByTestId('panel')).toHaveStyle({
+      height: '80px',
+    })
+  })
+
+  test('tracks the one-row minimum when the code font size changes', () => {
+    function Harness() {
+      const { height, panelRef, handleResizeStart } = useResizableBottomPanel(24)
+
+      return (
+        <section ref={panelRef} data-testid="panel" style={{ height }}>
+          <div data-testid="handle" onPointerDown={handleResizeStart} />
+        </section>
+      )
+    }
+
+    render(<Harness />)
+    fireEvent.pointerDown(screen.getByTestId('handle'), { clientY: 700 })
+    fireEvent.pointerMove(document, { clientY: 1000 })
+    fireEvent.pointerUp(document)
+
+    expect(screen.getByTestId('panel')).toHaveStyle({
+      height: '94px',
+    })
+  })
 })

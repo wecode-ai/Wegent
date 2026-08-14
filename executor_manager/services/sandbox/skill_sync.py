@@ -29,7 +29,7 @@ class SandboxSkillSyncError(RuntimeError):
 
 @dataclass(frozen=True)
 class ResolvedTaskSkills:
-    """Authoritative task Skill configuration returned by Backend."""
+    """Backend-resolved Skill deployment plan for one sandbox activation."""
 
     team_namespace: str = "default"
     skills: list[str] = field(default_factory=list)
@@ -96,12 +96,34 @@ def required_skill_names(metadata: Dict[str, Any]) -> list[str]:
     )
 
 
+def _request_skill_plan(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the Backend-resolved request Skill plan from sandbox bot metadata."""
+    raw = metadata.get("bot_config")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("[SandboxSkillSync] Ignoring invalid bot_config metadata")
+            return {}
+    if not isinstance(raw, list) or not raw or not isinstance(raw[0], dict):
+        return {}
+
+    bot = raw[0]
+    return {
+        "skills": _string_list(bot.get("skills")),
+        "preload_skills": _string_list(bot.get("preload_skills")),
+        "skill_refs": _object(bot.get("skill_refs")),
+        "preload_skill_refs": _object(bot.get("preload_skill_refs")),
+    }
+
+
 class SandboxSkillSynchronizer:
     """Fetch task Skills and require executor confirmation before sandbox use."""
 
     async def resolve(self, sandbox: Sandbox) -> ResolvedTaskSkills:
         """Resolve the task's Skills with its task-scoped authorization token."""
         required = required_skill_names(sandbox.metadata)
+        request_plan = _request_skill_plan(sandbox.metadata)
         auth_token = str(sandbox.metadata.get("auth_token") or "").strip()
         if not auth_token:
             if required:
@@ -142,7 +164,7 @@ class SandboxSkillSynchronizer:
             raise SandboxSkillSyncError(
                 "Failed to resolve task Skills: response must be an object"
             )
-        return self._parse_response(payload, required)
+        return self._parse_response(payload, required, request_plan)
 
     async def sync(
         self,
@@ -191,10 +213,46 @@ class SandboxSkillSynchronizer:
 
     @staticmethod
     def _parse_response(
-        payload: Dict[str, Any], required: list[str]
+        payload: Dict[str, Any],
+        required: list[str],
+        request_plan: Dict[str, Any] | None = None,
     ) -> ResolvedTaskSkills:
         """Validate and normalize the Backend response."""
         skills = _string_list(payload.get("skills"))
+        preload_skills = _string_list(payload.get("preload_skills"))
+        skill_refs = _object(payload.get("skill_refs"))
+        preload_skill_refs = _object(payload.get("preload_skill_refs"))
+
+        request_plan = request_plan or {}
+        request_skills = set(_string_list(request_plan.get("skills")))
+        request_preload = set(_string_list(request_plan.get("preload_skills")))
+        request_refs = _object(request_plan.get("skill_refs"))
+        request_preload_refs = _object(request_plan.get("preload_skill_refs"))
+
+        # The task endpoint describes persistent task Skills. Request-only Skills
+        # (for example, selected knowledge-base tooling) were already resolved by
+        # Backend for this chat turn and arrive through bot_config. Merge only
+        # currently required Skills so inactive candidates are not deployed.
+        for skill_name in required:
+            request_ref = request_preload_refs.get(skill_name) or request_refs.get(
+                skill_name
+            )
+            if (
+                skill_name not in request_skills
+                or not isinstance(request_ref, dict)
+                or not isinstance(request_ref.get("skill_id"), int)
+            ):
+                continue
+            if skill_name not in skills:
+                skills.append(skill_name)
+            skill_refs[skill_name] = request_ref
+            if skill_name in request_preload:
+                if skill_name not in preload_skills:
+                    preload_skills.append(skill_name)
+                preload_skill_refs[skill_name] = request_ref
+
+        skills.sort()
+        preload_skills.sort()
         missing = sorted(set(required) - set(skills))
         if missing:
             raise SandboxSkillSyncError(
@@ -203,9 +261,9 @@ class SandboxSkillSynchronizer:
         return ResolvedTaskSkills(
             team_namespace=str(payload.get("team_namespace") or "default"),
             skills=skills,
-            preload_skills=_string_list(payload.get("preload_skills")),
-            skill_refs=_object(payload.get("skill_refs")),
-            preload_skill_refs=_object(payload.get("preload_skill_refs")),
+            preload_skills=preload_skills,
+            skill_refs=skill_refs,
+            preload_skill_refs=preload_skill_refs,
             required_skills=required,
         )
 

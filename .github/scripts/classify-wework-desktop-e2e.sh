@@ -31,7 +31,7 @@ cloud_shards=(
   model-routing,embedded-browser,telemetry-consent
   window-lifecycle,conversation-state,browser-multi-tabs
   resilience,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,plugin-auto-update
 )
 
 declare -A selected=()

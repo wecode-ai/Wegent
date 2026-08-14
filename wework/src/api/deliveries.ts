@@ -65,6 +65,22 @@ export interface CloudLoopItem {
     action: 'assign' | 'reassign' | 'unassign'
     at: string
   }>
+  status_history?: Array<{
+    from_status: string
+    from_status_name?: string | null
+    to_status: string
+    to_status_name?: string | null
+    trigger:
+      | 'create'
+      | 'user_update'
+      | 'ai_started'
+      | 'ai_completed'
+      | 'task_started'
+      | 'delivery'
+      | 'status_removed'
+    by_user_id: number | null
+    at: string
+  }>
   approval?: {
     status: 'pending' | 'approved' | 'rejected'
     requested_at?: string

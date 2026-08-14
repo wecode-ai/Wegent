@@ -32,6 +32,10 @@ The new-task page uses compact suggestion buttons to help choose a task directio
 
 Project selection, message input, quick phrases, and model selection share one composer surface. The composer shows a blue border while focused, and the simplified launcher preserves project, attachment, quick-phrase, and model controls.
 
+## Use the Popout Window composer
+
+When no task is running, the Wework Popout Window uses a compact composer with a fixed height. After the message exceeds three lines, the text scrolls inside the editor while attachment, model, and send controls remain visible.
+
 ## Files and terminals
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
