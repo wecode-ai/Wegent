@@ -37,6 +37,7 @@ def use_default_remote_device_provider(monkeypatch):
     monkeypatch.delenv("REMOTE_DEVICE_DOCKER_IMAGE", raising=False)
     monkeypatch.delenv("REMOTE_DEVICE_BACKEND_URL", raising=False)
     monkeypatch.delenv("REMOTE_DEVICE_EXECUTOR_INSTALL_URL", raising=False)
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "")
     monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "")
     yield
     register_remote_device_command_provider(previous_provider)
@@ -50,8 +51,13 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
 ):
     monkeypatch.setattr(
         settings,
-        "BACKEND_INTERNAL_URL",
+        "WEGENT_BACKEND_PUBLIC_URL",
         "https://backend.current.example",
+    )
+    monkeypatch.setattr(
+        settings,
+        "BACKEND_INTERNAL_URL",
+        "http://backend:8000",
     )
 
     response = await remote_devices.create_docker_start_command(
@@ -145,8 +151,6 @@ async def test_create_docker_start_command_keeps_client_origin_optional(
     test_db,
     test_user,
 ):
-    monkeypatch.setattr(settings, "BACKEND_INTERNAL_URL", "")
-
     response = await remote_devices.create_docker_start_command(
         request=_FakeRequest(host="backend.example.com", scheme="https"),
         body=remote_devices.CreateDockerRemoteDeviceRequest(),

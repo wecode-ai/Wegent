@@ -192,8 +192,8 @@ class DefaultRemoteDeviceCommandProvider:
         )
         if configured_url:
             return configured_url
-        if settings.BACKEND_INTERNAL_URL:
-            return settings.BACKEND_INTERNAL_URL
+        if settings.WEGENT_BACKEND_PUBLIC_URL:
+            return settings.WEGENT_BACKEND_PUBLIC_URL
         host = context.request_headers.get("host", context.request_netloc)
         return f"{context.request_scheme}://{host}"
 
