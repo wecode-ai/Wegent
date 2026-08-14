@@ -419,17 +419,7 @@ impl AutomationStore {
     }
 
     fn write_state(&self, state: &AutomationState) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        let payload = serde_json::to_vec_pretty(&AutomationState {
-            version: AUTOMATION_STORE_VERSION,
-            ..state.clone()
-        })
-        .map_err(|error| error.to_string())?;
-        let temp_path = self.path.with_extension("json.tmp");
-        fs::write(&temp_path, payload).map_err(|error| error.to_string())?;
-        fs::rename(temp_path, &self.path).map_err(|error| error.to_string())
+        write_state_file(&self.path, state)
     }
 }
 
@@ -591,13 +581,15 @@ fn read_state(path: &PathBuf) -> AutomationState {
             version: AUTOMATION_STORE_VERSION,
             ..AutomationState::default()
         });
-    migrate_automation_state(&mut state, Utc::now());
+    if migrate_automation_state(&mut state, Utc::now()) {
+        let _ = write_state_file(path, &state);
+    }
     state
 }
 
-fn migrate_automation_state(state: &mut AutomationState, now: DateTime<Utc>) {
+fn migrate_automation_state(state: &mut AutomationState, now: DateTime<Utc>) -> bool {
     if state.version >= AUTOMATION_STORE_VERSION {
-        return;
+        return false;
     }
     for automation in state.automations.values_mut() {
         if automation.enabled && matches!(&automation.schedule, AutomationSchedule::Cron { .. }) {
@@ -606,6 +598,21 @@ fn migrate_automation_state(state: &mut AutomationState, now: DateTime<Utc>) {
         }
     }
     state.version = AUTOMATION_STORE_VERSION;
+    true
+}
+
+fn write_state_file(path: &PathBuf, state: &AutomationState) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let payload = serde_json::to_vec_pretty(&AutomationState {
+        version: AUTOMATION_STORE_VERSION,
+        ..state.clone()
+    })
+    .map_err(|error| error.to_string())?;
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, payload).map_err(|error| error.to_string())?;
+    fs::rename(temp_path, path).map_err(|error| error.to_string())
 }
 
 fn default_timezone() -> String {
@@ -624,7 +631,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        initial_next_run, migrate_automation_state, next_run_after, Automation,
+        initial_next_run, migrate_automation_state, next_run_after, read_state, Automation,
         AutomationRunStatus, AutomationSchedule, AutomationState, AutomationStore,
         ConversationMode, IntervalUnit, NotificationPolicy,
     };
@@ -703,13 +710,35 @@ mod tests {
             runs: Vec::new(),
         };
 
-        migrate_automation_state(&mut state, now);
+        assert!(migrate_automation_state(&mut state, now));
 
         assert_eq!(state.version, 2);
         assert_eq!(
             state.automations["weekday"].next_run_at,
             Some(Utc.with_ymd_and_hms(2026, 8, 14, 8, 45, 0).unwrap())
         );
+    }
+
+    #[test]
+    fn loading_old_state_persists_migration() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("automations.json");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&AutomationState {
+                version: 1,
+                automations: HashMap::new(),
+                runs: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let state = read_state(&path);
+        let stored: AutomationState = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+        assert_eq!(state.version, 2);
+        assert_eq!(stored.version, 2);
     }
 
     #[test]
