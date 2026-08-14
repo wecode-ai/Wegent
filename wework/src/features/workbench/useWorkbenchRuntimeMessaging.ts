@@ -944,7 +944,10 @@ export function useWorkbenchRuntimeMessaging({
       const runtimeExecutablePath = runtimeExecutablePathForTarget({
         executablePath: options?.runtimeExecutablePath,
         targetDevice,
-        workspaceSource: selectedProjectWorkspace?.workspaceSource,
+        workspaceSource:
+          selectedProjectWorkspace?.deviceId === optimisticDeviceId
+            ? selectedProjectWorkspace.workspaceSource
+            : undefined,
       })
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,

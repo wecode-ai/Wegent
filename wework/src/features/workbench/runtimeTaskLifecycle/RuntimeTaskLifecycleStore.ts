@@ -268,40 +268,7 @@ export class RuntimeTaskLifecycleStore {
 
     const previousMachine = this.machines.get(previousKey)
     if (!previousMachine) return
-    const previousState = previousMachine.getState()
-    const nextMachine = this.ensureMachine(canonicalNext)
-    nextMachine.dispatch({
-      type: 'executor_snapshot_received',
-      address: canonicalNext,
-      task: previousState.task ?? emptyRuntimeTaskSummary(canonicalNext),
-    })
-    if (previousState.goalStatus !== null) {
-      nextMachine.dispatch({
-        type: 'goal_status_received',
-        goalStatus: previousState.goalStatus,
-      })
-    }
-    if (previousState.executionPhase === 'starting') {
-      nextMachine.dispatch({ type: 'send_requested' })
-    } else if (previousState.executionPhase === 'running') {
-      nextMachine.dispatch({ type: 'executor_started' })
-    }
-    if (previousState.turnPhase === 'streaming') {
-      nextMachine.dispatch({ type: 'turn_started', turnId: previousState.activeTurnId })
-    } else if (previousState.turnPhase === 'submitting') {
-      nextMachine.dispatch({ type: 'send_requested' })
-    } else if (previousState.turnPhase === 'awaiting') {
-      nextMachine.dispatch({ type: 'send_accepted' })
-    }
-    if (previousState.turnOutcome) {
-      nextMachine.dispatch({
-        type: 'turn_settled',
-        outcome: previousState.turnOutcome,
-      })
-    }
-    if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
-    this.machines.delete(previousKey)
-    if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
+    this.mergeMachineIntoAddress(previousKey, previousMachine, canonicalNext)
     this.publish()
   }
 
@@ -389,22 +356,56 @@ export class RuntimeTaskLifecycleStore {
       const address = machine.getState().address
       if (address.deviceId !== alias) continue
       const nextAddress = { ...address, deviceId: canonical }
-      const nextKey = getRuntimeTaskLifecycleKey(nextAddress)
-      if (!this.machines.has(nextKey)) {
-        this.machines.delete(key)
-        this.machines.set(nextKey, machine)
-        machine.dispatch({
-          type: 'executor_snapshot_received',
-          address: nextAddress,
-          task: machine.getState().task ?? emptyRuntimeTaskSummary(nextAddress),
-        })
-      } else {
-        this.machines.delete(key)
-      }
-      if (this.currentTaskKey === key) this.currentTaskKey = nextKey
+      this.mergeMachineIntoAddress(key, machine, nextAddress)
       changed = true
     }
     return changed
+  }
+
+  private mergeMachineIntoAddress(
+    previousKey: string,
+    previousMachine: RuntimeTaskMachine,
+    nextAddress: RuntimeTaskAddress
+  ): void {
+    const previousState = previousMachine.getState()
+    const nextKey = getRuntimeTaskLifecycleKey(nextAddress)
+    const nextMachine = this.ensureMachine(nextAddress)
+    const nextTask = nextMachine.getState().task
+    const previousTask = previousState.task
+    if (!nextTask || (previousTask && shouldReplaceRuntimeTaskProjection(nextTask, previousTask))) {
+      nextMachine.dispatch({
+        type: 'executor_snapshot_received',
+        address: nextAddress,
+        task: previousTask ?? emptyRuntimeTaskSummary(nextAddress),
+      })
+    }
+    if (previousState.goalStatus !== null) {
+      nextMachine.dispatch({
+        type: 'goal_status_received',
+        goalStatus: previousState.goalStatus,
+      })
+    }
+    if (previousState.executionPhase === 'starting') {
+      nextMachine.dispatch({ type: 'send_requested' })
+    } else if (previousState.executionPhase === 'running') {
+      nextMachine.dispatch({ type: 'executor_started' })
+    }
+    if (previousState.turnPhase === 'streaming') {
+      nextMachine.dispatch({ type: 'turn_started', turnId: previousState.activeTurnId })
+    } else if (previousState.turnPhase === 'submitting') {
+      nextMachine.dispatch({ type: 'send_requested' })
+    } else if (previousState.turnPhase === 'awaiting') {
+      nextMachine.dispatch({ type: 'send_accepted' })
+    }
+    if (previousState.turnOutcome) {
+      nextMachine.dispatch({
+        type: 'turn_settled',
+        outcome: previousState.turnOutcome,
+      })
+    }
+    if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
+    this.machines.delete(previousKey)
+    if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
 
   private publish(): void {

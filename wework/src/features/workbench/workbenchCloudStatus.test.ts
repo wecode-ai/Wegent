@@ -53,18 +53,26 @@ function runtimeWork(deviceId: string): RuntimeWorkListResponse {
 }
 
 describe('mergeRuntimeWorkLists', () => {
-  test('is idempotent when the same cloud snapshot is merged repeatedly', () => {
+  test('is idempotent while preserving the same task ID on distinct devices', () => {
     const localWork = runtimeWork('local-device')
     const cloudWork = runtimeWork('remote-device')
 
     const once = mergeRuntimeWorkLists(localWork, cloudWork)
     const twice = mergeRuntimeWorkLists(once, cloudWork)
 
-    expect(once.totalTasks).toBe(1)
-    expect(twice.totalTasks).toBe(1)
+    expect(once.totalTasks).toBe(2)
+    expect(twice.totalTasks).toBe(2)
     expect(twice.projects).toHaveLength(1)
-    expect(twice.projects[0].deviceWorkspaces).toHaveLength(1)
-    expect(twice.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)).toEqual(['task-1'])
+    expect(twice.projects[0].deviceWorkspaces).toHaveLength(2)
+    expect(
+      twice.projects[0].deviceWorkspaces.map(deviceWorkspace => [
+        deviceWorkspace.deviceId,
+        deviceWorkspace.tasks.map(task => task.taskId),
+      ])
+    ).toEqual([
+      ['local-device', ['task-1']],
+      ['remote-device', ['task-1']],
+    ])
   })
 
   test('keeps distinct tasks from different devices in the same project', () => {
@@ -172,6 +180,42 @@ describe('mergeRuntimeWorkLists', () => {
       }),
     ])
     expect(merged.totalTasks).toBe(1)
+  })
+
+  test('keeps completed primary lifecycle state over a stale inactive secondary projection', () => {
+    const completedProjection = runtimeWork('local-device')
+    completedProjection.projects[0].deviceWorkspaces[0].tasks[0] = {
+      taskId: 'task-1',
+      workspacePath: '/workspace/repo',
+      title: 'Completed',
+      runtime: 'claude_code',
+      running: false,
+      status: 'active',
+      completedAt: 1_786_686_568_931,
+      updatedAt: 1_786_686_568_931,
+    }
+    const staleProjection = runtimeWork('local-device')
+    staleProjection.projects[0].deviceWorkspaces[0].tasks[0] = {
+      taskId: 'task-1',
+      workspacePath: '/workspace/repo',
+      title: 'Stale',
+      runtime: 'claude_code',
+      running: false,
+      status: 'active',
+      updatedAt: 1_786_686_569_000,
+    }
+
+    const merged = mergeRuntimeWorkLists(completedProjection, staleProjection)
+
+    expect(merged.projects[0].deviceWorkspaces[0].tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'task-1',
+        title: 'Completed',
+        running: false,
+        status: 'done',
+        completedAt: 1_786_686_568_931,
+      }),
+    ])
   })
 
   test('keeps mapped project workspaces without tasks so the first task has a target', () => {
@@ -500,7 +544,7 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
-  test('derives runtime work from last good cloud snapshot without duplicating tasks', () => {
+  test('derives runtime work from the last good cloud snapshot without repeated duplication', () => {
     const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['runtimeWork'])
     const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
       runtimeWork: { status: 'fulfilled', value: runtimeWork('remote-device') },
@@ -508,8 +552,8 @@ describe('cloud runtime sync state', () => {
     const once = selectRuntimeWorkView(runtimeWork('local-device'), ready)
     const twice = selectRuntimeWorkView(once, ready)
 
-    expect(once.totalTasks).toBe(1)
-    expect(twice.totalTasks).toBe(1)
+    expect(once.totalTasks).toBe(2)
+    expect(twice.totalTasks).toBe(2)
   })
 
   test('hides remote work while the cloud connection is explicitly disconnected', () => {

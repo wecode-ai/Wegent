@@ -199,21 +199,27 @@ function mergeRuntimeWorkPreservingTaskOrder(
   current: RuntimeWorkListResponse | null | undefined,
   next: RuntimeWorkListResponse | null
 ): RuntimeWorkListResponse | null {
-  if (!current || !next) return next
+  const normalizedCurrent = current ? normalizeRuntimeWorkTasks(current) : null
+  const normalizedNext = next ? normalizeRuntimeWorkTasks(next) : null
+  if (!normalizedCurrent || !normalizedNext) return normalizedNext
 
   const nextProjectTaskKeys = new Map(
-    next.projects.map(projectWork => [
+    normalizedNext.projects.map(projectWork => [
       runtimeProjectUiId(projectWork.project),
       collectRuntimeTaskKeys(projectWork.deviceWorkspaces),
     ])
   )
-  const nextChatTaskKeys = collectRuntimeTaskKeys(next.chats)
+  const nextChatTaskKeys = collectRuntimeTaskKeys(normalizedNext.chats)
 
   const mergeProjectWorkspace = (
     projectWork: RuntimeProjectWork,
     workspace: RuntimeDeviceWorkspace
   ): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingProjectRuntimeWorkspace(current, projectWork, workspace)
+    const currentWorkspace = findMatchingProjectRuntimeWorkspace(
+      normalizedCurrent,
+      projectWork,
+      workspace
+    )
     if (!currentWorkspace) return workspace
     const resolvedTaskKeys =
       nextProjectTaskKeys.get(runtimeProjectUiId(projectWork.project)) ?? new Set<string>()
@@ -229,7 +235,7 @@ function mergeRuntimeWorkPreservingTaskOrder(
   }
 
   const mergeChatWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingChatRuntimeWorkspace(current, workspace)
+    const currentWorkspace = findMatchingChatRuntimeWorkspace(normalizedCurrent, workspace)
     if (!currentWorkspace) return workspace
     return {
       ...workspace,
@@ -243,8 +249,8 @@ function mergeRuntimeWorkPreservingTaskOrder(
   }
 
   const projects = preserveMissingOptimisticProjects(
-    current.projects,
-    next.projects.map(project => ({
+    normalizedCurrent.projects,
+    normalizedNext.projects.map(project => ({
       ...project,
       deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
         mergeProjectWorkspace(project, workspace)
@@ -253,12 +259,12 @@ function mergeRuntimeWorkPreservingTaskOrder(
     nextProjectTaskKeys
   )
   const chats = preserveMissingOptimisticWorkspaces(
-    current.chats,
-    next.chats.map(mergeChatWorkspace),
+    normalizedCurrent.chats,
+    normalizedNext.chats.map(mergeChatWorkspace),
     nextChatTaskKeys
   )
   const merged = {
-    ...next,
+    ...normalizedNext,
     projects,
     chats,
   }
@@ -266,6 +272,21 @@ function mergeRuntimeWorkPreservingTaskOrder(
   return {
     ...merged,
     totalTasks: countRuntimeWorkTasks(merged),
+  }
+}
+
+function normalizeRuntimeWorkTasks(runtimeWork: RuntimeWorkListResponse): RuntimeWorkListResponse {
+  const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.map(normalizeRuntimeTaskSummary),
+  })
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
+    })),
+    chats: runtimeWork.chats.map(normalizeWorkspace),
   }
 }
 
@@ -325,7 +346,7 @@ function mergeRuntimeTasks(
   deviceId: string,
   resolvedTaskKeys: ReadonlySet<string>
 ) {
-  const nextById = new Map(nextTasks.map(task => [task.taskId, normalizeRuntimeTaskSummary(task)]))
+  const nextById = new Map(nextTasks.map(task => [task.taskId, task]))
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
@@ -340,7 +361,7 @@ function mergeRuntimeTasks(
     })
     .filter((task): task is RuntimeDeviceWorkspace['tasks'][number] => Boolean(task))
   const mergedIds = new Set(merged.map(task => task.taskId))
-  nextTasks.forEach(task => {
+  nextById.forEach(task => {
     if (!mergedIds.has(task.taskId)) {
       merged.push(task)
     }

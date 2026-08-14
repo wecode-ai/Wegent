@@ -373,7 +373,7 @@ describe('workbenchReducer', () => {
       runtimeWork,
     })
 
-    expect(state.runtimeWork).toBe(runtimeWork)
+    expect(state.runtimeWork).toEqual(runtimeWork)
     expect(state.projects[0].tasks).toEqual([])
   })
 
@@ -1418,6 +1418,44 @@ describe('workbenchReducer', () => {
       refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)
     ).toEqual(['attachment-only-new', 'attachment-only-existing'])
     expect(refreshed.runtimeWork?.totalTasks).toBe(2)
+  })
+
+  test('normalizes completed task projections when the current work list is empty', () => {
+    const refreshed = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/repo',
+            available: true,
+            tasks: [
+              {
+                taskId: 'completed-task',
+                workspacePath: '/workspace/repo',
+                title: 'Completed task',
+                runtime: 'claude_code',
+                running: false,
+                status: 'active',
+                completedAt: 1_786_686_568_931,
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.chats[0].tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'completed-task',
+        running: false,
+        status: 'done',
+        turnStatus: 'completed',
+        completedAt: 1_786_686_568_931,
+      }),
+    ])
   })
 
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {

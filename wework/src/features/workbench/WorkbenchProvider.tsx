@@ -274,10 +274,11 @@ export function WorkbenchProvider({
     () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),
     [providedLifecycleStore, user.id]
   )
+  const canSyncRuntimeTaskLifecycle = useStableEvent(() => syncRuntimeTaskLifecycle)
   const lifecycleStore = useMemo(
     () =>
-      createRuntimeTaskLifecycleOwnershipView(sharedLifecycleStore, () => syncRuntimeTaskLifecycle),
-    [sharedLifecycleStore, syncRuntimeTaskLifecycle]
+      createRuntimeTaskLifecycleOwnershipView(sharedLifecycleStore, canSyncRuntimeTaskLifecycle),
+    [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
@@ -326,10 +327,10 @@ export function WorkbenchProvider({
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
-  }, [lifecycleStore, state.runtimeWork])
+  }, [lifecycleStore, state.runtimeWork, syncRuntimeTaskLifecycle])
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
-  }, [lifecycleStore, state.currentRuntimeTask])
+  }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
   useEffect(() => {
     const trackingApis = [
       resolvedServices.projectSpaceApis?.local,

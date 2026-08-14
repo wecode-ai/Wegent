@@ -876,7 +876,11 @@ function mergeRuntimeTasks(
   const tasks = new Map<string, RuntimeTaskSummary>()
 
   const upsertTask = (task: RuntimeTaskSummary) => {
-    tasks.set(task.taskId, normalizeRuntimeTaskSummary(task))
+    const candidate = normalizeRuntimeTaskSummary(task)
+    const current = tasks.get(candidate.taskId)
+    if (!current || shouldReplaceRuntimeTaskProjection(current, candidate)) {
+      tasks.set(candidate.taskId, candidate)
+    }
   }
 
   primaryTasks.forEach(upsertTask)
@@ -958,12 +962,7 @@ function runtimeTaskProjectionAliases(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
 ): Set<string> {
-  const normalizedPath =
-    (task.workspacePath || workspace.workspacePath).trim().replace(/\/+$/u, '') || '/'
-  return new Set([
-    `${task.taskId}\0device:${workspace.deviceId}`,
-    `${task.taskId}\0path:${normalizedPath}`,
-  ])
+  return new Set([`${task.taskId}\0device:${workspace.deviceId}`])
 }
 
 function runtimeProjectKey(project: RuntimeProjectWork): string {

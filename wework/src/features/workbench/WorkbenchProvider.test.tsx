@@ -2109,7 +2109,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    render(
+    const { rerender } = render(
       <WorkbenchProvider
         lifecycleStore={lifecycleStore}
         services={services}
@@ -2145,6 +2145,47 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'shared-task',
       })
     ).toBeNull()
+    const runtimeSubscriptionCount = subscribe.mock.calls.filter(([handlers]) =>
+      hasRuntimeStreamHandler(handlers)
+    ).length
+
+    rerender(
+      <WorkbenchProvider
+        lifecycleStore={lifecycleStore}
+        services={services}
+        syncRuntimeTaskLifecycle
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+      >
+        <BootstrapProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(
+        lifecycleStore.getTask({
+          deviceId: 'device-1',
+          taskId: 'shared-task',
+        })
+      ).not.toBeNull()
+    )
+    expect(
+      subscribe.mock.calls.filter(([handlers]) => hasRuntimeStreamHandler(handlers))
+    ).toHaveLength(runtimeSubscriptionCount)
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'shared-task',
+        subtaskId: 'owned-turn',
+        shellType: 'ClaudeCode',
+        deviceId: 'device-1',
+      })
+    })
+    expect(
+      lifecycleStore.getTask({
+        deviceId: 'device-1',
+        taskId: 'shared-task',
+      })?.turn.id
+    ).toBe('owned-turn')
   })
 
   test('keeps the runtime event subscription across connected user preference updates', async () => {

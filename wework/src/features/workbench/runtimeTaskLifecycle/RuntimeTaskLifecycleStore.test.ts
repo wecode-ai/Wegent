@@ -119,6 +119,65 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect([...store.getSnapshot().tasks.keys()]).toEqual([getRuntimeTaskLifecycleKey(address)])
   })
 
+  test('preserves an alias streaming turn when the canonical machine already exists', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const remoteAddress = {
+      ...address,
+      deviceId: 'cloud-device',
+      runtime: 'claude_code',
+    }
+    const completedAt = 1_786_692_066_192
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          runtime: 'claude_code',
+          status: 'done',
+          running: false,
+          completedAt,
+          turnStatus: 'completed',
+        })
+      )
+    )
+    store.sendRequested(remoteAddress)
+    store.sendAccepted(remoteAddress)
+    store.turnStarted(remoteAddress, 'streaming-turn')
+
+    store.syncRuntimeWork({
+      projects: [
+        {
+          project: { key: 'project-1', id: 1, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: address.deviceId,
+              remoteHostId: remoteAddress.deviceId,
+              available: true,
+              workspacePath: address.workspacePath ?? '',
+              tasks: [
+                task({
+                  runtime: 'claude_code',
+                  status: 'done',
+                  running: false,
+                  completedAt,
+                  turnStatus: 'completed',
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+
+    expect(store.getTask(remoteAddress)?.key).toBe(getRuntimeTaskLifecycleKey(address))
+    expect(store.getTask(address)?.turn).toMatchObject({
+      phase: 'streaming',
+      id: 'streaming-turn',
+    })
+    expect(store.getTask(address)?.derived.isRunning).toBe(true)
+    expect([...store.getSnapshot().tasks.keys()]).toEqual([getRuntimeTaskLifecycleKey(address)])
+  })
+
   test('reconciles an optimistic start into a queued executor snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.sendRequested(address)
