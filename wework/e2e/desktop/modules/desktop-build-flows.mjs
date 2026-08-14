@@ -519,12 +519,11 @@ async function verifyFailedCloudConnectionCanDisconnect(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="settings-cloud-disconnect-button"]')
-  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
-    text: '连接云端',
+  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
-  await control.command('click', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('click', '[data-testid="settings-cloud-connect-button"]')
   await control.command('fill', '[data-testid="cloud-backend-url-input"]', {
     value: 'http://127.0.0.1:1',
   })
@@ -537,8 +536,7 @@ async function verifyFailedCloudConnectionCanDisconnect(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="cloud-disconnect-button"]')
-  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
-    text: '连接云端',
+  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForSnapshot(
