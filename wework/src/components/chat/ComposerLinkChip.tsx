@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { openExternalUrl } from '@/lib/external-links'
-import { GENERIC_LINK_ICON_SRC, resolveFavicon } from '@/lib/favicon-resolver'
+import {
+  faviconPlaceholderUrl,
+  GENERIC_LINK_ICON_SRC,
+  resolveAndProbeIcon,
+  resolveFavicon,
+} from '@/lib/favicon-resolver'
 import { getRecognizedLink } from '@/lib/link-preview'
 
 export interface ComposerLinkChipPayload {
@@ -27,16 +32,16 @@ function LinkChipIcon({
   useEffect(() => {
     if (provider !== 'web') return
     let cancelled = false
-    void resolveFavicon(url).then(favicon => {
-      if (favicon && favicon !== defaultIconUrl && !cancelled) {
-        setIconUrl(favicon)
-        setIconFailed(false)
-      }
-    })
+    resolveAndProbeIcon(
+      faviconPlaceholderUrl(url),
+      resolveFavicon(url),
+      setIconUrl,
+      () => cancelled
+    )
     return () => {
       cancelled = true
     }
-  }, [provider, url, defaultIconUrl])
+  }, [provider, url])
 
   if (iconUrl && !iconFailed) {
     return (

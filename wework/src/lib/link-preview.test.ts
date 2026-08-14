@@ -8,7 +8,7 @@ describe('link preview helpers', () => {
       url: 'https://github.com/wecode-ai/Wegent/actions',
       domain: 'github.com',
       displayUrl: 'github.com/wecode-ai/Wegent/actions',
-      iconUrl: 'https://github.com/favicon.ico',
+      iconUrl: '',
     })
   })
 
@@ -88,7 +88,7 @@ describe('recognized links', () => {
     const link = getRecognizedLink('https://example.com/docs/page')
     expect(link?.label).toBe('example.com/docs/page')
     expect(link?.provider).toBe('web')
-    expect(link?.iconUrl).toBe('https://example.com/favicon.ico')
+    expect(link?.iconUrl).toBe('')
     expect(link?.isAbbreviated).toBe(true)
     expect(link?.fullUrl).toBe('https://example.com/docs/page')
   })
@@ -119,10 +119,9 @@ describe('recognized links', () => {
     expect(getRecognizedLink('https://example.com/a,1')?.label).toBe('example.com/a,1')
   })
 
-  test('keeps the port in the label and favicon guess', () => {
+  test('keeps the port in the label', () => {
     const link = getRecognizedLink('http://localhost:3000/docs')
     expect(link?.label).toBe('localhost:3000/docs')
-    expect(link?.iconUrl).toBe('http://localhost:3000/favicon.ico')
   })
 
   test('recognizes FQDN github URLs with a trailing-dot hostname', () => {

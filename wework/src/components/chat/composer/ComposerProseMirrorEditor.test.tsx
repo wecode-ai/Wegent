@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Activity, createRef, useState } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { GENERIC_LINK_ICON_SRC, resolveFavicon } from '@/lib/favicon-resolver'
 import { GITHUB_ICON } from '@/lib/link-preview'
@@ -16,6 +16,24 @@ vi.mock('@/lib/favicon-resolver', async () => {
   const actual =
     await vi.importActual<typeof import('@/lib/favicon-resolver')>('@/lib/favicon-resolver')
   return { ...actual, resolveFavicon: vi.fn(async () => undefined) }
+})
+
+let resolveImageOnLoad = false
+class MockImage {
+  onload: (() => void) | null = null
+  set src(value: string) {
+    // jsdom never loads images; only resolve the probe when the test opts in.
+    if (resolveImageOnLoad) this.onload?.()
+  }
+}
+
+beforeEach(() => {
+  resolveImageOnLoad = false
+  vi.stubGlobal('Image', MockImage)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
@@ -637,10 +655,11 @@ test('renders generic web URLs as recognized inline link chips', () => {
   expect(chip).toHaveClass('composer-link-node', 'composer-mention-link')
   expect(chip).toHaveAttribute('data-composer-link-url', 'https://example.com/page')
   expect(chip).toHaveTextContent('example.com/page')
-  expect(chip.querySelector('img')).toHaveAttribute('src', 'https://example.com/favicon.ico')
+  expect(chip.querySelector('img')).toHaveAttribute('src', GENERIC_LINK_ICON_SRC)
 })
 
 test('upgrades the web link chip favicon when the backend resolves one', async () => {
+  resolveImageOnLoad = true
   vi.mocked(resolveFavicon).mockResolvedValue('https://cdn.example.com/real-icon.png')
   renderEditor('Visit https://example.com/page')
 
@@ -661,8 +680,8 @@ test('keeps non-http strings as plain text', () => {
   expect(screen.getByTestId('composer-editor')).toHaveTextContent('example.com/page')
 })
 
-test('composer link chip falls back to a generic icon when the favicon fails to load', () => {
-  renderEditor('Visit https://example.com/page')
+test('composer link chip falls back to a generic icon when a site icon fails to load', () => {
+  renderEditor('[产品发布页](wegent-sites-project://prj_product)')
 
   const chip = screen.getByTestId('composer-link-chip')
   const img = chip.querySelector('img')

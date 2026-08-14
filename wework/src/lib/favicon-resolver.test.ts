@@ -55,13 +55,24 @@ describe('favicon-resolver', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  test('returns undefined and caches the failure when the backend call fails', async () => {
+  test('does not cache network failures so favicons recover once the backend is reachable', async () => {
     const { resolveFavicon } = await loadResolver()
     fetchMock.mockRejectedValueOnce(new Error('network down'))
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        url: 'https://foo.example/x',
+        favicon: 'https://foo.example/icon.png',
+        success: true,
+      }),
+    })
 
     await expect(resolveFavicon('https://foo.example/x')).resolves.toBeUndefined()
-    await resolveFavicon('https://foo.example/y')
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await expect(resolveFavicon('https://foo.example/y')).resolves.toBe(
+      'https://foo.example/icon.png'
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   test('caches a success:false response without retrying within the TTL', async () => {
@@ -98,5 +109,50 @@ describe('favicon-resolver', () => {
     const { resolveFavicon } = await loadResolver()
     await expect(resolveFavicon('not a url')).resolves.toBeUndefined()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('builds the offline favicon placeholder from a URL', async () => {
+    const { faviconPlaceholderUrl } = await loadResolver()
+    expect(faviconPlaceholderUrl('https://example.com/docs')).toBe(
+      'https://example.com/favicon.ico'
+    )
+    expect(faviconPlaceholderUrl('http://localhost:3000/x')).toBe(
+      'http://localhost:3000/favicon.ico'
+    )
+    expect(faviconPlaceholderUrl('wegent-sites-project://prj_01')).toBeUndefined()
+    expect(faviconPlaceholderUrl('not a url')).toBeUndefined()
+  })
+
+  test('shows the placeholder icon before the backend favicon', async () => {
+    const { faviconPlaceholderUrl, resolveAndProbeIcon, resolveFavicon } = await loadResolver()
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        url: 'https://example.com/x',
+        favicon: 'https://example.com/icon.png',
+        success: true,
+      }),
+    })
+    vi.stubGlobal(
+      'Image',
+      class {
+        onload: (() => void) | null = null
+        set src(value: string) {
+          this.onload?.()
+        }
+      }
+    )
+
+    const shown: string[] = []
+    resolveAndProbeIcon(
+      faviconPlaceholderUrl('https://example.com/docs'),
+      resolveFavicon('https://example.com/docs'),
+      url => shown.push(url),
+      () => false
+    )
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(shown).toEqual(['https://example.com/favicon.ico', 'https://example.com/icon.png'])
   })
 })

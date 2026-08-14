@@ -8,7 +8,7 @@ export const GENERIC_LINK_ICON_SRC =
 
 const SUCCESS_TTL_MS = 60 * 60 * 1000
 const NO_FAVICON_TTL_MS = 60 * 60 * 1000
-const FAILURE_TTL_MS = 5 * 60 * 1000
+const FAILED_RESOLUTION_TTL_MS = 30 * 60 * 1000
 
 interface FaviconCacheEntry {
   favicon: string | undefined
@@ -28,10 +28,11 @@ const pendingByDomain = new Map<string, Promise<string | undefined>>()
 
 /**
  * Best-effort favicon lookup for a URL. Returns the site's real favicon when
- * the backend resolves it, otherwise undefined so callers keep the
- * `/favicon.ico` placeholder. Successful and "no favicon" results are cached
- * for an hour; failures only briefly, so a transient backend blip does not
- * disable favicons for the whole session.
+ * the backend resolves it, otherwise undefined so callers keep the generic
+ * link icon. Successful and "no favicon" results are cached for an hour, and
+ * a reachable backend's failed resolutions for 30 minutes; network failures
+ * are NOT cached, so favicons recover as soon as the backend is reachable
+ * again instead of being disabled for the whole session.
  */
 export function resolveFavicon(url: string): Promise<string | undefined> {
   let domain: string | undefined
@@ -57,17 +58,71 @@ export function resolveFavicon(url: string): Promise<string | undefined> {
     .get<UrlMetadataResult>(`/utils/url-metadata?url=${encodeURIComponent(url)}`)
     .then(result => {
       const favicon = result.favicon || undefined
-      const ttl = result.success ? (favicon ? SUCCESS_TTL_MS : NO_FAVICON_TTL_MS) : FAILURE_TTL_MS
+      const ttl = result.success
+        ? favicon
+          ? SUCCESS_TTL_MS
+          : NO_FAVICON_TTL_MS
+        : FAILED_RESOLUTION_TTL_MS
       faviconCache.set(domain, { favicon, expiresAt: Date.now() + ttl })
       return favicon
     })
-    .catch(() => {
-      faviconCache.set(domain, { favicon: undefined, expiresAt: Date.now() + FAILURE_TTL_MS })
-      return undefined
-    })
+    .catch(() => undefined)
     .finally(() => {
       pendingByDomain.delete(domain)
     })
   pendingByDomain.set(domain, request)
   return request
+}
+
+/**
+ * The site's conventional `/favicon.ico` URL, derived from the URL's own
+ * scheme, host and port. It loads directly from the site without the backend,
+ * so it can show a site-specific icon even when the backend is unreachable.
+ */
+export function faviconPlaceholderUrl(url: string): string | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+  const domain = normalizeHostname(parsed.hostname)
+  if (!domain) return undefined
+  const port = parsed.port ? `:${parsed.port}` : ''
+  return `${parsed.protocol}//${domain}${port}/favicon.ico`
+}
+
+/**
+ * Probes the offline `/favicon.ico` placeholder and the backend-resolved
+ * favicon, showing each only once it has actually loaded so the generic icon
+ * stays as the instant base (no blank flash). The backend favicon, once
+ * loaded, wins over the placeholder. `faviconPromise` is passed in so callers
+ * can provide a mocked resolution in tests.
+ */
+export function resolveAndProbeIcon(
+  placeholder: string | undefined,
+  faviconPromise: Promise<string | undefined>,
+  show: (iconUrl: string) => void,
+  isDisposed: () => boolean
+): void {
+  let backendIconShown = false
+  const probe = (candidate: string, onLoad: () => void): void => {
+    const image = new Image()
+    image.onload = onLoad
+    image.src = candidate
+  }
+  if (placeholder) {
+    probe(placeholder, () => {
+      if (!isDisposed() && !backendIconShown) show(placeholder)
+    })
+  }
+  void faviconPromise.then(favicon => {
+    if (!favicon || isDisposed()) return
+    probe(favicon, () => {
+      if (isDisposed()) return
+      backendIconShown = true
+      show(favicon)
+    })
+  })
 }
