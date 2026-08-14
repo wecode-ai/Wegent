@@ -257,6 +257,17 @@ When Codex creates an HTML visualization in the task workspace and references it
 - Only `.html`, `.htm`, or `.xhtml` files are accepted. Malformed references, paths containing parent traversal, and directives inside code fences remain normal text.
 - Wework wraps HTML fragments in a UTF-8 visualization host, supplies the Codex visualization theme variables, and automatically sizes the iframe to the fragment content.
 
+### Mermaid and PlantUML Diagrams
+
+When a model emits a `mermaid`, `mmd`, `plantuml`, or `puml` code block, Wework renders the diagram directly while the response is streaming. No intermediate HTML file is required. The diagram follows the active light or dark theme and automatically fits the conversation width.
+
+Two actions appear in the lower-right corner:
+
+- **Copy image** writes the current diagram to the system clipboard as a PNG.
+- **Save image** opens the system save dialog and saves the PNG locally.
+
+The workspace file panel also previews `.mermaid`, `.mmd`, `.plantuml`, and `.puml` files directly with the same copy and save actions.
+
 ## Cleaning Stale Runtimes
 
 Admins can manually clean up code task runtimes that have not been updated for a long time to release execution container resources. Cleanup only deletes runtime Pods or containers. It does not delete Task records, conversation history, or code changes.
