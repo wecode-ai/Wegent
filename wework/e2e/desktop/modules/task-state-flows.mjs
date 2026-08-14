@@ -64,6 +64,13 @@ async function verifyPriorityFilter({ composerSelector, control }) {
   await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `[data-testid="runtime-local-task-running-${requestInputTaskId}"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
 
   try {
     await control.command('click', '[data-testid="new-chat-button"]')
@@ -124,6 +131,13 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === requestInputTaskId &&
+        snapshot.pane?.status?.isBusy === false,
+      'The handled priority task did not settle before reopening the filter'
+    )
     await control.command(
       'waitFor',
       `[data-testid="runtime-priority-list"] [data-testid="${requestInputTaskRowTestId}"]`,
