@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
+use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
 #[test]
@@ -309,6 +309,34 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
 
         let _ = fs::remove_file(index_path);
     }
+}
+
+#[test]
+fn forked_task_inherits_project_routing_metadata() {
+    let mut source = RuntimeTaskLink::new_pending_with_runtime(
+        "task-1".to_owned(),
+        "/tmp/project/worktree".to_owned(),
+        "Source".to_owned(),
+        "codex",
+    );
+    source.runtime_project_key = Some("project-1".to_owned());
+    source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+
+    let forked = forked_task_link(
+        &source,
+        "task-2".to_owned(),
+        "thread-2".to_owned(),
+        "Forked".to_owned(),
+        json!({"taskId": "task-1", "lastTurnId": "turn-1"}),
+    );
+
+    assert_eq!(forked.runtime_project_key, source.runtime_project_key);
+    assert_eq!(
+        forked.runtime_workspace_roots,
+        source.runtime_workspace_roots
+    );
+    assert_eq!(forked.workspace_path, source.workspace_path);
+    assert_eq!(forked.runtime, source.runtime);
 }
 
 #[test]

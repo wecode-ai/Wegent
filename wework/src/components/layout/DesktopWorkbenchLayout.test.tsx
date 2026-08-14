@@ -6740,6 +6740,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(listWorkspaceEntries).toHaveBeenCalledWith(
         'workspace-device',
+        '/workspace/projects/abc/Wegent',
         '/workspace/projects/abc/Wegent'
       )
     )
@@ -6974,7 +6975,11 @@ describe('DesktopWorkbenchLayout', () => {
     await user.click(screen.getByTitle('/workspace/api'))
 
     await waitFor(() =>
-      expect(listWorkspaceEntries).toHaveBeenCalledWith('workspace-cloud-device', '/workspace/api')
+      expect(listWorkspaceEntries).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/api',
+        '/workspace/api'
+      )
     )
     expect(screen.getByTestId('workspace-file-root-selector')).toHaveTextContent('api')
     expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/api')
@@ -7067,7 +7072,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
-      '/workspace/project/README.md'
+      '/workspace/project/README.md',
+      '/workspace/project'
     )
   })
 
@@ -7126,7 +7132,11 @@ describe('DesktopWorkbenchLayout', () => {
     await user.click(screen.getByTestId('assistant-markdown-link'))
 
     await waitFor(() =>
-      expect(listWorkspaceEntries).toHaveBeenCalledWith('local-device', '/workspace/project/docs')
+      expect(listWorkspaceEntries).toHaveBeenCalledWith(
+        'local-device',
+        '/workspace/project/docs',
+        '/workspace/project/docs'
+      )
     )
     expect(screen.getByTestId('workspace-file-path')).toHaveTextContent('/workspace/project/docs')
     expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
@@ -7193,9 +7203,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
+      '/Users/me/.wework/workspace/attachments/draft/42',
       '/Users/me/.wework/workspace/attachments/draft/42'
     )
-    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(localDevice.device_id, imagePath, 0)
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      localDevice.device_id,
+      imagePath,
+      0,
+      '/Users/me/.wework/workspace/attachments/draft/42'
+    )
   })
 
   test('opens a skill from the empty composer on the real local device', async () => {
@@ -7237,9 +7253,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
+      '/Users/me/.agents/skills/gmail',
       '/Users/me/.agents/skills/gmail'
     )
-    expect(readWorkspaceTextFile).toHaveBeenCalledWith(localDevice.device_id, skillPath)
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      localDevice.device_id,
+      skillPath,
+      '/Users/me/.agents/skills/gmail'
+    )
   })
 
   test('opens a sent skill on the local device while the project workspace is remote', async () => {
@@ -7293,9 +7314,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
+      '/Users/me/.agents/skills/gmail',
       '/Users/me/.agents/skills/gmail'
     )
-    expect(readWorkspaceTextFile).toHaveBeenCalledWith(localDevice.device_id, skillPath)
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      localDevice.device_id,
+      skillPath,
+      '/Users/me/.agents/skills/gmail'
+    )
     expect(readWorkspaceTextFile).not.toHaveBeenCalledWith(
       workspacePanelState.devices[0].device_id,
       skillPath
@@ -7690,7 +7716,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByText('main.ts')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenLastCalledWith(
       'workspace-cloud-device',
-      '/workspace/project/src'
+      '/workspace/project/src',
+      '/workspace/project'
     )
   })
 
@@ -7804,6 +7831,86 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-markdown-preview')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
     expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the previous file visible while the next file loads', async () => {
+    const user = userEvent.setup()
+    const nextFile = createDeferred<{
+      path: string
+      name: string
+      content: string
+      editable: boolean
+      revision: string
+      truncated: boolean
+      size: number
+    }>()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'first.ts',
+          path: '/workspace/project/first.ts',
+          isDirectory: false,
+          size: 25,
+          modifiedAt: null,
+        },
+        {
+          name: 'second.ts',
+          path: '/workspace/project/second.ts',
+          isDirectory: false,
+          size: 26,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn((_deviceId: string, path: string) => {
+      if (path.endsWith('/second.ts')) return nextFile.promise
+      return Promise.resolve({
+        path,
+        name: 'first.ts',
+        content: 'export const first = true',
+        editable: true,
+        revision: 'revision-first',
+        truncated: false,
+        size: 25,
+      })
+    })
+
+    render(
+      <FileWorkspacePanel
+        target={{
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/project',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('first.ts'))
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('first'))
+    await user.click(screen.getByText('second.ts'))
+
+    expect(getWorkspaceCodeViewText()).toContain('first')
+    expect(screen.getByTestId('workspace-file-preview-loading-indicator')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
+
+    await act(async () => {
+      nextFile.resolve({
+        path: '/workspace/project/second.ts',
+        name: 'second.ts',
+        content: 'export const second = true',
+        editable: true,
+        revision: 'revision-second',
+        truncated: false,
+        size: 26,
+      })
+    })
+
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('second'))
+    expect(screen.queryByTestId('workspace-file-preview-loading-indicator')).not.toBeInTheDocument()
   })
 
   test('workspace file panel edits and saves an editable text file', async () => {
@@ -9826,7 +9933,8 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(workspaceFileApi.listWorkspaceEntries).toHaveBeenCalledWith(
         expect.any(String),
-        '/Users/me/Wegent/.worktrees/a/docs'
+        '/Users/me/Wegent/.worktrees/a/docs',
+        '/Users/me/Wegent/.worktrees/a'
       )
     })
 

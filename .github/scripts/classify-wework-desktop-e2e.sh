@@ -18,6 +18,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  local-file-preview
   local-harness
   embedded-browser
 )
@@ -28,6 +29,7 @@ plugin_segments=(
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
 # longest to shortest so the five serial workers finish at similar times.
+# shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   core-task-flow
   model-routing,embedded-browser,telemetry-consent
@@ -35,6 +37,55 @@ cloud_shards=(
   resilience,goal-lifecycle,supervisor-lifecycle
   rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
 )
+# Keep the number of core desktop runners fixed as checkpoints grow. Each
+# runner reuses the same prebuilt application and executes its shard serially.
+# shellcheck disable=SC2054 # Each element is one comma-joined shard.
+core_shards=(
+  core-task-flow
+  model-routing,embedded-browser,local-harness
+  window-lifecycle,conversation-state,temporary-chat
+  resilience,goal-lifecycle,supervisor-lifecycle
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
+)
+
+validate_core_shards() {
+  declare -A known_segments=()
+  declare -A assigned_segments=()
+  local segment
+  for segment in "${core_segments[@]}"; do
+    if [[ -n "${known_segments[$segment]+set}" ]]; then
+      printf 'Duplicate core segment in catalog: %s\n' "$segment" >&2
+      return 1
+    fi
+    known_segments["$segment"]=true
+  done
+
+  local shard
+  for shard in "${core_shards[@]}"; do
+    local shard_segments
+    IFS=',' read -ra shard_segments <<< "$shard"
+    for segment in "${shard_segments[@]}"; do
+      if [[ -z "${known_segments[$segment]+set}" ]]; then
+        printf 'Unknown core segment in core_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      if [[ -n "${assigned_segments[$segment]+set}" ]]; then
+        printf 'Duplicate core segment in core_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      assigned_segments["$segment"]=true
+    done
+  done
+
+  for segment in "${core_segments[@]}"; do
+    if [[ -z "${assigned_segments[$segment]+set}" ]]; then
+      printf 'Core segment missing from core_shards: %s\n' "$segment" >&2
+      return 1
+    fi
+  done
+}
+
+validate_core_shards
 
 declare -A selected=()
 desktop_runner_changed=false
@@ -218,6 +269,20 @@ classify_wework_path() {
       return
       ;;
 
+    # Local file browsing, preview, editing, and review share one real-Tauri
+    # checkpoint so theme and loading regressions are covered together.
+    wework/src-tauri/src/local_workspace_files* | \
+      wework/src/tauri/localWorkspaceFiles* | \
+      wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
+      wework/src/components/layout/workspace-panels/WorkspaceFilePreview* | \
+      wework/src/components/layout/workspace-panels/WorkspaceFileTree* | \
+      wework/src/components/layout/workspace-panels/WorkspaceTextFileEditor* | \
+      wework/src/components/chat/FileChangesReviewPanel* | \
+      wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
+      select_target "core:local-file-preview"
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
@@ -290,15 +355,26 @@ build_matrix() {
   cloud_matrix_entries=()
   other_matrix_entries=()
 
-  local segment
-  for segment in "${core_segments[@]}"; do
-    if [[ "${selected[core:all]:-false}" == "true" || \
-      "${selected[core:$segment]:-false}" == "true" ]]; then
-      append_matrix_entry \
-        "core-$segment" \
-        "Core / $segment" \
-        e2e:desktop \
-        "$segment"
+  local shard_index
+  for shard_index in "${!core_shards[@]}"; do
+    local selected_segments=()
+    local shard_segments
+    IFS=',' read -ra shard_segments <<< "${core_shards[$shard_index]}"
+    local segment
+    for segment in "${shard_segments[@]}"; do
+      if [[ "${selected[core:all]:-false}" == "true" || \
+        "${selected[core:$segment]:-false}" == "true" ]]; then
+        selected_segments+=("$segment")
+      fi
+    done
+    if ((${#selected_segments[@]} > 0)); then
+      local joined_segments
+      joined_segments="$(IFS=,; printf '%s' "${selected_segments[*]}")"
+      local entry
+      printf -v entry \
+        '{"id":"core-%s","name":"Core / shard %s","segments":"%s"}' \
+        "$((shard_index + 1))" "$((shard_index + 1))" "$joined_segments"
+      core_matrix_entries+=("$entry")
     fi
   done
 
