@@ -92,6 +92,7 @@ print(json.dumps(result, ensure_ascii=False))
 "#;
 const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -120,6 +121,15 @@ def run(*args):
         check=False,
     )
 
+def is_authenticated(auth_result):
+    if auth_result.returncode == 0:
+        return True
+    if tool != "glab":
+        return False
+
+    output = "\n".join((auth_result.stdout, auth_result.stderr))
+    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
+
 try:
     version_result = run("--version")
     version = next(
@@ -141,7 +151,7 @@ except subprocess.TimeoutExpired:
 print(json.dumps({
     "tool": tool,
     "installed": True,
-    "authenticated": auth_result.returncode == 0,
+    "authenticated": is_authenticated(auth_result),
     "executablePath": executable,
     "version": version,
     "detectionError": None,
