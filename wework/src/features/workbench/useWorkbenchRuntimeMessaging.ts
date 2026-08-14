@@ -1474,8 +1474,8 @@ export function useWorkbenchRuntimeMessaging({
       options?: CreateTemporaryRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
       const message = input.trim()
-      if (!message) {
-        reportSendBlocked('请输入内容后再发送', undefined, options)
+      if (!message && !options?.attachments?.length) {
+        reportSendBlocked('请输入内容或添加附件后再发送', undefined, options)
         return false
       }
       const prepared = buildSendPayload(message, options?.attachments, options?.project)

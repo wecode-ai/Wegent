@@ -1032,7 +1032,6 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "side-chat-follow-up").await;
-    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1059,9 +1058,16 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(
         calls
             .iter()
+            .filter(|call| call["method"] == "thread/turns/list")
+            .count(),
+        0
+    );
+    assert_eq!(
+        calls
+            .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        2
+        0
     );
     assert_eq!(
         calls
@@ -1464,6 +1470,68 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
             .filter(|call| call["method"] == "turn/start")
             .count(),
         2
+    );
+}
+
+#[tokio::test]
+async fn runtime_tasks_reconcile_missing_turn_completion_after_thread_becomes_idle() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-idle-reconcile-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-idle-reconcile-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-idle-reconcile-log", "jsonl");
+    let fake_codex = write_fake_codex_idle_without_turn_completion(&log_path);
+    let (event_tx, mut events) = broadcast::channel(64);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-idle-reconcile",
+                "workspacePath": "/tmp/project",
+                "message": "turn becomes idle",
+                "executionRequest": {
+                    "task_id": 5301,
+                    "subtask_id": 6301,
+                    "prompt": "turn becomes idle",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+
+    assert_eq!(created["accepted"], true);
+    wait_for_response_event(&mut events, "response.failed", "turn-idle").await;
+    wait_until_task_idle(&handler, "local-task-idle-reconcile").await;
+    wait_for_method_count(&log_path, "thread/turns/list", 1).await;
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "initialize")
+            .count(),
+        1,
+        "idle reconciliation must not restart the shared app-server"
     );
 }
 
@@ -3228,6 +3296,9 @@ while IFS= read -r line; do
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
     *'"method":"thread/rollback"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
@@ -3305,6 +3376,7 @@ while IFS= read -r line; do
       turn_count=$((turn_count + 1))
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"thread/status/changed","params":{{"threadId":"thread-ephemeral","status":{{"type":"idle"}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
       ;;
   esac
@@ -3509,6 +3581,47 @@ while IFS= read -r line; do
         printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-failure-2","turnId":"turn-recovered","delta":"recovered","phase":"finalAnswer"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-failure-2","turn":{{"id":"turn-recovered","status":"completed"}}}}}}'
       fi
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_idle_without_turn_completion(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-idle-reconcile", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-idle"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-idle","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"thread/status/changed","params":{{"threadId":"thread-idle","status":{{"type":"active","activeFlags":[]}}}}}}'
+      printf '%s\n' '{{"method":"thread/status/changed","params":{{"threadId":"thread-idle","status":{{"type":"idle"}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-idle","status":"failed","itemsView":"notLoaded"}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
   esac
 done

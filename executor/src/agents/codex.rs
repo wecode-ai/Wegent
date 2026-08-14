@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
     future::Future,
+    io::Write,
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -16,6 +17,7 @@ use std::{
 use futures_util::future::BoxFuture;
 use serde_json::Map;
 use serde_json::{json, Value};
+use tempfile::NamedTempFile;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -1174,6 +1176,7 @@ struct CodexThreadPlan {
     start: CodexThreadStart,
     resume_requested: bool,
     fork_requested: bool,
+    _fork_rollout_snapshot: Option<NamedTempFile>,
 }
 
 fn codex_thread_plan(
@@ -1183,10 +1186,19 @@ fn codex_thread_plan(
     resume_thread_id: Option<&str>,
     request: &ExecutionRequest,
     launch_config: &CodexLaunchConfig,
-) -> CodexThreadPlan {
+) -> Result<CodexThreadPlan, String> {
     let direct_thread_id = direct_thread_id
         .map(str::trim)
         .filter(|thread_id| !thread_id.is_empty());
+    let fork_rollout_snapshot = if direct_thread_id.is_none() && fork_thread_id.is_some() {
+        prepare_fork_rollout_snapshot(fork_thread_path)?
+    } else {
+        None
+    };
+    let fork_thread_path = fork_rollout_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.path().to_str())
+        .or(fork_thread_path);
     let start = if let Some(thread_id) = direct_thread_id {
         CodexThreadStart::Direct(thread_id.to_owned())
     } else if let Some(thread_id) = fork_thread_id {
@@ -1205,11 +1217,67 @@ fn codex_thread_plan(
             params: thread_start_params(request, launch_config),
         }
     };
-    CodexThreadPlan {
+    Ok(CodexThreadPlan {
         start,
         resume_requested: resume_thread_id.is_some(),
         fork_requested: fork_thread_id.is_some(),
+        _fork_rollout_snapshot: fork_rollout_snapshot,
+    })
+}
+
+fn prepare_fork_rollout_snapshot(
+    thread_path: Option<&str>,
+) -> Result<Option<NamedTempFile>, String> {
+    let Some(thread_path) = thread_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(None);
+    };
+    let source = match fs::read_to_string(thread_path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("failed to read Codex fork source rollout: {error}")),
+    };
+    if !source.ends_with('\n') {
+        return Err("Codex fork source rollout has an incomplete final record".to_owned());
     }
+
+    let mut records = Vec::new();
+    let mut has_ordinal = false;
+    let mut needs_repair = false;
+    for (index, line) in source.lines().enumerate() {
+        let mut record = serde_json::from_str::<Value>(line)
+            .map_err(|error| format!("failed to parse Codex fork source rollout: {error}"))?;
+        let ordinal = record.get("ordinal").and_then(Value::as_u64);
+        has_ordinal |= ordinal.is_some();
+        needs_repair |= ordinal != Some(index as u64);
+        if let Some(object) = record.as_object_mut() {
+            object.insert("ordinal".to_owned(), json!(index));
+        }
+        records.push(record);
+    }
+    if !has_ordinal || !needs_repair {
+        return Ok(None);
+    }
+
+    let mut snapshot = tempfile::Builder::new()
+        .prefix("wework-codex-fork-")
+        .suffix(".jsonl")
+        .tempfile()
+        .map_err(|error| format!("failed to create Codex fork rollout snapshot: {error}"))?;
+    for record in &records {
+        serde_json::to_writer(&mut snapshot, record)
+            .map_err(|error| format!("failed to write Codex fork rollout snapshot: {error}"))?;
+        snapshot
+            .write_all(b"\n")
+            .map_err(|error| format!("failed to write Codex fork rollout snapshot: {error}"))?;
+    }
+    snapshot
+        .flush()
+        .map_err(|error| format!("failed to flush Codex fork rollout snapshot: {error}"))?;
+    log_executor_event(
+        "codex fork rollout ordinal repair prepared",
+        &[("records", records.len().to_string())],
+    );
+    Ok(Some(snapshot))
 }
 
 fn thread_id_from_response(
@@ -1299,7 +1367,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             resume_thread_id.as_deref(),
             request,
             &launch_config,
-        );
+        )?;
         if !matches!(thread_plan.start, CodexThreadStart::Direct(_)) {
             if let Some(thread_id) = resume_thread_id.as_deref() {
                 // An idle thread is unsubscribed after its previous turn. Resume establishes the
@@ -1430,6 +1498,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_deadline,
             SharedTurnNotificationOptions {
                 active_turn_id,
+                ephemeral: request.ephemeral,
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -1460,9 +1529,26 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     if let Some(thread_id) = subscribed_thread_id {
         if let Some(generation) = client.mark_thread_idle(&thread_id).await {
-            if result.is_ok() {
+            if result.is_ok() && !prepared.request.ephemeral {
                 client.unsubscribe_thread_in_background(thread_id, generation);
             } else {
+                log_executor_event(
+                    "codex shared thread subscription retained",
+                    &[
+                        ("thread_id", thread_id.clone()),
+                        ("generation", generation.to_string()),
+                        ("ephemeral", prepared.request.ephemeral.to_string()),
+                        (
+                            "reason",
+                            if result.is_ok() {
+                                "ephemeral_follow_up"
+                            } else {
+                                "turn_failed"
+                            }
+                            .to_owned(),
+                        ),
+                    ],
+                );
                 client
                     .clear_idle_thread_generation(&thread_id, generation)
                     .await;
@@ -1554,7 +1640,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             resume_thread_id.as_deref(),
             request,
             &launch_config,
-        );
+        )?;
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1698,6 +1784,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 
 struct SharedTurnNotificationOptions {
     active_turn_id: Option<String>,
+    ephemeral: bool,
     notifications: Option<CodexNotificationSender>,
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
@@ -1717,6 +1804,8 @@ async fn read_shared_turn_notifications(
 ) -> Result<ExecutionOutcome, String> {
     let mut last_outcome: Option<ExecutionOutcome> = None;
     let mut waiting_for_initial_progress = true;
+    let mut active_thread_status_observed = false;
+    let mut idle_completion_deadline: Option<Instant> = None;
     let request_user_input_answers = options
         .request_user_input_answers
         .take()
@@ -1737,7 +1826,54 @@ async fn read_shared_turn_notifications(
                 }
             }
         };
-        let received = if waiting_for_initial_progress {
+        let received = if let Some(deadline) = idle_completion_deadline {
+            match timeout_at(deadline, receive_notification).await {
+                Ok(received) => received?,
+                Err(_) => {
+                    let active_turn_id = options.active_turn_id.as_deref().ok_or_else(|| {
+                        format!("codex thread {thread_id} became idle without an active turn")
+                    })?;
+                    let completion = if options.ephemeral {
+                        ephemeral_idle_turn_completion(thread_id, active_turn_id)
+                    } else {
+                        reconcile_idle_shared_turn(client, thread_id, active_turn_id)
+                            .await?
+                            .ok_or_else(|| {
+                                format!(
+                                    "codex thread {thread_id} became idle without a terminal root turn outcome"
+                                )
+                            })?
+                    };
+                    log_codex_raw_turn_message(&completion);
+                    forward_codex_notification(
+                        options.notifications.as_ref(),
+                        &completion,
+                        thread_id,
+                    );
+                    let outcome = state.handle_message(&completion).ok_or_else(|| {
+                        format!(
+                            "codex thread {thread_id} became idle without a terminal root turn outcome"
+                        )
+                    })?;
+                    options.active_turn_id = None;
+                    if let Some(callback) = options.active_turn_finished.as_ref() {
+                        callback();
+                    }
+                    if !should_wait_for_goal_continuation(
+                        &outcome,
+                        state,
+                        options.wait_for_goal_continuation,
+                    ) {
+                        return Ok(outcome);
+                    }
+                    last_outcome = Some(outcome);
+                    state.reset_turn_output();
+                    active_thread_status_observed = false;
+                    idle_completion_deadline = None;
+                    continue;
+                }
+            }
+        } else if waiting_for_initial_progress {
             match timeout_at(startup_deadline, receive_notification).await {
                 Ok(received) => received?,
                 Err(_) => {
@@ -1842,9 +1978,10 @@ async fn read_shared_turn_notifications(
         {
             waiting_for_initial_progress = false;
         }
-        if let Some(sender) = &options.notifications {
-            let _ = sender.send(message.clone());
+        if thread_status_changed_to_active(&message) {
+            active_thread_status_observed = true;
         }
+        forward_codex_notification(options.notifications.as_ref(), &message, thread_id);
 
         if message
             .get("method")
@@ -1889,6 +2026,7 @@ async fn read_shared_turn_notifications(
         }
 
         if let Some(outcome) = state.handle_message(&message) {
+            idle_completion_deadline = None;
             options.active_turn_id = None;
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
@@ -1902,8 +2040,169 @@ async fn read_shared_turn_notifications(
             }
             last_outcome = Some(outcome);
             state.reset_turn_output();
+            active_thread_status_observed = false;
+        }
+
+        if thread_status_changed_to_idle(&message) {
+            if (waiting_for_initial_progress && !active_thread_status_observed)
+                || options.active_turn_id.is_none()
+            {
+                continue;
+            }
+            idle_completion_deadline.get_or_insert_with(|| Instant::now() + Duration::from_secs(1));
         }
     }
+}
+
+fn forward_codex_notification(
+    notifications: Option<&CodexNotificationSender>,
+    message: &Value,
+    thread_id: &str,
+) {
+    let Some(sender) = notifications else {
+        return;
+    };
+    if sender.send(message.clone()).is_err() {
+        log_executor_event(
+            "codex shared notification forward failed",
+            &[
+                ("thread_id", thread_id.to_owned()),
+                (
+                    "method",
+                    message
+                        .get("method")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<none>")
+                        .to_owned(),
+                ),
+                ("reason", "runtime_receiver_closed".to_owned()),
+            ],
+        );
+    }
+}
+
+fn thread_status_changed_to_idle(message: &Value) -> bool {
+    message.get("method").and_then(Value::as_str) == Some("thread/status/changed")
+        && message_params(message)
+            .get("status")
+            .and_then(|status| status.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|status| status.eq_ignore_ascii_case("idle"))
+}
+
+fn thread_status_changed_to_active(message: &Value) -> bool {
+    message.get("method").and_then(Value::as_str) == Some("thread/status/changed")
+        && message_params(message)
+            .get("status")
+            .and_then(|status| status.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+}
+
+fn ephemeral_idle_turn_completion(thread_id: &str, active_turn_id: &str) -> Value {
+    log_executor_event(
+        "codex ephemeral turn completion reconciled",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            ("turn_id", active_turn_id.to_owned()),
+            ("status", "completed".to_owned()),
+            ("source", "thread_status_idle".to_owned()),
+        ],
+    );
+    json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": thread_id,
+            "turn": {
+                "id": active_turn_id,
+                "status": "completed",
+            },
+        }
+    })
+}
+
+async fn reconcile_idle_shared_turn(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    active_turn_id: &str,
+) -> Result<Option<Value>, String> {
+    let response = client
+        .request(
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "cursor": Value::Null,
+                "limit": 20,
+                "sortDirection": "desc",
+                "itemsView": "notLoaded",
+            }),
+        )
+        .await?;
+    let Some(turn) = response
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|turns| {
+            turns
+                .iter()
+                .find(|turn| string_value(turn, "id").as_deref() == Some(active_turn_id))
+        })
+        .cloned()
+    else {
+        log_executor_event(
+            "codex shared idle notification ignored",
+            &[
+                ("thread_id", thread_id.to_owned()),
+                ("turn_id", active_turn_id.to_owned()),
+                ("reason", "active_turn_not_materialized".to_owned()),
+            ],
+        );
+        return Ok(None);
+    };
+    let status = turn
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !codex_turn_status_is_terminal(status) {
+        log_executor_event(
+            "codex shared idle notification ignored",
+            &[
+                ("thread_id", thread_id.to_owned()),
+                ("turn_id", active_turn_id.to_owned()),
+                ("reason", "active_turn_not_terminal".to_owned()),
+                ("status", status.to_owned()),
+            ],
+        );
+        return Ok(None);
+    }
+    log_executor_event(
+        "codex shared turn completion reconciled",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            ("turn_id", active_turn_id.to_owned()),
+            ("status", status.to_owned()),
+            ("source", "thread_status_idle".to_owned()),
+        ],
+    );
+    Ok(Some(json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": thread_id,
+            "turn": turn,
+        }
+    })))
+}
+
+fn codex_turn_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed"
+            | "complete"
+            | "succeeded"
+            | "failed"
+            | "cancelled"
+            | "canceled"
+            | "interrupted"
+    )
 }
 
 fn should_wait_for_goal_continuation(

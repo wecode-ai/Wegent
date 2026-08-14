@@ -193,7 +193,6 @@ import {
   SIDE_CHAT_GUIDANCE_COMPLETION,
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
-  SIDE_CHAT_PROMPT,
   SUPERVISOR_COMPLETION_TEXT,
   SUPERVISOR_CORRECTION,
   SUPERVISOR_CORRECTION_COMPLETION_TEXT,
@@ -3051,7 +3050,6 @@ class DesktopE2EServer {
     if (this.scenario === 'side_chat_attachment') {
       this.recordScenarioRequest('side_chat_attachment', modelRequest)
       const requestText = JSON.stringify(body)
-      assert.ok(requestText.includes(SIDE_CHAT_PROMPT), 'The side-chat request lost its prompt')
       assert.ok(
         requestText.includes(SIDE_CHAT_FILENAME),
         'The side-chat request lost its isolated attachment'

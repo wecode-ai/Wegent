@@ -141,17 +141,7 @@ export function reduceRuntimeConversationTurns(
         }
       })
     case 'assistant_error':
-      return updateTurn(turns, action.subtaskId, turn => {
-        return {
-          ...turn,
-          items: settleRuntimeReconnectingBlocks(turn.items),
-          status: 'failed',
-          streamingThinkingContent: undefined,
-          completedAt: new Date().toISOString(),
-          error: action.error,
-          errorType: action.errorType,
-        }
-      })
+      return updateErroredTurn(turns, action)
     case 'file_changes_updated':
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
@@ -443,6 +433,30 @@ function appendOptimisticUser(
   ) {
     return turns
   }
+  const preboundIndex = turns.findIndex(turn => turn.clientUserMessageId === message.id)
+  if (preboundIndex >= 0) {
+    const prebound = turns[preboundIndex]
+    return replaceAt(turns, preboundIndex, {
+      ...prebound,
+      items: [
+        {
+          id: message.id,
+          type: 'user_message',
+          message: {
+            ...message,
+            role: 'user',
+            ...(prebound.id
+              ? {
+                  subtaskId: prebound.id,
+                  turnId: prebound.id,
+                }
+              : {}),
+          },
+        },
+        ...prebound.items,
+      ],
+    })
+  }
   return [
     ...turns,
     {
@@ -463,6 +477,7 @@ function updateStartedTurn(
   if (existingIndex >= 0) {
     return replaceAt(turns, existingIndex, {
       ...turns[existingIndex],
+      clientUserMessageId: turns[existingIndex].clientUserMessageId ?? action.clientUserMessageId,
       status: 'streaming',
       completedAt: undefined,
       error: undefined,
@@ -509,9 +524,46 @@ function updateStartedTurn(
     ...turns,
     {
       id: action.subtaskId,
+      clientUserMessageId: action.clientUserMessageId,
       items: [],
       status: 'streaming',
     },
+  ]
+}
+
+function updateErroredTurn(
+  turns: RuntimeConversationTurn[],
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_error' }>
+): RuntimeConversationTurn[] {
+  const failedTurn = (turn: RuntimeConversationTurn): RuntimeConversationTurn => ({
+    ...turn,
+    id: turn.id ?? action.subtaskId ?? null,
+    items: settleRuntimeReconnectingBlocks(turn.items),
+    status: 'failed',
+    streamingThinkingContent: undefined,
+    completedAt: new Date().toISOString(),
+    error: action.error,
+    errorType: action.errorType,
+  })
+  const existingIndex = action.subtaskId
+    ? turns.findIndex(turn => turn.id === action.subtaskId)
+    : -1
+  if (existingIndex >= 0) {
+    return replaceAt(turns, existingIndex, failedTurn(turns[existingIndex]))
+  }
+  const optimisticIndex = turns.findLastIndex(
+    turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+  )
+  if (optimisticIndex >= 0) {
+    return replaceAt(turns, optimisticIndex, failedTurn(turns[optimisticIndex]))
+  }
+  return [
+    ...turns,
+    failedTurn({
+      id: action.subtaskId ?? null,
+      items: [],
+      status: 'failed',
+    }),
   ]
 }
 

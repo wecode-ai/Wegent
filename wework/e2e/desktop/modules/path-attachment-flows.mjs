@@ -19,7 +19,6 @@ import {
   SIDE_CHAT_FILENAME,
   SIDE_CHAT_GUIDANCE_FOLLOW_UP,
   SIDE_CHAT_GUIDANCE_INITIAL,
-  SIDE_CHAT_PROMPT,
   SIDE_CHAT_QUEUE_FOLLOW_UP,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -292,12 +291,6 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '02-side-chat-attachment-isolated.png')
 
-  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_PROMPT })
-  assert.equal(
-    await control.command('getValue', sideComposerSelector),
-    SIDE_CHAT_PROMPT,
-    'The side-chat prompt did not reach the isolated composer'
-  )
   await new Promise(resolvePromise => setTimeout(resolvePromise, COMPOSER_READY_STABILITY_MS))
   await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
   await control.awaitScenarioRequestCount('side_chat_attachment', 1)
@@ -310,6 +303,11 @@ async function verifySideChatAttachmentIsolation({
     sideAfterSend.testIds.includes('attachment-badge'),
     false,
     'The sent side-chat attachment was not cleared from its composer'
+  )
+  assert.equal(
+    sideAfterSend.testIds.includes('message-image-attachments'),
+    true,
+    'The sent side-chat attachment was not rendered in the user message'
   )
   const mainAfterSend = JSON.parse(await control.command('snapshot', mainComposerSelector))
   assert.equal(
@@ -418,7 +416,6 @@ async function verifySideChatAttachmentIsolation({
   const requests = control.scenarioRequests.get('side_chat_attachment') ?? []
   assert.equal(requests.length, 1, 'The side chat did not send exactly one model request')
   const requestText = JSON.stringify(requests[0].body)
-  assert.ok(requestText.includes(SIDE_CHAT_PROMPT), 'The side-chat prompt was not forwarded')
   assert.ok(requestText.includes(SIDE_CHAT_FILENAME), 'The side-chat attachment was not forwarded')
 }
 

@@ -136,6 +136,48 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('attaches a startup error to the optimistic user turn before assistant start', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: null,
+          clientUserMessageId: 'side-user-1',
+          items: [
+            {
+              id: 'side-user-1',
+              type: 'user_message',
+              message: {
+                id: 'side-user-1',
+                role: 'user',
+                content: 'side question',
+                status: 'done',
+              },
+            },
+          ],
+          status: 'pending',
+        },
+      ],
+      {
+        type: 'assistant_error',
+        subtaskId: 'side-turn-1',
+        error: 'failed to prepare paginated fork',
+        errorType: 'response.failed',
+      }
+    )
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      id: 'side-turn-1',
+      status: 'failed',
+      error: 'failed to prepare paginated fork',
+      errorType: 'response.failed',
+    })
+    expect(turns[0].items[0]).toMatchObject({
+      id: 'side-user-1',
+      type: 'user_message',
+    })
+  })
+
   test('binds only the exact optimistic user to the real Codex turn id', () => {
     let turns = reduceRuntimeConversationTurns([], {
       type: 'user_added',
@@ -180,6 +222,37 @@ describe('runtimeConversationTurns', () => {
     expect(turns.map(turn => [turn.id, turn.clientUserMessageId])).toEqual([
       [null, 'client-user-1'],
       ['turn-2', 'client-user-2'],
+    ])
+  })
+
+  test('keeps the user before the assistant when turn start wins the send response race', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'assistant_started',
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'client-user-1',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_done',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-1',
+      content: 'Reply',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'user_added',
+      message: userMessage('client-user-1', 'Prompt'),
+    })
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      id: 'turn-1',
+      clientUserMessageId: 'client-user-1',
+      status: 'done',
+    })
+    expect(
+      projectRuntimeConversationTurns(turns).map(message => [message.role, message.content])
+    ).toEqual([
+      ['user', 'Prompt'],
+      ['assistant', 'Reply'],
     ])
   })
 

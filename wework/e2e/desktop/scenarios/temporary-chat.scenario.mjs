@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const MAIN_COMPOSER = `${ACTIVE_SURFACE} [data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]`
@@ -204,7 +206,49 @@ async function waitForRuntimeSource(control, taskId, timeoutMs) {
   )
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+async function findFiles(root, suffix) {
+  const files = []
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...(await findFiles(path, suffix)))
+    } else if (entry.isFile() && entry.name.endsWith(suffix)) {
+      files.push(path)
+    }
+  }
+  return files
+}
+
+async function corruptSourceRolloutOrdinal(executorHome) {
+  const sessionRoot = join(executorHome, 'codex', 'sessions')
+  const rollouts = await findFiles(sessionRoot, '.jsonl')
+  for (const rollout of rollouts) {
+    const source = await readFile(rollout, 'utf8')
+    if (!source.includes(SOURCE_PROMPT)) continue
+    const records = source
+      .trimEnd()
+      .split('\n')
+      .map(line => JSON.parse(line))
+    const index = records.findIndex(
+      (record, recordIndex) =>
+        recordIndex > 0 &&
+        Number.isInteger(record.ordinal) &&
+        Number.isInteger(records[recordIndex - 1]?.ordinal)
+    )
+    assert.ok(index > 0, 'The temporary-chat source rollout did not contain ordinalized records')
+    records[index].ordinal = records[index - 1].ordinal
+    await writeFile(rollout, `${records.map(record => JSON.stringify(record)).join('\n')}\n`)
+    return
+  }
+  throw new Error('The temporary-chat source rollout was not found')
+}
+
+export function createDesktopScenario({
+  captureScreenshot,
+  executorHome,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   let active = false
   let releaseFollowUp
   const followUpRelease = new Promise(resolve => {
@@ -294,6 +338,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: taskTimeoutMs,
       })
       await waitForRuntimeSource(control, sourceTaskId, taskTimeoutMs)
+      await corruptSourceRolloutOrdinal(executorHome)
 
       await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
       await control.command('click', '[data-testid="right-workspace-chat-option"]')
@@ -336,6 +381,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           })}`
         )
         await captureScreenshot(control, '01-temporary-chat-follow-up-order.png', ACTIVE_SURFACE)
+        releaseFollowUp()
+        await control.command('waitFor', `${SIDE_CHAT} [data-testid="message-assistant"]`, {
+          text: FOLLOW_UP_COMPLETION,
+          timeoutMs: taskTimeoutMs,
+        })
+        await waitForThinkingToSettle(control, taskTimeoutMs)
+        const settledUserMetrics = JSON.parse(
+          await control.command(
+            'getElementMetrics',
+            `${SIDE_CHAT} [data-testid="user-message-content"]`
+          )
+        )
+        const settledAssistantMetrics = JSON.parse(
+          await control.command(
+            'getElementMetrics',
+            `${SIDE_CHAT} [data-testid="message-assistant"]`
+          )
+        )
+        const settledFollowUpUser = settledUserMetrics.at(-1)
+        const settledFollowUpAssistant = settledAssistantMetrics.at(-1)
+        assert.ok(
+          settledFollowUpUser && settledFollowUpAssistant,
+          'The settled follow-up ordering elements were not measurable'
+        )
+        assert.ok(
+          settledFollowUpUser.top < settledFollowUpAssistant.top,
+          `The assistant reply appeared above its follow-up user message: ${JSON.stringify({
+            settledFollowUpUser,
+            settledFollowUpAssistant,
+          })}`
+        )
 
         await expandProject(control, uiTimeoutMs)
         await control.command('click', '[data-testid="new-chat-button"]')

@@ -493,6 +493,7 @@ const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const createTemporaryRuntimeTaskMock = vi.fn()
 const sendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
+const interruptAndSendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
 const sendRuntimePaneGuidanceMock = vi.fn().mockResolvedValue({
   sent: true,
   turnId: 'runtime-side-chat-turn',
@@ -708,6 +709,8 @@ describe('DesktopWorkbenchLayout', () => {
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
     sendRuntimePaneMessageMock.mockReset()
     sendRuntimePaneMessageMock.mockResolvedValue(true)
+    interruptAndSendRuntimePaneMessageMock.mockReset()
+    interruptAndSendRuntimePaneMessageMock.mockResolvedValue(true)
     sendRuntimePaneGuidanceMock.mockReset()
     sendRuntimePaneGuidanceMock.mockResolvedValue({
       sent: true,
@@ -1229,6 +1232,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
       sendRuntimePaneMessage: sendRuntimePaneMessageMock,
       sendRuntimePaneGuidance: sendRuntimePaneGuidanceMock,
+      interruptAndSendRuntimePaneMessage: interruptAndSendRuntimePaneMessageMock,
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
       createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
@@ -6130,6 +6134,45 @@ describe('DesktopWorkbenchLayout', () => {
     })
   }, 15_000)
 
+  test('temporary chat sends and renders an image without text', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-image',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    await userEvent.upload(
+      within(sideChat).getByTestId('attachment-file-input'),
+      new File(['image'], 'side-chat.png', { type: 'image/png' })
+    )
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+    expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({
+        attachments: [
+          expect.objectContaining({
+            id: 91,
+            filename: 'side-chat.png',
+            mime_type: 'image/png',
+          }),
+        ],
+      })
+    )
+    expect(within(sideChat).getByTestId('message-image-attachments')).toBeInTheDocument()
+    expect(within(sideChat).queryByTestId('attachment-badge')).not.toBeInTheDocument()
+  })
+
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
@@ -6220,6 +6263,47 @@ describe('DesktopWorkbenchLayout', () => {
     })
   }, 15_000)
 
+  test('temporary chat interrupts and sends immediately when selected', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-interrupt-send',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(sideChatInput, 'send this immediately')
+    await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
+    await userEvent.click(await screen.findByTestId('interrupt-and-send-option'))
+
+    await waitFor(() => expect(interruptAndSendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
+    expect(sendRuntimePaneGuidanceMock).not.toHaveBeenCalled()
+    expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
+    expect(interruptAndSendRuntimePaneMessageMock.mock.calls[0]?.[0]).toMatchObject({
+      address,
+      message: 'send this immediately',
+      ephemeral: true,
+    })
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'send this immediately'
+    )
+  }, 15_000)
+
   test('temporary chat sends a busy follow-up as guidance when selected', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
@@ -6288,6 +6372,46 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'guide the current response'
+    )
+  }, 15_000)
+
+  test('temporary chat falls back to a normal send when guidance finds no active turn', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-guidance-fallback',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    sendRuntimePaneGuidanceMock.mockResolvedValue({
+      sent: false,
+      code: 'no_active_turn',
+      error: 'no active turn to steer',
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(sideChatInput, 'send after stale busy state')
+    await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
+    await userEvent.click(await screen.findByTestId('guide-current-turn-option'))
+
+    await waitFor(() => expect(sendRuntimePaneGuidanceMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'send after stale busy state'
     )
   }, 15_000)
 

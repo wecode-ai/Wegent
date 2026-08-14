@@ -6,6 +6,64 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn fork_rollout_snapshot_repairs_duplicate_ordinals_without_mutating_source() {
+    let source_path = unique_test_path("fork-rollout-duplicate-ordinal").with_extension("jsonl");
+    let source = [
+        json!({"ordinal": 0, "type": "session_meta", "payload": {"history_mode": "paginated"}}),
+        json!({"ordinal": 1, "type": "event_msg", "payload": {"type": "task_complete"}}),
+        json!({"ordinal": 1, "type": "event_msg", "payload": {"type": "task_started"}}),
+        json!({"ordinal": 2, "type": "turn_context", "payload": {"turn_id": "turn-2"}}),
+    ]
+    .into_iter()
+    .map(|record| record.to_string())
+    .collect::<Vec<_>>()
+    .join("\n");
+    fs::write(&source_path, format!("{source}\n")).expect("source rollout should be written");
+
+    let snapshot = prepare_fork_rollout_snapshot(source_path.to_str())
+        .expect("duplicate ordinals should be repairable")
+        .expect("duplicate ordinals should create a snapshot");
+    let repaired = fs::read_to_string(snapshot.path()).expect("snapshot should be readable");
+    let repaired_ordinals = repaired
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line)
+                .expect("snapshot line should be valid JSON")
+                .get("ordinal")
+                .and_then(Value::as_u64)
+                .expect("snapshot line should have an ordinal")
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(repaired_ordinals, vec![0, 1, 2, 3]);
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("source rollout should remain readable"),
+        format!("{source}\n")
+    );
+
+    let _ = fs::remove_file(source_path);
+}
+
+#[test]
+fn fork_rollout_snapshot_leaves_valid_ordinals_unchanged() {
+    let source_path = unique_test_path("fork-rollout-valid-ordinal").with_extension("jsonl");
+    fs::write(
+        &source_path,
+        concat!(
+            "{\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{}}\n",
+            "{\"ordinal\":1,\"type\":\"event_msg\",\"payload\":{}}\n"
+        ),
+    )
+    .expect("source rollout should be written");
+
+    assert!(prepare_fork_rollout_snapshot(source_path.to_str())
+        .expect("valid rollout should be accepted")
+        .is_none());
+
+    let _ = fs::remove_file(source_path);
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();
@@ -1474,6 +1532,66 @@ fn turn_start_response_resolves_the_active_turn_without_a_started_notification()
 }
 
 #[test]
+fn idle_thread_status_requires_turn_reconciliation() {
+    assert!(thread_status_changed_to_idle(&json!({
+        "method": "thread/status/changed",
+        "params": {
+            "threadId": "thread-1",
+            "status": { "type": "idle" }
+        }
+    })));
+    assert!(!thread_status_changed_to_idle(&json!({
+        "method": "thread/status/changed",
+        "params": {
+            "threadId": "thread-1",
+            "status": { "type": "active" }
+        }
+    })));
+    assert!(thread_status_changed_to_active(&json!({
+        "method": "thread/status/changed",
+        "params": {
+            "threadId": "thread-1",
+            "status": { "type": "active" }
+        }
+    })));
+}
+
+#[test]
+fn ephemeral_idle_thread_completion_does_not_require_turn_history() {
+    assert_eq!(
+        ephemeral_idle_turn_completion("thread-1", "turn-1"),
+        json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "completed"
+                }
+            }
+        })
+    );
+}
+
+#[test]
+fn only_terminal_turn_statuses_can_reconcile_an_idle_thread() {
+    for status in [
+        "completed",
+        "complete",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "canceled",
+        "interrupted",
+    ] {
+        assert!(codex_turn_status_is_terminal(status), "{status}");
+    }
+    for status in ["inProgress", "pending", "running", ""] {
+        assert!(!codex_turn_status_is_terminal(status), "{status}");
+    }
+}
+
+#[test]
 fn item_notification_cannot_replace_the_active_turn() {
     let state = CodexRunState::default();
     let notification = json!({
@@ -1891,7 +2009,8 @@ fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
         Some("resume-thread"),
         &ExecutionRequest::default(),
         &CodexLaunchConfig::default(),
-    );
+    )
+    .expect("thread plan should be built");
 
     match plan.start {
         CodexThreadStart::Direct(thread_id) => assert_eq!(thread_id, "direct-thread"),
@@ -1912,7 +2031,8 @@ fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
         Some("resume-thread"),
         &ExecutionRequest::default(),
         &CodexLaunchConfig::default(),
-    );
+    )
+    .expect("thread plan should be built");
 
     match plan.start {
         CodexThreadStart::Request { operation, params } => {
@@ -1927,6 +2047,58 @@ fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
 }
 
 #[test]
+fn codex_thread_plan_forks_from_repaired_rollout_snapshot() {
+    let source_path = unique_test_path("thread-plan-repaired-fork").with_extension("jsonl");
+    fs::write(
+        &source_path,
+        concat!(
+            "{\"ordinal\":0,\"type\":\"session_meta\",\"payload\":{\"history_mode\":\"paginated\"}}\n",
+            "{\"ordinal\":0,\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n"
+        ),
+    )
+    .expect("source rollout should be written");
+
+    let plan = codex_thread_plan(
+        None,
+        Some("fork-thread"),
+        source_path.to_str(),
+        None,
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    )
+    .expect("thread plan should repair the fork source");
+    let snapshot_path = match &plan.start {
+        CodexThreadStart::Request { operation, params } => {
+            assert_eq!(*operation, "thread/fork");
+            params["path"]
+                .as_str()
+                .expect("fork path should be present")
+                .to_owned()
+        }
+        CodexThreadStart::Direct(thread_id) => {
+            panic!("expected fork request, got direct thread {thread_id}")
+        }
+    };
+
+    assert_ne!(snapshot_path, source_path.to_string_lossy());
+    assert!(Path::new(&snapshot_path).exists());
+    let ordinals = fs::read_to_string(snapshot_path)
+        .expect("snapshot should remain available while the plan is alive")
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line)
+                .expect("snapshot line should be valid JSON")
+                .get("ordinal")
+                .and_then(Value::as_u64)
+                .expect("snapshot line should have an ordinal")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ordinals, vec![0, 1]);
+
+    let _ = fs::remove_file(source_path);
+}
+
+#[test]
 fn codex_thread_plan_selects_resume_when_fork_is_absent() {
     let plan = codex_thread_plan(
         None,
@@ -1935,7 +2107,8 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
         Some("resume-thread"),
         &ExecutionRequest::default(),
         &CodexLaunchConfig::default(),
-    );
+    )
+    .expect("thread plan should be built");
 
     match plan.start {
         CodexThreadStart::Request { operation, params } => {
@@ -1959,7 +2132,8 @@ fn codex_thread_plan_starts_new_thread_without_identifiers() {
         None,
         &ExecutionRequest::default(),
         &CodexLaunchConfig::default(),
-    );
+    )
+    .expect("thread plan should be built");
 
     match plan.start {
         CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
