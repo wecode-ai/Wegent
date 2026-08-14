@@ -100,6 +100,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const rules = [RULE]
   const runs = []
   const createdPayloads = []
+  let archivedAgentPayload = null
   let cancelRequested = false
   let modelRequests = 0
 
@@ -121,6 +122,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents`
       ) {
         json(response, 200, [AGENT])
+        return true
+      }
+      if (
+        request.method === 'PATCH' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/chat-agents/${AGENT_ID}`
+      ) {
+        archivedAgentPayload = await readJson(request)
+        json(response, 200, { ...AGENT, ...archivedAgentPayload, version: AGENT.version + 1 })
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/models/unified') {
@@ -348,6 +357,53 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-runtime-group"]', {
+        text: '运行环境',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-execution-group"]', {
+        text: '执行策略',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="cloud-project-chat-agent-access-group"]', {
+        text: '访问权限',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          '[data-testid="cloud-project-chat-agent-environment"] [data-selection-state]',
+          { value: 'data-selection-state', visible: true }
+        ),
+        'selected'
+      )
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          '[data-testid="cloud-project-chat-agent-model"] [data-selection-state]',
+          { value: 'data-selection-state', visible: true }
+        ),
+        'unselected'
+      )
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          '[data-testid="cloud-project-chat-agent-device"] [data-selection-state]',
+          { value: 'data-selection-state', visible: true }
+        ),
+        'unselected'
+      )
+      assert.equal(
+        await control.command(
+          'getAttribute',
+          '[data-testid="cloud-project-chat-agent-execution-project"] [data-selection-state]',
+          { value: 'data-selection-state', visible: true }
+        ),
+        'unselected'
+      )
       await control.command('click', '[data-testid="cloud-project-chat-agent-model"]', {
         visible: true,
       })
@@ -381,7 +437,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         '[data-testid="cloud-project-chat-agent-save"]',
         { value: 'disabled', visible: true }
       )
-      assert.equal(saveWithoutModel, '', 'save must stay disabled while no model is selected')
+      assert.equal(saveWithoutModel, '', 'save must allow validation while no model is selected')
+      await control.command('click', '[data-testid="cloud-project-chat-agent-save"]', {
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="cloud-project-chat-agent-model"]', {
+          value: 'aria-invalid',
+          visible: true,
+        }),
+        'true'
+      )
       await captureScreenshot(control, 'project-automation-04-robot-model-required.png')
 
       await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
@@ -397,10 +463,49 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       assert.equal(configuredCapability, AGENT.capabilityDescription)
       await captureScreenshot(control, 'project-automation-05-robot-capability.png')
+
+      await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]', {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        `[data-testid="cloud-project-chat-agent-remove-${AGENT_ID}"]`,
+        { visible: true }
+      )
+      await control.command('waitFor', '[data-testid="project-chat-agent-template-development"]', {
+        stableMs: 100,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(archivedAgentPayload?.status, 'archived')
+      await captureScreenshot(control, 'project-automation-06-robot-templates.png')
+      await control.command('click', '[data-testid="project-chat-agent-template-development"]', {
+        visible: true,
+      })
+      const templateName = await control.command(
+        'getValue',
+        '[data-testid="cloud-project-chat-agent-name"]',
+        { visible: true }
+      )
+      const templateCapability = await control.command(
+        'getValue',
+        '[data-testid="cloud-project-chat-agent-capability"]',
+        { visible: true }
+      )
+      const templatePrompt = await control.command(
+        'getValue',
+        '[data-testid="cloud-project-chat-agent-system-prompt"]',
+        { visible: true }
+      )
+      assert.equal(templateName, '开发实现机器人')
+      assert.equal(templateCapability, '编写代码、修复问题并完成必要验证')
+      assert.match(templatePrompt ?? '', /完成被指派的开发任务/)
+      await captureScreenshot(control, 'project-automation-07-robot-template-dialog.png')
     },
 
     diagnostics() {
       return {
+        archivedAgentPayload,
         cancelRequested,
         createdPayloads,
         modelRequests,
