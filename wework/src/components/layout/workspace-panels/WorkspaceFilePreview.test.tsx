@@ -99,6 +99,7 @@ test('shows Markdown source without a duplicate sticky file header', () => {
 
 test('uses the application dark theme for code and binary previews', () => {
   document.documentElement.dataset.theme = 'dark'
+  appearanceMocks.resolvedMode = 'dark'
 
   const { rerender } = render(
     <WorkspaceFilePreview
@@ -154,6 +155,7 @@ test('uses the application dark theme for code and binary previews', () => {
 
 test('uses the application dark theme while editing text files', () => {
   document.documentElement.dataset.theme = 'dark'
+  appearanceMocks.resolvedMode = 'dark'
 
   render(
     <WorkspaceFilePreview
