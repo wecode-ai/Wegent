@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use super::store::runtime_work_dir;
 
-const AUTOMATION_STORE_VERSION: u64 = 1;
+const AUTOMATION_STORE_VERSION: u64 = 2;
 const DEFAULT_TIMEZONE: &str = "UTC";
 const MAX_RUNS_PER_AUTOMATION: usize = 100;
 type SharedAutomationState = Arc<Mutex<AutomationState>>;
@@ -419,17 +419,7 @@ impl AutomationStore {
     }
 
     fn write_state(&self, state: &AutomationState) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        let payload = serde_json::to_vec_pretty(&AutomationState {
-            version: AUTOMATION_STORE_VERSION,
-            ..state.clone()
-        })
-        .map_err(|error| error.to_string())?;
-        let temp_path = self.path.with_extension("json.tmp");
-        fs::write(&temp_path, payload).map_err(|error| error.to_string())?;
-        fs::rename(temp_path, &self.path).map_err(|error| error.to_string())
+        write_state_file(&self.path, state)
     }
 }
 
@@ -488,9 +478,57 @@ pub(crate) fn next_run_after(
 fn normalize_cron_expression(expression: &str) -> Option<String> {
     let fields = expression.split_whitespace().collect::<Vec<_>>();
     match fields.len() {
-        5 => Some(format!("0 {expression}")),
+        5 => Some(format!(
+            "0 {} {} {} {} {}",
+            fields[0],
+            fields[1],
+            fields[2],
+            fields[3],
+            normalize_standard_days_of_week(fields[4])?
+        )),
         6 | 7 => Some(expression.to_owned()),
         _ => None,
+    }
+}
+
+fn normalize_standard_days_of_week(field: &str) -> Option<String> {
+    field
+        .split(',')
+        .map(|part| {
+            let (range, step) = part
+                .split_once('/')
+                .map_or((part, None), |(range, step)| (range, Some(step)));
+            let range = if range == "*" {
+                range.to_owned()
+            } else if let Some((start, end)) = range.split_once('-') {
+                format!(
+                    "{}-{}",
+                    standard_day_of_week_name(start)?,
+                    standard_day_of_week_name(end)?
+                )
+            } else {
+                standard_day_of_week_name(range)?.to_owned()
+            };
+            Some(match step {
+                Some(step) => format!("{range}/{step}"),
+                None => range,
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join(","))
+}
+
+fn standard_day_of_week_name(value: &str) -> Option<&str> {
+    match value.parse::<u8>() {
+        Ok(0 | 7) => Some("SUN"),
+        Ok(1) => Some("MON"),
+        Ok(2) => Some("TUE"),
+        Ok(3) => Some("WED"),
+        Ok(4) => Some("THU"),
+        Ok(5) => Some("FRI"),
+        Ok(6) => Some("SAT"),
+        Ok(_) => None,
+        Err(_) => Some(value),
     }
 }
 
@@ -536,13 +574,45 @@ fn prune_runs(state: &mut AutomationState) {
 }
 
 fn read_state(path: &PathBuf) -> AutomationState {
-    fs::read(path)
+    let mut state = fs::read(path)
         .ok()
         .and_then(|payload| serde_json::from_slice(&payload).ok())
         .unwrap_or_else(|| AutomationState {
             version: AUTOMATION_STORE_VERSION,
             ..AutomationState::default()
-        })
+        });
+    if migrate_automation_state(&mut state, Utc::now()) {
+        let _ = write_state_file(path, &state);
+    }
+    state
+}
+
+fn migrate_automation_state(state: &mut AutomationState, now: DateTime<Utc>) -> bool {
+    if state.version >= AUTOMATION_STORE_VERSION {
+        return false;
+    }
+    for automation in state.automations.values_mut() {
+        if automation.enabled && matches!(&automation.schedule, AutomationSchedule::Cron { .. }) {
+            automation.next_run_at =
+                initial_next_run(&automation.schedule, &automation.timezone, now);
+        }
+    }
+    state.version = AUTOMATION_STORE_VERSION;
+    true
+}
+
+fn write_state_file(path: &PathBuf, state: &AutomationState) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let payload = serde_json::to_vec_pretty(&AutomationState {
+        version: AUTOMATION_STORE_VERSION,
+        ..state.clone()
+    })
+    .map_err(|error| error.to_string())?;
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, payload).map_err(|error| error.to_string())?;
+    fs::rename(temp_path, path).map_err(|error| error.to_string())
 }
 
 fn default_timezone() -> String {
@@ -555,14 +625,15 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{collections::HashMap, fs};
 
     use chrono::{TimeZone, Utc};
     use tempfile::tempdir;
 
     use super::{
-        initial_next_run, next_run_after, Automation, AutomationRunStatus, AutomationSchedule,
-        AutomationStore, ConversationMode, IntervalUnit, NotificationPolicy,
+        initial_next_run, migrate_automation_state, next_run_after, read_state, Automation,
+        AutomationRunStatus, AutomationSchedule, AutomationState, AutomationStore,
+        ConversationMode, IntervalUnit, NotificationPolicy,
     };
     use serde_json::json;
 
@@ -578,6 +649,96 @@ mod tests {
         )
         .unwrap();
         assert_eq!(next, Utc.with_ymd_and_hms(2026, 7, 28, 1, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn standard_weekday_cron_includes_friday() {
+        let after = Utc.with_ymd_and_hms(2026, 8, 14, 8, 0, 0).unwrap();
+        let next = next_run_after(
+            &AutomationSchedule::Cron {
+                expression: "45 16 * * 1-5".to_owned(),
+            },
+            "Asia/Shanghai",
+            after,
+        )
+        .unwrap();
+
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 8, 14, 8, 45, 0).unwrap());
+    }
+
+    #[test]
+    fn standard_weekday_cron_skips_weekend_after_friday() {
+        let after = Utc.with_ymd_and_hms(2026, 8, 14, 9, 0, 0).unwrap();
+        let next = next_run_after(
+            &AutomationSchedule::Cron {
+                expression: "45 16 * * 1-5".to_owned(),
+            },
+            "Asia/Shanghai",
+            after,
+        )
+        .unwrap();
+
+        assert_eq!(next, Utc.with_ymd_and_hms(2026, 8, 17, 8, 45, 0).unwrap());
+    }
+
+    #[test]
+    fn migration_recalculates_existing_cron_next_run() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 14, 8, 0, 0).unwrap();
+        let automation = Automation {
+            id: "weekday".to_owned(),
+            version: 1,
+            name: "Weekday".to_owned(),
+            description: String::new(),
+            prompt: "Run".to_owned(),
+            schedule: AutomationSchedule::Cron {
+                expression: "45 16 * * 1-5".to_owned(),
+            },
+            timezone: "Asia/Shanghai".to_owned(),
+            enabled: true,
+            conversation_mode: ConversationMode::Independent,
+            notification_policy: NotificationPolicy::AllRuns,
+            task_payload: json!({}),
+            continuation_payload: None,
+            next_run_at: Some(Utc.with_ymd_and_hms(2026, 8, 16, 8, 45, 0).unwrap()),
+            last_run_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let mut state = AutomationState {
+            version: 1,
+            automations: HashMap::from([(automation.id.clone(), automation)]),
+            runs: Vec::new(),
+        };
+
+        assert!(migrate_automation_state(&mut state, now));
+
+        assert_eq!(state.version, 2);
+        assert_eq!(
+            state.automations["weekday"].next_run_at,
+            Some(Utc.with_ymd_and_hms(2026, 8, 14, 8, 45, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn loading_old_state_persists_migration() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("automations.json");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&AutomationState {
+                version: 1,
+                automations: HashMap::new(),
+                runs: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let state = read_state(&path);
+        let stored: AutomationState = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+
+        assert_eq!(state.version, 2);
+        assert_eq!(stored.version, 2);
     }
 
     #[test]
