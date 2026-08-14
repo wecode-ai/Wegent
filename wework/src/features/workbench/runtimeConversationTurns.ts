@@ -8,6 +8,8 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 
+const RUNTIME_RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
+
 export function mergeRuntimeConversationTurns(
   localTurns: RuntimeConversationTurn[],
   snapshotTurns: RuntimeConversationTurn[]
@@ -72,7 +74,10 @@ export function reduceRuntimeConversationTurns(
       return updateStartedTurn(turns, action)
     case 'assistant_chunk':
       return updateTurn(turns, action.subtaskId, turn => {
-        let items = upsertReasoningChunk(turn.items, action.subtaskId, action.reasoningChunk)
+        let items = hasAssistantChunkProgress(action)
+          ? settleRuntimeReconnectingBlocks(turn.items)
+          : turn.items
+        items = upsertReasoningChunk(items, action.subtaskId, action.reasoningChunk)
         items = upsertBlocks(items, action.blocks)
         if (action.content) {
           if (action.itemId) {
@@ -106,7 +111,9 @@ export function reduceRuntimeConversationTurns(
     case 'assistant_done':
       return updateTurn(turns, action.subtaskId, turn => {
         const items = applyCompletedAssistantContent(
-          settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
+          settleProcessingBlocks(
+            upsertBlocks(settleRuntimeReconnectingBlocks(turn.items), action.blocks)
+          ),
           turn.id,
           action.itemId,
           action.content
@@ -123,22 +130,28 @@ export function reduceRuntimeConversationTurns(
         }
       })
     case 'assistant_cancelled':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        status: 'cancelled',
-        streamingThinkingContent: undefined,
-        completedAt: new Date().toISOString(),
-        stoppedNotice: true,
-      }))
+      return updateTurn(turns, action.subtaskId, turn => {
+        return {
+          ...turn,
+          items: settleRuntimeReconnectingBlocks(turn.items),
+          status: 'cancelled',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          stoppedNotice: true,
+        }
+      })
     case 'assistant_error':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        status: 'failed',
-        streamingThinkingContent: undefined,
-        completedAt: new Date().toISOString(),
-        error: action.error,
-        errorType: action.errorType,
-      }))
+      return updateTurn(turns, action.subtaskId, turn => {
+        return {
+          ...turn,
+          items: settleRuntimeReconnectingBlocks(turn.items),
+          status: 'failed',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          error: action.error,
+          errorType: action.errorType,
+        }
+      })
     case 'file_changes_updated':
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
@@ -146,8 +159,11 @@ export function reduceRuntimeConversationTurns(
       }))
     case 'block_created':
       return updateTurn(turns, action.subtaskId, turn => {
+        const currentItems = isRuntimeReconnectingBlock(action.block)
+          ? turn.items
+          : settleRuntimeReconnectingBlocks(turn.items)
         const items = replaceAssistantTextWithBlock(
-          turn.items,
+          currentItems,
           action.replaceAssistantTextItemId,
           action.block
         )
@@ -164,10 +180,18 @@ export function reduceRuntimeConversationTurns(
       })
     case 'block_updated':
       return updateTurn(turns, action.subtaskId, turn => {
+        const currentItems = turn.items.some(
+          item =>
+            item.type === 'block' &&
+            item.id === action.blockId &&
+            isRuntimeReconnectingBlock(item.block)
+        )
+          ? turn.items
+          : settleRuntimeReconnectingBlocks(turn.items)
         const previousBlock = turn.items.find(
           item => item.type === 'block' && item.id === action.blockId
         )
-        const items = turn.items.map(item =>
+        const items = currentItems.map(item =>
           item.type === 'block' && item.id === action.blockId
             ? {
                 ...item,
@@ -784,6 +808,43 @@ function settleProcessingBlocks(items: RuntimeConversationItem[]): RuntimeConver
       } as ProcessingBlock,
     }
   })
+}
+
+function settleRuntimeReconnectingBlocks(
+  items: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  // A WebView refresh can miss the dedicated completion event. Any later turn
+  // progress proves the connection recovered, so the transient block must settle.
+  const completedAt = Date.now()
+  return items.map(item => {
+    if (
+      item.type !== 'block' ||
+      !isRuntimeReconnectingBlock(item.block) ||
+      item.block.status === 'done' ||
+      item.block.status === 'error'
+    ) {
+      return item
+    }
+    return {
+      ...item,
+      block: {
+        ...item.block,
+        status: 'done',
+        completedAt: item.block.completedAt ?? completedAt,
+      },
+    }
+  })
+}
+
+function hasAssistantChunkProgress(
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_chunk' }>
+): boolean {
+  if (action.content || action.reasoningChunk) return true
+  return Boolean(action.blocks?.some(block => !isRuntimeReconnectingBlock(block)))
+}
+
+function isRuntimeReconnectingBlock(block: ProcessingBlock): boolean {
+  return block.type === 'tool' && block.toolName === RUNTIME_RECONNECTING_TOOL_NAME
 }
 
 function assistantTextContent(items: RuntimeConversationItem[]): string {
