@@ -109,4 +109,13 @@ describe('LocalConnectorAuthDialog browser oauth', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(authMocks.cancel).toHaveBeenCalledWith(executorTarget, 'session-2'))
   })
+
+  test('shows a string executor error once', async () => {
+    authMocks.start.mockRejectedValue('internal_error: HOME is not set')
+
+    render(<LocalConnectorAuthDialog open target={target} onSuccess={vi.fn()} onCancel={vi.fn()} />)
+
+    await screen.findByTestId('local-connector-auth-retry')
+    expect(screen.getAllByText('internal_error: HOME is not set')).toHaveLength(1)
+  })
 })

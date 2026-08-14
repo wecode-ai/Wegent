@@ -123,8 +123,9 @@ export function LocalConnectorAuthDialog({
               )}
             </div>
           )}
-          <p className="text-center text-sm text-foreground">{statusText}</p>
-          {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
+          <p className={cn('text-center text-sm', error ? 'text-destructive' : 'text-foreground')}>
+            {statusText}
+          </p>
         </div>
 
         <div className="mt-4 flex justify-end gap-2">

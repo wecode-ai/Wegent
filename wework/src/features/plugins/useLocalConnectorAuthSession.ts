@@ -13,6 +13,7 @@ import {
 export type LocalConnectorAuthTranslate = TFunction
 
 function startErrorMessage(startError: unknown, fallback: string): string {
+  if (typeof startError === 'string' && startError.trim()) return startError
   if (startError instanceof Error) return startError.message
   if (
     typeof startError === 'object' &&

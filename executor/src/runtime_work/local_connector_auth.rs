@@ -238,12 +238,10 @@ fn resolve_plugin_root_candidates(
         ));
     }
 
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| AppIpcError::new("internal_error", "HOME is not set"))?;
-    let executor_home = env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".wegent-executor"));
+    let executor_home = resolve_executor_home(
+        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
+        dirs::home_dir(),
+    )?;
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     let store_plugins = executor_home.join("capabilities/store/plugins");
@@ -284,6 +282,15 @@ fn resolve_plugin_root_candidates(
         ));
     }
     Ok(candidates)
+}
+
+fn resolve_executor_home(
+    configured_executor_home: Option<PathBuf>,
+    platform_home: Option<PathBuf>,
+) -> Result<PathBuf, AppIpcError> {
+    configured_executor_home
+        .or_else(|| platform_home.map(|home| home.join(".wegent-executor")))
+        .ok_or_else(|| AppIpcError::new("internal_error", "Home directory is not available"))
 }
 
 fn has_plugin_manifest(path: &Path) -> bool {
@@ -919,6 +926,15 @@ mod tests {
             Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
             None => env::remove_var("WEGENT_CODEX_HOME"),
         }
+    }
+
+    #[test]
+    fn resolve_executor_home_uses_runtime_path_without_platform_home() {
+        let executor_home = PathBuf::from("runtime/executor-home");
+
+        let resolved = resolve_executor_home(Some(executor_home.clone()), None).unwrap();
+
+        assert_eq!(resolved, executor_home);
     }
 
     #[test]
