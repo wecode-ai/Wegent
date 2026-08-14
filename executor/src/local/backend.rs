@@ -79,7 +79,6 @@ const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
 const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
-const RUNTIME_EVENT_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -312,9 +311,7 @@ where
             loop {
                 match events.recv().await {
                     Ok(event) => {
-                        if let Err(error) = client
-                            .call_raw_event(RUNTIME_EVENT_EVENT, event, RUNTIME_EVENT_ACK_TIMEOUT)
-                            .await
+                        if let Err(error) = client.emit_raw_event(RUNTIME_EVENT_EVENT, event).await
                         {
                             write_executor_error_line(&format_executor_log(
                                 "runtime event relay failed",
