@@ -18,7 +18,7 @@ To create a Git project, select a device, repository, default branch, and destin
 
 ## View pull request and merge request status
 
-For tasks using a GitHub or GitLab workspace, the environment panel looks up the pull request (PR) or merge request (MR) associated with the current branch. It shows the request number, title, open/draft/closed/merged state, and pipeline check result. When a GitHub workflow check has multiple runs, Wework uses the latest result so a superseded cancelled or failed run does not override the current status. Select the entry to open the PR or MR in your browser.
+For tasks using a GitHub or GitLab workspace, the environment panel looks up the pull request (PR) or merge request (MR) associated with the current branch. The request number and title stay on one line. The main icon color communicates the open, closed, or other request state, while a small lower-right icon shows checks pending, passed, or failed. A red merge-conflict icon takes priority over the check result when conflicts exist. When a GitHub workflow check has multiple runs, Wework uses the latest result so a superseded cancelled or failed run does not override the current status. Select the entry to open the PR or MR in your browser.
 
 The lookup runs in the task's actual workspace on its execution device: GitHub uses `gh`, and GitLab uses `glab`. In a single-machine Wework setup, the local executor runs the command directly, so a separate cloud Git service connection is not required. Install and authenticate the corresponding CLI on that machine:
 

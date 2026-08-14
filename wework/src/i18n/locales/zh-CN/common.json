@@ -966,6 +966,7 @@
     "environment_change_request_checks_pending": "检查中",
     "environment_change_request_checks_success": "检查通过",
     "environment_change_request_checks_failure": "检查失败",
+    "environment_change_request_conflicting": "存在冲突",
     "environment_change_request_unavailable_github": "安装 GitHub CLI（gh）后可查询拉取请求状态",
     "environment_change_request_unauthenticated_github": "登录 GitHub CLI（gh auth login）后可查询状态",
     "environment_change_request_error_github": "暂时无法查询 GitHub 拉取请求状态",
