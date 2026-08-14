@@ -186,6 +186,7 @@ interface RightWorkspacePanelProps {
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
   getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
+  getChatSource?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
   onChatAddressChange?: (tab: RightWorkspaceChatTab, address: RuntimeTaskAddress | null) => void
 }
 
@@ -309,6 +310,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onRestoreConversation,
   getChatInitialInput,
   getChatInitialAddress,
+  getChatSource,
   onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
@@ -564,7 +566,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           >
             <TemporaryChatPanel
               currentProject={currentProject}
-              source={currentRuntimeTask}
+              source={getChatSource?.(tab) ?? currentRuntimeTask}
               instanceId={tab}
               initialInput={getChatInitialInput?.(tab)}
               initialAddress={getChatInitialAddress?.(tab)}
