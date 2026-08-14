@@ -106,6 +106,7 @@ async fn run_git(
     max_bytes: usize,
 ) -> Result<(String, bool), String> {
     let mut command = Command::new("git");
+    crate::process::hide_windows_console(&mut command);
     command.args(args);
     command.env_clear();
     command.envs(env);
@@ -144,6 +145,7 @@ async fn run_codex(
     env: &HashMap<String, String>,
 ) -> Result<String, String> {
     let mut command = Command::new(binary);
+    crate::process::hide_windows_console(&mut command);
     command.args(codex_args(output_path));
     command.env_clear();
     command.envs(env);

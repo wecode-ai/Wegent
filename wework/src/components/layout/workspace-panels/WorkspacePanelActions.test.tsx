@@ -4,12 +4,19 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
-import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
+import {
+  isLocalTerminalAvailable,
+  listLocalWorkspaceOpeners,
+  openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
+} from '@/lib/local-terminal'
 import { WorkspacePanelActions } from './WorkspacePanelActions'
 
 vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
+  listLocalWorkspaceOpeners: vi.fn(),
   openLocalWorkspace: vi.fn(),
+  pickLocalWorkspaceOpenerExe: vi.fn(),
 }))
 
 vi.mock('@/lib/external-links', () => ({
@@ -18,7 +25,25 @@ vi.mock('@/lib/external-links', () => ({
 
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
+const listLocalWorkspaceOpenersMock = vi.mocked(listLocalWorkspaceOpeners)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
+const pickLocalWorkspaceOpenerExeMock = vi.mocked(pickLocalWorkspaceOpenerExe)
+
+const defaultOpenersAvailability = [
+  { id: 'vscode', category: 'general', available: true },
+  { id: 'vscode-insiders', category: 'general', available: true },
+  { id: 'cursor', category: 'general', available: true },
+  { id: 'sublime-text', category: 'general', available: true },
+  { id: 'windsurf', category: 'general', available: true },
+  { id: 'intellij-idea', category: 'general', available: true },
+  { id: 'android-studio', category: 'general', available: true },
+  { id: 'file-manager', category: 'fileManager', available: true },
+  { id: 'terminal', category: 'terminal', available: true },
+  { id: 'xcode', category: 'macOnly', available: true },
+  { id: 'iterm2', category: 'macOnly', available: true },
+  { id: 'ghostty', category: 'macOnly', available: true },
+  { id: 'warp', category: 'macOnly', available: true },
+] as const
 const startProjectCodeServerMock = vi.fn()
 const startDeviceCodeServerMock = vi.fn()
 const workspaceSessionApi: WorkspaceSessionApi = {
@@ -29,6 +54,7 @@ const workspaceSessionApi: WorkspaceSessionApi = {
   createRemoteTerminalClient: vi.fn(),
 }
 const originalInnerWidth = window.innerWidth
+const originalUserAgent = window.navigator.userAgent
 
 function setWindowWidth(width: number) {
   Object.defineProperty(window, 'innerWidth', {
@@ -70,6 +96,8 @@ describe('WorkspacePanelActions', () => {
     setWindowWidth(originalInnerWidth)
     isLocalTerminalAvailableMock.mockReturnValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    listLocalWorkspaceOpenersMock.mockResolvedValue([...defaultOpenersAvailability])
+    pickLocalWorkspaceOpenerExeMock.mockResolvedValue(null)
     startProjectCodeServerMock.mockResolvedValue({
       session_id: 'ide-1',
       project_id: 7,
@@ -90,6 +118,10 @@ describe('WorkspacePanelActions', () => {
 
   afterEach(() => {
     setWindowWidth(originalInnerWidth)
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: originalUserAgent,
+    })
   })
 
   test('hides environment info while a task is being created', () => {
@@ -447,6 +479,79 @@ describe('WorkspacePanelActions', () => {
         opener: 'intellij-idea',
         path: '/Users/me/project38',
       })
+    )
+  })
+
+  test('on Windows, hides unavailable openers and lets the user add a custom opener', async () => {
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    })
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalWorkspaceOpenersMock.mockResolvedValue([
+      { id: 'vscode', category: 'general', available: true },
+      { id: 'intellij-idea', category: 'general', available: false },
+      { id: 'cmd', category: 'winOnly', available: true },
+      { id: 'powershell', category: 'winOnly', available: true },
+      { id: 'custom', category: 'general', available: true, label: 'Helix' },
+    ])
+
+    render(
+      <WorkspacePanelActions
+        {...baseProps}
+        currentProject={{
+          id: 7,
+          name: 'project38',
+          config: {
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-1',
+            },
+            workspace: {
+              source: 'local_path',
+              localPath: '/Users/me/project38',
+            },
+          },
+          tasks: [],
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Local Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'local',
+            bind_shell: 'claudecode',
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+
+    expect(screen.getByTestId('open-local-workspace-picker-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('open-local-workspace-option-vscode')).toBeInTheDocument()
+    expect(screen.getByTestId('open-local-workspace-option-cmd')).toBeInTheDocument()
+    expect(screen.getByTestId('open-local-workspace-option-powershell')).toBeInTheDocument()
+    expect(screen.getByTestId('open-local-workspace-option-custom')).toHaveTextContent('Helix')
+    expect(
+      screen.queryByTestId('open-local-workspace-option-intellij-idea')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('open-local-workspace-choose-other-button')).toBeInTheDocument()
+
+    pickLocalWorkspaceOpenerExeMock.mockResolvedValue('C:\\Tools\\Helix\\hx.exe')
+    listLocalWorkspaceOpenersMock.mockResolvedValueOnce([
+      { id: 'vscode', category: 'general', available: true },
+      { id: 'cmd', category: 'winOnly', available: true },
+      { id: 'powershell', category: 'winOnly', available: true },
+      { id: 'custom', category: 'general', available: true, label: 'Neovim' },
+    ])
+    await userEvent.click(screen.getByTestId('open-local-workspace-choose-other-button'))
+
+    await waitFor(() => expect(pickLocalWorkspaceOpenerExeMock).toHaveBeenCalled())
+    expect(await screen.findByTestId('open-local-workspace-option-custom')).toHaveTextContent(
+      'Neovim'
     )
   })
 

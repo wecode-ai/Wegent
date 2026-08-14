@@ -290,8 +290,12 @@ vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
   listLocalHarnesses: vi.fn().mockResolvedValue([]),
   listLocalHarnessSessions: vi.fn().mockResolvedValue([]),
+  listLocalWorkspaceOpeners: vi
+    .fn()
+    .mockResolvedValue([{ id: 'vscode', category: 'general', available: true }]),
   localPathExists: vi.fn(),
   openLocalWorkspace: vi.fn(),
+  pickLocalWorkspaceOpenerExe: vi.fn().mockResolvedValue(null),
   resolveLocalHarnessPluginRoots: vi.fn().mockResolvedValue([]),
   startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),

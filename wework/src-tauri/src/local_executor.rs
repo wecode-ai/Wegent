@@ -2133,6 +2133,7 @@ fn spawn_configured_sidecar(
     }
 
     let mut command = Command::new(&path);
+    crate::process::hide_windows_console(&mut command);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

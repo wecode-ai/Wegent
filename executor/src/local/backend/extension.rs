@@ -113,6 +113,7 @@ async fn run_script(
 ) -> Result<String, String> {
     let payload_json = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_owned());
     let mut command = Command::new("bash");
+    crate::process::hide_windows_console(&mut command);
     command
         .arg(script)
         .arg(action)
