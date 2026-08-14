@@ -358,7 +358,7 @@ fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state(
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
@@ -404,7 +404,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("complete"));
     assert!(!handler.is_active_local_task("task-1"));
@@ -453,7 +453,7 @@ fn stale_execution_cannot_finish_its_replacement() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(!handler.is_active_local_task("task-1"));
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.thread_id.as_deref(), Some("current-thread"));
     assert!(task.completed_at.is_some());
@@ -492,7 +492,7 @@ fn claude_execution_persists_running_and_settled_state() {
     let settled_task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(settled_task.status, "active");
+    assert_eq!(settled_task.status, "done");
     assert!(!settled_task.running);
     assert_eq!(settled_task.thread_status, "idle");
     assert_eq!(settled_task.turn_status.as_deref(), Some("completed"));
@@ -500,6 +500,33 @@ fn claude_execution_persists_running_and_settled_state() {
     assert!(settled_task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn settled_task_projection_normalizes_every_terminal_outcome() {
+    for (status, thread_status, turn_status, expected) in [
+        ("active", "idle", "completed", "done"),
+        ("active", "failed", "failed", "failed"),
+        ("active", "cancelled", "cancelled", "cancelled"),
+    ] {
+        let mut link = RuntimeTaskLink::new_pending_with_runtime(
+            format!("task-{expected}"),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+            "claude_code",
+        );
+        link.status = status.to_owned();
+        link.running = false;
+        link.thread_status = thread_status.to_owned();
+        link.turn_status = Some(turn_status.to_owned());
+        link.completed_at = Some(1_780_000_000_000);
+
+        apply_local_execution_state(&mut link, false, None);
+
+        assert_eq!(link.status, expected);
+        assert!(!link.running);
+        assert!(link.completed_at.is_some());
+    }
 }
 
 #[test]

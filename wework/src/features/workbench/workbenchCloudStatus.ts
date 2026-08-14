@@ -16,6 +16,10 @@ import type {
   RuntimeWorkListResponse,
   Team,
 } from '@/types/api'
+import {
+  normalizeRuntimeTaskSummary,
+  shouldReplaceRuntimeTaskProjection,
+} from './runtimeTaskLifecycle/projection'
 import type {
   CloudRuntimeSnapshot,
   CloudRuntimeState,
@@ -621,20 +625,14 @@ export function mergeRuntimeWorkLists(
   secondaryWork: RuntimeWorkListResponse,
   context: RuntimeWorkMergeContext = {}
 ): RuntimeWorkListResponse {
-  const taskOwners = new Map<string, string>()
   const canonicalizer = createRuntimeWorkDeviceCanonicalizer(context.devices ?? [])
-  const projects = mergeRuntimeProjects(
+  const mergedProjects = mergeRuntimeProjects(
     primaryWork.projects,
     secondaryWork.projects,
-    taskOwners,
     canonicalizer
   )
-  const chats = mergeRuntimeWorkspaces(
-    primaryWork.chats,
-    secondaryWork.chats,
-    taskOwners,
-    canonicalizer
-  )
+  const mergedChats = mergeRuntimeWorkspaces(primaryWork.chats, secondaryWork.chats, canonicalizer)
+  const { projects, chats } = dedupeRuntimeTaskProjections(mergedProjects, mergedChats)
   const totalTasks =
     projects.reduce((total, project) => total + countWorkspaceTasks(project.deviceWorkspaces), 0) +
     countWorkspaceTasks(chats)
@@ -649,7 +647,6 @@ export function mergeRuntimeWorkLists(
 function mergeRuntimeProjects(
   primaryProjects: RuntimeProjectWork[],
   secondaryProjects: RuntimeProjectWork[],
-  taskOwners: Map<string, string>,
   canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeProjectWork[] {
   const projects = new Map<string, RuntimeProjectWork>()
@@ -659,12 +656,7 @@ function mergeRuntimeProjects(
   const upsertProject = (project: RuntimeProjectWork) => {
     const normalizedProject: RuntimeProjectWork = {
       ...project,
-      deviceWorkspaces: mergeRuntimeWorkspaces(
-        [],
-        project.deviceWorkspaces,
-        new Map(),
-        canonicalizer
-      ),
+      deviceWorkspaces: mergeRuntimeWorkspaces([], project.deviceWorkspaces, canonicalizer),
     }
     normalizedProject.totalTasks = countWorkspaceTasks(normalizedProject.deviceWorkspaces)
 
@@ -690,7 +682,6 @@ function mergeRuntimeProjects(
       const deviceWorkspaces = mergeRuntimeWorkspaces(
         [],
         normalizedProject.deviceWorkspaces,
-        taskOwners,
         canonicalizer
       )
       const registeredProject = {
@@ -717,7 +708,6 @@ function mergeRuntimeProjects(
     const deviceWorkspaces = mergeRuntimeWorkspaces(
       existingIsRemoteDescriptor && !incomingIsRemoteDescriptor ? [] : existing.deviceWorkspaces,
       incomingWorkspaces,
-      taskOwners,
       canonicalizer
     )
     const projectRef =
@@ -781,7 +771,6 @@ function runtimeWorkspaceRouteIdentity(workspace: RuntimeDeviceWorkspace): strin
 function mergeRuntimeWorkspaces(
   primaryWorkspaces: RuntimeDeviceWorkspace[],
   secondaryWorkspaces: RuntimeDeviceWorkspace[],
-  taskOwners: Map<string, string>,
   canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeDeviceWorkspace[] {
   const workspaces = new Map<
@@ -796,13 +785,7 @@ function mergeRuntimeWorkspaces(
     const key = workspaceRouteAliases.get(routeIdentity) ?? runtimeWorkspaceKey(canonicalWorkspace)
     const existingEntry = workspaces.get(key)
     const existing = existingEntry?.workspace
-    const tasks = mergeRuntimeTasks(
-      existing?.tasks ?? [],
-      canonicalWorkspace.tasks,
-      canonicalWorkspace,
-      key,
-      taskOwners
-    )
+    const tasks = mergeRuntimeTasks(existing?.tasks ?? [], canonicalWorkspace.tasks)
     workspaces.set(key, {
       workspace: {
         ...canonicalWorkspace,
@@ -888,25 +871,98 @@ function isRuntimeWorkspaceDeviceAvailable(device: DeviceInfo): boolean {
 
 function mergeRuntimeTasks(
   primaryTasks: RuntimeTaskSummary[],
-  secondaryTasks: RuntimeTaskSummary[],
-  workspace: RuntimeDeviceWorkspace,
-  workspaceKey: string,
-  taskOwners: Map<string, string>
+  secondaryTasks: RuntimeTaskSummary[]
 ): RuntimeTaskSummary[] {
   const tasks = new Map<string, RuntimeTaskSummary>()
 
   const upsertTask = (task: RuntimeTaskSummary) => {
-    const key = runtimeTaskKey(workspace, task)
-    const owner = taskOwners.get(key)
-    if (owner && owner !== workspaceKey) return
-    taskOwners.set(key, workspaceKey)
-    tasks.set(task.taskId, task)
+    const candidate = normalizeRuntimeTaskSummary(task)
+    const current = tasks.get(candidate.taskId)
+    if (!current || shouldReplaceRuntimeTaskProjection(current, candidate)) {
+      tasks.set(candidate.taskId, candidate)
+    }
   }
 
   primaryTasks.forEach(upsertTask)
   secondaryTasks.forEach(upsertTask)
 
   return Array.from(tasks.values())
+}
+
+interface RuntimeTaskProjection {
+  workspace: RuntimeDeviceWorkspace
+  task: RuntimeTaskSummary
+  aliases: Set<string>
+}
+
+function dedupeRuntimeTaskProjections(
+  projects: RuntimeProjectWork[],
+  chats: RuntimeDeviceWorkspace[]
+): Pick<RuntimeWorkListResponse, 'projects' | 'chats'> {
+  const winners = new Set<RuntimeTaskProjection>()
+  const winnersByAlias = new Map<string, RuntimeTaskProjection>()
+  const workspaces = [...projects.flatMap(project => project.deviceWorkspaces), ...chats]
+
+  workspaces.forEach(workspace => {
+    workspace.tasks.forEach(task => {
+      const aliases = runtimeTaskProjectionAliases(workspace, task)
+      const matches = new Set(
+        [...aliases]
+          .map(alias => winnersByAlias.get(alias))
+          .filter((projection): projection is RuntimeTaskProjection => Boolean(projection))
+      )
+      const candidate = { workspace, task, aliases }
+      const winner = [...matches, candidate].reduce((current, projection) =>
+        shouldReplaceRuntimeTaskProjection(current.task, projection.task) ? projection : current
+      )
+      const mergedAliases = new Set([
+        ...aliases,
+        ...[...matches].flatMap(projection => [...projection.aliases]),
+      ])
+
+      matches.forEach(projection => winners.delete(projection))
+      winner.aliases = mergedAliases
+      winners.add(winner)
+      mergedAliases.forEach(alias => winnersByAlias.set(alias, winner))
+    })
+  })
+
+  const winningTasks = new Set([...winners].map(projection => projection.task))
+  const retainWinningTasks = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace | null => {
+    const inputTaskCount = workspace.tasks.length
+    const tasks = workspace.tasks.filter(task => winningTasks.has(task))
+    const filteredWorkspace = tasks.length === inputTaskCount ? workspace : { ...workspace, tasks }
+    return shouldKeepRuntimeWorkspace(filteredWorkspace, inputTaskCount) ? filteredWorkspace : null
+  }
+  const dedupedProjects = projects
+    .map(project => {
+      const deviceWorkspaces = project.deviceWorkspaces.flatMap(workspace => {
+        const retained = retainWinningTasks(workspace)
+        return retained ? [retained] : []
+      })
+      return {
+        ...project,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      }
+    })
+    .filter(project => project.deviceWorkspaces.length > 0)
+  const dedupedChats = chats.flatMap(workspace => {
+    const retained = retainWinningTasks(workspace)
+    return retained ? [retained] : []
+  })
+
+  return {
+    projects: dedupedProjects,
+    chats: dedupedChats,
+  }
+}
+
+function runtimeTaskProjectionAliases(
+  workspace: RuntimeDeviceWorkspace,
+  task: RuntimeTaskSummary
+): Set<string> {
+  return new Set([`${task.taskId}\0device:${workspace.deviceId}`])
 }
 
 function runtimeProjectKey(project: RuntimeProjectWork): string {
@@ -924,15 +980,6 @@ function runtimeWorkspaceKey(workspace: RuntimeDeviceWorkspace): string {
     workspace.workspaceKind ?? '',
     workspace.projectId ?? '',
     workspace.worktreeId ?? '',
-  ].join('\0')
-}
-
-function runtimeTaskKey(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): string {
-  return [
-    task.taskId,
-    task.workspacePath || workspace.workspacePath,
-    task.workspaceKind ?? workspace.workspaceKind ?? '',
-    task.worktreeId ?? workspace.worktreeId ?? '',
   ].join('\0')
 }
 

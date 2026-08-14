@@ -593,6 +593,83 @@ async fn runtime_task_list_applies_manual_order_to_projectless_chats() {
 }
 
 #[tokio::test]
+async fn runtime_task_list_applies_manual_order_without_project_state() {
+    let _lock = env_lock().await;
+    let home = temp_path("runtime-local-order-home", "dir");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-local-order-executor-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-local-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let task_workspace = home
+        .join("Documents")
+        .join("Codex")
+        .join("2026-08-14")
+        .join("project-task");
+    let threads = json!([
+        {
+            "id": "thread-target",
+            "cwd": task_workspace,
+            "name": "Target task",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000200000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-source",
+            "cwd": task_workspace,
+            "name": "Source task",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000100000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-local-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let reordered = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.sidebar.tasks.reorder",
+            "payload": {
+                "projectKey": "local:/repo/Manual",
+                "threadId": "thread-source",
+                "beforeThreadId": "thread-target"
+            }
+        }))
+        .await
+        .expect("task reorder should succeed");
+    assert_eq!(reordered["accepted"], true);
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(
+        listed["workspaces"][0]["tasks"]
+            .as_array()
+            .expect("workspace tasks")
+            .iter()
+            .map(|task| task["taskId"].as_str().expect("task id"))
+            .collect::<Vec<_>>(),
+        vec!["thread-source", "thread-target"]
+    );
+    assert_eq!(listed["workspaces"][0]["tasks"][0]["sidebarOrder"], 0);
+    assert_eq!(listed["workspaces"][0]["tasks"][1]["sidebarOrder"], 1);
+}
+
+#[tokio::test]
 async fn runtime_task_list_coalesces_codex_git_worktrees_under_common_repo_root() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

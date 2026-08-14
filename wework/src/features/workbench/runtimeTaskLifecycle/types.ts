@@ -50,6 +50,7 @@ export interface RuntimeTaskLifecycleSnapshot {
   turn: {
     phase: RuntimeTaskTurnPhase
     active: boolean
+    id: string | null
     outcome: RuntimeTaskTurnOutcome
   }
   goalStatus: RuntimeGoalStatus | null

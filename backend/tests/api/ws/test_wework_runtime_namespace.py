@@ -155,6 +155,45 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_request_rejects_executor_failure_envelope(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "success": False,
+                "error": {"message": "Codex app server restart failed"},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.codex.app_server.restart",
+            "params": {"ifIdle": True},
+        },
+    )
+
+    assert response == {
+        "id": "req-1",
+        "ok": False,
+        "error": {
+            "code": "runtime_rpc_failed",
+            "message": "Codex app server restart failed",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_request_requires_device_id(monkeypatch):
     namespace = WeworkRuntimeNamespace()
     monkeypatch.setattr(
