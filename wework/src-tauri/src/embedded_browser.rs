@@ -2246,6 +2246,17 @@ pub fn embedded_browser_set_bounds(
     Ok(())
 }
 
+#[tauri::command]
+#[cfg(target_os = "macos")]
+pub fn embedded_browser_capture_snapshot(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    label: Option<String>,
+) -> Result<String, String> {
+    let label = browser_label(label);
+    let webview = get_entry(&state, &label)?.ready_webview()?;
+    screenshot::capture_webview_snapshot_base64(&webview)
+}
+
 #[cfg(target_os = "macos")]
 fn force_embedded_browser_redraw(webview: &Webview<Wry>) {
     // Hiding and re-showing a WKWebView with setHidden can leave its rendered

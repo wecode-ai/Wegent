@@ -23,6 +23,7 @@ vi.mock('@extensions/cloud-desktop', () => ({
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   canUseEmbeddedBrowser: vi.fn(),
+  captureEmbeddedBrowserSnapshot: vi.fn(),
   clearEmbeddedBrowserData: vi.fn(),
   closeEmbeddedBrowser: vi.fn(),
   consumeEmbeddedBrowserLabelTransfer: vi.fn(),
@@ -125,6 +126,9 @@ describe('WorkspaceBrowserPanel', () => {
     resetEmbeddedBrowserDownloadStoreForTests()
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockResolvedValue(
+      'data:image/png;base64,aW1hZ2U='
+    )
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
     embeddedBrowserMocks.isEmbeddedBrowserLabelTransferred.mockReturnValue(false)
     embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockReturnValue(null)
@@ -1590,6 +1594,41 @@ describe('WorkspaceBrowserPanel', () => {
         true,
         'workspace-browser'
       )
+    })
+  })
+
+  test('shows a static snapshot while the native browser is occluded and clears it on release', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: true },
+      })
+    )
+
+    const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalledWith(
+      'workspace-browser'
+    )
+    expect(snapshot).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: false },
+      })
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-browser-occlusion-snapshot')).not.toBeInTheDocument()
     })
   })
 
