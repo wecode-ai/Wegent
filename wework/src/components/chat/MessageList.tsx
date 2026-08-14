@@ -35,7 +35,11 @@ import type {
   TurnFileChangesSummary,
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type {
+  ProcessingBlock,
+  RuntimeAssistantDisplayItem,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import {
   getAttachmentTextPreview,
@@ -2053,11 +2057,26 @@ function AssistantMessage({
   const hasPlanResponse = displayBlocks.some(
     block => block.type === 'plan' && Boolean(block.content.trim())
   )
+  const orderedRuntimeSegments = getOrderedRuntimeDisplaySegments(
+    message.runtimeDisplayItems,
+    displayBlocks
+  )
+  const orderedRuntimeContent = orderedRuntimeSegments
+    .flatMap(segment => (segment.kind === 'content' ? [segment.content] : []))
+    .join('\n\n')
+  const hasProcessingAfterContent = orderedRuntimeSegments.some(
+    (segment, index) =>
+      hasVisibleContent &&
+      orderedRuntimeContent === visibleContent &&
+      segment.kind === 'content' &&
+      orderedRuntimeSegments.slice(index + 1).some(candidate => candidate.kind === 'processing')
+  )
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
     !hasRunningBlocks &&
     !isCancelled &&
+    !hasProcessingAfterContent &&
     (isProcessingOnlyBeforeGuidance ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
@@ -2119,6 +2138,66 @@ function AssistantMessage({
         />
       ))
     : null
+  const orderedRuntimeTimeline = hasProcessingAfterContent
+    ? orderedRuntimeSegments.map((segment, segmentIndex) => {
+        if (segment.kind === 'content') {
+          return (
+            <div
+              key={`content:${segmentIndex}`}
+              data-message-selectable-text
+              data-testid="assistant-message-content"
+            >
+              <AssistantMarkdown
+                content={segment.content}
+                isStreaming={isStreaming}
+                onOpenFile={openFileFromLink}
+                fileChanges={message.fileChanges}
+              />
+            </div>
+          )
+        }
+
+        const segments = splitProcessingBlocks(segment.blocks)
+        return (
+          <Fragment key={`processing:${segmentIndex}`}>
+            {segments.map((processingSegment, processingIndex) => (
+              <ToolBlocksDisplay
+                key={`${processingSegment.kind}:${processingIndex}`}
+                blocks={processingSegment.blocks}
+                fileEditDurationBlocks={displayBlocks}
+                isStreaming={isStreaming}
+                startedAt={getProcessingSummaryStartMs(
+                  message,
+                  processingSegment.blocks,
+                  isStreaming
+                )}
+                forceExpanded={processingSegment.kind === 'narrative'}
+                processingPhase={
+                  segmentIndex === orderedRuntimeSegments.length - 1 ? 'live' : 'intermediate'
+                }
+                showInterToolThinking={
+                  isStreaming &&
+                  segmentIndex === orderedRuntimeSegments.length - 1 &&
+                  processingSegment.kind === 'tool' &&
+                  processingIndex === segments.length - 1
+                }
+                thinkingContent={activeThinkingContent}
+                showSummary={processingSegment.kind === 'tool'}
+                stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onRequestUserInputSubmit={onRequestUserInputSubmit}
+                onRequestUserInputIgnore={onRequestUserInputIgnore}
+                onOpenAssistantPlan={onOpenAssistantPlan}
+                onLoadFullTranscript={onLoadFullTranscript}
+                loadingFullTranscript={loadingFullTranscript}
+                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+              />
+            ))}
+          </Fragment>
+        )
+      })
+    : null
   const finalProcessingDuration = getDurationText(
     displayBlocks,
     getProcessingSummaryStartMs(message, displayBlocks, false) ?? finalProcessingCompletedAt,
@@ -2169,6 +2248,8 @@ function AssistantMessage({
               </button>
               {finalProcessingExpanded ? <div className="mt-1">{processingTimeline}</div> : null}
             </div>
+          ) : hasProcessingAfterContent ? (
+            orderedRuntimeTimeline
           ) : (
             processingTimeline
           )}
@@ -2183,7 +2264,7 @@ function AssistantMessage({
               loadingFullTranscript={loadingFullTranscript}
             />
           ) : null}
-          {hasVisibleContent ? (
+          {hasVisibleContent && !hasProcessingAfterContent ? (
             <div data-message-selectable-text data-testid="assistant-message-content">
               <AssistantMarkdown
                 content={visibleContent}
@@ -2376,6 +2457,50 @@ function hasRunningProcessingBlocks(blocks: ProcessingBlock[]): boolean {
 type ProcessingSegment = {
   kind: 'tool' | 'narrative'
   blocks: ProcessingBlock[]
+}
+
+type RuntimeDisplaySegment =
+  | {
+      kind: 'content'
+      content: string
+    }
+  | {
+      kind: 'processing'
+      blocks: ProcessingBlock[]
+    }
+
+function getOrderedRuntimeDisplaySegments(
+  items: RuntimeAssistantDisplayItem[] | undefined,
+  displayBlocks: ProcessingBlock[]
+): RuntimeDisplaySegment[] {
+  if (!items?.length) return []
+
+  const blocksById = new Map(displayBlocks.map(block => [block.id, block]))
+  const segments: RuntimeDisplaySegment[] = []
+
+  items.forEach(item => {
+    if (item.type === 'assistant_text') {
+      if (!item.content.trim()) return
+      const previous = segments.at(-1)
+      if (previous?.kind === 'content') {
+        previous.content = `${previous.content}\n\n${item.content}`
+      } else {
+        segments.push({ kind: 'content', content: item.content })
+      }
+      return
+    }
+
+    const block = blocksById.get(item.id)
+    if (!block) return
+    const previous = segments.at(-1)
+    if (previous?.kind === 'processing') {
+      previous.blocks.push(block)
+    } else {
+      segments.push({ kind: 'processing', blocks: [block] })
+    }
+  })
+
+  return segments
 }
 
 function getProcessingPhase(

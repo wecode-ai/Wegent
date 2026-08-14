@@ -260,6 +260,8 @@ The mode pill's cancel button appears only on hover and is absolutely positioned
 
 `BufferedChatInput` preserves a pane-level draft during editing and submission, while the external `value` remains the source of truth for the confirmed draft. After a non-empty draft is submitted, the local empty state must be associated with the expected empty external value instead of the text that was just submitted. Otherwise, returning the same text from a queue or guidance row for editing is mistaken for stale draft state and the composer remains empty. Changes to this path must cover the regression sequence “submit text → external value clears → edit the queued row to restore the same text.”
 
+When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. Confirmation must synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
+
 ## Referenced Conversation Context
 
 The composer's `@` menu supports explicit references to other Wework conversations. An empty query shows the five most recent conversations from the current `runtimeWork`; a typed query filters by title, project, and workspace path. The current conversation is always excluded so its in-progress context cannot be recursively injected into itself.
@@ -305,6 +307,20 @@ the canonical `turnId` and `subtaskId`. If the user input and the first
 assistant message share a timestamp, the user input must remain first.
 Canonical `turns` are the frontend transcript's only input, so restoring a
 message only in the compatibility `messages` array is insufficient.
+
+### Assistant In-Turn Display Order and Typography
+
+Final text, process text, and tool blocks within one assistant turn must be
+projected in runtime item arrival order. The UI must not group them by type and
+then render them in a fixed layout. In particular, when final text arrives
+before a later process update, that process update must appear below the final
+text, and transcript restoration must preserve the same order.
+
+The thinking indicator, process body text, and final answer body all use the
+semantic `text-chat` size. Tool summaries, timestamps, and other metadata may
+retain their compact roles, but a chat body must not change font size when it
+moves between streaming and completed states because that causes a visible
+flash.
 
 ## Guidance Message Order
 

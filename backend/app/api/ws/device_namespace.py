@@ -729,6 +729,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # This prevents race conditions when multiple response.output_text.delta
         # events arrive concurrently for the same subtask
         self._subtask_locks: Dict[int, asyncio.Lock] = {}
+        self._runtime_event_locks: Dict[str, asyncio.Lock] = {}
         self._runtime_auth_sync_inflight: set[tuple[int, str, str]] = set()
         self._connection_attempts: Dict[str, list[float]] = {}
         self._recent_registrations: Dict[tuple[int, str], tuple[float, str]] = {}
@@ -813,6 +814,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             subtask_id: Subtask ID
         """
         self._subtask_locks.pop(subtask_id, None)
+
+    def _get_runtime_event_lock(self, sid: str) -> asyncio.Lock:
+        """Return the ordered runtime-event relay lock for one device socket."""
+        if sid not in self._runtime_event_locks:
+            self._runtime_event_locks[sid] = asyncio.Lock()
+        return self._runtime_event_locks[sid]
 
     @trace_websocket_event(
         exclude_events={"connect"},
@@ -1142,6 +1149,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         except Exception as e:
             logger.error(f"[Device WS] Error in disconnect handler: {e}")
+        finally:
+            self._runtime_event_locks.pop(sid, None)
 
     # ============================================================
     # Device Registration and Heartbeat Events
@@ -1997,6 +2006,22 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not isinstance(data, dict):
             return {"error": "Invalid runtime event payload"}
 
+        async with self._get_runtime_event_lock(sid):
+            return await self._forward_runtime_event(
+                user_id=int(user_id),
+                device_id=device_id,
+                data=data,
+            )
+
+    async def _forward_runtime_event(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        data: dict,
+    ) -> dict:
+        """Persist and relay one runtime event without reordering its socket stream."""
+
         payload = dict(data)
         nested_payload = payload.get("payload")
         if isinstance(nested_payload, dict):
@@ -2031,7 +2056,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         await get_sio().emit(
             WEWORK_RUNTIME_EVENT,
             payload,
-            room=wework_runtime_user_room(int(user_id)),
+            room=wework_runtime_user_room(user_id),
             namespace=WEWORK_RUNTIME_NAMESPACE,
         )
         return {"success": True}

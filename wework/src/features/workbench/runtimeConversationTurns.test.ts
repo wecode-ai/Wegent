@@ -366,6 +366,47 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('preserves process text that arrives after assistant text in display order', () => {
+    const turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content: 'The answer arrived first.',
+            createdAt: '2026-08-14T00:00:00.000Z',
+          },
+          {
+            id: 'process-after-answer',
+            type: 'block',
+            block: {
+              id: 'process-after-answer',
+              subtaskId: 'turn-1',
+              type: 'text',
+              content: 'Then the latest process update arrived.',
+              status: 'streaming',
+              createdAt: Date.parse('2026-08-14T00:00:01.000Z'),
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    expect(projectRuntimeConversationTurns(turns)[0].runtimeDisplayItems).toEqual([
+      {
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: 'The answer arrived first.',
+      },
+      {
+        id: 'process-after-answer',
+        type: 'block',
+      },
+    ])
+  })
+
   test('reuses the Codex response item identity when terminal content arrives without a chunk', () => {
     const turns = reduceRuntimeConversationTurns(
       [

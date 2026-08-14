@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
+import { createAttachmentDownloadUrl } from '@/apis/attachments'
 import AttachmentPreview from '@/features/tasks/components/input/AttachmentPreview'
 import type { Attachment } from '@/types/api'
 
@@ -21,6 +22,14 @@ jest.mock('@/hooks/useAttachmentImage', () => ({
   }),
 }))
 
+jest.mock('@/apis/attachments', () => {
+  const actual = jest.requireActual('@/apis/attachments')
+  return {
+    ...actual,
+    createAttachmentDownloadUrl: jest.fn(),
+  }
+})
+
 const attachment = (overrides: Partial<Attachment>): Attachment => ({
   id: 1,
   filename: 'material.mp4',
@@ -37,6 +46,9 @@ describe('AttachmentPreview sent media cards', () => {
   const pause = jest.fn()
 
   beforeEach(() => {
+    jest
+      .mocked(createAttachmentDownloadUrl)
+      .mockImplementation(async id => `https://backend.example.com/attachments/${id}`)
     Object.defineProperty(HTMLMediaElement.prototype, 'play', {
       configurable: true,
       value: play,
@@ -51,9 +63,10 @@ describe('AttachmentPreview sent media cards', () => {
     jest.clearAllMocks()
   })
 
-  it('renders video as a compact thumbnail and opens a player dialog', () => {
+  it('renders video as a compact thumbnail and opens a player dialog', async () => {
     render(<AttachmentPreview attachment={attachment({})} />)
 
+    await waitFor(() => expect(screen.getByTestId('sent-video-attachment-1')).toBeInTheDocument())
     const card = screen.getByTestId('sent-video-attachment-1')
     expect(card).toHaveClass('h-16', 'w-16')
     expect(screen.getByText('material.mp4')).toBeInTheDocument()
@@ -61,7 +74,7 @@ describe('AttachmentPreview sent media cards', () => {
     fireEvent.click(card)
     expect(screen.getByTestId('sent-video-dialog-1')).toHaveAttribute(
       'src',
-      'blob:attachment-media'
+      'https://backend.example.com/attachments/1'
     )
   })
 
@@ -77,6 +90,7 @@ describe('AttachmentPreview sent media cards', () => {
       />
     )
 
+    await waitFor(() => expect(screen.getByTitle('actions.play')).toBeEnabled())
     expect(screen.getByTestId('sent-audio-attachment-2')).toHaveClass('h-12', 'max-w-52')
     expect(screen.queryByText('attachment.click_to_download')).not.toBeInTheDocument()
 

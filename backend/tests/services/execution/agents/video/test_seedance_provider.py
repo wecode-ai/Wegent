@@ -12,6 +12,7 @@ from app.services.execution.agents.video.providers.seedance import (
     _media_url_diagnostics,
     _media_url_for_log,
     _reject_credential_media_urls,
+    _response_value_for_log,
 )
 
 
@@ -150,6 +151,20 @@ async def test_seedance_does_not_send_credential_media_url(monkeypatch) -> None:
         )
 
     assert client.post_kwargs is None
+
+
+def test_allows_scoped_application_token() -> None:
+    _reject_credential_media_urls(
+        [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://backend.example.com/image.png?token=scoped",
+                },
+                "role": "reference_image",
+            }
+        ]
+    )
 
 
 @pytest.mark.asyncio
@@ -335,4 +350,20 @@ def test_seedance_request_log_redacts_only_url_credentials() -> None:
         "query_keys": [],
         "credential_query_detected": False,
         "credential_query_keys": [],
+    }
+
+
+def test_seedance_response_log_redacts_nested_url_queries() -> None:
+    assert _response_value_for_log(
+        {
+            "content": {
+                "video_url": "https://cdn.example.com/video.mp4?token=temporary",
+            },
+            "status": "succeeded",
+        }
+    ) == {
+        "content": {
+            "video_url": "https://cdn.example.com/video.mp4?<redacted>",
+        },
+        "status": "succeeded",
     }

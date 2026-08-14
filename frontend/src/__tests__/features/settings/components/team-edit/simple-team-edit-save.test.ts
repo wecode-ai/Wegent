@@ -129,7 +129,7 @@ describe('simple team edit save helpers', () => {
     })
   })
 
-  it('builds a solo team request with a leader bot and display config', () => {
+  it('builds a solo team request with input placeholder and display config', () => {
     expect(buildSimpleTeamRequest(teamForm, 42)).toEqual({
       name: 'support-agent',
       displayName: 'Support Agent',
