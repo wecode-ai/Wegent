@@ -56,6 +56,7 @@ impl PreExecuteHook {
         };
 
         let mut command = Command::new("bash");
+        crate::process::hide_windows_console(&mut command);
         command.arg(script).arg(&context.task_dir);
         command.env("WEGENT_TASK_DIR", &context.task_dir);
         if let Some(task_id) = context.task_id {

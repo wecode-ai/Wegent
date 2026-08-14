@@ -73,6 +73,7 @@ import {
   isClaudeCodeDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
+import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -2449,7 +2450,7 @@ function ProjectItem({
     runtimeProjectWork,
     finderWorkspacePath,
     path => {
-      void openLocalWorkspace({ opener: 'finder', path })
+      void openLocalWorkspace({ opener: 'file-manager', path })
     },
     path =>
       formatSidebarTemplate(t('workbench.open_project_source'), {
@@ -2689,12 +2690,12 @@ function ProjectItem({
                 ...(finderWorkspacePath
                   ? [
                       {
-                        label: t('workbench.show_in_finder', '在 Finder 中显示'),
+                        label: fileManagerRevealLabel(t),
                         icon: FolderOpen,
                         testId: `show-project-in-finder-${project.id}`,
                         onSelect: () =>
                           openLocalWorkspace({
-                            opener: 'finder',
+                            opener: 'file-manager',
                             path: finderWorkspacePath,
                           }),
                       },

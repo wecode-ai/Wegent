@@ -3648,7 +3648,7 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('show-project-in-finder-7'))
 
     expect(openLocalWorkspace).toHaveBeenCalledWith({
-      opener: 'finder',
+      opener: 'file-manager',
       path: '/Users/alice/dev/Wegent',
     })
   })

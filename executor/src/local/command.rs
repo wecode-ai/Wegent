@@ -243,6 +243,7 @@ pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String>
 fn process_command(request: &CommandRequest) -> Command {
     if !request.argv.is_empty() {
         let mut command = Command::new(&request.argv[0]);
+        crate::process::hide_windows_console(&mut command);
         command.args(&request.argv[1..]);
         return command;
     }

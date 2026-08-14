@@ -331,6 +331,7 @@ async fn authenticate_github(git_domain: &str, credentials: &GitCredentials) -> 
         ],
     );
     let mut command = Command::new("gh");
+    crate::process::hide_windows_console(&mut command);
     command
         .arg("auth")
         .arg("login")
@@ -451,7 +452,8 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
             ("git_domain", git_domain.to_owned()),
         ],
     );
-    Command::new("glab")
+    let mut command = Command::new("glab");
+    command
         .arg("auth")
         .arg("login")
         .arg("--hostname")
@@ -459,7 +461,9 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
         .arg("--token")
         .arg(git_token)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::process::hide_windows_console(&mut command);
+    command
         .output()
         .await
         .map(|output| {
@@ -494,7 +498,9 @@ async fn configure_repo_proxy(git_domain: &str) {
         return;
     };
     for (key, value) in proxy_values {
-        let _ = Command::new("git")
+        let mut command = Command::new("git");
+        crate::process::hide_windows_console(&mut command);
+        let _ = command
             .arg("config")
             .arg("--global")
             .arg(key)
