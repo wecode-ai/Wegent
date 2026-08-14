@@ -267,6 +267,12 @@ impl CodexGlobalProjectIndex {
             .unwrap_or(order.len() + fallback)
     }
 
+    pub fn sidebar_project_key_for_thread(&self, thread_id: &str) -> Option<&str> {
+        self.thread_project_assignments
+            .get(thread_id)
+            .map(String::as_str)
+    }
+
     pub fn project_for_key(&self, value: &str) -> Option<&CodexGlobalProject> {
         self.project_by_key_or_path(value)
     }
@@ -1693,6 +1699,10 @@ fn reorder_project_thread_payload(
     before_thread_id: Option<&str>,
     insert_at_end: bool,
 ) {
+    assign_thread_to_project_payload(payload, thread_id, project_key);
+    if let Some(before_thread_id) = before_thread_id {
+        assign_thread_to_project_payload(payload, before_thread_id, project_key);
+    }
     let orders = payload
         .entry(SIDEBAR_PROJECT_THREAD_ORDERS_KEY.to_owned())
         .or_insert_with(|| Value::Object(Map::new()));
@@ -1719,7 +1729,29 @@ fn reorder_project_thread_payload(
             .unwrap_or(0)
     };
     order.insert(index, thread_id.to_owned());
+    project_order.insert("sortKey".to_owned(), Value::String("manual".to_owned()));
     project_order.insert("threadIds".to_owned(), serde_json::json!(order));
+}
+
+fn assign_thread_to_project_payload(
+    payload: &mut Map<String, Value>,
+    thread_id: &str,
+    project_key: &str,
+) {
+    let assignments = payload
+        .entry(THREAD_PROJECT_ASSIGNMENTS_KEY.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Some(assignments) = assignments.as_object_mut() {
+        let assignment = assignments
+            .entry(thread_id.to_owned())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(assignment) = assignment.as_object_mut() {
+            assignment.insert("projectId".to_owned(), json!(project_key));
+        } else {
+            *assignment = json!({"projectId": project_key});
+        }
+    }
+    remove_text_list_item(payload, PROJECTLESS_THREAD_IDS_KEY, thread_id);
 }
 
 fn normalized_text_list(value: Option<&Value>) -> Vec<String> {
@@ -2105,6 +2137,54 @@ mod tests {
             json!({"color": "blue"})
         );
         assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
+    }
+
+    #[test]
+    fn reordering_thread_creates_manual_order_used_by_project_index() {
+        let mut payload = payload(json!({
+            "thread-project-assignments": {
+                "moved": {"projectId": "old-project", "projectKind": "local"},
+                "target": {"projectId": "old-project", "futureField": {"keep": true}}
+            },
+            "unknown-codex-setting": {"keep": true}
+        }));
+
+        apply_codex_global_state_ops(
+            &mut payload,
+            &[CodexGlobalStateOplogRecord {
+                kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
+                project_key: Some("project".to_owned()),
+                thread_id: Some("moved".to_owned()),
+                before_id: Some("target".to_owned()),
+                ..Default::default()
+            }],
+        );
+
+        assert_eq!(
+            payload["sidebar-project-thread-orders"]["project"],
+            json!({"threadIds": ["moved"], "sortKey": "manual"})
+        );
+        assert_eq!(
+            payload["thread-project-assignments"]["moved"],
+            json!({"projectId": "project", "projectKind": "local"})
+        );
+        assert_eq!(
+            payload["thread-project-assignments"]["target"],
+            json!({"projectId": "project", "futureField": {"keep": true}})
+        );
+        assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
+
+        let index = index_from_payload(&payload);
+        assert_eq!(
+            index.sidebar_project_key_for_thread("moved"),
+            Some("project")
+        );
+        assert_eq!(
+            index.sidebar_project_key_for_thread("target"),
+            Some("project")
+        );
+        assert_eq!(index.thread_sort_order("project", "moved", 1), 0);
+        assert_eq!(index.thread_sort_order("project", "target", 0), 1);
     }
 
     #[test]

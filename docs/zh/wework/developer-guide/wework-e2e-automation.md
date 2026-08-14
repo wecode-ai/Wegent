@@ -115,9 +115,12 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
 `workspace-tabs`、`priority-filter`、`telemetry-consent`、
-`automation-lifecycle`、`model-routing`、`core-task-flow`、
-`window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
+`automation-lifecycle`、`project-automation`、`plugin-auto-update`、
+`model-routing`、`permission-modes`、`core-task-flow`、`runtime-task-queue`、
+`split-workbench`、`window-lifecycle`、`goal-lifecycle`、
+`supervisor-lifecycle`、`resilience`、
 `conversation-state`、`temporary-chat`、`workspace-attachments`、`rendering-extensions`、
+`change-request-status`、`claude-runtime`、`local-file-preview`、`local-harness`、
 `browser-multi-tabs` 和 `embedded-browser`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
@@ -143,6 +146,7 @@ pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment temporary-chat
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
+pnpm --filter wework e2e:desktop -- --segment claude-runtime
 ```
 
 `automation-lifecycle` 独立覆盖自动化创建、立即执行、固定既有任务以及定时继续
@@ -154,6 +158,12 @@ sidecar 和本地模型协议矩阵。两者都建立自身最小 fixture，因�
 `temporary-chat` 使用独立本地项目和真实 Codex ephemeral thread，保持 follow-up
 回复处于流式运行状态，验证 user message 在“正在思考”之前显示，并在切换主会话后
 验证临时聊天内容仍从运行时会话缓存恢复。
+
+`claude-runtime` 使用真实 Tauri Wework、Backend、local executor 和 remote
+executor，验证 Claude Code 在本机与远程设备上的创建、追问和取消路径。场景还会
+确认远程执行使用目标设备自己的 Claude Code binary，并以可见 DOM 为准检查任务
+完成后侧栏和 composer 不再显示 running；布局保留的隐藏 sidebar preview 不计入
+可见状态断言。
 
 `local-harness` 使用 `.github/claude-code-cli/package-lock.json` 固定的真实
 OpenCode、Claude Code 和 Kimi Code CLI，不允许用只记录参数的 shell fixture

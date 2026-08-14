@@ -18,6 +18,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  claude-runtime
   local-file-preview
   local-harness
   embedded-browser
@@ -42,7 +43,7 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   core-task-flow
-  model-routing,embedded-browser,local-harness
+  model-routing,embedded-browser,claude-runtime,local-harness
   window-lifecycle,conversation-state,temporary-chat
   resilience,goal-lifecycle,supervisor-lifecycle
   rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
@@ -256,7 +257,14 @@ classify_wework_path() {
       return
       ;;
 
-    # Local PTY-backed coding harnesses have a dedicated real-Tauri scenario.
+    # Claude conversations cover both local and remote executor routing.
+    wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
+      select_target "core:core-task-flow"
+      select_target "core:claude-runtime"
+      return
+      ;;
+
+    # Local PTY-backed coding harnesses have dedicated real-Tauri scenarios.
     wework/src-tauri/src/local_terminal* | \
       wework/src/lib/local-harness* | \
       wework/src/lib/local-terminal* | \
@@ -264,7 +272,9 @@ classify_wework_path() {
       wework/src/components/layout/WorkbenchHarnessSelector* | \
       wework/src/components/layout/localHarnessWorkbench* | \
       wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/claude-runtime.scenario.mjs | \
       wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:claude-runtime"
       select_target "core:local-harness"
       return
       ;;

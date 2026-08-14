@@ -10,7 +10,6 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
-LocalTaskStatus = Literal["active", "archived", "queued", "running"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
 
@@ -126,10 +125,19 @@ class LocalTaskSummary(BaseModel):
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
-    created_at: Optional[str] = Field(default=None, alias="createdAt")
-    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+    created_at: Optional[str | int] = Field(default=None, alias="createdAt")
+    updated_at: Optional[str | int] = Field(default=None, alias="updatedAt")
+    completed_at: Optional[str | int] = Field(default=None, alias="completedAt")
     running: bool = False
-    status: Optional[LocalTaskStatus] = None
+    continuable: Optional[bool] = None
+    thread_status: Optional[str] = Field(default=None, alias="threadStatus")
+    turn_status: Optional[str] = Field(default=None, alias="turnStatus")
+    goal_status: Optional[str] = Field(default=None, alias="goalStatus")
+    supervisor: Optional[dict[str, Any]] = None
+    pinned: Optional[bool] = None
+    pinned_order: Optional[int] = Field(default=None, alias="pinnedOrder")
+    sidebar_order: Optional[int] = Field(default=None, alias="sidebarOrder")
+    status: Optional[str] = None
 
 
 class DeviceWorkspaceUpsert(BaseModel):

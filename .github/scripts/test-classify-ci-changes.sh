@@ -309,7 +309,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"model-routing,embedded-browser,local-harness"},{"id":"core-3","name":"Core / shard 3","segments":"window-lifecycle,conversation-state,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"model-routing,embedded-browser,claude-runtime,local-harness"},{"id":"core-3","name":"Core / shard 3","segments":"window-lifecycle,conversation-state,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,embedded-browser,telemetry-consent"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle,conversation-state,browser-multi-tabs"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update"}]}
 wework_desktop_other_e2e=true
@@ -330,10 +330,18 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "local harness files select local harness coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"local-harness"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"claude-runtime,local-harness"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/lib/local-harness.ts"
+
+assert_desktop_case "Claude runtime messaging selects task and Claude coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"claude-runtime"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts"
 
 assert_desktop_case "local file preview files select the shared preview checkpoint" \
   'wework_desktop_e2e=true

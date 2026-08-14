@@ -155,6 +155,26 @@ export async function prepareRuntimeAttachmentsForDevice(
   }
 }
 
+export function runtimeExecutablePathForTarget({
+  executablePath,
+  targetDevice,
+  workspaceSource,
+}: {
+  executablePath?: string
+  targetDevice: WorkbenchState['devices'][number] | null
+  workspaceSource?: RuntimeDeviceWorkspace['workspaceSource']
+}): string | undefined {
+  if (!executablePath) return undefined
+  if (
+    workspaceSource === 'remote' ||
+    targetDevice?.device_type === 'cloud' ||
+    targetDevice?.device_type === 'remote'
+  ) {
+    return undefined
+  }
+  return executablePath
+}
+
 interface RuntimeMessagingAttachmentSelection {
   attachments: Attachment[]
   resetAttachments: () => void
@@ -920,14 +940,21 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
+      const targetDevice = findWorkbenchDevice(state.devices, optimisticDeviceId)
+      const runtimeExecutablePath = runtimeExecutablePathForTarget({
+        executablePath: options?.runtimeExecutablePath,
+        targetDevice,
+        workspaceSource:
+          selectedProjectWorkspace?.deviceId === optimisticDeviceId
+            ? selectedProjectWorkspace.workspaceSource
+            : undefined,
+      })
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
         taskId,
         teamId: payload.team_id,
         runtime,
-        ...(options?.runtimeExecutablePath
-          ? { runtimeExecutablePath: options.runtimeExecutablePath }
-          : {}),
+        ...(runtimeExecutablePath ? { runtimeExecutablePath } : {}),
         ...(options?.runtimePermissionMode
           ? { runtimePermissionMode: options.runtimePermissionMode }
           : {}),
