@@ -614,8 +614,10 @@ impl RuntimeWorkRpcHandler {
             });
             let route_handler = handler.clone();
             let route_local_task_id = turn_local_task_id.clone();
+            let route_request = request.clone();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
                 route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
+                route_handler.register_codex_thread_workspace_root(&thread_id, &route_request);
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();

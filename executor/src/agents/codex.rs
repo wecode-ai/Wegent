@@ -1389,7 +1389,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_id
             }
         };
-        log_codex_mcp_inventory(client, request, &thread_id).await;
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
@@ -1471,6 +1470,19 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(turn_id) = active_turn_id.as_ref() {
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
+            }
+            if !request.mcp_servers.is_empty() {
+                let inventory_client = client.clone();
+                let inventory_request = request.clone();
+                let inventory_thread_id = thread_id.clone();
+                tokio::spawn(async move {
+                    log_codex_mcp_inventory(
+                        &inventory_client,
+                        &inventory_request,
+                        &inventory_thread_id,
+                    )
+                    .await;
+                });
             }
             log_executor_event(
                 "codex shared active turn resolved",
