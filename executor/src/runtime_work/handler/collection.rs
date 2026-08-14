@@ -890,18 +890,22 @@ impl RuntimeWorkRpcHandler {
 }
 
 fn runtime_task_sidebar_project_key(link: &RuntimeTaskLink) -> String {
+    if let Some(project_key) = link
+        .runtime_project_key
+        .as_deref()
+        .filter(|project_key| !project_key.trim().is_empty())
+    {
+        return project_key.to_owned();
+    }
+    if let Some(workspace_path) = link
+        .group_workspace_path
+        .as_deref()
+        .filter(|workspace_path| !workspace_path.trim().is_empty())
+    {
+        return format!("local:{workspace_path}");
+    }
     if infer_workspace_kind(&link.workspace_path) == "chat" {
         return "chats".to_owned();
     }
-    link.runtime_project_key
-        .clone()
-        .filter(|project_key| !project_key.trim().is_empty())
-        .unwrap_or_else(|| {
-            format!(
-                "local:{}",
-                link.group_workspace_path
-                    .clone()
-                    .unwrap_or_else(|| workspace_group_path(&link.workspace_path))
-            )
-        })
+    format!("local:{}", workspace_group_path(&link.workspace_path))
 }
