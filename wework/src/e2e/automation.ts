@@ -36,6 +36,7 @@ import { selectDesktopControlOption } from './desktop-control-select'
 import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
+import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -358,6 +359,7 @@ export async function installWeworkAutomationBridge(
   if (isTauriRuntime()) {
     await loadDesktopE2ERuntimeConfig()
   }
+  installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
@@ -1187,6 +1189,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'snapshot':
       return desktopControlSnapshot(command.selector)
+    case 'getClipboardText':
+      return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

@@ -559,6 +559,11 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
     text: '已复制',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    runnableCommandSnapshot.text,
+    'The remote Docker command was not copied into the desktop E2E clipboard'
+  )
   await captureVerificationScreenshot(control, 'cloud-00-remote-docker-command.png')
   const generatedDeviceId = runnableCommandSnapshot.text.match(/DEVICE_ID=([^\s\\]+)/)?.[1]
   const generatedDeviceName = runnableCommandSnapshot.text.match(/DEVICE_NAME=([^\s\\]+)/)?.[1]
