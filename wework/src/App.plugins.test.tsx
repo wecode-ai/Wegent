@@ -177,7 +177,6 @@ const workbenchValue: WorkbenchContextValue = {
   updateGlobalImNotification: vi.fn(),
   subscribeRuntimeTaskNotifications: vi.fn(),
   unsubscribeRuntimeTaskNotifications: vi.fn(),
-  rememberExecutionDevice: vi.fn(),
   refreshWorkLists: vi.fn(),
   refreshDevices: vi.fn(),
   getRemoteDeviceStartupCommand: vi.fn(),
