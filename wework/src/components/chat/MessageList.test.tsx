@@ -4665,6 +4665,35 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
+  test('shows thinking after process text completes while waiting for the next item', () => {
+    const processBlock: ProcessingBlock = {
+      id: 'text-1',
+      subtaskId: 1,
+      type: 'text',
+      content: 'Let me inspect the repository first.',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [processBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Let me inspect the repository first.')).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+  })
+
   test('collapses tool rows and shows trailing thinking once final text is visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
