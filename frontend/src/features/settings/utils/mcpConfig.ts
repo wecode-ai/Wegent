@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { adaptMcpConfigForAgent, type AgentType } from './mcpTypeAdapter'
+import { migrateLegacyProviderMcpServerKey } from './providerMcpConfig'
 
 export type McpServersConfig = Record<string, unknown>
 
@@ -48,9 +49,14 @@ export function normalizeMcpServers(
 
   const normalizedServers: McpServersConfig = {}
 
-  Object.entries(servers).forEach(([serverName, serverValue]) => {
+  Object.entries(servers).forEach(([rawServerName, serverValue]) => {
+    const serverName = migrateLegacyProviderMcpServerKey(rawServerName)
     if (!MCP_SERVER_NAME_REGEX.test(serverName)) {
-      throw new Error(`mcp_server_name_invalid:${serverName}`)
+      throw new Error(`mcp_server_name_invalid:${rawServerName}`)
+    }
+
+    if (serverName in normalizedServers) {
+      throw new Error(`mcp_server_name_duplicate:${serverName}`)
     }
 
     if (!serverValue || typeof serverValue !== 'object' || Array.isArray(serverValue)) {
