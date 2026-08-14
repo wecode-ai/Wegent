@@ -1,10 +1,14 @@
 import { Check, Circle } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimePlanEventPayload, RuntimePlanStep } from '@/types/api'
 
+const COMPLETED_PLAN_NOTICE_DURATION_MS = 2200
+
 export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | null }) {
   const { t } = useTranslation('common')
+  const [dismissedPlan, setDismissedPlan] = useState<RuntimePlanEventPayload | null>(null)
+  const allCompleted = plan?.plan.every(step => step.status === 'completed') ?? false
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -14,11 +18,20 @@ export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | nu
     }
   }, [plan])
 
-  if (!plan?.plan.length) return null
+  useEffect(() => {
+    if (!plan?.plan.length || !allCompleted) return
+
+    const timeout = window.setTimeout(
+      () => setDismissedPlan(plan),
+      COMPLETED_PLAN_NOTICE_DURATION_MS
+    )
+    return () => window.clearTimeout(timeout)
+  }, [allCompleted, plan])
+
+  if (!plan?.plan.length || plan === dismissedPlan) return null
 
   const currentIndex = currentPlanStepIndex(plan.plan)
   const activeStep = plan.plan[currentIndex]
-  const allCompleted = plan.plan.every(step => step.status === 'completed')
 
   return (
     <div data-testid="runtime-plan-progress" className="relative z-0 mb-2 flex justify-center">
