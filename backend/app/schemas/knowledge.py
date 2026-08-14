@@ -1405,6 +1405,9 @@ class DocumentContentReadResponse(BaseModel):
     index_status: DocumentIndexStatus = Field(
         ..., description="Document indexing status"
     )
+    source_media_type: Optional[str] = Field(
+        default=None, description="Media type of the source attachment (e.g. 'video')"
+    )
 
 
 class DocumentContentUpdate(BaseModel):

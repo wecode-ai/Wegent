@@ -6,14 +6,15 @@
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-from shared.models import (
-    EventType,
-    ExecutionEvent,
-)
+from shared.models import EventType, ExecutionEvent
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
+from wecode.service.knowledge.video_citation_sources import (
+    collect_and_log_knowledge_mcp_video_sources,
+    merge_video_sources,
+)
 
 from .dispatcher import (
     _build_shell_call_context,
@@ -56,6 +57,7 @@ class EmitterBridgeTransport(EventTransport):
         self._offset = 0  # Track cumulative text offset
         self._tool_contexts: dict[str, dict] = {}
         self._reasoning_content = ""
+        self._video_sources: dict[tuple[int, int], dict[str, Any]] = {}
 
     def _pop_tool_context(self, tool_use_id: str) -> dict:
         """Return tracked tool context or fail fast for invalid tool lifecycles."""
@@ -147,6 +149,17 @@ class EmitterBridgeTransport(EventTransport):
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             response_data = data.get("response", {})
             result = extract_completed_result(response_data)
+            if self._video_sources:
+                result["sources"] = merge_video_sources(
+                    result.get("sources"), self._video_sources
+                )
+                logger.info(
+                    "Attached bridged video citations to completion: task_id=%d, "
+                    "subtask_id=%d, source_count=%d",
+                    self.task_id,
+                    self.subtask_id,
+                    len(self._video_sources),
+                )
             if not result.get("reasoning_content") and self._reasoning_content:
                 result["reasoning_content"] = self._reasoning_content
             return ExecutionEvent(
@@ -360,6 +373,13 @@ class EmitterBridgeTransport(EventTransport):
                 if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
                 else data.get("output")
             )
+            if event_type == ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value:
+                collect_and_log_knowledge_mcp_video_sources(
+                    self._video_sources,
+                    tool_output,
+                    logger=logger,
+                    context=f"task_id={self.task_id},subtask_id={self.subtask_id}",
+                )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT.value,
                 task_id=self.task_id,

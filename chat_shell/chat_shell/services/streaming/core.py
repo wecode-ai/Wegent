@@ -167,14 +167,19 @@ class StreamingState:
     def add_sources(self, sources: list) -> None:
         """Add knowledge base sources for citation."""
         existing_keys = {
-            (s.get("source_id") or s.get("kb_id"), s.get("title")) for s in self.sources
+            (
+                s.get("source_id") or s.get("kb_id"),
+                s.get("document_id"),
+                s.get("title"),
+            )
+            for s in self.sources
         }
         for source in sources:
             source_identity = source.get("source_id") or source.get("kb_id")
             title = source.get("title")
             if source_identity is None or title is None:
                 continue
-            key = (source_identity, title)
+            key = (source_identity, source.get("document_id"), title)
             if key not in existing_keys:
                 self.sources.append(source)
                 existing_keys.add(key)

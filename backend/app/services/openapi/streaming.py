@@ -26,6 +26,10 @@ from app.schemas.openapi_response import (
     ShellCallOutputItem,
 )
 from app.services.openapi.output_builder import normalize_tool_output
+from wecode.service.knowledge.video_citation_sources import (
+    collect_and_log_knowledge_mcp_video_sources,
+    merge_video_sources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +149,7 @@ class OpenAPIStreamingService:
         tool_output_indexes: Dict[str, int] = {}
         completed_output_items: Dict[int, Any] = {}
         response_blocks: Dict[str, Dict[str, Any]] = {}
+        video_sources: dict[tuple[int, int], dict[str, Any]] = {}
 
         def allocate_output_index() -> int:
             nonlocal next_output_index
@@ -475,6 +480,13 @@ class OpenAPIStreamingService:
                         server_label = chunk.data["server_label"]
                         arguments = chunk.data.get("arguments") or ""
                         tool_output = normalize_tool_output(chunk.data.get("output"))
+                        if chunk.data.get("status") != "failed":
+                            collect_and_log_knowledge_mcp_video_sources(
+                                video_sources,
+                                tool_output,
+                                logger=logger,
+                                context=f"response_id={response_id}",
+                            )
                         tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
                         completed_output_items[tool_output_index] = MCPCallOutputItem(
                             id=item_id,
@@ -674,6 +686,10 @@ class OpenAPIStreamingService:
             final_response_data = final_response.model_dump()
             if response_blocks:
                 final_response_data["blocks"] = list(response_blocks.values())
+            if video_sources:
+                final_response_data["sources"] = merge_video_sources(
+                    final_response_data.get("sources"), video_sources
+                )
             yield _format_sse_event(
                 {
                     "response": final_response_data,

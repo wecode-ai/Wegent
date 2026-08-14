@@ -938,6 +938,7 @@ class KnowledgeBaseTool(BaseTool):
                     "source_id": source_id,
                     "source_uri": record.get("source_uri"),
                     "source_name": record.get("source_name"),
+                    "source_media_type": record.get("source_media_type"),
                     "metadata": record.get("metadata") or {},
                 }
             )
@@ -1644,14 +1645,18 @@ class KnowledgeBaseTool(BaseTool):
 
         # Build source references from chunks_used
         source_references = []
-        seen_sources: dict[tuple[Any, str], int] = {}
+        seen_sources: dict[tuple[str, str, str], int] = {}
         source_index = 1
 
         for chunk in chunks_used:
             kb_id = chunk.get("knowledge_base_id")
             source_id = chunk.get("source_id")
             source_file = chunk.get("source", "Unknown")
-            source_key = (source_id or kb_id, source_file)
+            source_key = _chunk_source_identity(
+                chunk,
+                kb_id=kb_id,
+                source_file=source_file,
+            )
 
             if source_key not in seen_sources:
                 seen_sources[source_key] = source_index
@@ -1668,6 +1673,10 @@ class KnowledgeBaseTool(BaseTool):
                     }
                 )
                 source_index += 1
+
+        # Upgrade video sources: from full Markdown content parse all chapters
+        # (direct injection has no chunk-level metadata, so we parse content).
+        self._upgrade_direct_injection_video_sources(source_references, chunks_used)
 
         retrieval_summary = self._with_citation_counts(
             retrieval_summary, source_references
@@ -1782,6 +1791,66 @@ class KnowledgeBaseTool(BaseTool):
             },
             ensure_ascii=False,
         )
+
+    def _upgrade_direct_injection_video_sources(
+        self,
+        source_references: list[dict[str, Any]],
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        """Upgrade video sources in direct-injection mode by parsing full content.
+
+        Direct injection has no chunk-level metadata (only document_id and
+        total_length), so video chapters are parsed from the full Markdown
+        content using the shared parser.
+
+        Dual condition: ``source_media_type == "video"`` AND content must
+        contain valid timestamp headings.
+        """
+        from shared.knowledge.video_segments import extract_all_video_segments
+
+        sources_by_doc_id: dict[Any, dict[str, Any]] = {}
+        for source in source_references:
+            doc_id = source.get("document_id")
+            if doc_id is not None and doc_id not in sources_by_doc_id:
+                sources_by_doc_id[doc_id] = source
+
+        for chunk in chunks:
+            if chunk.get("source_media_type") != "video":
+                continue
+
+            doc_ref = (chunk.get("metadata") or {}).get("doc_ref")
+            if doc_ref is None:
+                doc_ref = chunk.get("document_id")
+            try:
+                document_id = int(doc_ref)
+            except (TypeError, ValueError):
+                continue
+
+            source = sources_by_doc_id.get(chunk.get("document_id"))
+            if source is None:
+                source = sources_by_doc_id.get(document_id)
+            if source is None:
+                continue
+
+            parse_result = extract_all_video_segments(chunk.get("content", ""))
+            if not parse_result.segments:
+                continue
+
+            source["source_type"] = "wegent_video_chapters"
+            source["document_id"] = document_id
+            source["segments"] = [
+                {
+                    "id": f"segment_{s.start_sec}_{s.end_sec}",
+                    "start_sec": s.start_sec,
+                    "end_sec": s.end_sec,
+                    "score": chunk.get("score"),
+                    "title": s.title,
+                    "description": s.description,
+                }
+                for s in parse_result.segments
+            ]
+            if parse_result.truncated:
+                source["segments_truncated"] = True
 
     def _upgrade_video_source_references(
         self,
