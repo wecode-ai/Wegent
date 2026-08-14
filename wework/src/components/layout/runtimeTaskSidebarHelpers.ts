@@ -24,6 +24,21 @@ function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
+function compareRuntimeTasks(
+  left: RuntimeTaskSummary,
+  right: RuntimeTaskSummary,
+  useSidebarOrder: boolean
+) {
+  const leftOrder = left.sidebarOrder
+  const rightOrder = right.sidebarOrder
+  if (useSidebarOrder && leftOrder != null && rightOrder != null && leftOrder !== rightOrder) {
+    return leftOrder - rightOrder
+  }
+  if (useSidebarOrder && leftOrder != null && rightOrder == null) return -1
+  if (useSidebarOrder && leftOrder == null && rightOrder != null) return 1
+  return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
+}
+
 function getRuntimeTaskQueuePosition(task: RuntimeTaskSummary) {
   if (!isRuntimeTaskQueued(task)) return null
   if (!Number.isInteger(task.queuePosition) || Number(task.queuePosition) <= 0) return null
@@ -35,8 +50,8 @@ function sortQueuedTasksWithinRecencyOrder<T>(
   getTask: (item: T) => RuntimeTaskSummary,
   getQueueKey: (item: T) => string
 ) {
-  const sorted = [...items].sort(
-    (left, right) => getRuntimeTaskSortTime(getTask(right)) - getRuntimeTaskSortTime(getTask(left))
+  const sorted = [...items].sort((left, right) =>
+    compareRuntimeTasks(getTask(left), getTask(right), getQueueKey(left) === getQueueKey(right))
   )
   const queues = new Map<string, T[]>()
 

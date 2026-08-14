@@ -11,6 +11,37 @@ import {
 } from './runtimeTaskSidebarHelpers'
 
 describe('runtimeTaskSidebarHelpers', () => {
+  test('uses persisted sidebar order before activity time', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        {
+          taskId: 'newer-second',
+          workspacePath: '/workspace/repo',
+          title: 'Newer second',
+          runtime: 'codex',
+          sidebarOrder: 1,
+          completedAt: '2026-08-12T03:00:00.000Z',
+        },
+        {
+          taskId: 'older-first',
+          workspacePath: '/workspace/repo',
+          title: 'Older first',
+          runtime: 'codex',
+          sidebarOrder: 0,
+          completedAt: '2026-08-12T02:00:00.000Z',
+        },
+      ],
+    }
+
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'older-first',
+      'newer-second',
+    ])
+  })
+
   test('sorts runtime task items newest first across workspaces', () => {
     const oldWorkspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',
