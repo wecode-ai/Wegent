@@ -169,7 +169,7 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
 
     let config = persistent_codex_app_server_launch_config(&request_config);
 
-    assert!(!config
+    assert!(config
         .config_overrides
         .contains(&"features.tool_search=true".to_owned()));
     assert!(!config

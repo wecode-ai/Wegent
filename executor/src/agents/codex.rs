@@ -1012,6 +1012,9 @@ fn persistent_codex_app_server_launch_config(
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
+        // Deferred MCP discovery is registered when the persistent app-server
+        // starts, so enabling it in per-thread configuration is too late.
+        "features.tool_search=true".to_owned(),
     ]);
     launch_config
         .config_overrides
