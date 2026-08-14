@@ -882,6 +882,31 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      try {
+        const prepared = await executorClient.runtime.prepareRuntimeModel({
+          deviceId: optimisticDeviceId,
+          modelId: executionModel.modelId,
+        })
+        if (!prepared) {
+          reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
+          return false
+        }
+        const supervisorModelId = options?.initialSupervisor?.modelSelection?.modelName
+        if (supervisorModelId) {
+          const supervisorPrepared = await executorClient.runtime.prepareRuntimeModel({
+            deviceId: optimisticDeviceId,
+            modelId: supervisorModelId,
+          })
+          if (!supervisorPrepared) {
+            reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
+            return false
+          }
+        }
+      } catch (error) {
+        reportError(runtimeSendError(error, '发送失败'), options)
+        return false
+      }
+
       let preparedAttachments: RuntimeAttachmentTransport
       try {
         preparedAttachments = await prepareRuntimeAttachmentsForDevice(
@@ -1010,6 +1035,27 @@ export function useWorkbenchRuntimeMessaging({
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
       }
+      logRuntimeTaskLaunchTiming('runtime-create-started', launchStartedAt, {
+        taskId,
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        deviceId: optimisticAddress.deviceId,
+      })
+      // Start the primary request before optimistic navigation mounts task readers.
+      // Presentation work must never leave a visible pending task without a runtime request.
+      const createResponsePromise = (async () => {
+        const worktreeCreationDelayMs = Number(
+          import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ?? 0
+        )
+        if (
+          payload.execution?.workspace?.source === 'git_worktree' &&
+          Number.isFinite(worktreeCreationDelayMs) &&
+          worktreeCreationDelayMs > 0
+        ) {
+          await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
+        }
+        return executorClient.runtime.createRuntimeTask(createRequest)
+      })()
+      void createResponsePromise.catch(() => undefined)
       logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {
         taskId,
         clientUserMessageId: options?.clientUserMessageId ?? null,
@@ -1051,22 +1097,7 @@ export function useWorkbenchRuntimeMessaging({
       }
 
       try {
-        logRuntimeTaskLaunchTiming('runtime-create-started', launchStartedAt, {
-          taskId,
-          clientUserMessageId: options?.clientUserMessageId ?? null,
-          deviceId: optimisticAddress.deviceId,
-        })
-        const worktreeCreationDelayMs = Number(
-          import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ?? 0
-        )
-        if (
-          payload.execution?.workspace?.source === 'git_worktree' &&
-          Number.isFinite(worktreeCreationDelayMs) &&
-          worktreeCreationDelayMs > 0
-        ) {
-          await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
-        }
-        const response = await executorClient.runtime.createRuntimeTask(createRequest)
+        const response = await createResponsePromise
         logRuntimeTaskLaunchTiming('runtime-create-resolved', launchStartedAt, {
           taskId,
           clientUserMessageId: options?.clientUserMessageId ?? null,

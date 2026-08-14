@@ -32,6 +32,18 @@ describe('getRuntimeConfig', () => {
     expect(getRuntimeConfig().feedbackUrl).toBe('')
   })
 
+  test('uses the official PlantUML SVG server by default', () => {
+    expect(getRuntimeConfig().plantumlServerUrl).toBe('https://www.plantuml.com/plantuml/svg')
+  })
+
+  test('prefers and normalizes the runtime PlantUML server URL', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      plantumlServerUrl: 'https://plantuml.example.com/svg/',
+    }
+
+    expect(getRuntimeConfig().plantumlServerUrl).toBe('https://plantuml.example.com/svg')
+  })
+
   test('reads and normalizes the feedback URL from build-time config', () => {
     vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports/')
 

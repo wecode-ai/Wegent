@@ -694,3 +694,25 @@ fn launch_linux(def: &OpenerDef, path: &str) -> Result<(), String> {
         .map_err(|error| format!("Failed to launch {cli}: {error}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::opener_def;
+
+    fn macos_app_name(id: &str) -> Option<&'static str> {
+        opener_def(id).and_then(|definition| definition.macos_app_name)
+    }
+
+    #[test]
+    fn maps_local_workspace_openers_to_macos_app_names() {
+        assert_eq!(macos_app_name("vscode"), Some("Visual Studio Code"));
+        assert_eq!(
+            macos_app_name("vscode-insiders"),
+            Some("Visual Studio Code - Insiders")
+        );
+        assert_eq!(macos_app_name("iterm2"), Some("iTerm"));
+        assert_eq!(macos_app_name("android-studio"), Some("Android Studio"));
+        assert_eq!(macos_app_name("intellij-idea"), Some("IntelliJ IDEA"));
+        assert_eq!(macos_app_name("unknown"), None);
+    }
+}

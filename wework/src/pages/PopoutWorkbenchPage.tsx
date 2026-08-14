@@ -25,6 +25,15 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { isLocalStandaloneDevice } from '@/components/chat/composer/project-work-bar-utils'
 import { isOnlineDevice } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  type WorkbenchPaneIdentity,
+} from '@/components/layout/workbenchPaneIdentity'
+import {
+  useWorkbenchSplitGroups,
+  workbenchSplitStorageKeys,
+} from '@/components/layout/useWorkbenchSplitGroups'
 import './PopoutWorkbenchPage.css'
 
 const POPOUT_LAST_PROJECT_STORAGE_KEY = 'wework.popout.lastProjectId.v1'
@@ -63,8 +72,32 @@ function writeRememberedProjectId(projectId: number | null) {
 
 export function PopoutWorkbenchPage() {
   const { t } = useTranslation('common')
-  const { state, selectProject, selectStandaloneDevice, setWorkbenchError, startNewChat } =
-    useWorkbench()
+  const {
+    state,
+    selectProject,
+    selectStandaloneDevice,
+    setWorkbenchError,
+    startNewChat,
+    workspaceTabId,
+  } = useWorkbench()
+  const activePane = useMemo<WorkbenchPaneIdentity>(
+    () => ({
+      currentRuntimeTask: state.currentRuntimeTask,
+      currentProject: state.currentProject,
+      standaloneChatKey: state.standaloneChatKey,
+    }),
+    [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
+  )
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const splitGroups = useWorkbenchSplitGroups({
+    ...workbenchSplitStorageKeys(`popout:${workspaceTabId ?? 'default'}`),
+    activePaneKey: getWorkbenchPaneKey(activePane),
+    validRuntimeKeys: runtimePaneKeys,
+    runtimeKeysReady: state.runtimeWork !== null,
+  })
   const selectionInitializedRef = useRef(false)
   const restoringProjectIdRef = useRef<number | null | undefined>(undefined)
   const expanded = Boolean(state.currentRuntimeTask)
@@ -230,11 +263,8 @@ export function PopoutWorkbenchPage() {
           sidebarCollapsed
           showComposerProjectMenuAction
           onSidebarCollapsedChange={() => undefined}
-          activePane={{
-            currentRuntimeTask: state.currentRuntimeTask,
-            currentProject: state.currentProject,
-            standaloneChatKey: state.standaloneChatKey,
-          }}
+          activePane={activePane}
+          splitGroups={splitGroups}
         />
       </div>
     </main>

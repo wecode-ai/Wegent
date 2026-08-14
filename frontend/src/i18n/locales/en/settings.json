@@ -186,6 +186,17 @@
       "placeholder": "Example: Help me create a product roadmap PPT",
       "add": "Add phrase"
     },
+    "input_placeholder": {
+      "label": "Input placeholder",
+      "description": "Uses the current device and language first, then the generic value, and finally the system default.",
+      "generic": "Generic fallback",
+      "desktop": "Desktop",
+      "mobile": "Mobile",
+      "zh": "Chinese",
+      "en": "English",
+      "zh_placeholder": "Chinese placeholder",
+      "en_placeholder": "English placeholder"
+    },
     "simple": {
       "advanced_title": "Advanced configuration",
       "advanced_description": "Collaboration modes, multi-bot orchestration, and detailed role settings live here.",

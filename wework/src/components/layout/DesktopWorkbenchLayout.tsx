@@ -51,6 +51,12 @@ import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
 } from './localHarnessWorkbench'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
+import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -137,6 +143,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     runtimeTaskReminders,
     services,
     refreshWorkLists,
+    workspaceTabId,
   } = useWorkbench()
   const localTodoProjects = useMemo(
     () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
@@ -144,6 +151,26 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
+  const activePane = useMemo<WorkbenchPaneIdentity>(
+    () => ({
+      currentRuntimeTask: state.currentRuntimeTask,
+      currentProject: state.currentProject,
+      standaloneChatKey: state.standaloneChatKey,
+    }),
+    [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
+  )
+  const activePaneKey = getWorkbenchPaneKey(activePane)
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const splitGroups = useWorkbenchSplitGroups({
+    ...workbenchSplitStorageKeys(workspaceTabId ?? 'main'),
+    activePaneKey,
+    validRuntimeKeys: runtimePaneKeys,
+    runtimeKeysReady: state.runtimeWork !== null,
+  })
+  const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
@@ -231,10 +258,16 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
+      activateSplitPane(
+        getWorkbenchPaneKey({
+          currentRuntimeTask: address,
+          currentProject: null,
+        })
+      )
       if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
       await onOpenRuntimeTask(address)
     },
-    [currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
+    [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
   const registerLocalHarnessSession = useCallback(
     (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
@@ -753,6 +786,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
+      splitGroupMemberships={splitGroups.memberships}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
@@ -942,11 +976,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}
-              activePane={{
-                currentRuntimeTask: state.currentRuntimeTask,
-                currentProject: state.currentProject,
-                standaloneChatKey: state.standaloneChatKey,
-              }}
+              activePane={activePane}
+              splitGroups={splitGroups}
               localHarnessSessions={localHarnessSessions}
               activeLocalHarnessSessionId={activeLocalHarnessSessionId}
               onLocalHarnessSessionStarted={registerLocalHarnessSession}

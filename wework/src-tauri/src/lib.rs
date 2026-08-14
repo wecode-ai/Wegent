@@ -3,6 +3,7 @@ mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
 mod desktop_capture;
+mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
@@ -2351,11 +2352,7 @@ pub(crate) fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Res
 }
 
 #[tauri::command]
-fn open_local_workspace(
-    app: tauri::AppHandle,
-    opener: String,
-    path: String,
-) -> Result<(), String> {
+fn open_local_workspace(app: tauri::AppHandle, opener: String, path: String) -> Result<(), String> {
     let opener =
         normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
     let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
@@ -4300,9 +4297,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalize_local_harness_preferences,
-        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
-        wework_cli_launcher_content, LocalHarnessPreference,
+        normalize_local_harness_preferences, normalized_browser_link_target,
+        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4560,28 +4557,6 @@ mod tests {
             *transport.shutdown_timeouts.lock().unwrap(),
             vec![Duration::ZERO]
         );
-    }
-
-    #[test]
-    fn maps_local_workspace_openers_to_macos_app_names() {
-        assert_eq!(
-            local_workspace_opener_app_name("vscode"),
-            Some("Visual Studio Code")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("vscode-insiders"),
-            Some("Visual Studio Code - Insiders")
-        );
-        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
-        assert_eq!(
-            local_workspace_opener_app_name("android-studio"),
-            Some("Android Studio")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("intellij-idea"),
-            Some("IntelliJ IDEA")
-        );
-        assert_eq!(local_workspace_opener_app_name("unknown"), None);
     }
 
     #[test]
@@ -5125,6 +5100,8 @@ pub fn run() {
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            diagram_image::copy_diagram_png,
+            diagram_image::save_diagram_png,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
@@ -5134,8 +5111,14 @@ pub fn run() {
             local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
+            local_executor::local_executor_delete_personal_plugin,
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
+            local_executor::local_executor_import_plugin_package,
+            local_executor::local_executor_preview_plugin_import,
+            local_executor::local_executor_finalize_plugin_import,
+            local_executor::local_executor_rollback_plugin_import,
+            local_executor::local_executor_save_plugin_example,
             local_executor::local_executor_link_plugin_release,
             local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,

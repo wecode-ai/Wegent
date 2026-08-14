@@ -3,6 +3,7 @@ import { getLatestThinkingContent, resolveStreamingThinkingContent } from '@wege
 import { parseCodeCommentContexts } from '@/lib/code-comment-context'
 import type {
   ProcessingBlock,
+  RuntimeAssistantDisplayItem,
   RuntimeConversationItem,
   RuntimeConversationTurn,
   WorkbenchMessage,
@@ -710,6 +711,13 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       turnId: turn.id ?? undefined,
       runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
+      runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(item =>
+        item.type === 'assistant_text'
+          ? [{ id: item.id, type: item.type, content: item.content }]
+          : item.type === 'block'
+            ? [{ id: item.id, type: item.type }]
+            : []
+      ),
       fileChanges: isLast ? turn.fileChanges : undefined,
       error: isLast ? turn.error : undefined,
       errorType: isLast ? turn.errorType : undefined,
