@@ -5306,6 +5306,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-review-option')).toHaveTextContent('审查')
+    expect(screen.getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
     expect(screen.getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
     expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
@@ -5814,6 +5815,77 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
   })
 
+  test('opens multiple terminal tabs in the right workspace panel', async () => {
+    startDeviceTerminalSessionMock
+      .mockResolvedValueOnce({
+        session_id: 'terminal-1',
+        url: '',
+        transport: 'socketio',
+        device_id: 'workspace-cloud-device',
+        path: '/workspace/project',
+      })
+      .mockResolvedValueOnce({
+        session_id: 'terminal-2',
+        url: '',
+        transport: 'socketio',
+        device_id: 'workspace-cloud-device',
+        path: '/workspace/project',
+      })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-terminal-option'))
+
+    expect(screen.queryByTestId('right-workspace-launcher')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'true')
+    await waitFor(() =>
+      expect(startDeviceTerminalSessionMock).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/project'
+      )
+    )
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-terminal-option'
+      )
+    )
+
+    await waitFor(() => expect(startDeviceTerminalSessionMock).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    expect(screen.getByTestId('right-workspace-terminal-tab-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getAllByTestId('remote-terminal')).toHaveLength(2)
+    expect(screen.getAllByTestId('remote-terminal')[0]).toHaveAttribute(
+      'data-session-id',
+      'terminal-1'
+    )
+    expect(screen.getAllByTestId('remote-terminal')[1]).toHaveAttribute(
+      'data-session-id',
+      'terminal-2'
+    )
+
+    await userEvent.click(screen.getByTestId('right-workspace-terminal-tab-2-close-button'))
+
+    expect(screen.queryByTestId('right-workspace-terminal-tab-2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-terminal-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+  })
+
   test('right workspace panel pushes the conversation chat into a narrow split column', async () => {
     mockDesktopWorkbenchMainWidth(1000)
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -6101,6 +6173,52 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'queued follow-up'
     )
+  }, 15_000)
+
+  test('temporary chat renders a direct follow-up before its thinking indicator', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-follow-up-order',
+      workspacePath: '/workspace/project',
+    }
+    const followUpSend = createDeferred<boolean>()
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    sendRuntimePaneMessageMock.mockReturnValue(followUpSend.promise)
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await userEvent.type(sideChatInput, 'direct follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    const userMessages = await within(sideChat).findAllByTestId('user-message-content')
+    const latestUserMessage = userMessages.at(-1)
+    const thinkingIndicator = within(sideChat).getByTestId('thinking-indicator')
+    expect(latestUserMessage).toHaveTextContent('direct follow-up')
+    expect(
+      latestUserMessage?.compareDocumentPosition(thinkingIndicator) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await act(async () => {
+      followUpSend.resolve(true)
+      await followUpSend.promise
+    })
   }, 15_000)
 
   test('temporary chat sends a busy follow-up as guidance when selected', async () => {
@@ -9704,6 +9822,42 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
   })
+
+  test('restores an ephemeral temporary chat when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const temporaryAddress: RuntimeTaskAddress = {
+      deviceId: 'local-device',
+      taskId: 'runtime-ephemeral-side-chat',
+      workspacePath: '/Users/me/Wegent/.worktrees/a',
+      runtimeHandle: {
+        thread_id: 'thread-ephemeral-side-chat',
+        ephemeral: true,
+      },
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(temporaryAddress)
+      return temporaryAddress
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-chat-option'))
+    const sideChat = activePane().getByTestId('right-workspace-chat-panel')
+    const composer = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(composer, 'keep this temporary chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    const restoredSideChat = await activePane().findByTestId('right-workspace-chat-panel')
+    expect(within(restoredSideChat).getByTestId('user-message-content')).toHaveTextContent(
+      'keep this temporary chat'
+    )
+    expect(within(restoredSideChat).queryByText('加载临时聊天失败')).not.toBeInTheDocument()
+  }, 15_000)
 
   test('resets cached conversation horizontal scroll when the task becomes active', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

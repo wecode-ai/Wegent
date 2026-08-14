@@ -280,18 +280,19 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 右侧工作区的“临时聊天”用于在当前 Codex 本地线程旁边发起一次短对话。它不是 fork，也不是左侧任务列表中的普通 runtime task：
 
 - 每个临时聊天 tab 都有独立的 `chat:<id>` 实例标识，允许在右侧工作区同时打开多个临时聊天。
-- UI 状态保存在 `TemporaryChatPanel` 内部，并以实例标识作为未创建 runtime 线程前的 `conversationKey`；切换 tab 时面板保持挂载，避免丢失本地消息和输入状态。
+- 创建 runtime 线程前，`TemporaryChatPanel` 以实例标识作为 `conversationKey`。线程创建后，pane workspace state 保存该 tab 的 runtime 地址，消息则由 `runtimeConversationCache` 的实时投影恢复。临时线程不支持 `thread/turns/list`，因此切换主会话导致面板卸载、再切回时，不能依赖 transcript 补回内容。
 - 每个临时聊天的附件选择、上传进度和错误状态也按实例隔离，不能复用主聊天 composer 的附件状态；首条消息必须把该实例的附件显式传给 `createTemporaryRuntimeTask`。
 - 右侧工作区只打开一个临时聊天时，默认使用紧凑的 `420px` 面板宽度；打开其他工作区 tab 后恢复通用分栏默认值，用户手动调整的宽度仍然优先。
 - 首条消息通过 `createTemporaryRuntimeTask` 创建 `ephemeral` runtime task，并携带当前主线程的 `sideSource`。该任务不写入左侧任务列表，也不触发主 pane 导航。
 - 后续消息必须继续使用已加载的临时线程。Codex app-server 路径使用 `direct_thread_id` 直接 `turn/start`，不能走普通 `resume_thread_id` 的 `thread/resume` 路径，否则会因为临时线程没有 rollout 映射而出现 `no rollout found`。
+- 普通 follow-up 必须在等待 `runtime.tasks.sendMessage` 返回前先把 user message 写入会话缓存，使它稳定出现在当前 turn 的“正在思考”指示器之前；发送失败时再按同一 client message id 回滚。
 - `BufferedChatInput` 传入的运行中发送选项必须由 `TemporaryChatPanel` 原样处理。用户选择“引导当前回复”或从队列卡片触发引导时，临时聊天必须调用 `runtime.tasks.guidance`，并以 `clientGuidanceId` 结算对应队列项；不能把引导降级成当前 turn 结束后的普通 follow-up。
 - 临时聊天只复用当前工作区和当前线程上下文；如果没有可用的主线程 source，应阻止发送并提示用户先打开已有对话。
 - runtime work 列表刷新后，reducer 必须用同一设备、同一任务的权威 `threadId/runtimeHandle` 水合当前任务地址；不能因为设备仍在线就保留缺少 thread 的 optimistic address，否则右侧临时聊天无法建立 `sideSource`。
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
 
-修改该链路后运行 `pnpm --dir wework e2e:desktop`。主桌面场景会断言右栏约为 `420px`，在右栏上传并发送附件，确认主 composer 始终没有继承右栏附件，并验证运行中的临时聊天 follow-up 通过 guidance 进入同一个活跃 turn；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+修改该链路后运行 `pnpm --filter wework e2e:desktop --segment temporary-chat`。独立真实 Tauri 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在切换主会话后确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

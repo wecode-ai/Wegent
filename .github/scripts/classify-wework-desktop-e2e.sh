@@ -15,6 +15,7 @@ core_segments=(
   supervisor-lifecycle
   resilience
   conversation-state
+  temporary-chat
   workspace-attachments
   rendering-extensions
   local-harness
@@ -168,6 +169,16 @@ classify_wework_path() {
     wework/src/components/chat/MessageList*)
       select_target "core:conversation-state"
       select_target "core:rendering-extensions"
+      return
+      ;;
+
+    # Right-workspace temporary chats have an independently bootstrapped
+    # ephemeral-thread scenario.
+    wework/src/components/layout/DesktopWorkbenchMain.tsx | \
+      wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
+      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+      wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
+      select_target "core:temporary-chat"
       return
       ;;
 

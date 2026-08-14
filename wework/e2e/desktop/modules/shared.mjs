@@ -162,6 +162,12 @@ const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
 const CHECKPOINT_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK: create a completed task for downstream checkpoints.'
 const CHECKPOINT_TASK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE'
+const MESSAGE_EDIT_ORIGINAL_PROMPT =
+  'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_ORIGINAL: answer before this message is edited.'
+const MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_ORIGINAL_COMPLETE'
+const MESSAGE_EDIT_UPDATED_PROMPT =
+  'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_UPDATED: answer only this edited message.'
+const MESSAGE_EDIT_UPDATED_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_UPDATED_COMPLETE'
 const FILE_PANEL_ANCHOR_PROMPT =
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR: create a long response with a file link in the middle.'
 const FILE_PANEL_ANCHOR_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_MARKER'
@@ -469,6 +475,7 @@ const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
+const MESSAGE_EDIT_ONLY = process.argv.includes('--message-edit-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const SEND_REJECTION_ONLY = process.argv.includes('--send-rejection-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
@@ -570,6 +577,7 @@ function getActiveOnlyModes() {
     ['--guidance-background-only', GUIDANCE_BACKGROUND_ONLY],
     ['--guidance-scroll-only', GUIDANCE_SCROLL_ONLY],
     ['--message-restoration-only', MESSAGE_RESTORATION_ONLY],
+    ['--message-edit-only', MESSAGE_EDIT_ONLY],
     ['--queue-management-only', QUEUE_MANAGEMENT_ONLY],
     ['--send-rejection-only', SEND_REJECTION_ONLY],
     ['--task-plan-only', TASK_PLAN_ONLY],
@@ -1460,6 +1468,10 @@ export {
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   CHECKPOINT_TASK_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
+  MESSAGE_EDIT_ORIGINAL_PROMPT,
+  MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+  MESSAGE_EDIT_UPDATED_PROMPT,
+  MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_ANCHOR_MARKER,
   FILE_PREVIEW_RESTORE_MARKER,
@@ -1632,6 +1644,7 @@ export {
   GUIDANCE_BACKGROUND_ONLY,
   GUIDANCE_SCROLL_ONLY,
   MESSAGE_RESTORATION_ONLY,
+  MESSAGE_EDIT_ONLY,
   QUEUE_MANAGEMENT_ONLY,
   SEND_REJECTION_ONLY,
   TASK_PLAN_ONLY,
