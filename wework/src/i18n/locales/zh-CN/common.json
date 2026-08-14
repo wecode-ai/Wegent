@@ -993,6 +993,7 @@
     "close_split_task": "从分屏中移除任务",
     "focus_split_task": "单独查看此任务",
     "restore_split_view": "返回分屏",
+    "split_group_badge": "分屏 {{number}}",
     "split_empty_title": "选择一个任务",
     "split_empty_description": "从左侧任务列表中打开要在此处显示的任务",
     "task_fallback_title": "任务 {{taskId}}",

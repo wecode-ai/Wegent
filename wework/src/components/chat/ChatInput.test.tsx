@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
@@ -38,7 +38,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ChatInput } from './ChatInput'
-import type { ChatSubmitOptions } from './ChatInput'
+import type { ChatInputHandle, ChatSubmitOptions } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
@@ -950,6 +950,7 @@ describe('ChatInput', () => {
   })
 
   test('asks whether to preserve a paused queue before sending a new message', async () => {
+    const inputRef = createRef<ChatInputHandle>()
     const onSubmit = vi.fn()
     const onResumeQueue = vi.fn()
     const onChange = vi.fn()
@@ -957,6 +958,7 @@ describe('ChatInput', () => {
 
     render(
       <ChatInput
+        ref={inputRef}
         value="发送新消息"
         onChange={onChange}
         onSubmit={onSubmit}
@@ -986,6 +988,7 @@ describe('ChatInput', () => {
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onResumeQueueWithInput).toHaveBeenCalled()
     expect(onChange).toHaveBeenCalledWith('')
+    expect(inputRef.current?.getValue()).toBe('')
   })
 
   test('hides drag handles when fewer than two messages are queued', () => {
