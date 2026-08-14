@@ -123,6 +123,19 @@ executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex
 
 排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。Tauri 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
 
+### 前端生命周期投影
+
+Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task lifecycle 状态。可见 pane 拥有 stream 事件的写权限；为了保留布局和快速切换而挂载的隐藏 Provider 可以继续订阅和读取，但不能写入 `turnStarted`、`turnSettled`、goal 状态或 executor snapshot。侧栏、composer 和任务执行遮罩都从同一个不可变 store snapshot 读取，不能再从 Provider 私有 state 或缓存 work list 生成第二份运行状态。
+
+来自 `runtime.tasks.list`、任务创建响应、stream 事件和本地缓存的 task summary 在进入 store 前都经过同一投影规则：
+
+- `running: false` 且 `completedAt` 非空表示权威终态；即使上游仍携带 `status: active`，也统一规范为 `done`、`failed`、`cancelled` 或 `archived`。
+- optimistic `active` 不能覆盖已经确认的终态。
+- 只有 `running: true`、线程或 turn 状态为运行中、`completedAt` 为空且不是 optimistic snapshot，才表示一个新的活跃 turn。
+- task address 只使用 `deviceId + taskId`；workspace 路径、tab id 和隐藏布局实例不能形成第二个生命周期身份。
+
+因此任务完成后的唯一数据流是：executor/Backend task snapshot 或终止 stream 事件进入共享 lifecycle store，投影收敛到 idle，所有 UI 消费者在同一次 store 更新后移除 running 状态。
+
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。本地 IPC 和远程 WebSocket 都只负责传输同一份 canonical 模型选择；本地设备调用远程模型、远程设备调用远程模型，都进入 executor backend 的同一套执行逻辑。新建任务和继续任务都必须复用同一套模型选择路径。
 
 如果当前 LocalTask 仍在回复，Wework 会把新的用户输入放入本地队列，而不是并发调用 `runtime.tasks.send`。用户可以取消队列中的消息；也可以在队列面板中选择“暂停当前回复并发送”，这会先调用：
