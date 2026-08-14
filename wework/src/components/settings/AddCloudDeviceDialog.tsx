@@ -11,7 +11,7 @@ import { remoteDeviceOnboardingExtension } from '@extensions/remote-device-onboa
 
 const IS_WEWORK_E2E = import.meta.env.VITE_WEWORK_E2E === 'true'
 const REMOTE_DEVICE_POLL_INTERVAL_MS = IS_WEWORK_E2E ? 100 : 2000
-const REMOTE_DEVICE_POLL_ATTEMPTS = IS_WEWORK_E2E ? 10 : 150
+const REMOTE_DEVICE_POLL_ATTEMPTS = IS_WEWORK_E2E ? 100 : 150
 const REMOTE_DEVICE_REQUEST_TIMEOUT_MS = IS_WEWORK_E2E ? 1000 : 30_000
 
 interface CloudDeviceDialogConnection {
