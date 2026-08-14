@@ -1943,6 +1943,7 @@ async fn read_shared_turn_notifications(
         .take()
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
+    let mut cancellation_requested = false;
     loop {
         let receive_notification = async {
             if let Some(cancel_rx) = options.cancellation.as_mut() {
@@ -1975,6 +1976,7 @@ async fn read_shared_turn_notifications(
         };
         let Some(received) = received else {
             options.cancellation = None;
+            cancellation_requested = true;
             let interrupt_turn_id = if waiting_for_initial_progress {
                 Some("")
             } else {
@@ -1992,12 +1994,17 @@ async fn read_shared_turn_notifications(
                     );
                 }
             }
-            return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+            continue;
         };
         let notification = shared_notification_result(received, last_outcome.clone())?;
         let message = match notification {
             SharedNotification::Message(message) => message,
-            SharedNotification::Completed(outcome) => return Ok(outcome),
+            SharedNotification::Completed(outcome) => {
+                if cancellation_requested {
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+                }
+                return Ok(outcome);
+            }
         };
         if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
             if let Some(outcome) = last_outcome {
@@ -2113,6 +2120,9 @@ async fn read_shared_turn_notifications(
             options.active_turn_id = None;
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
+            }
+            if cancellation_requested {
+                return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
             }
             if !should_wait_for_goal_continuation(
                 &outcome,
