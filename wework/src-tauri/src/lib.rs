@@ -3,6 +3,7 @@ mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
 mod desktop_capture;
+mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
@@ -5125,6 +5126,8 @@ pub fn run() {
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            diagram_image::copy_diagram_png,
+            diagram_image::save_diagram_png,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,

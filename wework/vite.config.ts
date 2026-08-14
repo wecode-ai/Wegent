@@ -61,6 +61,9 @@ export default defineConfig({
     // Test artifacts may contain standalone plugin apps with dependencies that
     // are intentionally absent from Wework. Only crawl the desktop app entry.
     entries: ['index.html'],
+    // The drawing renderer loads Mermaid dynamically. Pre-bundle the concrete
+    // package so WebKit does not confuse it with syntax-language chunks.
+    include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
     // File-viewer renderers are split into dedicated chunks; the desktop shell
