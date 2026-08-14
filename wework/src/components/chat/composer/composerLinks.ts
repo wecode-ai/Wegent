@@ -1,9 +1,4 @@
-import {
-  faviconPlaceholderUrl,
-  GENERIC_LINK_ICON_SRC,
-  resolveAndProbeIcon,
-  resolveFavicon,
-} from '@/lib/favicon-resolver'
+import { GENERIC_LINK_ICON_SRC, resolveAndProbeIcon, resolveFavicon } from '@/lib/favicon-resolver'
 import {
   BARE_HTTP_URL_REGEX,
   getRecognizedLink,
@@ -77,7 +72,7 @@ export function applyLinkIcon(icon: HTMLImageElement, payload: ComposerLinkPaylo
   }
   if (payload.provider === 'web') {
     resolveAndProbeIcon(
-      faviconPlaceholderUrl(payload.url),
+      payload.url,
       resolveFavicon(payload.url),
       favicon => {
         if (icon.isConnected) icon.src = favicon

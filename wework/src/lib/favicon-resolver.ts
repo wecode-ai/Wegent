@@ -32,7 +32,9 @@ const pendingByDomain = new Map<string, Promise<string | undefined>>()
  * link icon. Successful and "no favicon" results are cached for an hour, and
  * a reachable backend's failed resolutions for 30 minutes; network failures
  * are NOT cached, so favicons recover as soon as the backend is reachable
- * again instead of being disabled for the whole session.
+ * again instead of being disabled for the whole session. A cached favicon
+ * that fails to render is evicted (see `resolveAndProbeIcon`) rather than
+ * sticking for the whole cache TTL.
  */
 export function resolveFavicon(url: string): Promise<string | undefined> {
   let domain: string | undefined
@@ -94,22 +96,42 @@ export function faviconPlaceholderUrl(url: string): string | undefined {
 }
 
 /**
- * Probes the offline `/favicon.ico` placeholder and the backend-resolved
+ * Drops a domain's cached favicon so the next `resolveFavicon` call retries
+ * instead of serving a URL that failed to render.
+ */
+export function evictFaviconCache(url: string): void {
+  let domain: string | undefined
+  try {
+    domain = normalizeHostname(new URL(url).hostname)
+  } catch {
+    return
+  }
+  if (!domain) return
+  faviconCache.delete(domain)
+}
+
+/**
+ * Probes the site's `/favicon.ico` placeholder and the backend-resolved
  * favicon, showing each only once it has actually loaded so the generic icon
  * stays as the instant base (no blank flash). The backend favicon, once
- * loaded, wins over the placeholder. `faviconPromise` is passed in so callers
- * can provide a mocked resolution in tests.
+ * loaded, wins over the placeholder. If the backend favicon fails to load —
+ * e.g. a site that serves HTML at `/favicon.ico` — the cache entry is evicted
+ * so the next render re-resolves instead of showing the generic icon for the
+ * whole cache TTL. `faviconPromise` is passed in so callers can provide a
+ * mocked resolution in tests.
  */
 export function resolveAndProbeIcon(
-  placeholder: string | undefined,
+  url: string,
   faviconPromise: Promise<string | undefined>,
   show: (iconUrl: string) => void,
   isDisposed: () => boolean
 ): void {
+  const placeholder = faviconPlaceholderUrl(url)
   let backendIconShown = false
-  const probe = (candidate: string, onLoad: () => void): void => {
+  const probe = (candidate: string, onLoad: () => void, onError?: () => void): void => {
     const image = new Image()
     image.onload = onLoad
+    image.onerror = () => onError?.()
     image.src = candidate
   }
   if (placeholder) {
@@ -119,10 +141,14 @@ export function resolveAndProbeIcon(
   }
   void faviconPromise.then(favicon => {
     if (!favicon || isDisposed()) return
-    probe(favicon, () => {
-      if (isDisposed()) return
-      backendIconShown = true
-      show(favicon)
-    })
+    probe(
+      favicon,
+      () => {
+        if (isDisposed()) return
+        backendIconShown = true
+        show(favicon)
+      },
+      () => evictFaviconCache(url)
+    )
   })
 }

@@ -4,11 +4,22 @@ async function loadResolver() {
   return import('./favicon-resolver')
 }
 
+let imageShouldFail = false
+class MockImage {
+  onload: (() => void) | null = null
+  onerror: (() => void) | null = null
+  set src(value: string) {
+    if (imageShouldFail) this.onerror?.()
+    else this.onload?.()
+  }
+}
+
 describe('favicon-resolver', () => {
   const fetchMock = vi.fn()
 
   beforeEach(() => {
     fetchMock.mockReset()
+    imageShouldFail = false
     localStorage.clear()
     vi.stubGlobal('fetch', fetchMock)
     vi.resetModules()
@@ -124,7 +135,7 @@ describe('favicon-resolver', () => {
   })
 
   test('shows the placeholder icon before the backend favicon', async () => {
-    const { faviconPlaceholderUrl, resolveAndProbeIcon, resolveFavicon } = await loadResolver()
+    const { resolveAndProbeIcon, resolveFavicon } = await loadResolver()
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -134,19 +145,11 @@ describe('favicon-resolver', () => {
         success: true,
       }),
     })
-    vi.stubGlobal(
-      'Image',
-      class {
-        onload: (() => void) | null = null
-        set src(value: string) {
-          this.onload?.()
-        }
-      }
-    )
+    vi.stubGlobal('Image', MockImage)
 
     const shown: string[] = []
     resolveAndProbeIcon(
-      faviconPlaceholderUrl('https://example.com/docs'),
+      'https://example.com/docs',
       resolveFavicon('https://example.com/docs'),
       url => shown.push(url),
       () => false
@@ -154,5 +157,44 @@ describe('favicon-resolver', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(shown).toEqual(['https://example.com/favicon.ico', 'https://example.com/icon.png'])
+  })
+
+  test('evicts a cached favicon that fails to render so the next resolve retries', async () => {
+    const { resolveAndProbeIcon, resolveFavicon } = await loadResolver()
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        url: 'https://example.com/a',
+        favicon: 'https://example.com/icon.png',
+        success: true,
+      }),
+    })
+    vi.stubGlobal('Image', MockImage)
+    imageShouldFail = true
+
+    resolveAndProbeIcon(
+      'https://example.com/a',
+      resolveFavicon('https://example.com/a'),
+      () => {},
+      () => false
+    )
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    // The failed probe evicted the cache, so resolving again refetches and
+    // picks up a loadable favicon instead of the broken cached URL.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        url: 'https://example.com/b',
+        favicon: 'https://example.com/icon2.png',
+        success: true,
+      }),
+    })
+    await expect(resolveFavicon('https://example.com/b')).resolves.toBe(
+      'https://example.com/icon2.png'
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
