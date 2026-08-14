@@ -2732,6 +2732,40 @@ describe('createLocalAppServices', () => {
       intervalSeconds: 60,
     })
 
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      mode: 'auto',
+      instructions: 'Keep scope focused',
+      modelSelection: {
+        modelName: 'gpt-5.6-sol',
+        modelType: 'runtime',
+        options: {
+          reasoning: 'high',
+        },
+      },
+      intervalSeconds: 30,
+    })
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.tasks.supervisor.set',
+      expect.objectContaining({
+        address: { deviceId: 'device-uuid', taskId: 'task-1' },
+        modelSelection: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'runtime',
+          options: {
+            reasoning: 'high',
+          },
+        },
+        modelConfig: expect.objectContaining({
+          model_id: 'gpt-5.6-sol',
+          wework_model_kind: 'codex-official',
+          reasoning: {
+            effort: 'high',
+          },
+        }),
+      })
+    )
+
     await services.runtimeWorkApi?.runRuntimeSupervisorNow({
       address: { deviceId: 'local-device', taskId: 'task-1' },
     })
