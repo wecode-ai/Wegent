@@ -762,6 +762,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       return
     }
     if (onResumeQueueWithInput) {
+      composerRef.current?.setValue('')
       onChange('')
       void onResumeQueueWithInput(valueOverride, options)
       return
