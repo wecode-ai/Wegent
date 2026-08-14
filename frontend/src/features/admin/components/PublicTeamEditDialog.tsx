@@ -21,7 +21,13 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Loader2 } from 'lucide-react'
 
-import { Bot, Team, TaskType, type PipelineContextPassing } from '@/types/api'
+import {
+  Bot,
+  Team,
+  TaskType,
+  type PipelineContextPassing,
+  type TeamInputPlaceholder,
+} from '@/types/api'
 import {
   TeamMode,
   getAllowedAgentsForTeamMode,
@@ -47,6 +53,7 @@ import TeamModeSelector from '@/features/settings/components/team-edit/TeamModeS
 import TeamModeEditor from '@/features/settings/components/team-edit/TeamModeEditor'
 import TeamModeChangeDialog from '@/features/settings/components/team-edit/TeamModeChangeDialog'
 import { getModelCategoryTypeForBindMode } from '@/features/settings/components/team-edit/simple-team-edit-utils'
+import { normalizeInputPlaceholder } from '@/features/settings/components/team-edit/InputPlaceholderEditor'
 
 interface PublicTeamEditDialogProps {
   open: boolean
@@ -93,6 +100,7 @@ function parseTeamJson(json: Record<string, unknown>): {
   bindMode: TaskType[]
   icon: string | null
   requiresWorkspace: boolean | null
+  inputPlaceholder: TeamInputPlaceholder
   mode: TeamMode
   members: {
     botName: string
@@ -112,6 +120,10 @@ function parseTeamJson(json: Record<string, unknown>): {
     const bindMode = (spec?.bind_mode as TaskType[]) || ['chat', 'code']
     const icon = (spec?.icon as string) || null
     const requiresWorkspace = (spec?.requiresWorkspace as boolean) ?? true
+    const inputPlaceholder =
+      spec?.inputPlaceholder && typeof spec.inputPlaceholder === 'object'
+        ? (spec.inputPlaceholder as TeamInputPlaceholder)
+        : {}
     const mode = (spec?.collaborationModel as TeamMode) || 'solo'
 
     const rawMembers = (spec?.members as Array<Record<string, unknown>>) || []
@@ -123,7 +135,17 @@ function parseTeamJson(json: Record<string, unknown>): {
       contextPassing: (m?.contextPassing as PipelineContextPassing) || 'none',
     }))
 
-    return { name, displayName, description, bindMode, icon, requiresWorkspace, mode, members }
+    return {
+      name,
+      displayName,
+      description,
+      bindMode,
+      icon,
+      requiresWorkspace,
+      inputPlaceholder,
+      mode,
+      members,
+    }
   } catch {
     return null
   }
@@ -152,6 +174,7 @@ export default function PublicTeamEditDialog({
   const [bindMode, setBindMode] = useState<TaskType[]>(['chat'])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(true)
+  const [inputPlaceholder, setInputPlaceholder] = useState<TeamInputPlaceholder>({})
 
   // Bot selection state
   const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([])
@@ -283,6 +306,7 @@ export default function PublicTeamEditDialog({
         setBindMode(parsed.bindMode)
         setIcon(parsed.icon)
         setRequiresWorkspace(parsed.requiresWorkspace)
+        setInputPlaceholder(parsed.inputPlaceholder)
         setMode(parsed.mode)
 
         // Map member bot names to bot IDs
@@ -337,6 +361,7 @@ export default function PublicTeamEditDialog({
       setBindMode(['chat'])
       setIcon(null)
       setRequiresWorkspace(true)
+      setInputPlaceholder({})
       setMode('solo')
       setSelectedBotKeys([])
       setLeaderBotId(null)
@@ -561,6 +586,7 @@ export default function PublicTeamEditDialog({
       bindMode,
       icon,
       requiresWorkspace,
+      inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
       mode,
       members,
     })
@@ -574,6 +600,7 @@ export default function PublicTeamEditDialog({
     bindMode,
     icon,
     requiresWorkspace,
+    inputPlaceholder,
     mode,
     leaderBotId,
     selectedBotKeys,
@@ -601,6 +628,7 @@ export default function PublicTeamEditDialog({
     setBindMode(parsed.bindMode)
     setIcon(parsed.icon)
     setRequiresWorkspace(parsed.requiresWorkspace)
+    setInputPlaceholder(parsed.inputPlaceholder)
     setMode(parsed.mode)
 
     // Map member bot names to bot IDs
@@ -730,6 +758,7 @@ export default function PublicTeamEditDialog({
             bindMode,
             icon,
             requiresWorkspace,
+            inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
             mode,
             members: [
               {
@@ -805,6 +834,7 @@ export default function PublicTeamEditDialog({
             bindMode,
             icon,
             requiresWorkspace,
+            inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
             mode,
             members,
           })
@@ -887,8 +917,9 @@ export default function PublicTeamEditDialog({
       bind_mode: bindMode,
       icon: icon || undefined,
       requires_workspace: requiresWorkspace ?? true,
+      inputPlaceholder,
     }
-  }, [editingTeam, mode, bindMode, icon, requiresWorkspace])
+  }, [editingTeam, mode, bindMode, icon, requiresWorkspace, inputPlaceholder])
 
   const leaderOptions = useMemo(() => filteredBots, [filteredBots])
 
@@ -951,6 +982,8 @@ export default function PublicTeamEditDialog({
                     onUploadIcon={handleUploadIcon}
                     requiresWorkspace={requiresWorkspace}
                     setRequiresWorkspace={setRequiresWorkspace}
+                    inputPlaceholder={inputPlaceholder}
+                    onInputPlaceholderChange={setInputPlaceholder}
                   />
 
                   {/* Mode Selection Section */}

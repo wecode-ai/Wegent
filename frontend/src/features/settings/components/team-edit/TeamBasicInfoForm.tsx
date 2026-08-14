@@ -13,8 +13,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import { HelpCircle, Lock, LockKeyholeOpen } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { TaskType } from '@/types/api'
+import type { TaskType, TeamInputPlaceholder } from '@/types/api'
 import QuickPhraseEditor from './QuickPhraseEditor'
+import InputPlaceholderEditor from './InputPlaceholderEditor'
 
 interface TeamBasicInfoFormProps {
   name: string
@@ -27,6 +28,8 @@ interface TeamBasicInfoFormProps {
   setDescription: (description: string) => void
   quickPhrases?: string[]
   onQuickPhrasesChange?: (quickPhrases: string[]) => void
+  inputPlaceholder: TeamInputPlaceholder
+  onInputPlaceholderChange: (value: TeamInputPlaceholder) => void
   bindMode: TaskType[]
   setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
@@ -47,6 +50,8 @@ export default function TeamBasicInfoForm({
   setDescription,
   quickPhrases,
   onQuickPhrasesChange,
+  inputPlaceholder,
+  onInputPlaceholderChange,
   bindMode,
   setBindMode,
   icon,
@@ -179,6 +184,11 @@ export default function TeamBasicInfoForm({
           <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">{t('settings:team.input_placeholder.label')}</Label>
+        <InputPlaceholderEditor value={inputPlaceholder} onChange={onInputPlaceholderChange} />
+      </div>
 
       {/* Requires Workspace Toggle - Only show when code mode is selected */}
       {showRequiresWorkspace && (

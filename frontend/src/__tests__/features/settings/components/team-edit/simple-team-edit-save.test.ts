@@ -44,6 +44,10 @@ const teamForm: SimpleTeamFormValue = {
   description: 'Answers customer questions',
   bindMode: ['chat'] as TaskType[],
   quickPhrases: ['  Create a support FAQ  ', '', 'Draft a customer reply'],
+  inputPlaceholder: {
+    zh: '  通用提示  ',
+    desktop: { zh: '  桌面提示  ', en: '   ' },
+  },
   icon: 'sparkles',
   requiresWorkspace: false,
   namespace: 'default',
@@ -57,7 +61,9 @@ describe('simple team edit save helpers', () => {
   })
 
   it('builds a bot request with model, skills, knowledge bases, and prompt', () => {
-    expect(buildSimpleBotRequest(botForm, 'support-agent')).toEqual({
+    const request = buildSimpleBotRequest(botForm, 'support-agent')
+
+    expect(request).toEqual({
       name: 'Helper Bot',
       shell_name: 'Chat',
       agent_config: {
@@ -121,7 +127,7 @@ describe('simple team edit save helpers', () => {
     })
   })
 
-  it('builds a solo team request with a leader bot', () => {
+  it('builds a solo team request with a leader bot and input placeholder', () => {
     expect(buildSimpleTeamRequest(teamForm, 42)).toEqual({
       name: 'support-agent',
       displayName: 'Support Agent',
@@ -139,6 +145,10 @@ describe('simple team edit save helpers', () => {
         },
       ],
       quick_phrases: ['Create a support FAQ', 'Draft a customer reply'],
+      inputPlaceholder: {
+        zh: '通用提示',
+        desktop: { zh: '桌面提示' },
+      },
       namespace: 'default',
       icon: 'sparkles',
       requires_workspace: false,
@@ -154,6 +164,7 @@ describe('simple team edit save helpers', () => {
         icon: null,
         namespace: undefined,
         requiresWorkspace: null,
+        inputPlaceholder: {},
       },
       42
     )
@@ -165,6 +176,7 @@ describe('simple team edit save helpers', () => {
       namespace: undefined,
       icon: undefined,
       requires_workspace: undefined,
+      inputPlaceholder: null,
     })
   })
 })
