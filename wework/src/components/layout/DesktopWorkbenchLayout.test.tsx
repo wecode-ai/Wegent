@@ -6131,6 +6131,41 @@ describe('DesktopWorkbenchLayout', () => {
     })
   }, 15_000)
 
+  test('temporary chat uses the refreshed source thread when the route address is stale', async () => {
+    const { propsForTask, runtimeWork, taskA } = createLocalRuntimeTaskPanelFixture()
+    const props = propsForTask(taskA, { runtimeWork })
+    createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    const view = render(<DesktopWorkbenchLayout {...props} />)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sourceTask = runtimeWork.projects[0]?.deviceWorkspaces[0]?.tasks.find(
+      task => task.taskId === taskA.taskId
+    )
+    if (!sourceTask) throw new Error('Source task fixture was not found')
+    sourceTask.runtimeHandle = { threadId: 'thread-a' }
+    view.rerender(<DesktopWorkbenchLayout {...props} messages={[]} />)
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() =>
+      expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledWith(
+        'side chat',
+        expect.objectContaining({
+          source: expect.objectContaining({
+            deviceId: taskA.deviceId,
+            taskId: taskA.taskId,
+            workspacePath: taskA.workspacePath,
+            runtimeHandle: { threadId: 'thread-a' },
+          }),
+        })
+      )
+    )
+  })
+
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',

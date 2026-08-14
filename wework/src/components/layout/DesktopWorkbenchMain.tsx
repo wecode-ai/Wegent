@@ -966,6 +966,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const currentRuntimeConversationSource: RuntimeTaskAddress | null =
+    currentRuntimeTask && runtimeTaskSummary
+      ? {
+          ...currentRuntimeTask,
+          runtime: runtimeTaskSummary.runtime,
+          workspacePath: runtimeTaskSummary.workspacePath || currentRuntimeTask.workspacePath,
+          threadId: runtimeTaskSummary.threadId ?? currentRuntimeTask.threadId,
+          runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
+        }
+      : currentRuntimeTask
   const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
@@ -4229,7 +4239,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               allowTemporaryChat={temporaryChatAvailable}
               currentProject={workspaceProject}
               canBrowseFiles={canBrowseFiles}
-              currentRuntimeTask={currentRuntimeTask}
+              currentRuntimeTask={currentRuntimeConversationSource}
               devices={devices}
               workspaceTarget={workspacePanelTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}
