@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MCPServer } from '@/apis/mcpProviders'
-import { mergeMcpConfigs } from '@/features/settings/utils/mcpConfig'
 import {
   buildProviderMcpConfig,
-  encodeProviderMcpServerKey,
+  getProviderMcpServerKey,
+  migrateLegacyProviderMcpConfig,
 } from '@/features/settings/utils/providerMcpConfig'
 
 function createServer(id: string): MCPServer {
@@ -22,18 +22,34 @@ function createServer(id: string): MCPServer {
 }
 
 describe('providerMcpConfig', () => {
-  it.each(['a/b', 'a@b', 'a_b'])('uses a reversible key for server ID %s', serverId => {
-    const serverKey = encodeProviderMcpServerKey(serverId)
-
-    expect(decodeURIComponent(serverKey)).toBe(serverId)
+  it.each([
+    ['@weibo/imagedLogMcpServer', 'imagedLogMcpServer'],
+    ['provider/my-coffee', 'my-coffee'],
+    ['provider/group/my-coffee', 'group-my-coffee'],
+    ['plain_server', 'plain_server'],
+  ])('creates an editable key for server ID %s', (serverId, expected) => {
+    expect(getProviderMcpServerKey(serverId)).toBe(expected)
   })
 
-  it('preserves configurations whose source IDs previously normalized to the same key', () => {
-    const merged = mergeMcpConfigs(
-      buildProviderMcpConfig(createServer('a_b')),
-      buildProviderMcpConfig(createServer('a/b'))
-    )
+  it('migrates URL-encoded marketplace keys already saved on Bots', () => {
+    expect(
+      migrateLegacyProviderMcpConfig({
+        '%40weibo%2FimagedLogMcpServer': {
+          type: 'streamable-http',
+          url: 'http://g-mcp',
+        },
+      })
+    ).toEqual({
+      imagedLogMcpServer: {
+        type: 'streamable-http',
+        url: 'http://g-mcp',
+      },
+    })
+  })
 
-    expect(Object.keys(merged)).toEqual(['a_b', 'a%2Fb'])
+  it('uses the provider server key when building a config', () => {
+    const config = buildProviderMcpConfig(createServer('@weibo/imagedLogMcpServer'))
+
+    expect(Object.keys(config)).toEqual(['imagedLogMcpServer'])
   })
 })

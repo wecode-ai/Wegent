@@ -80,6 +80,7 @@ import {
 import { getAllowedAgentsForBindMode } from '../utils/team-bind-mode-rules'
 import { normalizeMcpServers, parseMcpConfig, stringifyMcpConfig } from '../utils/mcpConfig'
 import type { AgentType as McpAgentType } from '../utils/mcpTypeAdapter'
+import { migrateLegacyProviderMcpConfig } from '../utils/providerMcpConfig'
 import type { Group } from '@/types/group'
 import type { ResourceCreateTarget } from '@/features/resource-library/components/ResourceCreateButton'
 import {
@@ -537,7 +538,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
       setShowFinalAnswerOnly(formTeam.display_config?.show_final_answer_only === true)
       setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
-      setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
+      setSimpleMcpConfig(
+        stringifyMcpConfig(migrateLegacyProviderMcpConfig(fullLeaderBot?.mcp_servers || {}))
+      )
       setSimpleModelName(
         fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
       )
