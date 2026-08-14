@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Mapping, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -45,6 +46,35 @@ class TaskStatus(str, Enum):
     CANCELLING = "CANCELLING"
     DELETE = "DELETE"
     PENDING_CONFIRMATION = "PENDING_CONFIRMATION"  # Pipeline stage completed, waiting for user confirmation
+
+
+@dataclass(frozen=True)
+class TaskModelOverride:
+    """A task-scoped model selection and its precedence."""
+
+    name: str
+    namespace: str | None = None
+    model_type: str | None = None
+    force: bool = False
+
+    @classmethod
+    def from_task_labels(
+        cls, labels: Mapping[str, object]
+    ) -> "TaskModelOverride | None":
+        """Build a normalized override from persisted Task labels."""
+
+        model_id = labels.get("modelId")
+        if not isinstance(model_id, str) or not (name := model_id.strip()):
+            return None
+
+        namespace = labels.get("modelNamespace")
+        model_type = labels.get("forceOverrideBotModelType")
+        return cls(
+            name=name,
+            namespace=namespace.strip() if isinstance(namespace, str) else None,
+            model_type=model_type.strip() if isinstance(model_type, str) else None,
+            force=labels.get("forceOverrideBotModel") == "true",
+        )
 
 
 class TaskBase(BaseModel):

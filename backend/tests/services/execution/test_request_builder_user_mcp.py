@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.schemas.task import TaskModelOverride
 from app.services import mcp_provider_registry
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
@@ -129,8 +130,7 @@ class TestUserScopedMcpInjection:
             bot=SimpleNamespace(),
             user_id=1,
             user_name="admin",
-            override_model_name="ignored-model",
-            force_override=True,
+            model_override=TaskModelOverride(name="ignored-model", force=True),
             task_id=33,
             team_id=38,
             runtime_model_config=runtime_model_config,

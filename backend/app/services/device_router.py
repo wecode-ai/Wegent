@@ -23,6 +23,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.task import TaskModelOverride
 from app.services.device_service import device_service
 from app.stores.tasks import subtask_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
@@ -122,18 +123,16 @@ async def route_task_to_device(
     # Extract model override from task labels
     task_json = local_task.json if local_task else {}
     task_labels = task_json.get("metadata", {}).get("labels", {})
-    override_model_name = None
-    override_model_namespace = None
-    override_model_type = None
-    force_override = False
-    if task_labels.get("forceOverrideBotModel") == "true":
-        override_model_name = task_labels.get("modelId")
-        override_model_namespace = task_labels.get("modelNamespace")
-        override_model_type = task_labels.get("forceOverrideBotModelType")
-        force_override = True
+    task_model_override = TaskModelOverride.from_task_labels(task_labels)
+    model_override = (
+        task_model_override
+        if task_model_override and task_model_override.force
+        else None
+    )
+    if model_override and model_override.force:
         logger.info(
             f"[DeviceRouter] Extracted model override from task labels: "
-            f"modelId={override_model_name}, forceOverrideBotModel=true"
+            f"modelId={model_override.name}, forceOverrideBotModel=true"
         )
 
     # Build unified execution request.
@@ -151,10 +150,7 @@ async def route_task_to_device(
             if message is not None
             else extract_display_prompt(fallback_prompt) or ""
         ),
-        override_model_name=override_model_name,
-        override_model_namespace=override_model_namespace,
-        override_model_type=override_model_type,
-        force_override=force_override,
+        model_override=model_override,
         attachments=attachments,
     )
 
@@ -221,18 +217,16 @@ async def route_task_to_device_unified(
     # Extract model override from task labels
     task_json = task.json or {}
     task_labels = task_json.get("metadata", {}).get("labels", {})
-    override_model_name = None
-    override_model_namespace = None
-    override_model_type = None
-    force_override = False
-    if task_labels.get("forceOverrideBotModel") == "true":
-        override_model_name = task_labels.get("modelId")
-        override_model_namespace = task_labels.get("modelNamespace")
-        override_model_type = task_labels.get("forceOverrideBotModelType")
-        force_override = True
+    task_model_override = TaskModelOverride.from_task_labels(task_labels)
+    model_override = (
+        task_model_override
+        if task_model_override and task_model_override.force
+        else None
+    )
+    if model_override and model_override.force:
         logger.info(
             f"[DeviceRouter] Extracted model override from task labels: "
-            f"modelId={override_model_name}, forceOverrideBotModel=true"
+            f"modelId={model_override.name}, forceOverrideBotModel=true"
         )
 
     # Build unified execution request
@@ -243,10 +237,7 @@ async def route_task_to_device_unified(
         user=user,
         team=team,
         message=message,
-        override_model_name=override_model_name,
-        override_model_namespace=override_model_namespace,
-        override_model_type=override_model_type,
-        force_override=force_override,
+        model_override=model_override,
     )
 
     # Dispatch task via ExecutionDispatcher with device_id

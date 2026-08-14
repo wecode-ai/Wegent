@@ -5,6 +5,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from app.schemas.task import TaskModelOverride
 from app.services.execution.agents.generation_context import (
     GenerationContext,
     resolve_generation_model,
@@ -53,10 +54,12 @@ def test_resolve_generation_model_uses_available_category_fallback() -> None:
 
     assert result["modelType"] == "image"
     assert list_models.call_args.kwargs["model_category_type"] == "image"
-    assert build_request.call_args.kwargs["override_model_name"] == "image-model"
-    assert build_request.call_args.kwargs["override_model_namespace"] == "team-platform"
-    assert build_request.call_args.kwargs["override_model_type"] == "group"
-    assert build_request.call_args.kwargs["force_override"] is True
+    assert build_request.call_args.kwargs["model_override"] == TaskModelOverride(
+        name="image-model",
+        namespace="team-platform",
+        model_type="group",
+        force=True,
+    )
 
 
 def test_resolve_generation_model_uses_configured_default() -> None:
@@ -98,7 +101,7 @@ def test_resolve_generation_model_uses_configured_default() -> None:
 
     assert result["modelType"] == "image"
     assert (
-        build_request.call_args.kwargs["override_model_name"] == "preferred-image-model"
+        build_request.call_args.kwargs["model_override"].name == "preferred-image-model"
     )
 
 

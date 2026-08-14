@@ -85,6 +85,7 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceSearchRequest,
     RuntimeWorkspaceSearchResponse,
 )
+from app.schemas.task import TaskModelOverride
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
@@ -3653,8 +3654,11 @@ def _build_runtime_execution_request(
             request.message, request.additional_context
         ),
         preload_skills=request.additional_skills,
-        override_model_name=override_model_name,
-        force_override=force_override,
+        model_override=(
+            TaskModelOverride(name=override_model_name, force=force_override)
+            if override_model_name
+            else None
+        ),
         runtime_model_config=runtime_model_config,
         web_runtime_guidance=True,
     )

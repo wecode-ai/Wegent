@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.schemas.task import TaskModelOverride
 from app.services.execution.schedule_helper import (
     _dispatch_task_async,
     _extract_device_id_from_executor_name,
@@ -35,8 +36,9 @@ async def test_scheduled_task_dispatch_uses_task_model_override() -> None:
             "metadata": {
                 "labels": {
                     "modelId": "kimi-k2-7",
+                    "modelNamespace": "team-platform",
                     "forceOverrideBotModel": "true",
-                    "forceOverrideBotModelType": "public",
+                    "forceOverrideBotModelType": "group",
                 }
             }
         },
@@ -88,5 +90,9 @@ async def test_scheduled_task_dispatch_uses_task_model_override() -> None:
     ):
         await _dispatch_task_async(task.id)
 
-    assert builder.build.call_args.kwargs["override_model_name"] == "kimi-k2-7"
-    assert builder.build.call_args.kwargs["force_override"] is True
+    assert builder.build.call_args.kwargs["model_override"] == TaskModelOverride(
+        name="kimi-k2-7",
+        namespace="team-platform",
+        model_type="group",
+        force=True,
+    )

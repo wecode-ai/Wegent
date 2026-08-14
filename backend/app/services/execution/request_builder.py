@@ -26,6 +26,7 @@ from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
+from app.schemas.task import TaskModelOverride
 from app.services.auth import create_skill_identity_token
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import (
@@ -97,7 +98,7 @@ class TaskRequestBuilder:
             user=user,
             team=team,
             message=message,
-            override_model_name="gpt-4",
+            model_override=TaskModelOverride(name="gpt-4", force=True),
             preload_skills=["skill1", "skill2"],
         )
     """
@@ -144,11 +145,8 @@ class TaskRequestBuilder:
         system_mcp_config: Optional[dict] = None,
         # Tracing
         trace_context: Optional[dict] = None,
-        # Model override (from ChatConfigBuilder)
-        override_model_name: Optional[str] = None,
-        override_model_namespace: Optional[str] = None,
-        override_model_type: Optional[str] = None,
-        force_override: bool = False,
+        # Model override (from task labels or an explicit runtime selection)
+        model_override: TaskModelOverride | None = None,
         runtime_model_config: Optional[dict[str, Any]] = None,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
@@ -177,8 +175,7 @@ class TaskRequestBuilder:
             is_subscription: Whether this is a subscription task
             system_mcp_config: System MCP configuration
             trace_context: OpenTelemetry trace context
-            override_model_name: Optional model name to override bot's model
-            force_override: If True, override takes highest priority
+            model_override: Optional task-scoped model selection
             runtime_model_config: Optional already-resolved runtime model config
             team_member_prompt: Optional additional prompt from team member
             web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
@@ -224,10 +221,7 @@ class TaskRequestBuilder:
             bot=bot,
             user_id=user.id,
             user_name=user.user_name,
-            override_model_name=override_model_name,
-            override_model_namespace=override_model_namespace,
-            override_model_type=override_model_type,
-            force_override=force_override,
+            model_override=model_override,
             task_id=task.id,
             team_id=team.id,
             team_name=team.name,
@@ -314,10 +308,7 @@ class TaskRequestBuilder:
             team_crd,
             bot,
             user_id=user.id,
-            override_model_name=override_model_name,
-            override_model_namespace=override_model_namespace,
-            override_model_type=override_model_type,
-            force_override=force_override,
+            model_override=model_override,
             runtime_model_config=runtime_model_config,
         )
 
@@ -860,10 +851,7 @@ class TaskRequestBuilder:
         bot: Kind,
         user_id: int,
         user_name: str,
-        override_model_name: str | None,
-        override_model_namespace: str | None,
-        override_model_type: str | None,
-        force_override: bool,
+        model_override: TaskModelOverride | None,
         task_id: int,
         team_id: int,
         team_name: str = "",
@@ -883,10 +871,7 @@ class TaskRequestBuilder:
             bot: Bot Kind object
             user_id: User ID
             user_name: User name for placeholder replacement
-            override_model_name: Optional model name override
-            override_model_namespace: Optional model namespace override
-            override_model_type: Optional model scope override
-            force_override: Whether override takes priority
+            model_override: Optional task-scoped model selection
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
             team_name: Team (agent) name for identity header placeholder replacement
@@ -912,10 +897,7 @@ class TaskRequestBuilder:
             self.db,
             bot,
             user_id,
-            override_model_name=override_model_name,
-            override_model_namespace=override_model_namespace,
-            override_model_type=override_model_type,
-            force_override=force_override,
+            model_override=model_override,
         )
 
         # Build agent_config and task_data for placeholder replacement
@@ -1711,10 +1693,7 @@ Response template:
         team_crd: Team,
         first_bot: Kind,
         user_id: int,
-        override_model_name: str | None = None,
-        override_model_namespace: str | None = None,
-        override_model_type: str | None = None,
-        force_override: bool = False,
+        model_override: TaskModelOverride | None = None,
         runtime_model_config: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Build bot configuration list.
@@ -1724,10 +1703,7 @@ Response template:
             team_crd: Parsed Team CRD
             first_bot: First bot Kind object (already resolved)
             user_id: User ID for model resolution
-            override_model_name: Optional model name override from task
-            override_model_namespace: Optional model namespace override from task
-            override_model_type: Optional model scope override from task
-            force_override: Whether override takes priority
+            model_override: Optional task-scoped model selection
             runtime_model_config: Optional already-resolved runtime model config
 
         Returns:
@@ -1811,10 +1787,7 @@ Response template:
                     self.db,
                     bot,
                     user_id,
-                    override_model_name=override_model_name,
-                    override_model_namespace=override_model_namespace,
-                    override_model_type=override_model_type,
-                    force_override=force_override,
+                    model_override=model_override,
                 )
 
             bot_config = {

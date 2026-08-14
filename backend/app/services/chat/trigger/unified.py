@@ -28,6 +28,7 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.task import TaskModelOverride
 from app.services.chat.external_knowledge_refs import (
     extract_task_external_knowledge_refs,
     validate_external_knowledge_refs,
@@ -714,10 +715,7 @@ async def build_execution_request(
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
-        override_model_name = None
-        override_model_namespace = None
-        override_model_type = None
-        force_override = False
+        model_override = None
         runtime_model_config = None
         task_json = task.json if isinstance(task.json, dict) else {}
         metadata = task_json.get("metadata") or {}
@@ -726,18 +724,16 @@ async def build_execution_request(
         labels = metadata.get("labels") or {}
         task_labels = labels if isinstance(labels, dict) else {}
         if task_labels:
-            override_model_name = task_labels.get("modelId")
-            override_model_namespace = task_labels.get("modelNamespace")
-            override_model_type = task_labels.get("forceOverrideBotModelType")
-            force_override = task_labels.get("forceOverrideBotModel") == "true"
+            model_override = TaskModelOverride.from_task_labels(task_labels)
+        if model_override:
             logger.info(
                 "[build_execution_request] Extracted model override from task labels: "
                 "modelId=%s, modelNamespace=%s, forceOverrideBotModel=%s, "
                 "forceOverrideBotModelType=%s",
-                override_model_name,
-                override_model_namespace,
-                force_override,
-                override_model_type,
+                model_override.name,
+                model_override.namespace,
+                model_override.force,
+                model_override.model_type,
             )
 
         # Extract model options from payload or task labels (retry path may not have payload)
@@ -752,12 +748,12 @@ async def build_execution_request(
             )
 
         if (
-            force_override
-            and override_model_name
-            and (override_model_type == RUNTIME_MODEL_TYPE)
+            model_override
+            and model_override.force
+            and (model_override.model_type == RUNTIME_MODEL_TYPE)
         ):
             runtime_model_config = _build_codex_runtime_model_config(
-                override_model_name,
+                model_override.name,
                 model_options=model_options,
                 db=db,
                 user_id=user.id,
@@ -765,31 +761,28 @@ async def build_execution_request(
             logger.info(
                 "[build_execution_request] Using runtime model config: "
                 "selectedModel=%s, executorModel=%s",
-                override_model_name,
+                model_override.name,
                 runtime_model_config.get("model_id"),
             )
-            override_model_name = None
-            force_override = False
+            model_override = None
         elif (
-            force_override
-            and override_model_name
+            model_override
+            and model_override.force
             and _should_ignore_unavailable_task_model_override(payload)
             and not _task_model_override_available(
                 db,
-                model_name=override_model_name,
+                model_name=model_override.name,
                 user_id=user.id,
-                model_namespace=override_model_namespace,
-                model_type=override_model_type,
+                model_namespace=model_override.namespace,
+                model_type=model_override.model_type,
             )
         ):
             logger.info(
                 "[build_execution_request] Ignoring unavailable task model "
                 "override for payload fallback: modelId=%s",
-                override_model_name,
+                model_override.name,
             )
-            override_model_name = None
-            override_model_namespace = None
-            force_override = False
+            model_override = None
 
         request = builder.build(
             subtask=assistant_subtask,
@@ -804,10 +797,7 @@ async def build_execution_request(
             preload_skills=preload_skills,
             history_limit=history_limit,
             is_subscription=is_subscription,
-            override_model_name=override_model_name,
-            override_model_namespace=override_model_namespace,
-            override_model_type=override_model_type,
-            force_override=force_override,
+            model_override=model_override,
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
             runtime_model_config=runtime_model_config,

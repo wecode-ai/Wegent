@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.schemas.task import TaskModelOverride
 from app.services.chat.config.model_resolver import get_model_config_for_bot
 from app.services.user_runtime_config import user_runtime_config_service
 
@@ -62,8 +63,7 @@ def test_resolves_runtime_codex_model_when_user_auth_enabled(
         test_db,
         bot,
         test_user.id,
-        override_model_name="codex-gpt-5.5",
-        force_override=True,
+        model_override=TaskModelOverride(name="codex-gpt-5.5", force=True),
     )
 
     assert config == {

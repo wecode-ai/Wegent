@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.schemas.task import TaskModelOverride
 from app.services.chat.config.model_resolver import _resolve_model_for_bot
 
 
@@ -81,8 +82,7 @@ class TestAllowedModelsNoRestriction:
                 db=db,
                 bot=bot,
                 user_id=1,
-                override_model_name="claude-3-5-sonnet",
-                force_override=True,
+                model_override=TaskModelOverride(name="claude-3-5-sonnet", force=True),
             )
 
         assert model_name == "claude-3-5-sonnet"
@@ -105,8 +105,7 @@ class TestAllowedModelsNoRestriction:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="any-model",
-                force_override=True,
+                model_override=TaskModelOverride(name="any-model", force=True),
             )
 
         assert model_name == "any-model"
@@ -127,8 +126,7 @@ class TestAllowedModelsNoRestriction:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="any-model",
-                force_override=True,
+                model_override=TaskModelOverride(name="any-model", force=True),
             )
 
         assert model_name == "any-model"
@@ -161,8 +159,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="claude-3-5-sonnet",
-                force_override=True,
+                model_override=TaskModelOverride(name="claude-3-5-sonnet", force=True),
             )
 
         assert model_name == "claude-3-5-sonnet"
@@ -179,8 +176,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="gpt-4o",
-                force_override=True,
+                model_override=TaskModelOverride(name="gpt-4o", force=True),
             )
 
         assert model_name == "gpt-4o"
@@ -197,8 +193,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="my-model",
-                force_override=True,
+                model_override=TaskModelOverride(name="my-model", force=True),
             )
 
         assert model_name == "my-model"
@@ -212,8 +207,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="forbidden-model",
-                force_override=True,
+                model_override=TaskModelOverride(name="forbidden-model", force=True),
             )
 
         assert "forbidden-model" in str(exc_info.value)
@@ -235,8 +229,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="not-allowed-model",
-                force_override=False,
+                model_override=TaskModelOverride(name="not-allowed-model"),
             )
 
         assert "not-allowed-model" in str(exc_info.value)
@@ -262,8 +255,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name=None,
-                force_override=False,
+                model_override=None,
             )
 
         # bind_model is used, no whitelist check since no override was requested
@@ -289,8 +281,7 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="gpt-4o",
-                force_override=True,
+                model_override=TaskModelOverride(name="gpt-4o", force=True),
             )
 
         assert model_name == "gpt-4o"
@@ -311,6 +302,5 @@ class TestAllowedModelsWithWhitelist:
                 db=MagicMock(),
                 bot=bot,
                 user_id=1,
-                override_model_name="gpt-4o",
-                force_override=True,
+                model_override=TaskModelOverride(name="gpt-4o", force=True),
             )

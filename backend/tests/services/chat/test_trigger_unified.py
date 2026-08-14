@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.schemas.task import TaskModelOverride
 from shared.models import ExecutionRequest
 from shared.models.knowledge import (
     ChatContextsResult,
@@ -370,8 +371,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                     )
 
         mock_find_model.assert_called_once_with(mock_db, "codex-gpt-5.5", 7)
-        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
-        assert mock_builder.build.call_args.kwargs["force_override"] is False
+        assert mock_builder.build.call_args.kwargs["model_override"] is None
 
     async def test_task_model_override_passes_namespace_and_type_to_request_builder(
         self,
@@ -413,9 +413,12 @@ class TestBuildExecutionRequestUserSubtaskId:
                 )
 
         build_kwargs = mock_builder.build.call_args.kwargs
-        assert build_kwargs["override_model_name"] == "same-name-model"
-        assert build_kwargs["override_model_namespace"] == "team-platform"
-        assert build_kwargs["override_model_type"] == "group"
+        assert build_kwargs["model_override"] == TaskModelOverride(
+            name="same-name-model",
+            namespace="team-platform",
+            model_type="group",
+            force=True,
+        )
 
     async def test_runtime_task_model_override_uses_codex_runtime_config(self):
         """Wework runtime model labels should execute through Codex auth config."""
@@ -461,8 +464,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                     )
 
         mock_find_model.assert_not_called()
-        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
-        assert mock_builder.build.call_args.kwargs["force_override"] is False
+        assert mock_builder.build.call_args.kwargs["model_override"] is None
         assert mock_builder.build.call_args.kwargs["runtime_model_config"] == {
             "model": "openai",
             "model_id": "gpt-5.5",

@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.schemas.task import TaskModelOverride
 from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
@@ -202,18 +203,14 @@ async def _dispatch_task_async(task_id: int) -> None:
         task_labels = (task.json or {}).get("metadata", {}).get("labels", {})
         if not isinstance(task_labels, dict):
             task_labels = {}
-        model_id = task_labels.get("modelId")
-        override_model_name = model_id.strip() if isinstance(model_id, str) else None
-        force_override = task_labels.get("forceOverrideBotModel") == "true" and bool(
-            override_model_name
-        )
+        model_override = TaskModelOverride.from_task_labels(task_labels)
 
-        if force_override:
+        if model_override and model_override.force:
             logger.info(
                 "[schedule_dispatch] Applying task model override: "
                 "task_id=%s, model_id=%s",
                 task_id,
-                override_model_name,
+                model_override.name,
             )
 
         for subtask in subtasks:
@@ -229,8 +226,7 @@ async def _dispatch_task_async(task_id: int) -> None:
                     user=user,
                     team=team,
                     message=message,
-                    override_model_name=override_model_name,
-                    force_override=force_override,
+                    model_override=model_override,
                 )
 
                 # Check if executor needs recovery (deleted after previous completion)

@@ -16,6 +16,7 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
+from app.schemas.task import TaskModelOverride
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.model_aggregation_service import model_aggregation_service
 from app.stores.tasks import subtask_store, task_store
@@ -77,14 +78,12 @@ def resolve_generation_context(
         )
 
     labels = (task.json or {}).get("metadata", {}).get("labels", {})
+    model_override = TaskModelOverride.from_task_labels(labels)
     request = _build_request(
         db=db,
         context=(user, task, subtask, team),
         prompt=prompt,
-        override_model_name=labels.get("modelId"),
-        override_model_namespace=labels.get("modelNamespace"),
-        override_model_type=labels.get("forceOverrideBotModelType"),
-        force_override=labels.get("forceOverrideBotModel") == "true",
+        model_override=model_override,
     )
     return GenerationContext(
         user=user,
@@ -152,10 +151,12 @@ def resolve_generation_model(
         db=db,
         context=(context.user, context.task, context.subtask, context.team),
         prompt=prompt,
-        override_model_name=model_name,
-        force_override=True,
-        override_model_namespace=selected_model.get("namespace"),
-        override_model_type=selected_model.get("type"),
+        model_override=TaskModelOverride(
+            name=model_name,
+            namespace=selected_model.get("namespace"),
+            model_type=selected_model.get("type"),
+            force=True,
+        ),
     )
     model_config = dict(request.model_config or {})
     if model_config.get("modelType") != model_type:
@@ -176,10 +177,7 @@ def _build_request(
     db: Session,
     context: tuple[User, TaskResource, Subtask, Kind],
     prompt: str,
-    override_model_name: str | None,
-    force_override: bool,
-    override_model_namespace: str | None = None,
-    override_model_type: str | None = None,
+    model_override: TaskModelOverride | None,
 ) -> ExecutionRequest:
     user, task, subtask, team = context
     return TaskRequestBuilder(db).build(
@@ -192,8 +190,5 @@ def _build_request(
         enable_web_search=False,
         enable_clarification=False,
         enable_deep_thinking=False,
-        override_model_name=override_model_name,
-        override_model_namespace=override_model_namespace,
-        override_model_type=override_model_type,
-        force_override=force_override,
+        model_override=model_override,
     )

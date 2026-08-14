@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from app.schemas.task import TaskModelOverride
 from app.services.capability_reference_service import get_referenced_capability
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
@@ -447,11 +448,7 @@ def _resolve_model_for_bot(
     db: Session,
     bot: Kind,
     user_id: int,
-    override_model_name: Optional[str] = None,
-    force_override: bool = False,
-    *,
-    override_model_namespace: Optional[str] = None,
-    override_model_type: Optional[str] = None,
+    model_override: TaskModelOverride | None = None,
 ) -> tuple[Optional[Kind], Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
     """
     Resolve model Kind and spec for a bot.
@@ -459,26 +456,23 @@ def _resolve_model_for_bot(
     Shared logic for build_agent_config_for_bot and get_model_config_for_bot.
 
     Resolution priority:
-    1. override_model_name with force_override=True (task-level override)
+    1. forced task-level model override
     2. bot.spec.agent_config.bind_model (bot-level binding)
     3. bot.spec.modelRef (legacy reference)
-    4. override_model_name without force_override (fallback)
+    4. non-forced task-level model override (fallback)
 
     Args:
         db: Database session
         bot: The Bot Kind object
         user_id: User ID for querying user-specific models
-        override_model_name: Optional model name to override
-        override_model_namespace: Namespace of the task-level override
-        override_model_type: Scope of the task-level override
-        force_override: If True, override_model_name takes highest priority
+        model_override: Optional task-scoped model selection
 
     Returns:
         Tuple of (model_kind, model_spec, model_name, raw_agent_config).
         model_kind/model_spec/model_name may be None if no model is found.
 
     Raises:
-        ValueError: If override_model_name is not in the bot's allowed_models whitelist.
+        ValueError: If the task override is not in the bot's allowed_models whitelist.
     """
     bot_crd = Bot.model_validate(bot.json)
     bot_json = bot.json or {}
@@ -489,8 +483,8 @@ def _resolve_model_for_bot(
     uses_task_override = False
 
     # Priority 1: Force override from task
-    if force_override and override_model_name:
-        model_name = override_model_name
+    if model_override and model_override.force:
+        model_name = model_override.name
         uses_task_override = True
         logger.info(f"Using task model (force override): {model_name}")
     else:
@@ -506,8 +500,8 @@ def _resolve_model_for_bot(
             logger.info(f"Using bot modelRef: {model_name}")
 
         # Priority 4: Task-level override (fallback)
-        if not model_name and override_model_name:
-            model_name = override_model_name
+        if not model_name and model_override:
+            model_name = model_override.name
             uses_task_override = True
             logger.info(f"Using task model (fallback): {model_name}")
 
@@ -518,11 +512,7 @@ def _resolve_model_for_bot(
     # This is the single validation point covering all call paths (chat, task creation,
     # subscription, retry, etc.).
     allowed_models = raw_agent_config.get("allowed_models")
-    if (
-        allowed_models
-        and override_model_name
-        and (force_override or override_model_name)
-    ):
+    if allowed_models and model_override:
         if isinstance(allowed_models, list) and len(allowed_models) > 0:
             allowed_names = {
                 m.get("name")
@@ -541,10 +531,10 @@ def _resolve_model_for_bot(
     # (e.g. a Bot's private Model that only carries an allowed_models
     # whitelist and points onward to the model with the real env config).
     model_lookup_kwargs: dict[str, Optional[str]] = {}
-    if uses_task_override and override_model_namespace is not None:
+    if uses_task_override and model_override and model_override.namespace is not None:
         model_lookup_kwargs = {
-            "namespace": override_model_namespace,
-            "model_type": override_model_type,
+            "namespace": model_override.namespace,
+            "model_type": model_override.model_type,
         }
     model_kind, model_spec = _find_model_with_namespace(
         db,
@@ -562,11 +552,7 @@ def build_agent_config_for_bot(
     db: Session,
     bot: Kind,
     user_id: int,
-    override_model_name: Optional[str] = None,
-    force_override: bool = False,
-    *,
-    override_model_namespace: Optional[str] = None,
-    override_model_type: Optional[str] = None,
+    model_override: TaskModelOverride | None = None,
 ) -> Dict[str, Any]:
     """
     Build agent_config for a bot based on its model binding.
@@ -577,7 +563,7 @@ def build_agent_config_for_bot(
     # Short-circuit: if raw agent_config already has inline model config, use it
     bot_json = bot.json or {}
     raw_agent_config = bot_json.get("spec", {}).get("agent_config", {})
-    if not (force_override and override_model_name):
+    if not (model_override and model_override.force):
         raw_env = raw_agent_config.get("env", {})
         if raw_env.get("model") and raw_env.get("api_key"):
             return raw_agent_config
@@ -586,10 +572,7 @@ def build_agent_config_for_bot(
         db,
         bot,
         user_id,
-        override_model_name=override_model_name,
-        force_override=force_override,
-        override_model_namespace=override_model_namespace,
-        override_model_type=override_model_type,
+        model_override=model_override,
     )
 
     if not model_spec:
@@ -620,11 +603,7 @@ def get_model_config_for_bot(
     db: Session,
     bot: Kind,
     user_id: int,
-    override_model_name: Optional[str] = None,
-    force_override: bool = False,
-    *,
-    override_model_namespace: Optional[str] = None,
-    override_model_type: Optional[str] = None,
+    model_override: TaskModelOverride | None = None,
 ) -> Dict[str, Any]:
     """
     Get model configuration for a Bot (flat format for Chat Shell).
@@ -647,10 +626,7 @@ def get_model_config_for_bot(
         db,
         bot,
         user_id,
-        override_model_name=override_model_name,
-        force_override=force_override,
-        override_model_namespace=override_model_namespace,
-        override_model_type=override_model_type,
+        model_override=model_override,
     )
 
     if not model_name:
