@@ -3098,7 +3098,7 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
 }
 
 #[tokio::test]
-async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local_index() {
+async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollback() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -3130,6 +3130,7 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
                 },
                 "message": "edited from address handle",
                 "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
                 "executionRequest": codex_execution_request(
                     "edited from address handle",
                     "/tmp/project",
@@ -3141,16 +3142,23 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
         .expect("rollback should be accepted");
     assert_eq!(rollback["accepted"], true);
 
-    wait_for_method_count(&log_path, "thread/rollback", 1).await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
     wait_for_thread_mapping(&handler, "local-visible-task", "thread-1").await;
     let calls = read_json_lines(&log_path);
-    let rollback = calls
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/rollback"),
+        "message editing must not use the deprecated provider rollback"
+    );
+    let resume = calls
         .iter()
-        .find(|call| call["method"] == "thread/rollback")
-        .expect("rollback should use the nested runtime handle");
-    assert_eq!(rollback["params"]["threadId"], "thread-1");
-    assert_eq!(rollback["params"]["numTurns"], 1);
+        .find(|call| call["method"] == "thread/resume")
+        .expect("editing should resume and subscribe to the persistent thread");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+    let turn_start = calls
+        .iter()
+        .find(|call| call["method"] == "turn/start")
+        .expect("editing should start a replacement turn");
+    assert_eq!(turn_start["params"]["threadId"], "thread-1");
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {

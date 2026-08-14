@@ -1386,6 +1386,8 @@ describe('createLocalAppServices', () => {
       },
       message: 'edited question',
       messageId: 'user-last',
+      clientUserMessageId: 'user-edited',
+      retrySourceTurnId: 'turn-last',
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -1404,6 +1406,8 @@ describe('createLocalAppServices', () => {
         },
         message: 'edited question',
         messageId: 'user-last',
+        clientUserMessageId: 'user-edited',
+        retrySourceTurnId: 'turn-last',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -1413,6 +1417,7 @@ describe('createLocalAppServices', () => {
           task_id: 'task-1',
           subtask_id: expect.any(String),
           prompt: 'edited question',
+          client_user_message_id: 'user-edited',
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
