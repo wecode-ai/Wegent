@@ -2153,7 +2153,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
                 # Mark current selection
                 status_str = ""
-                if model_name == current_model_name:
+                is_current_model = (
+                    current_selection is not None
+                    and model_name == current_model_name
+                    and model_type == current_selection.model_type
+                    and (
+                        current_selection.model_namespace is None
+                        or (model.get("namespace") or "default")
+                        == current_selection.model_namespace
+                    )
+                )
+                if is_current_model:
                     status_str = " - ⭐ 当前"
                 elif model_type == "public":
                     status_str = " [公共]"

@@ -88,10 +88,10 @@ describe('restoring a past version', () => {
     fireEvent.click(await screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`))
     fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
 
-    await waitFor(() => expect(onRepublished).toHaveBeenCalled())
     const { toast } = jest.requireMock('sonner')
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Page reload failed'))
+    expect(onRepublished).toHaveBeenCalled()
     expect(toast.success).not.toHaveBeenCalled()
-    expect(toast.error).toHaveBeenCalledWith('Page reload failed')
   })
 })
 

@@ -217,6 +217,60 @@ class TestAllowedModelsWithWhitelist:
 
         assert "gpt-4o" in str(exc_info.value)
 
+    def test_exact_override_honors_type_only_whitelist_entry(self):
+        """A type-only allowed entry limits complete Task references by type."""
+        bot = _make_bot({"allowed_models": [{"name": "gpt-4o", "type": "public"}]})
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (MagicMock(), {"modelConfig": {}})
+            _, _, model_name, _ = _resolve_model_for_bot(
+                db=MagicMock(),
+                bot=bot,
+                user_id=1,
+                model_override=TaskModelOverride(
+                    name="gpt-4o",
+                    namespace="other-public-scope",
+                    model_type="public",
+                    force=True,
+                ),
+            )
+
+        assert model_name == "gpt-4o"
+
+        with pytest.raises(ValueError):
+            _resolve_model_for_bot(
+                db=MagicMock(),
+                bot=bot,
+                user_id=1,
+                model_override=TaskModelOverride(
+                    name="gpt-4o",
+                    namespace="other-group",
+                    model_type="group",
+                    force=True,
+                ),
+            )
+
+    def test_exact_override_honors_namespace_only_whitelist_entry(self):
+        """A namespace-only allowed entry limits complete Task references by scope."""
+        bot = _make_bot(
+            {"allowed_models": [{"name": "gpt-4o", "namespace": "default"}]}
+        )
+
+        with pytest.raises(ValueError):
+            _resolve_model_for_bot(
+                db=MagicMock(),
+                bot=bot,
+                user_id=1,
+                model_override=TaskModelOverride(
+                    name="gpt-4o",
+                    namespace="other-scope",
+                    model_type="public",
+                    force=True,
+                ),
+            )
+
     def test_model_not_in_whitelist_raises_value_error(self):
         """When override model is NOT in the whitelist, ValueError should be raised."""
         bot = _make_bot(self._make_agent_config_with_whitelist())

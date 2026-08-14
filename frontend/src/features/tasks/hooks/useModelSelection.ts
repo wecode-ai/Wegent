@@ -443,17 +443,13 @@ export function useModelSelection({
       if (!restoredModel && teamId && !taskId) {
         const preference = getGlobalModelPreference(teamId, modelCategoryType)
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-          const foundModel = selectableModels.find(m => {
-            if (preference.modelType) {
-              return (
-                m.name === preference.modelName &&
-                m.type === preference.modelType &&
-                (!preference.modelNamespace ||
-                  (m.namespace || 'default') === preference.modelNamespace)
-              )
-            }
-            return m.name === preference.modelName
-          })
+          const foundModel = selectableModels.find(
+            m =>
+              m.name === preference.modelName &&
+              (!preference.modelType || m.type === preference.modelType) &&
+              (!preference.modelNamespace ||
+                (m.namespace || 'default') === preference.modelNamespace)
+          )
           if (foundModel) {
             restoredModel = foundModel
             restoredForceOverride = true
@@ -508,16 +504,12 @@ export function useModelSelection({
 
     // Case 2: Model list changed - check compatibility
     if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-      const isStillCompatible = selectableModels.some(m => {
-        if (selectedModel.type) {
-          return (
-            m.name === selectedModel.name &&
-            m.type === selectedModel.type &&
-            (m.namespace || 'default') === (selectedModel.namespace || 'default')
-          )
-        }
-        return m.name === selectedModel.name
-      })
+      const isStillCompatible = selectableModels.some(
+        m =>
+          m.name === selectedModel.name &&
+          (!selectedModel.type || m.type === selectedModel.type) &&
+          (m.namespace || 'default') === (selectedModel.namespace || 'default')
+      )
       if (!isStillCompatible) {
         setSelectedModel(null)
       }

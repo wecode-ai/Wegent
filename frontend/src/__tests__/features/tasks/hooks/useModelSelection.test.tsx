@@ -12,6 +12,7 @@ import {
   type TeamWithBotDetails,
 } from '@/features/tasks/hooks/useModelSelection'
 import {
+  getAllowedModelsFromConfig,
   getModelFromConfig,
   getModelNamespaceFromConfig,
   getModelTypeFromConfig,
@@ -474,6 +475,100 @@ describe('useModelSelection', () => {
 
     await waitFor(() => {
       expect(result.current.selectedModel).toEqual(expect.objectContaining(groupModel))
+    })
+  })
+
+  it('restores a namespace-only global preference without selecting a same-named model', async () => {
+    const defaultModel: Model = {
+      name: 'shared-model',
+      displayName: 'Default shared model',
+      provider: 'openai',
+      modelId: 'default-model',
+      namespace: 'default',
+    }
+    const platformModel: Model = {
+      name: 'shared-model',
+      displayName: 'Platform shared model',
+      provider: 'openai',
+      modelId: 'platform-model',
+      namespace: 'platform',
+    }
+    ;(getGlobalModelPreference as jest.Mock).mockReturnValue({
+      modelName: platformModel.name,
+      modelNamespace: platformModel.namespace,
+      forceOverride: true,
+      updatedAt: Date.now(),
+    })
+    const modelLoad = mockDeferredModelsLoad([defaultModel, platformModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(platformModel))
+    })
+  })
+
+  it('filters models by type-only and namespace-only allowed entries', async () => {
+    const defaultPublic: Model = {
+      name: 'shared-model',
+      displayName: 'Default public model',
+      provider: 'openai',
+      modelId: 'default-public',
+      type: 'public',
+      namespace: 'default',
+    }
+    const platformPublic: Model = {
+      name: 'shared-model',
+      displayName: 'Platform public model',
+      provider: 'openai',
+      modelId: 'platform-public',
+      type: 'public',
+      namespace: 'platform',
+    }
+    const defaultGroup: Model = {
+      name: 'shared-model',
+      displayName: 'Default group model',
+      provider: 'openai',
+      modelId: 'default-group',
+      type: 'group',
+      namespace: 'default',
+    }
+    ;(getAllowedModelsFromConfig as jest.Mock).mockReturnValue([
+      { name: 'shared-model', type: 'public' },
+      { name: 'shared-model', namespace: 'default' },
+    ])
+    const modelLoad = mockDeferredModelsLoad([defaultPublic, platformPublic, defaultGroup])
+    const teamWithWhitelist: TeamWithBotDetails = {
+      ...mockTeam,
+      bots: [{ bot_id: 1, bot_prompt: '', bot: { agent_config: {} } }],
+    }
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: teamWithWhitelist,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.filteredModels).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining(defaultPublic),
+          expect.objectContaining(platformPublic),
+          expect.objectContaining(defaultGroup),
+        ])
+      )
     })
   })
 

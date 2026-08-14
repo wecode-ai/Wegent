@@ -524,12 +524,12 @@ def _resolve_model_for_bot(
                     and model.get("name") == model_name
                     and (
                         not model.get("namespace")
-                        or not model.get("type")
-                        or (
-                            (model.get("namespace") or "default")
-                            == model_override.namespace
-                            and model.get("type") == model_override.model_type
-                        )
+                        or (model.get("namespace") or "default")
+                        == model_override.namespace
+                    )
+                    and (
+                        not model.get("type")
+                        or model.get("type") == model_override.model_type
                     )
                     for model in allowed_models
                 )

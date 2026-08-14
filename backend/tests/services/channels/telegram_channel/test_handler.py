@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from app.models.subtask import SubtaskStatus
 from app.services.channels.callback import ChannelType
 from app.services.channels.handler import MessageContext
+from app.services.channels.model_selection import ModelSelection
 from app.services.channels.telegram.handler import TelegramChannelHandler
 
 EXPECTED_IM_SOURCE = {
@@ -267,6 +268,55 @@ class TestTelegramChannelHandler:
         result = await handler.send_text_reply(mock_context, "Hello!")
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_models_marks_only_the_matching_namespaced_selection(self, handler):
+        """A namespaced selection must not mark same-named models as current."""
+        user = SimpleNamespace(id=1)
+        models = [
+            {
+                "name": "shared-model",
+                "displayName": "Default model",
+                "namespace": "default",
+                "type": "public",
+            },
+            {
+                "name": "shared-model",
+                "displayName": "Platform model",
+                "namespace": "platform",
+                "type": "group",
+            },
+        ]
+
+        with (
+            patch(
+                "app.services.channels.handler.device_selection_manager.get_selection",
+                new=AsyncMock(return_value=SimpleNamespace(device_type=None)),
+            ),
+            patch(
+                "app.services.channels.handler.model_selection_manager.get_selection",
+                new=AsyncMock(
+                    return_value=ModelSelection(
+                        model_name="shared-model",
+                        model_type="group",
+                        model_namespace="platform",
+                    )
+                ),
+            ),
+            patch(
+                "app.services.model_aggregation_service."
+                "model_aggregation_service.list_available_models",
+                return_value=models,
+            ),
+            patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
+        ):
+            await handler._handle_model_command(
+                MagicMock(), user, None, _message_context()
+            )
+
+        response = send_reply.await_args.args[1]
+        assert response.count("⭐ 当前") == 1
+        assert "Platform model" in response.split("⭐ 当前")[0]
 
     def test_create_callback_info(self, handler):
         """Test creating callback info."""
