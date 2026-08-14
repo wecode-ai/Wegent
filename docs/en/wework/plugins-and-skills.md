@@ -8,6 +8,18 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+## Import a personal plugin
+
+On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.
+
+If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
+
+## Delete a personal plugin
+
+You can delete a plugin that you created or imported from the **…** menu in its detail page. If the plugin is installed, Wework uninstalls it before deleting the local plugin source.
+
+For a plugin published to the cloud, Wework checks its usage before deletion. An unused plugin can be deleted immediately. If it still has users, grants, or device installations, the confirmation dialog shows the affected scope and changes the action to **Deactivate and delete**. The cloud then blocks sharing and new installations, revokes existing grants, and asks online devices to remove the plugin; offline devices remove it the next time they connect. Tasks that are already running are not forcibly interrupted. If usage changes while the dialog is open, refresh the impact and confirm again.
+
 ## Use the built-in application plugins
 
 The Wegent cloud marketplace publishes `wegent-sites` and `weibo-miniapp-h5-develop-agent` in advance, but does not preinstall them for every user. Open **Applications** to view the **Sites** and **Mini Programs** tabs. When you click **Create** and choose an application type, Wework first checks whether the selected online device already has the matching plugin installed; if it does, Wework inserts the plugin reference into a new task composer immediately. If not, Wework idempotently installs the plugin for the account and syncs it to that device.

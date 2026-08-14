@@ -2709,6 +2709,24 @@ describe('PluginsWorkspace', () => {
       'data-plugin-distribution',
       'personal'
     )
+    const actionsBar = screen.getByTestId('plugin-detail-actions-bar')
+    const actionMenu = screen.getByTestId('plugin-detail-actions-code-review')
+    const installAction = screen.getByTestId('plugin-detail-toggle-code-review')
+    expect(Array.from(actionsBar.children).indexOf(actionMenu.parentElement!)).toBeLessThan(
+      Array.from(actionsBar.children).indexOf(installAction)
+    )
+    await userEvent.click(actionMenu)
+    await userEvent.click(screen.getByTestId('plugin-detail-delete-code-review'))
+    expect(screen.getByTestId('delete-personal-plugin-dialog')).toHaveTextContent(
+      '将永久删除「Code Review」的本地插件源码'
+    )
+    await userEvent.click(screen.getByTestId('plugin-delete-confirm-button'))
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('local_executor_delete_personal_plugin', {
+        marketplacePath: '/Users/test/.codex/plugins/marketplaces/personal',
+        pluginName: 'code-review',
+      })
+    )
   })
 
   test('opens marketplace plugin detail from the plugin row', async () => {
@@ -2865,6 +2883,48 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
     expect(screen.getByTestId('plugin-detail-edit-101')).toHaveTextContent('继续编辑')
     expect(screen.getByTestId('plugin-detail-menu-publish-101')).toHaveTextContent('发布新版本')
+  })
+
+  test('allows deleting local source after a personal plugin has been published', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      canPublish: true,
+      canSharePersonalPlugins: true,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'dev-tools-local',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Developer tools',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId(/^plugin-detail-actions-(?!bar$)/))
+
+    expect(screen.getByTestId(/^plugin-detail-edit-/)).toHaveTextContent('继续编辑')
+    expect(screen.getByTestId(/^plugin-detail-menu-publish-/)).toHaveTextContent('发布新版本')
+    expect(screen.getByTestId(/^plugin-detail-delete-/)).toHaveTextContent('删除插件')
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the detail menu', async () => {
