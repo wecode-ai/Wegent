@@ -75,6 +75,9 @@ webview2-com = "0.38.2"
 windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
 
+[dev-dependencies]
+tempfile = "3"
+
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
 # over a browser download. Keep application debug assertions enabled while
 # suppressing that dependency-only false error in development builds.

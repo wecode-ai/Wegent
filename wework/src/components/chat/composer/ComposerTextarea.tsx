@@ -883,11 +883,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             })
           }
         }
+        const triggerEnd = trigger.start + 1 + trigger.query.length
         const replacement = replaceComposerMentionTrigger(
           snapshot.value,
           candidate.reference,
           trigger.start,
-          snapshot.selectionEnd
+          Math.max(snapshot.selectionEnd, triggerEnd)
         )
 
         commitEditorValue(replacement.value, replacement.cursor)

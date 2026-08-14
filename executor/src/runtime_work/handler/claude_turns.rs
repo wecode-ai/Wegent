@@ -493,6 +493,13 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
 mod tests {
     use super::*;
 
+    fn isolated_handler() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
+        let directory = tempfile::tempdir().expect("temporary runtime work directory");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+        (directory, handler)
+    }
+
     #[test]
     fn claude_transcript_merges_streamed_block_updates() {
         let mut transcript = ClaudeTurnTranscript::default();
@@ -542,7 +549,7 @@ mod tests {
 
     #[test]
     fn claude_goal_uses_native_print_mode_command_and_persists_state() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let (_directory, handler) = isolated_handler();
         let link = RuntimeTaskLink::new_pending_with_runtime(
             "claude-task-1".to_owned(),
             "/tmp/project".to_owned(),
@@ -580,7 +587,7 @@ mod tests {
 
     #[test]
     fn claude_goal_status_update_preserves_objective() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let (_directory, handler) = isolated_handler();
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             "claude-task-1".to_owned(),
             "/tmp/project".to_owned(),

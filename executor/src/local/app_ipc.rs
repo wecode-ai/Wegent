@@ -1963,7 +1963,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--limit",
                 "20",
                 "--json",
-                "number,url,title,state,isDraft,statusCheckRollup",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
                 "--head",
             ],
             Some(PostProcessor::Json),

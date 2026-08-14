@@ -13,6 +13,7 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { EditorView } from '@codemirror/view'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
@@ -365,7 +366,17 @@ export async function installWeworkAutomationBridge(
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(selector))
+  const elements: HTMLElement[] = []
+  const visit = (root: Document | ShadowRoot) => {
+    elements.push(...root.querySelectorAll<HTMLElement>(selector))
+    root.querySelectorAll<HTMLElement>('*').forEach(element => {
+      if (element.shadowRoot) {
+        visit(element.shadowRoot)
+      }
+    })
+  }
+  visit(document)
+  return elements
 }
 
 function desktopControlElementText(selector: string, visible = false): string {
@@ -739,6 +750,18 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 
 function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
+
+  const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
+  const codeMirrorView = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null
+  if (codeMirrorView) {
+    codeMirrorView.dispatch({
+      changes: { from: 0, to: codeMirrorView.state.doc.length, insert: value },
+      selection: { anchor: value.length },
+      scrollIntoView: true,
+    })
+    codeMirrorView.focus()
+    return
+  }
 
   if (element instanceof HTMLSelectElement) {
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
@@ -1406,7 +1429,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         }
         await waitForDesktopControlTick()
       }
-      throw new Error(`Unable to find selector "${command.selector}" containing "${text}"`)
+      const candidates = findDesktopControlElements(command.selector)
+        .slice(0, 20)
+        .map(candidate => ({
+          tagName: candidate.tagName.toLowerCase(),
+          testId: candidate.dataset.testid ?? null,
+        }))
+      throw new Error(
+        `Unable to find selector "${command.selector}" containing the requested text; candidateCount=${findDesktopControlElements(command.selector).length}; candidates=${JSON.stringify(candidates)}`
+      )
     }
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]

@@ -15,6 +15,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
+  'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
@@ -25,6 +26,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'change-request-status',
   'claude-runtime',
+  'local-file-preview',
   'local-harness',
   'runtime-task-queue',
   'split-workbench',
@@ -225,6 +227,13 @@ function parallelCheckpointLimit() {
   return value
 }
 
+function parallelCheckpointArgs(checkpoint) {
+  const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
+  if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
+  if (scope === 'core') return ['--segment', checkpoint]
+  throw new Error('WEWORK_E2E_PARALLEL_SCOPE must be "cloud" or "core"')
+}
+
 async function runRequestedArgs() {
   const parallelCheckpoints = requestedParallelCheckpoints(requestedArgs)
   if (parallelCheckpoints) return runParallelCheckpoints(parallelCheckpoints)
@@ -268,7 +277,7 @@ async function runParallelCheckpoints(checkpoints) {
       delete env.WEWORK_E2E_CONTROL_SERVER_PORT
       delete env.WEWORK_E2E_MODEL_SERVER_PORT
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
-      const result = await runTaskFlow(['--cloud-only', '--segment', checkpoint], env, checkpoint)
+      const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
       if (result.code === 0) {
         console.log(
           `[desktop-e2e] PASS ${checkpoint}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
