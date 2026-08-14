@@ -1701,6 +1701,22 @@ async function createLocalRuntimeTaskPayload(
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
+  const initialSupervisor = normalizedData.initialSupervisor
+  if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
+    payload.initialSupervisor = {
+      ...initialSupervisor,
+      modelConfig: applyRuntimeModelOptions(
+        localRuntimeModelConfig(
+          'codex',
+          initialSupervisor.modelSelection.modelName,
+          initialSupervisor.modelSelection.modelType,
+          initialSupervisor.modelSelection.options,
+          cloudModelGateway
+        ),
+        initialSupervisor.modelSelection.options
+      ),
+    }
+  }
   const friendlyTitleExecutionRequest = normalizedData.friendlyTitle
     ? buildLocalRuntimeExecutionRequest({
         taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
@@ -2533,8 +2549,43 @@ export function createRuntimeWorkApiFromIpc(
     getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
       return requestWithLocalDevice('runtime.tasks.supervisor.get', data)
     },
-    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
-      return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+    async setRuntimeSupervisor(
+      data: RuntimeSupervisorSetRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      const selection = data.modelSelection
+      if (selection?.modelType !== 'runtime') {
+        return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+      }
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      if (
+        !(await prepareRuntimeModel({
+          deviceId: localDeviceId,
+          modelId: selection.modelName,
+        }))
+      ) {
+        throw modelCatalogSyncCancelled()
+      }
+      const modelConfig = applyRuntimeModelOptions(
+        localRuntimeModelConfig(
+          'codex',
+          selection.modelName,
+          selection.modelType,
+          selection.options,
+          options.cloudModelGateway
+        ),
+        selection.options
+      )
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.supervisor.set',
+        {
+          ...data,
+          address: normalizedAddress,
+          modelConfig,
+        },
+        localDeviceId
+      )
     },
     clearRuntimeSupervisor(
       data: RuntimeSupervisorClearRequest
@@ -2691,6 +2742,13 @@ export function createRuntimeWorkApiFromIpc(
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
+      if (
+        supervisorModelId &&
+        !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: supervisorModelId }))
+      ) {
         throw modelCatalogSyncCancelled()
       }
       const payload = await createLocalRuntimeTaskPayload(
