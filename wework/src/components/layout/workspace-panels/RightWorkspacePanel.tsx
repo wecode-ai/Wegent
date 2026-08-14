@@ -61,14 +61,15 @@ function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
 export type RightWorkspaceChatTab = `chat:${string}`
 export type RightWorkspaceBrowserTab = `browser:${string}`
 export type RightWorkspaceHarnessTab = `harness:${string}`
+export type RightWorkspaceTerminalTab = `terminal:${string}`
 export type RightWorkspacePanelTab =
   | 'review'
-  | 'terminal'
   | 'files'
   | 'plan'
   | RightWorkspaceChatTab
   | RightWorkspaceBrowserTab
   | RightWorkspaceHarnessTab
+  | RightWorkspaceTerminalTab
 export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
 
 function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
@@ -83,6 +84,12 @@ function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightW
   return tab.startsWith('harness:')
 }
 
+function isRightWorkspaceTerminalTab(
+  tab: RightWorkspacePanelView
+): tab is RightWorkspaceTerminalTab {
+  return tab.startsWith('terminal:')
+}
+
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
   return tab.slice('harness:'.length)
 }
@@ -93,6 +100,10 @@ function getRightWorkspaceChatTabSuffix(tab: RightWorkspaceChatTab) {
 
 function getRightWorkspaceBrowserTabSuffix(tab: RightWorkspaceBrowserTab) {
   return tab.slice('browser:'.length)
+}
+
+function getRightWorkspaceTerminalTabSuffix(tab: RightWorkspaceTerminalTab) {
+  return tab.slice('terminal:'.length)
 }
 
 export interface RightWorkspaceBrowserState {
@@ -174,6 +185,8 @@ interface RightWorkspacePanelProps {
   onRefreshReview?: () => void
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
+  getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
+  onChatAddressChange?: (tab: RightWorkspaceChatTab, address: RuntimeTaskAddress | null) => void
 }
 
 interface RightWorkspaceBrowserPanelSlotProps {
@@ -295,6 +308,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onRefreshReview,
   onRestoreConversation,
   getChatInitialInput,
+  getChatInitialAddress,
+  onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const availableTabs = allowTemporaryChat
@@ -492,6 +507,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             allowTemporaryChat={allowTemporaryChat}
             workspaceActions={workspaceActions}
             onSelectReview={onSelectReview}
+            onSelectTerminal={onSelectTerminal}
             onSelectBrowser={onSelectBrowser}
             onSelectFiles={onSelectFiles}
             onSelectChat={onSelectChat}
@@ -508,18 +524,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             focusFilePath={review.focusFilePath}
             viewOptions={reviewViewOptions}
             onRefresh={onRefreshReview}
-          />
-        ) : !isRightWorkspaceChatTab(activeView) && activeView === 'terminal' ? (
-          <WorkspacePanelCards
-            showWorkbenchBackground={showWorkbenchBackground}
-            currentProject={currentProject}
-            devices={devices}
-            workspaceTarget={workspaceTarget}
-            defaultOpenTool="terminal"
-            hideTerminalChrome
-            preferLocalTerminal={preferLocalTerminal}
-            terminalContextTitle={terminalContextTitle}
-            workspaceSessionApi={workspaceSessionApi}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />
@@ -563,6 +567,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               source={currentRuntimeTask}
               instanceId={tab}
               initialInput={getChatInitialInput?.(tab)}
+              initialAddress={getChatInitialAddress?.(tab)}
+              onAddressChange={address => onChatAddressChange?.(tab, address)}
               expanded={expanded && activeView === tab}
               onRestoreConversation={onRestoreConversation}
               testId={
@@ -570,6 +576,25 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                   ? 'right-workspace-chat-panel'
                   : `right-workspace-chat-panel-${getRightWorkspaceChatTabSuffix(tab)}`
               }
+            />
+          </div>
+        ))}
+        {openTabs.filter(isRightWorkspaceTerminalTab).map(tab => (
+          <div
+            key={tab}
+            className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+          >
+            <WorkspacePanelCards
+              showWorkbenchBackground={showWorkbenchBackground}
+              currentProject={currentProject}
+              devices={devices}
+              workspaceTarget={workspaceTarget}
+              defaultOpenTool="terminal"
+              hideTerminalChrome
+              preferLocalTerminal={preferLocalTerminal}
+              terminalContextTitle={terminalContextTitle}
+              workspaceSessionApi={workspaceSessionApi}
+              panelActive={visible && activeView === tab}
             />
           </div>
         ))}
@@ -752,6 +777,7 @@ function RightWorkspaceLauncher({
   allowTemporaryChat,
   workspaceActions,
   onSelectReview,
+  onSelectTerminal,
   onSelectBrowser,
   onSelectFiles,
   onSelectChat,
@@ -761,6 +787,7 @@ function RightWorkspaceLauncher({
   allowTemporaryChat: boolean
   workspaceActions: WorkspaceAddMenuItem[]
   onSelectReview: () => void
+  onSelectTerminal: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
   onSelectChat: () => void
@@ -792,6 +819,12 @@ function RightWorkspaceLauncher({
           shortcut={getRightWorkspaceShortcuts(platform).review}
           onClick={onSelectReview}
           disabled={!canOpenReview}
+        />
+        <RightWorkspaceLauncherItem
+          data-testid="right-workspace-terminal-option"
+          icon={SquareTerminal}
+          label={t('workbench.terminal', '终端')}
+          onClick={onSelectTerminal}
         />
         <RightWorkspaceLauncherItem
           data-testid="right-workspace-browser-option"
@@ -864,7 +897,12 @@ function getRightWorkspaceTabLabel(
   harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>
 ) {
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
-  if (tab === 'terminal') return t('workbench.terminal', '终端')
+  if (isRightWorkspaceTerminalTab(tab)) {
+    const suffix = getRightWorkspaceTerminalTabSuffix(tab)
+    return suffix === '1'
+      ? t('workbench.terminal', '终端')
+      : `${t('workbench.terminal', '终端')} ${suffix}`
+  }
   if (isRightWorkspaceBrowserTab(tab)) {
     return browserStates[tab]?.title || t('workbench.browser_new_tab', '新选项卡')
   }
@@ -880,7 +918,12 @@ function getRightWorkspaceTabLabel(
 }
 
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
-  if (tab === 'terminal') return 'right-workspace-terminal-tab'
+  if (isRightWorkspaceTerminalTab(tab)) {
+    const suffix = getRightWorkspaceTerminalTabSuffix(tab)
+    return suffix === '1'
+      ? 'right-workspace-terminal-tab'
+      : `right-workspace-terminal-tab-${suffix}`
+  }
   if (tab === 'files') return 'right-workspace-file-tab'
   if (isRightWorkspaceChatTab(tab)) {
     return `right-workspace-chat-tab-${getRightWorkspaceChatTabSuffix(tab)}`
@@ -896,7 +939,7 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
 
 function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
   if (tab === 'review') return FileDiff
-  if (tab === 'terminal') return SquareTerminal
+  if (isRightWorkspaceTerminalTab(tab)) return SquareTerminal
   if (isRightWorkspaceBrowserTab(tab)) return Globe2
   if (isRightWorkspaceChatTab(tab)) return MessageCircle
   if (isRightWorkspaceHarnessTab(tab)) return SquareTerminal

@@ -137,7 +137,7 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     expect(screen.getByTestId('environment-supervisor-section')).toHaveTextContent('监督')
-    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
+    expect(screen.getByTestId('task-supervisor-status-icon')).toHaveAccessibleName(
       '已检查，无需纠正'
     )
     await userEvent.click(screen.getByTestId('task-supervisor-toggle-button'))

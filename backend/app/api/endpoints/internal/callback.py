@@ -120,7 +120,7 @@ async def handle_callback(
     Returns:
         CallbackResponse indicating success
     """
-    logger.info(
+    logger.debug(
         f"[Callback] Received event: event_type={request.event_type}, "
         f"task_id={request.task_id}, subtask_id={request.subtask_id}"
     )
@@ -166,7 +166,7 @@ async def handle_callback(
         # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
         await session_manager.publish_callback_event(request.subtask_id, event)
 
-        logger.info(
+        logger.debug(
             f"[Callback] Event emitted: type={event.type}, "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )

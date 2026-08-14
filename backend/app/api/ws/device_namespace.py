@@ -624,19 +624,6 @@ def _project_chat_runtime_event_sync(
             payload.get("status"),
         )
         return None
-    logger.info(
-        "[ProjectChat] Runtime event projection received: "
-        "device_id=%s runtime_task_id=%s event=%s payload_status=%s data_status=%s",
-        device_id,
-        runtime_task_id,
-        event_name,
-        payload.get("status"),
-        (
-            (payload.get("data") or {}).get("status")
-            if isinstance(payload.get("data"), dict)
-            else None
-        ),
-    )
     with get_db_session() as db:
         projected = project_chat_service.project_runtime_event(
             db,
@@ -657,28 +644,8 @@ def _project_chat_runtime_event_sync(
 
             publish_run_event(device_id, runtime_task_id, event_name)
         if projected is None:
-            logger.info(
-                "[ProjectChat] Runtime event projection produced no project chat message: "
-                "device_id=%s runtime_task_id=%s event=%s",
-                device_id,
-                runtime_task_id,
-                event_name,
-            )
             return None
         message, mode = projected
-        logger.info(
-            "[ProjectChat] Runtime event projection produced message: "
-            "device_id=%s runtime_task_id=%s event=%s mode=%s "
-            "project_id=%s task_id=%s message_id=%s message_status=%s",
-            device_id,
-            runtime_task_id,
-            event_name,
-            mode,
-            message.project_id,
-            message.task_id,
-            message.message_id,
-            message.status,
-        )
         return {"message": message.model_dump(mode="json", by_alias=True), "mode": mode}
 
 
@@ -2054,17 +2021,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 PROJECT_CHAT_AGENT_CHUNK_EVENT
                 if projected["mode"] == "delta"
                 else PROJECT_CHAT_CREATED_EVENT
-            )
-            logger.info(
-                "[ProjectChat] Emitting projected runtime message: "
-                "socket_event=%s project_id=%s task_id=%s message_id=%s "
-                "message_status=%s mode=%s",
-                event_name,
-                project_id,
-                task_id,
-                message.get("messageId"),
-                message.get("status"),
-                projected["mode"],
             )
             await get_sio().emit(
                 event_name,

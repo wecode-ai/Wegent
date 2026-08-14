@@ -805,6 +805,11 @@ describe('ChatInput', () => {
     await waitFor(() =>
       expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
     )
+
+    const editor = screen.getByTestId('chat-message-input')
+    expect(editor).toHaveFocus()
+    await userEvent.type(editor, '，继续')
+    expect(editor).toHaveTextContent('先检查引导条里的文本，继续')
   })
 
   test('shows lightweight interrupt action while guidance is sending', async () => {

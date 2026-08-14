@@ -11,6 +11,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 3
 const CHECKPOINT_SCENARIO_MODULES = {
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
+  'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
@@ -25,6 +26,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'runtime-task-queue',
   'split-workbench',
+  'temporary-chat',
 ])
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')

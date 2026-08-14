@@ -7,6 +7,9 @@ import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
+import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
@@ -128,14 +131,19 @@ const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
   'text/csv': 'csv',
 }
 
-function fileViewerTypeFromMime(mimeType: string): string | undefined {
-  return FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
+const DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION: Record<string, string> = {
+  mermaid: 'mermaid',
+  mmd: 'mermaid',
+  plantuml: 'plantuml',
+  puml: 'plantuml',
 }
 
-const WORKSPACE_FILE_VIEWER_OPTIONS = {
-  preset: [officeRenderers, liteRenderers, engineeringRenderers],
-  spreadsheet: { worker: false },
-  theme: 'light' as const,
+function workspaceFileViewerType(name: string, mimeType: string): string | undefined {
+  const extension = name.split('.').pop()?.toLowerCase() ?? ''
+  return (
+    DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION[extension] ??
+    FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
+  )
 }
 
 const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
@@ -143,6 +151,21 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
 }: {
   file: NonNullable<WorkspaceFilePreviewProps['binaryFile']>
 }) {
+  const appearance = useOptionalAppearance()
+  const containerRef = useRef<HTMLElement>(null)
+  const viewerType = workspaceFileViewerType(file.name, file.file.type)
+  const isDiagram = viewerType === 'mermaid' || viewerType === 'plantuml'
+  const diagramFilename = `${file.name.replace(/\.[^.]+$/, '')}.png`
+  const viewerOptions = useMemo(
+    () => ({
+      preset: [officeRenderers, liteRenderers, engineeringRenderers],
+      drawing: { plantumlServerUrl: getRuntimeConfig().plantumlServerUrl },
+      spreadsheet: { worker: false },
+      theme: appearance?.resolvedMode ?? ('system' as const),
+    }),
+    [appearance?.resolvedMode]
+  )
+
   if (/\.xmind$/i.test(file.name)) {
     return (
       <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
@@ -152,17 +175,25 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   return (
     <section
       data-testid="workspace-binary-file-preview"
-      className="min-w-0 flex-1 overflow-hidden bg-background"
+      ref={containerRef}
+      className="wework-diagram-preview relative min-w-0 flex-1 overflow-hidden bg-background"
     >
       <FileViewer
         key={`${file.path}:${file.size}`}
         file={file.file}
         filename={file.name}
-        type={fileViewerTypeFromMime(file.file.type)}
+        type={viewerType}
         size={file.size}
         className="h-full w-full"
-        options={WORKSPACE_FILE_VIEWER_OPTIONS}
+        options={viewerOptions}
       />
+      {isDiagram ? (
+        <DiagramImageActions
+          containerRef={containerRef}
+          filename={diagramFilename}
+          theme={appearance?.resolvedMode ?? 'system'}
+        />
+      ) : null}
     </section>
   )
 })

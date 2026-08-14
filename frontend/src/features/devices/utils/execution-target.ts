@@ -51,6 +51,33 @@ export function getSelectableDevices(devices: DeviceInfo[]) {
     .sort(compareDevicesByExecutionPriority)
 }
 
+/**
+ * Convert the account-level default into a new-task device selection.
+ *
+ * `null` represents managed cloud execution. A configured device id is kept
+ * verbatim even when the device is currently offline or absent from discovery;
+ * silently substituting another target would change the user's explicit choice.
+ */
+export function getAccountDefaultDeviceId(
+  defaultExecutionTarget: string | null | undefined
+): string | null {
+  const target = defaultExecutionTarget?.trim()
+  return target && target !== 'cloud' ? target : null
+}
+
+export function resolveTaskExecutionDeviceId({
+  taskId,
+  persistedTaskDeviceId,
+  newTaskDeviceId,
+}: {
+  taskId: number | null | undefined
+  persistedTaskDeviceId: string | null | undefined
+  newTaskDeviceId: string | null | undefined
+}): string | undefined {
+  const deviceId = taskId ? persistedTaskDeviceId : newTaskDeviceId
+  return deviceId?.trim() || undefined
+}
+
 export function getPreferredExecutionDevice(devices: DeviceInfo[]) {
   const selectableDevices = getSelectableDevices(devices)
 

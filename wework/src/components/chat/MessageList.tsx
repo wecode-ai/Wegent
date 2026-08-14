@@ -2066,6 +2066,7 @@ function AssistantMessage({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
     hasVisibleContent,
+    hasTrailingCompletedProcessText: hasTrailingCompletedProcessText(displayBlocks),
   })
   const webSearchSources = isStreaming
     ? []
@@ -2416,16 +2417,26 @@ function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
   return buildProcessingDisplayRows(blocks).length > 0
 }
 
+function hasTrailingCompletedProcessText(blocks: ProcessingBlock[]): boolean {
+  const lastBlock = blocks.at(-1)
+  return lastBlock?.type === 'text' && (lastBlock.status === 'done' || lastBlock.status === 'error')
+}
+
 function shouldShowAssistantThinkingIndicator({
   isStreaming,
   hasProcessingDisplayBlock,
   hasVisibleContent,
+  hasTrailingCompletedProcessText,
 }: {
   isStreaming: boolean
   hasProcessingDisplayBlock: boolean
   hasVisibleContent: boolean
+  hasTrailingCompletedProcessText: boolean
 }): boolean {
-  return isStreaming && (!hasProcessingDisplayBlock || hasVisibleContent)
+  return (
+    isStreaming &&
+    (!hasProcessingDisplayBlock || hasVisibleContent || hasTrailingCompletedProcessText)
+  )
 }
 
 function AssistantErrorCard({
