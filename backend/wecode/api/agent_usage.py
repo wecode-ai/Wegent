@@ -18,6 +18,7 @@ from wecode.models.agent_task_usage import AgentTaskUsageDetail
 from wecode.schemas.agent_usage import (
     AgentUsageAgent,
     AgentUsageAgentPage,
+    AgentUsageDailyRow,
     AgentUsageQuery,
     AgentUsageResponse,
     AgentUsageRow,
@@ -197,8 +198,44 @@ def query_usage(
             .filter(*filters)
             .scalar()
         )
+    usage_date = func.date(AgentTaskUsageDetail.task_created_at).label("date")
+    daily_grouped = (
+        db.query(
+            usage_date,
+            AgentTaskUsageDetail.agent_name,
+            AgentTaskUsageDetail.agent_namespace,
+            func.count(AgentTaskUsageDetail.task_id).label("pv"),
+            func.count(distinct(AgentTaskUsageDetail.visitor_user_id)).label("uv"),
+            func.coalesce(func.sum(AgentTaskUsageDetail.ai_rounds), 0).label(
+                "ai_rounds"
+            ),
+            func.coalesce(func.sum(AgentTaskUsageDetail.completed_ai_rounds), 0).label(
+                "completed_ai_rounds"
+            ),
+        )
+        .filter(*filters)
+        .group_by(
+            usage_date,
+            AgentTaskUsageDetail.agent_name,
+            AgentTaskUsageDetail.agent_namespace,
+        )
+        .order_by(
+            usage_date.desc(),
+            func.count(AgentTaskUsageDetail.task_id).desc(),
+            AgentTaskUsageDetail.agent_name,
+        )
+        .all()
+    )
+    daily_rows = []
+    for row in daily_grouped:
+        values = row._asdict()
+        if not is_admin:
+            values.pop("ai_rounds")
+            values.pop("completed_ai_rounds")
+        daily_rows.append(AgentUsageDailyRow(**values))
     response = AgentUsageResponse(
         rows=rows,
+        daily_rows=daily_rows,
         pv=sum(row.pv for row in rows),
         uv=int(total_uv or 0),
     )

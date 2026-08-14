@@ -126,7 +126,12 @@ export function SkillMarketplaceSearch({
       const file = new File([blob], `${installKey}.zip`, { type: 'application/zip' })
 
       // Upload to local system
-      await uploadSkill(file, installKey, namespace)
+      await uploadSkill(file, installKey, namespace, undefined, {
+        type: 'marketplace',
+        provider_key: provider.key,
+        skill_key: skill.skillKey,
+        original_skill_key: skill.originalSkillKey,
+      })
 
       setInstallingSkills(prev => {
         const newMap = new Map(prev)

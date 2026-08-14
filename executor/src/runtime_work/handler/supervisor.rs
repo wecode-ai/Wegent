@@ -33,10 +33,37 @@ impl RuntimeWorkRpcHandler {
             task.updated_at = now_ms();
         });
         self.emit_supervisor_updated(&link.local_task_id);
-        self.schedule_supervisor_evaluation(link.local_task_id.clone(), None);
+        self.schedule_supervisor_evaluation(link.local_task_id.clone(), None, false);
         Ok(supervisor_response(
             &self.local_task_link(&link.local_task_id).unwrap_or(link),
         ))
+    }
+
+    pub(super) async fn run_task_supervisor_now(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let link = self.task_link_from_payload(&payload, false).await?;
+        if link.supervisor.is_none() {
+            return Err(AppIpcError::new("bad_request", "supervisor is disabled"));
+        }
+        if runtime_session_id_from_link(&link).is_none() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "runtime task session is not ready",
+            ));
+        }
+        if !self.schedule_supervisor_evaluation(link.local_task_id.clone(), None, true) {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": link.local_task_id,
+                "runtime": "codex",
+                "supervisor": link.supervisor,
+                "error": "supervisor evaluation is already running",
+            }));
+        }
+        Ok(supervisor_response(&link))
     }
 
     pub(super) async fn clear_task_supervisor(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -94,7 +121,8 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: String,
         source_turn_id: Option<String>,
-    ) {
+        force: bool,
+    ) -> bool {
         let enabled = self.local_task_link(&local_task_id).is_some_and(|link| {
             runtime_session_id_from_link(&link).is_some()
                 && link
@@ -102,7 +130,7 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(|supervisor| supervisor.status != "disabled")
         });
         if !enabled {
-            return;
+            return false;
         }
         let evaluation_started = self
             .supervisor_evaluating
@@ -110,12 +138,12 @@ impl RuntimeWorkRpcHandler {
             .expect("supervisor evaluating set lock should not be poisoned")
             .insert(local_task_id.clone());
         if !evaluation_started {
-            return;
+            return false;
         }
         let handler = self.clone();
         tokio::spawn(async move {
             if let Err(error) = handler
-                .evaluate_task_supervisor(&local_task_id, source_turn_id)
+                .evaluate_task_supervisor(&local_task_id, source_turn_id, force)
                 .await
             {
                 handler.record_supervisor_error(&local_task_id, error);
@@ -126,6 +154,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("supervisor evaluating set lock should not be poisoned")
                 .remove(&local_task_id);
         });
+        true
     }
 
     pub(super) fn start_supervisor_scheduler(&self) {
@@ -144,10 +173,10 @@ impl RuntimeWorkRpcHandler {
                 for link in handler.local_task_links(false) {
                     if supervisor_needs_scheduled_check(
                         &link,
-                        handler.is_active_local_task(&link.local_task_id),
+                        handler.is_busy_local_task(&link.local_task_id),
                         now_ms(),
                     ) {
-                        handler.schedule_supervisor_evaluation(link.local_task_id, None);
+                        handler.schedule_supervisor_evaluation(link.local_task_id, None, false);
                     }
                 }
             }
@@ -158,6 +187,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         source_turn_id: Option<String>,
+        force: bool,
     ) -> Result<(), String> {
         let link = self
             .local_task_link(local_task_id)
@@ -202,7 +232,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         let content_hash = content_hash(&visible_ai_progress);
-        if supervisor.last_content_hash.as_deref() == Some(content_hash.as_str()) {
+        if should_skip_unchanged_content(&supervisor, &content_hash, force) {
             self.store.update_task(local_task_id, |task| {
                 let Some(current) = task.supervisor.as_mut() else {
                     return;
@@ -211,6 +241,7 @@ impl RuntimeWorkRpcHandler {
                 current.last_error = None;
                 current.status = "active".to_owned();
             });
+            self.emit_supervisor_updated(local_task_id);
             return Ok(());
         }
         let snapshot_at = now_ms();
@@ -465,6 +496,7 @@ impl RuntimeWorkRpcHandler {
         );
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.to_owned(),
+            runtime: "codex".to_owned(),
             request,
             direct_thread_id: link.ephemeral.then(|| thread_id.clone()),
             fork_thread_id: None,
@@ -472,7 +504,9 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: (!link.ephemeral).then_some(thread_id),
             initial_thread_name: None,
             initial_thread_goal: None,
-        });
+        })
+        .await
+        .map_err(|error| error.message)?;
         Ok(())
     }
 
@@ -514,7 +548,7 @@ pub(super) fn configured_supervisor(
     payload: &Value,
     existing: Option<RuntimeSupervisorState>,
 ) -> Result<RuntimeSupervisorState, AppIpcError> {
-    let mode = string_field(payload, "mode").unwrap_or_else(|| "suggest".to_owned());
+    let mode = string_field(payload, "mode").unwrap_or_else(|| "auto".to_owned());
     if !SUPERVISOR_MODES.contains(&mode.as_str()) {
         return Err(AppIpcError::new(
             "bad_request",
@@ -685,14 +719,28 @@ fn supervisor_needs_scheduled_check(link: &RuntimeTaskLink, active: bool, now: i
     };
     let interval_elapsed = now.saturating_sub(last_evaluated_at)
         >= i64::try_from(supervisor.interval_seconds).unwrap_or(i64::MAX) * 1_000;
+    if !active
+        && link
+            .completed_at
+            .is_some_and(|completed_at| completed_at > last_evaluated_at)
+    {
+        return true;
+    }
     if supervisor.last_content_hash.is_none() {
         return interval_elapsed;
     }
     if active && interval_elapsed {
         return true;
     }
-    link.completed_at
-        .is_some_and(|completed_at| completed_at > last_evaluated_at)
+    false
+}
+
+fn should_skip_unchanged_content(
+    supervisor: &RuntimeSupervisorState,
+    content_hash: &str,
+    force: bool,
+) -> bool {
+    !force && supervisor.last_content_hash.as_deref() == Some(content_hash)
 }
 
 struct VisibleAiProgress {
@@ -905,6 +953,86 @@ mod tests {
 
         assert!(!supervisor_needs_scheduled_check(&link, true, 30_999));
         assert!(supervisor_needs_scheduled_check(&link, true, 31_000));
+    }
+
+    #[test]
+    fn failed_supervisor_evaluation_retries_when_the_active_turn_later_completes() {
+        let link = RuntimeTaskLink {
+            completed_at: Some(2_000),
+            supervisor: Some(RuntimeSupervisorState {
+                mode: "auto".to_owned(),
+                status: "error".to_owned(),
+                instructions: String::new(),
+                model_selection: None,
+                interval_seconds: 30,
+                last_evaluated_at: Some(1_000),
+                last_content_hash: None,
+                last_error: Some("transcript was not ready".to_owned()),
+                suggestions: Vec::new(),
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        assert!(supervisor_needs_scheduled_check(&link, false, 2_001));
+    }
+
+    #[test]
+    fn completed_timestamp_does_not_overlap_an_execution_that_is_still_active() {
+        let link = RuntimeTaskLink {
+            completed_at: Some(2_000),
+            supervisor: Some(RuntimeSupervisorState {
+                mode: "auto".to_owned(),
+                status: "error".to_owned(),
+                instructions: String::new(),
+                model_selection: None,
+                interval_seconds: 30,
+                last_evaluated_at: Some(1_000),
+                last_content_hash: None,
+                last_error: Some("transcript was not ready".to_owned()),
+                suggestions: Vec::new(),
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        assert!(!supervisor_needs_scheduled_check(&link, true, 2_001));
+    }
+
+    #[test]
+    fn manual_check_re_evaluates_unchanged_content() {
+        let supervisor = RuntimeSupervisorState {
+            mode: "auto".to_owned(),
+            status: "active".to_owned(),
+            instructions: String::new(),
+            model_selection: None,
+            interval_seconds: 30,
+            last_evaluated_at: Some(100),
+            last_content_hash: Some("same".to_owned()),
+            last_error: None,
+            suggestions: Vec::new(),
+        };
+
+        assert!(should_skip_unchanged_content(&supervisor, "same", false));
+        assert!(!should_skip_unchanged_content(&supervisor, "same", true));
+    }
+
+    #[test]
+    fn supervisor_defaults_to_auto_correction() {
+        let supervisor = configured_supervisor(
+            &json!({
+                "modelSelection": {
+                    "modelName": "review-model",
+                    "modelType": "public",
+                    "options": {
+                        "weworkCloudModelNamespace": "default",
+                        "weworkCloudModelResourceUserId": "0"
+                    }
+                }
+            }),
+            None,
+        )
+        .expect("supervisor should configure");
+
+        assert_eq!(supervisor.mode, "auto");
     }
 
     #[test]

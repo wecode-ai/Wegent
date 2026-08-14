@@ -84,4 +84,118 @@ describe('ContextBadgeList knowledge presentation', () => {
     expect(screen.queryByText('AP')).not.toBeInTheDocument()
     expect(screen.queryByText(/篇文档|个文档|个文件夹/)).not.toBeInTheDocument()
   })
+
+  it('renders one card when a whole external knowledge base includes descendant contexts', () => {
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 10,
+            context_type: 'external_knowledge',
+            name: 'Project Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_id: 'kb-1',
+            external_target_type: 'folder',
+            external_node_id: 'folder-1',
+          },
+          {
+            id: 11,
+            context_type: 'external_knowledge',
+            name: 'Project Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_id: 'kb-1',
+            external_target_type: 'document',
+            external_node_id: 'doc-1',
+          },
+          {
+            id: 12,
+            context_type: 'external_knowledge',
+            name: 'Project Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByText('Project Space')).toHaveLength(1)
+    expect(screen.getAllByText('WeiboAP')).toHaveLength(1)
+    expect(screen.queryByText('1 文件夹 · 1 文档')).not.toBeInTheDocument()
+  })
+
+  it('combines folder and document scopes from one external knowledge base', () => {
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 20,
+            context_type: 'external_knowledge',
+            name: 'Project Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_id: 'kb-1',
+            external_target_type: 'folder',
+            external_node_id: 'folder-1',
+          },
+          {
+            id: 21,
+            context_type: 'external_knowledge',
+            name: 'Project Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_id: 'kb-1',
+            external_target_type: 'document',
+            external_node_id: 'doc-1',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getAllByText('Project Space')).toHaveLength(1)
+    expect(screen.getByText('1 文件夹 · 1 文档')).toBeInTheDocument()
+  })
+
+  it('renders separate cards for the same external ID in different scopes', () => {
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 30,
+            context_type: 'external_knowledge',
+            name: 'Organization Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_scope: 'organization',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+          {
+            id: 31,
+            context_type: 'external_knowledge',
+            name: 'Personal Space',
+            status: 'ready',
+            external_provider: 'ap',
+            external_mode: 'explicit',
+            external_scope: 'personal',
+            external_id: 'kb-1',
+            external_target_type: 'knowledge_base',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Organization Space')).toBeInTheDocument()
+    expect(screen.getByText('Personal Space')).toBeInTheDocument()
+    expect(screen.getAllByText('WeiboAP')).toHaveLength(2)
+  })
 })

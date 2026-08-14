@@ -901,14 +901,13 @@ export function useWorkbenchRuntimeMessaging({
             : {}),
         },
         modelSelection:
-          options?.modelSelection ??
-          (selectedModel
+          selectedModel && executionModel.modelId
             ? {
-                modelName: selectedModel.name,
-                modelType: selectedModel.type,
-                options: selectedModelOptions,
+                modelName: executionModel.modelId,
+                modelType: executionModel.modelType ?? selectedModel.type,
+                options: executionModel.modelOptions ?? {},
               }
-            : null),
+            : (options?.modelSelection ?? null),
         ...(friendlyTitle ? { friendlyTitle } : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: preparedAttachments.attachmentIds,
@@ -1101,6 +1100,8 @@ export function useWorkbenchRuntimeMessaging({
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
+              status: response.status ?? 'running',
+              queuePosition: response.queuePosition,
               workspaceKind:
                 payload.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
               modelSelection: createModelSelection,
@@ -1128,7 +1129,20 @@ export function useWorkbenchRuntimeMessaging({
             runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           }
         }
-        lifecycleStore.sendAccepted(address)
+        if (response.status === 'queued') {
+          lifecycleStore.syncRuntimeTask(address, {
+            taskId: address.taskId,
+            workspacePath: resolvedWorkspacePath ?? '',
+            title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
+            runtime,
+            running: false,
+            status: 'queued',
+            queuePosition: response.queuePosition,
+            optimistic: true,
+          })
+        } else {
+          lifecycleStore.sendAccepted(address)
+        }
         track('conversation_created', {
           execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
         })
@@ -1755,6 +1769,7 @@ function buildOptimisticRuntimeTask({
   title,
   runtime,
   status = 'creating',
+  queuePosition,
   workspaceKind,
   error,
   modelSelection,
@@ -1763,7 +1778,8 @@ function buildOptimisticRuntimeTask({
   workspacePath: string
   title: string
   runtime: RuntimeTaskSummary['runtime']
-  status?: 'creating' | 'failed'
+  status?: 'creating' | 'failed' | 'queued' | 'running'
+  queuePosition?: number | null
   workspaceKind?: RuntimeTaskSummary['workspaceKind']
   error?: string | null
   modelSelection?: ModelSelectionConfig | null
@@ -1778,9 +1794,10 @@ function buildOptimisticRuntimeTask({
     ...(workspaceKind ? { workspaceKind } : {}),
     createdAt: now,
     updatedAt: now,
-    running: status === 'creating',
+    running: status === 'creating' || status === 'running',
     status,
     optimistic: true,
+    ...(queuePosition != null ? { queuePosition } : {}),
     ...(error ? { error } : {}),
     ...(modelSelection ? { modelSelection } : {}),
   }

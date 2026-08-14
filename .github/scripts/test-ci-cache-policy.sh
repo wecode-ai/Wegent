@@ -85,6 +85,11 @@ executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 
+desktop_image="${warmup_all_false/docker=false/docker=true}"
+desktop_image="${desktop_image/wework_target=false/wework_target=true}"
+assert_warmup_case "Wework desktop image" "$desktop_image" \
+  "docker/wework-e2e/desktop.Dockerfile"
+
 wework_lock="${warmup_all_false/wework_rust=false/wework_rust=true}"
 wework_lock="${wework_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "Wework lock" "$wework_lock" \
@@ -153,8 +158,10 @@ python_action="$action_dir/setup-python-uv-cache/action.yml"
 # GitHub expressions are matched literally in action source.
 # shellcheck disable=SC2016
 if ! grep -Fq 'default: "false"' "$python_action" ||
-  ! grep -Fq 'save-cache: ${{ inputs.save-cache }}' "$python_action" ||
-  ! grep -Fq 'cache-suffix: python-${{ inputs.python-version }}' \
+  ! grep -Fq "if: inputs.setup-python == 'true'" "$python_action" ||
+  ! grep -Fq "if: inputs.setup-uv == 'true'" "$python_action" ||
+  ! grep -Fq "if: inputs.save-cache == 'true'" "$python_action" ||
+  ! grep -Fq 'uv-v1-python-${{ inputs.python-version }}' \
     "$python_action"; then
   fail "Python caches must be shared by version and read-only by default"
 fi
@@ -201,7 +208,8 @@ workspace_manifests="hashFiles('pnpm-lock.yaml', 'package.json', 'pnpm-workspace
 if ! grep -Fq 'node-24-workspace-v2-${{ hashFiles(' "$node_action" ||
   ! grep -Fq "$workspace_manifests" "$node_action" ||
   ! grep -Fq 'frontend/public/fonts' "$node_action" ||
-  ! grep -Fq 'default: "false"' "$node_action"; then
+  ! grep -Fq 'default: "false"' "$node_action" ||
+  ! grep -Fq "if: inputs.setup-toolchain == 'true'" "$node_action"; then
   fail "Node dependencies and generated fonts must share a read-only-by-default cache"
 fi
 
@@ -213,19 +221,32 @@ if ! validate_yaml_steps checkout "$warmup_workflow" ||
 fi
 
 if ! ruby "$script_dir/lib/validate-ci-cache-policy.rb" docker-sha \
-  "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
+  "$warmup_workflow" \
+  "$workflow_dir/e2e-tests.yml" \
+  "$workflow_dir/wework-e2e.yml"; then
   fail "Docker actions introduced by cache workflows must be pinned by SHA"
 fi
 
+claude_cli_manifest=".github/claude-code-cli/package.json"
 claude_cli_lock=".github/claude-code-cli/package-lock.json"
-claude_cli_key="node-24-claude-code-cli-v3-\${{ hashFiles('$claude_cli_lock') }}"
+claude_cli_key="node-24-local-harness-clis-v2-\${{ hashFiles('$claude_cli_manifest', '$claude_cli_lock') }}"
+claude_cli_verify=".github/scripts/verify-local-harness-clis.sh"
 if [[ ! -f "$script_dir/../claude-code-cli/package.json" ]] ||
   [[ ! -f "$script_dir/../claude-code-cli/package-lock.json" ]] ||
+  [[ ! -x "$script_dir/verify-local-harness-clis.sh" ]] ||
   ! grep -Fq "$claude_cli_key" "$warmup_workflow" ||
   ! grep -Fq "$claude_cli_key" "$workflow_dir/e2e-tests.yml" ||
+  ! grep -Fq "$claude_cli_key" "$workflow_dir/wework-e2e.yml" ||
+  ! grep -Fq "$claude_cli_verify" "$warmup_workflow" ||
+  ! grep -Fq "$claude_cli_verify" "$workflow_dir/e2e-tests.yml" ||
+  ! grep -Fq "$claude_cli_verify" "$workflow_dir/wework-e2e.yml" ||
+  [[ "$(grep -Fl 'npm ci --prefix .github/claude-code-cli --strict-allow-scripts' \
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml" \
+    "$workflow_dir/wework-e2e.yml" | wc -l)" -ne 3 ]] ||
   grep -Eq 'npm install -g .*claude-code' \
-    "$warmup_workflow" "$workflow_dir/e2e-tests.yml"; then
-  fail "Claude Code CLI caches must use the shared integrity-locked npm graph"
+    "$warmup_workflow" "$workflow_dir/e2e-tests.yml" \
+    "$workflow_dir/wework-e2e.yml"; then
+  fail "Local harness CLI caches must use the shared integrity-locked npm graph"
 fi
 
 for workflow in "${pr_workflows[@]}" ci-cache-warmup.yml; do
@@ -239,17 +260,39 @@ done
 # shellcheck disable=SC2016
 playwright_key='playwright-chromium-v2-${{ steps.playwright-version.outputs.version }}'
 if ! grep -Fq "$playwright_key" "$workflow_dir/e2e-tests.yml" ||
-  ! grep -Fq "$playwright_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$playwright_key" "$warmup_workflow"; then
-  fail "Platform, Wework, and warmup must share the Playwright browser cache"
+  fail "Platform E2E and warmup must share the Playwright browser cache"
+fi
+
+wework_workflow="$workflow_dir/wework-e2e.yml"
+wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
+  ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
+  [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
+  grep -Eq 'playwright (install|install-deps)|install-wework-tauri-system-dependencies' \
+    "$wework_workflow"; then
+  fail "Wework E2E must consume its immutable dependency image without runtime installs"
+fi
+
+if ! grep -Eq '^ENV IS_SANDBOX=1$' "$wework_desktop_image"; then
+  fail "Wework desktop E2E must identify its root container as a Claude Code sandbox"
 fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-desktop-e2e-v2-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
+wework_target_key='wework-desktop-e2e-v3-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
   fail "Wework E2E and warmup must share the desktop Cargo target cache"
+fi
+
+if ! grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
+  grep -Fq 'image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}' ||
+  ! grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
+    grep -Fq 'HOME: /root' ||
+  grep -A40 'name: Warm Wework Desktop Cargo Target' "$warmup_workflow" |
+    grep -Eq 'install-wework-tauri-system-dependencies|dtolnay/rust-toolchain'; then
+  fail "Wework desktop target warmup must build inside the E2E container"
 fi
 
 printf 'CI cache policy tests passed\n'

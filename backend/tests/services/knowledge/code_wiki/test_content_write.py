@@ -10,6 +10,7 @@ its RAG index entry and any stored citation — stable when the agent rewords a 
 
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -429,6 +430,34 @@ def test_a_skill_identity_token_for_a_missing_user_is_refused(test_db):
         _verify_internal_token(authorization=f"Bearer {token}", db=test_db)
 
 
+def test_optional_jwt_lookup_propagates_database_failures() -> None:
+    """Only malformed JWTs are optional; a broken user lookup is a server failure."""
+    from app.core.security import create_access_token, get_current_user_from_token
+
+    db = Mock()
+    db.query.side_effect = RuntimeError("database unavailable")
+    token = create_access_token(data={"sub": "writer"})
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        get_current_user_from_token(token, db)
+
+
+def test_writer_does_not_recast_jwt_lookup_failures_as_invalid_tokens(
+    test_db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.api.endpoints.wiki import _verify_internal_token
+    from app.core import security
+
+    monkeypatch.setattr(
+        security,
+        "get_current_user_from_token",
+        Mock(side_effect=RuntimeError("database unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        _verify_internal_token(authorization="Bearer valid-token", db=test_db)
+
+
 def test_writing_a_page_does_not_read_back_the_others(
     test_db: Session, generation: WikiGeneration
 ):
@@ -594,14 +623,19 @@ def test_a_caller_reading_their_own_generation_is_allowed(test_db, test_user):
     _assert_caller_owns_generation(test_db, test_user, generation.id)
 
 
-def test_the_fixed_operator_token_is_not_scoped_to_one_generation(test_db):
-    """`None` means the internal token was used, which is an operator rather than a
-    person. Applying an ownership check to it would compare against no account."""
+def test_an_unscoped_writer_identity_is_refused(test_db):
+    """The writer has no trusted anonymous or fixed-token caller path."""
+    import pytest
+    from fastapi import HTTPException
+
     from app.api.endpoints.wiki import _assert_caller_owns_generation
 
     generation = _generation(test_db, user_id=4242)
 
-    _assert_caller_owns_generation(test_db, None, generation.id)
+    with pytest.raises(HTTPException) as refused:
+        _assert_caller_owns_generation(test_db, None, generation.id)
+
+    assert refused.value.status_code == 403
 
 
 def test_a_generation_that_does_not_exist_reads_as_absent(test_db, test_user):

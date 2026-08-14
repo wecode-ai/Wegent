@@ -13,6 +13,7 @@ In HTTP mode, skill binaries are downloaded from backend API.
 """
 
 import asyncio
+import copy
 import logging
 import time
 from typing import Any, Optional
@@ -24,6 +25,37 @@ from shared.models.execution import ExecutionRequest
 from shared.telemetry.context import get_request_id
 
 logger = logging.getLogger(__name__)
+
+
+def _with_request_skill_plan(
+    skill_config: dict[str, Any],
+    task_data: Optional[ExecutionRequest],
+) -> dict[str, Any]:
+    """Attach request-scoped Skill refs to the sandbox bot configuration."""
+    if skill_config.get("name") != "sandbox" or task_data is None:
+        return skill_config
+
+    configured_bots = skill_config.get("config", {}).get("bot_config")
+    if not isinstance(configured_bots, list) or not configured_bots:
+        logger.warning(
+            "[skill_factory] Sandbox Skill has no bot_config; "
+            "request Skill plan cannot be propagated"
+        )
+        return skill_config
+    if not isinstance(configured_bots[0], dict):
+        logger.warning(
+            "[skill_factory] Sandbox Skill bot_config is invalid; "
+            "request Skill plan cannot be propagated"
+        )
+        return skill_config
+
+    enriched = copy.deepcopy(skill_config)
+    sandbox_bot = enriched["config"]["bot_config"][0]
+    sandbox_bot["skills"] = list(task_data.skill_names or [])
+    sandbox_bot["preload_skills"] = list(task_data.preload_skills or [])
+    sandbox_bot["skill_refs"] = dict(task_data.skill_refs or {})
+    sandbox_bot["preload_skill_refs"] = dict(task_data.preload_skill_refs or {})
+    return enriched
 
 
 def prepare_load_skill_tool(
@@ -145,10 +177,12 @@ async def _create_provider_tools_for_skill(
     auth_token: Optional[str] = None,
     skill_identity_token: Optional[str] = None,
     load_skill_tool: Optional[Any] = None,
+    task_data: Optional[ExecutionRequest] = None,
 ) -> list[Any]:
     """Load a skill provider if needed and create concrete tool instances."""
     from chat_shell.skills import SkillToolContext
 
+    skill_config = _with_request_skill_plan(skill_config, task_data)
     skill_name = skill_config.get("name", "unknown")
     provider_config = skill_config.get("provider")
     skill_id = skill_config.get("skill_id")
@@ -486,6 +520,7 @@ async def prepare_skill_tools(
                         auth_token=auth_token,
                         skill_identity_token=skill_identity_token,
                         load_skill_tool=load_skill_tool,
+                        task_data=task_data,
                     )
                     logger.info(
                         "[skill_factory_perf] skill=%s deferred_provider_load=%.2fms "
@@ -529,6 +564,7 @@ async def prepare_skill_tools(
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
             load_skill_tool=load_skill_tool,
+            task_data=task_data,
         )
 
         if skill_tools:

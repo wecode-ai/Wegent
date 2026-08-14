@@ -10,21 +10,35 @@ export function reduceRuntimeTaskLifecycle(
       const expectedRunning = state.expectedExecutorRunning
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
+      const queuedStatus = isQueuedTaskStatus(event.task.status)
+      const snapshotConfirmsActiveTurn =
+        snapshotRunning === true &&
+        (isRunningTaskStatus(event.task.threadStatus) || isRunningTaskStatus(event.task.turnStatus))
+      const settledLocalHarness =
+        snapshotRunning === false &&
+        state.turnPhase !== 'streaming' &&
+        isLocalHarnessRuntime(event.task.runtime)
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
-        (!terminalStatus || hasIdentifiedActiveTurn)
+        !queuedStatus &&
+        (!terminalStatus || hasIdentifiedActiveTurn) &&
+        !snapshotConfirmsActiveTurn &&
+        !settledLocalHarness
       if (shouldIgnoreStaleSnapshot) return state
 
-      const executionPhase =
-        terminalStatus || snapshotRunning === false
+      const executionPhase = queuedStatus
+        ? 'queued'
+        : terminalStatus || snapshotRunning === false
           ? 'idle'
           : snapshotRunning === true
             ? 'running'
             : state.executionPhase
-      const turnPhase = terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
-      const activeTurnId = terminalStatus || snapshotRunning === false ? null : state.activeTurnId
+      const turnPhase =
+        queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
+      const activeTurnId =
+        queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
 
       return {
         ...state,
@@ -36,9 +50,10 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
-          snapshotRunning !== null &&
-          event.task.optimistic !== true &&
-          (snapshotRunning === expectedRunning || terminalStatus)
+          queuedStatus ||
+          (snapshotRunning !== null &&
+            event.task.optimistic !== true &&
+            (snapshotRunning === expectedRunning || terminalStatus))
             ? null
             : expectedRunning,
       }
@@ -176,6 +191,10 @@ export function reduceRuntimeTaskLifecycle(
   }
 }
 
+function isQueuedTaskStatus(status: string | null | undefined): boolean {
+  return status?.trim().toLowerCase() === 'queued'
+}
+
 function isTerminalTaskStatus(status: string | null | undefined): boolean {
   const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
   return Boolean(
@@ -184,6 +203,15 @@ function isTerminalTaskStatus(status: string | null | undefined): boolean {
       normalized
     )
   )
+}
+
+function isRunningTaskStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
+}
+
+function isLocalHarnessRuntime(runtime: string | null | undefined): boolean {
+  return runtime === 'opencode' || runtime === 'claude_code' || runtime === 'kimi_code'
 }
 
 function mergeAddress(

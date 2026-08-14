@@ -317,6 +317,45 @@ describe('ChatInput', () => {
     })
   })
 
+  test('moves the caret and editor viewport to the end after selecting a quick phrase', async () => {
+    function Harness() {
+      const [value, setValue] = useState('existing prompt')
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input')
+    const textNode = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT).nextNode()
+    const range = document.createRange()
+    range.setStart(textNode!, 0)
+    range.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+
+    await userEvent.click(screen.getByTestId('quick-phrase-button'))
+    await userEvent.click(screen.getByTestId('quick-phrase-option-default-summary-progress'))
+
+    await waitFor(() => {
+      expect(editor).toHaveFocus()
+      expect((editor as HTMLElement & { value: string }).value).toBe(
+        'existing prompt\n总结目前完成的工作和下一步建议'
+      )
+    })
+    const trailingText = editor.querySelector('p')?.lastChild
+    expect(window.getSelection()?.anchorNode).toBe(trailingText)
+    expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
+  })
+
   test('opens plugin picker from its toolbar button without a separate slash action', async () => {
     render(
       <ChatInput

@@ -62,6 +62,7 @@ interface WorkspacePanelActionsProps {
   onManageTodo?: () => void
   supervisor?: RuntimeSupervisorState | null
   onConfigureSupervisor?: () => void
+  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   bottomPanelOpen: boolean
@@ -96,6 +97,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onManageTodo,
   supervisor,
   onConfigureSupervisor,
+  onRunSupervisorNow,
   rightPanelOpen,
   rightPanelExpanded,
   bottomPanelOpen,
@@ -244,6 +246,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onManageTodo={onManageTodo}
           supervisor={supervisor}
           onConfigureSupervisor={onConfigureSupervisor}
+          onRunSupervisorNow={onRunSupervisorNow}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (
@@ -273,7 +276,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             ) : (
               <LocalWorkspaceOpenerIcon opener="vscode" className="h-4 w-4" />
             )}
-            <span className="whitespace-nowrap">{t('workbench.open_workspace_location')}</span>
+            <span data-testid="open-workspace-location-label" className="whitespace-nowrap">
+              {t('workbench.open_workspace_location')}
+            </span>
           </button>
           <LocalWorkspaceOpenerPicker
             ariaLabel={t('workbench.choose_project_ide')}

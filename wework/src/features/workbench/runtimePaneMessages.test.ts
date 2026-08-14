@@ -359,6 +359,142 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(calls).toEqual(['assistant_done', 'lifecycle_settled'])
   })
 
+  test('settles a provider-renamed terminal event against its provisional start', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onAssistantSettled,
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'provisional-turn',
+      deviceId: 'device-1',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'canonical-turn',
+      deviceId: 'device-1',
+      result: {},
+    })
+
+    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'succeeded')
+  })
+
+  test('ignores a canonical start that arrives after its aliased turn settled', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantStart = vi.fn()
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantStart,
+      onAssistantSettled,
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'provisional-turn',
+      deviceId: 'device-1',
+    })
+    handlers.onChatError?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'canonical-turn',
+      deviceId: 'device-1',
+      error: 'interrupted',
+      type: 'response.incomplete',
+    })
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'canonical-turn',
+      deviceId: 'device-1',
+    })
+
+    expect(onAssistantStart).toHaveBeenCalledTimes(1)
+    expect(onAssistantStart).toHaveBeenCalledWith('provisional-turn')
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'cancelled')
+    expect(actions.filter(action => action.type === 'assistant_started')).toHaveLength(1)
+  })
+
+  test('settles renamed overlapping turns in their start order', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onAssistantSettled,
+    })
+
+    for (const subtaskId of ['provisional-turn-1', 'provisional-turn-2']) {
+      handlers.onChatStart?.({
+        taskId: 'runtime-task-1',
+        subtaskId,
+        deviceId: 'device-1',
+      })
+    }
+    for (const subtaskId of ['canonical-turn-1', 'canonical-turn-2']) {
+      handlers.onChatDone?.({
+        taskId: 'runtime-task-1',
+        subtaskId,
+        deviceId: 'device-1',
+        result: {},
+      })
+    }
+
+    expect(onAssistantSettled.mock.calls).toEqual([
+      ['provisional-turn-1', 'succeeded'],
+      ['provisional-turn-2', 'succeeded'],
+    ])
+  })
+
+  test('does not settle a newer turn from a repeated old terminal event', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onAssistantSettled,
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      result: {},
+    })
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-2',
+      deviceId: 'device-1',
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      result: {},
+    })
+
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'succeeded')
+  })
+
   test('maps a Codex failure to an identified canonical error item action', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',

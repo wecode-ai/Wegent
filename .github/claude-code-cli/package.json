@@ -1,8 +1,16 @@
 {
-  "name": "wegent-ci-claude-code-cli",
+  "name": "wegent-ci-local-harness-clis",
   "version": "0.0.0",
   "private": true,
+  "allowScripts": {
+    "@anthropic-ai/claude-code@2.1.228": true,
+    "@moonshot-ai/kimi-code@0.35.0": true,
+    "node-pty@1.1.0": true,
+    "opencode-ai@1.18.16": true
+  },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.199"
+    "@anthropic-ai/claude-code": "2.1.228",
+    "@moonshot-ai/kimi-code": "0.35.0",
+    "opencode-ai": "1.18.16"
   }
 }

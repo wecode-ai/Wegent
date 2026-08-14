@@ -20,7 +20,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
@@ -110,8 +110,8 @@ def _generation_config_for_log(config: Any) -> Dict[str, Any]:
 def _request_shell_type(request: "ExecutionRequest") -> str:
     """Extract the primary shell type from an execution request."""
     if request.bot and isinstance(request.bot[0], dict):
-        return str(request.bot[0].get("shell_type") or "")
-    return ""
+        return str(request.bot[0].get("shell_type") or "Chat")
+    return "Chat"
 
 
 def _should_inline_attachment_content(request: "ExecutionRequest") -> bool:
@@ -203,7 +203,8 @@ def _catalog_model_id_from_model_options(
     if not model_options:
         return None
     catalog_id = (
-        model_options.get("weworkCloudModelCatalogModelId")
+        model_options.get("weworkCloudModelCodexCatalogModelId")
+        or model_options.get("weworkCloudModelCatalogModelId")
         or model_options.get("codex_catalog_model_id")
         or model_options.get("codexCatalogModelId")
     )
@@ -375,8 +376,11 @@ def _build_cloud_gateway_model_config(
     model_name: str,
     creator: Any,
     upstream_api_format: Optional[str] = None,
+    model_type: Optional[str] = None,
+    namespace: Optional[str] = None,
+    resource_user_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build the backend LLM gateway config for a public/group cloud model.
+    """Build the backend LLM gateway config for an authorized cloud model.
 
     Mirrors the App's cloud-model send: the executor forwards to the backend
     `llm-responses-proxy` with the user's token and model identity headers; the
@@ -384,27 +388,64 @@ def _build_cloud_gateway_model_config(
     executor devices never see the raw API key and requests share the gateway's
     quota management instead of being rate-limited per device.
 
-    Returns None for models that should keep their direct config (user-owned
-    models that may be local, or models without a public/group Model CRD).
+    Exact identities route public, group, and user cloud models through the
+    gateway. Legacy name-only callers keep user-owned models on their direct
+    config path.
     """
 
     from app.core.config import settings
     from app.core.security import create_access_token
-    from app.services.chat.config.model_resolver import _find_model_with_namespace
 
-    kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
-    if kind is None or not kind.json:
-        return None
-    namespace = str(kind.namespace or "default")
-    if kind.user_id == 0:
-        model_type = "public"
-        resource_user_id = 0
-    elif namespace != "default":
-        model_type = "group"
-        resource_user_id = int(kind.user_id or 0)
+    exact_identity = any(
+        value is not None for value in (model_type, namespace, resource_user_id)
+    )
+    if exact_identity:
+        if model_type is None or namespace is None or resource_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cloud model identity is incomplete",
+            )
+        from app.services.llm_proxy_service import _validate_model_access
+
+        _validate_model_access(
+            db,
+            creator,
+            model_type,
+            namespace,
+            resource_user_id,
+        )
+        kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == resource_user_id,
+                Kind.kind == "Model",
+                Kind.namespace == namespace,
+                Kind.name == model_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if kind is None or not kind.json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cloud model not found",
+            )
     else:
-        # User-owned models may be local; keep the direct config path.
-        return None
+        from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+        kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
+        if kind is None or not kind.json:
+            return None
+        namespace = str(kind.namespace or "default")
+        if kind.user_id == 0:
+            model_type = "public"
+            resource_user_id = 0
+        elif namespace != "default":
+            model_type = "group"
+            resource_user_id = int(kind.user_id or 0)
+        else:
+            # Legacy callers keep user-owned models on their direct config path.
+            return None
     backend_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
     if not backend_base:
         return None
@@ -1001,24 +1042,33 @@ async def build_execution_request(
                 user.id,
                 preload_selected_kb_skill=preload_selected_kb_skill,
             )
-            if (
-                preload_selected_kb_skill
-                and (device_id or _request_shell_type(request) == "ClaudeCode")
-                and request.knowledge_base_ids
-                and request.is_user_selected_kb
-                and SELECTED_KB_PRELOAD_SKILL not in (request.skill_names or [])
-            ):
-                from app.schemas.kind import Team as TeamCRD
 
-                team_crd = TeamCRD.model_validate(team.json)
-                bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
-                if bot:
-                    request = builder.resolve_request_preload_skills(
-                        request=request,
-                        bot=bot,
-                        team=team,
-                        user=user,
-                    )
+        from app.services.chat.selected_knowledge import (
+            activate_provider_native_knowledge,
+            apply_selected_knowledge_context,
+        )
+
+        provider_skills = []
+        if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE:
+            provider_skills = apply_selected_knowledge_context(db, request, task)
+        unresolved_provider_skills = [
+            skill_name
+            for skill_name in provider_skills
+            if skill_name not in (request.skill_names or [])
+        ]
+        if unresolved_provider_skills:
+            from app.schemas.kind import Team as TeamCRD
+
+            team_crd = TeamCRD.model_validate(team.json)
+            bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
+            if bot:
+                request = builder.resolve_request_preload_skills(
+                    request=request,
+                    bot=bot,
+                    team=team,
+                    user=user,
+                )
+        activate_provider_native_knowledge(request, provider_skills)
 
         return request
 
@@ -1054,6 +1104,7 @@ async def _process_contexts(
     inline_attachment_content = _should_inline_attachment_content(request)
 
     # Process contexts (attachments, knowledge bases, etc.)
+    base_system_prompt = request.system_prompt
     ctx = await prepare_contexts_for_chat(
         db=db,
         user_subtask_id=user_subtask_id,
@@ -1072,9 +1123,24 @@ async def _process_contexts(
     # computed inside _prepare_kb_tools_from_contexts and surfaced here - no extra
     # DB queries needed.
     request.prompt = ctx.final_message
-    request.system_prompt = ctx.kb.enhanced_system_prompt
+    from app.services.chat.selected_knowledge import (
+        SUPPORTED_PROVIDER_NATIVE_SHELLS,
+    )
+
+    prepare_provider_native_knowledge = bool(
+        ctx.kb.knowledge_base_ids
+        and preload_selected_kb_skill
+        and _request_shell_type(request) in SUPPORTED_PROVIDER_NATIVE_SHELLS
+    )
+    request.system_prompt = (
+        base_system_prompt
+        if prepare_provider_native_knowledge
+        else ctx.kb.enhanced_system_prompt
+    )
     request.table_contexts = ctx.table_contexts
-    request.kb_meta_prompt = ctx.kb.kb_meta_prompt
+    request.kb_meta_prompt = (
+        "" if prepare_provider_native_knowledge else ctx.kb.kb_meta_prompt
+    )
     request.attachments = [
         _build_executor_attachment_payload(context)
         for context in context_service.get_attachments_by_subtask(db, user_subtask_id)
@@ -1087,13 +1153,14 @@ async def _process_contexts(
         [attachment.get("id") for attachment in request.attachments],
     )
     if ctx.kb.knowledge_base_ids:
+        request.provider_native_knowledge = False
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
         request.knowledge_base_scopes = ctx.kb.knowledge_base_scopes
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
-        if preload_selected_kb_skill:
+        if prepare_provider_native_knowledge:
             _ensure_selected_kb_skill_priority(request)
 
     logger.info(

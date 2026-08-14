@@ -60,6 +60,7 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     taskRowsBeforeConversation,
     'WEWORK_DESKTOP_E2E_FRESH_CHAT'
   )
+  await verifyConversationRenameSpaceDoesNotDrag(control, shortConversationTaskRowTestId)
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
@@ -231,6 +232,38 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
   )
   control.setScenario('fresh_chat')
   return shortConversationTaskRowTestId
+}
+
+async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {
+  const taskId = taskRowTestId.replace('runtime-local-task-row-', '')
+  const taskRow = `[data-testid="${taskRowTestId}"]`
+  const renameMenuItem = `[data-testid="runtime-local-task-menu-rename-${taskId}"]`
+  const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
+  const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+  const sortable = `[data-sidebar-sortable-id]:has(${taskRow})`
+
+  await control.command('contextMenu', taskRow)
+  await control.command('waitFor', renameMenuItem, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', renameMenuItem)
+  await control.command('waitFor', renameInput, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', renameInput, { key: 'Space' })
+  assert.equal(
+    await control.command('getAttribute', sortable, { value: 'data-dragging' }),
+    '',
+    'Typing a space in the conversation rename input started sidebar dragging'
+  )
+  await control.command('click', renameCloseButton)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`rename-runtime-local-task-input-${taskId}`),
+    'The rename dialog did not close after the space-key drag regression check'
+  )
 }
 
 function countTextOccurrences(value, search) {

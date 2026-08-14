@@ -129,6 +129,8 @@ class ExecutionRequest:
     document_ids: Optional[list] = None
     knowledge_base_scopes: list[KnowledgeBaseScope] = field(default_factory=list)
     external_knowledge_refs: Optional[list[dict]] = None
+    selected_knowledge_prompt: str = ""
+    provider_native_knowledge: bool = False
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
@@ -208,6 +210,7 @@ class ExecutionRequest:
     # === Validation / Sandbox Configuration ===
     validation_params: Optional[dict] = None  # Validation task parameters
     sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
+    runtime_permission_profile: Optional[str] = None
 
     # === Reasoning Configuration ===
     reasoning_config: Optional[dict] = (

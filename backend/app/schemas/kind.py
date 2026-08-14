@@ -818,17 +818,26 @@ class BatchResponse(BaseModel):
 
 # Skill CRD schemas
 class SkillSource(BaseModel):
-    """Source information for skills imported from Git repositories"""
+    """Source information for imported skills."""
 
     type: str = Field(
         "upload",
-        description="Source type: 'upload' (manual upload) or 'git' (imported from Git repository)",
+        description="Source type: 'upload', 'git', or 'marketplace'",
     )
     repo_url: Optional[str] = Field(
         None, description="Git repository URL (for git source type)"
     )
     skill_path: Optional[str] = Field(
         None, description="Path to skill in the repository (for git source type)"
+    )
+    provider_key: Optional[str] = Field(
+        None, description="Marketplace provider key (for marketplace source type)"
+    )
+    skill_key: Optional[str] = Field(
+        None, description="Provider-specific marketplace skill key"
+    )
+    original_skill_key: Optional[str] = Field(
+        None, description="Provider-agnostic marketplace skill key"
     )
     imported_at: Optional[str] = Field(
         None, description="Timestamp when the skill was imported (ISO format)"
@@ -1321,6 +1330,13 @@ class GitImportRequest(BaseModel):
         None,
         description="Marketplace tags required when importing public skills",
     )
+
+
+class GitSkillUpdateRequest(BaseModel):
+    """Update an existing skill from a selected Git repository path."""
+
+    repo_url: str = Field(..., description="Git repository URL")
+    skill_path: str = Field(..., description="Path to the skill in the repository")
 
 
 class GitImportSuccessItem(BaseModel):

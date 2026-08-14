@@ -387,7 +387,10 @@ class IMSessionService:
             runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
         ).strip()
         local_task_id = str(
-            runtime_task.get("localTaskId") or runtime_task.get("local_task_id") or ""
+            runtime_task.get("localTaskId")
+            or runtime_task.get("taskId")
+            or runtime_task.get("local_task_id")
+            or ""
         ).strip()
         if not device_id or not local_task_id:
             raise ValueError(

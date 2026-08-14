@@ -96,7 +96,8 @@ export async function uploadSkill(
   file: File,
   name: string,
   namespace: string = 'default',
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  source?: SkillSource
 ): Promise<Skill> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
@@ -105,6 +106,7 @@ export async function uploadSkill(
   formData.append('file', file)
   formData.append('name', name)
   formData.append('namespace', namespace)
+  appendSkillSource(formData, source)
 
   const url = `${getApiUrl()}/v1/kinds/skills/upload`
 
@@ -155,13 +157,15 @@ export async function uploadSkill(
 export async function updateSkill(
   skillId: number,
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  source?: SkillSource
 ): Promise<Skill> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
   const formData = new FormData()
   formData.append('file', file)
+  appendSkillSource(formData, source)
 
   const url = `${getApiUrl()}/v1/kinds/skills/${skillId}`
 
@@ -284,13 +288,26 @@ export function formatFileSize(bytes?: number): string {
 // ============================================================================
 
 /**
- * Skill source information for git-imported skills
+ * Skill source information for uploaded or imported skills
  */
 export interface SkillSource {
-  type: 'upload' | 'git'
+  type: 'upload' | 'git' | 'marketplace'
   repo_url?: string
   skill_path?: string
+  provider_key?: string
+  skill_key?: string
+  original_skill_key?: string
   imported_at?: string
+}
+
+function appendSkillSource(formData: FormData, source?: SkillSource): void {
+  if (!source) return
+  formData.append('source_type', source.type)
+  if (source.provider_key) formData.append('source_provider_key', source.provider_key)
+  if (source.skill_key) formData.append('source_skill_key', source.skill_key)
+  if (source.original_skill_key) {
+    formData.append('source_original_skill_key', source.original_skill_key)
+  }
 }
 
 export interface SkillAvailability {
@@ -327,7 +344,7 @@ export interface UnifiedSkill {
   user_id: number // ID of the user who uploaded this skill
   publication_status?: 'published' | 'archived'
   availability?: SkillAvailability
-  /** Source information for git-imported skills */
+  /** Source information for uploaded or imported skills */
   source?: SkillSource
   created_at?: string
   updated_at?: string
@@ -593,7 +610,8 @@ export async function uploadPublicSkill(
   file: File,
   name: string,
   marketplaceTags: string[],
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  source?: SkillSource
 ): Promise<UnifiedSkill> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
@@ -602,6 +620,7 @@ export async function uploadPublicSkill(
   formData.append('file', file)
   formData.append('name', name)
   formData.append('marketplace_tags', JSON.stringify(marketplaceTags))
+  appendSkillSource(formData, source)
 
   const url = `${getApiUrl()}/v1/kinds/skills/public/upload`
 
@@ -651,13 +670,15 @@ export async function uploadPublicSkill(
 export async function updatePublicSkillWithUpload(
   skillId: number,
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  source?: SkillSource
 ): Promise<UnifiedSkill> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
   const formData = new FormData()
   formData.append('file', file)
+  appendSkillSource(formData, source)
 
   const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}/upload`
 
@@ -1166,7 +1187,8 @@ export async function importGitRepoPublicSkills(
 export interface UpdateFromGitResponse {
   id: number
   name: string
-  message: string
+  version?: string
+  source?: SkillSource
 }
 
 /**
@@ -1191,6 +1213,31 @@ export async function updateSkillFromGit(skillId: number): Promise<UpdateFromGit
     } catch {
       throw new Error(error || 'Failed to update skill from Git')
     }
+  }
+
+  return response.json()
+}
+
+export async function updateSkillFromGitRepository(
+  skillId: number,
+  repoUrl: string,
+  skillPath: string
+): Promise<UpdateFromGitResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const response = await fetch(`${getApiUrl()}/v1/kinds/skills/git/update/${skillId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ repo_url: repoUrl, skill_path: skillPath }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to update skill from Git' }))
+    throw new Error(error.detail || 'Failed to update skill from Git')
   }
 
   return response.json()

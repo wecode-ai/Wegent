@@ -57,6 +57,7 @@ import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/a
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
+import { migrateLegacyProviderMcpConfig } from '../utils/providerMcpConfig'
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
@@ -512,15 +513,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     // Apply type normalization when loading MCP config
     if (baseBot?.mcp_servers) {
+      const mcpServers = migrateLegacyProviderMcpConfig(baseBot.mcp_servers)
       const shellName = baseBot.shell_name || baseBot.shell_type || ''
       const shell = shells.find(s => s.name === shellName)
       const agentType = shell?.shellType
 
       if (agentType && isValidAgentType(agentType)) {
-        const adaptedConfig = adaptMcpConfigForAgent(baseBot.mcp_servers, agentType)
+        const adaptedConfig = adaptMcpConfigForAgent(mcpServers, agentType)
         setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
       } else {
-        setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
+        setMcpConfig(JSON.stringify(mcpServers, null, 2))
       }
     } else {
       setMcpConfig('')

@@ -3,6 +3,175 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use std::fs::OpenOptions;
+use std::io::Write;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
+const RUNTIME_TURN_QUEUE_VERSION: u64 = 1;
+const RUNTIME_TURN_QUEUE_AAD: &[u8] = b"wework-runtime-turn-queue-v1";
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EncryptedRuntimeTurnQueue {
+    version: u64,
+    nonce: String,
+    ciphertext: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeTurnQueuePayload {
+    version: u64,
+    turns: VecDeque<SpawnTurnRequest>,
+}
+
+pub(super) fn runtime_turn_queue_path() -> PathBuf {
+    runtime_work_dir().join("turn-queue.json")
+}
+
+fn runtime_turn_queue_key_path(queue_path: &Path) -> PathBuf {
+    queue_path.with_file_name("turn-queue.key")
+}
+
+pub(super) fn read_runtime_turn_queue(
+    queue_path: &Path,
+) -> Result<VecDeque<SpawnTurnRequest>, String> {
+    let Ok(envelope_bytes) = fs::read(queue_path) else {
+        return Ok(VecDeque::new());
+    };
+    let envelope = serde_json::from_slice::<EncryptedRuntimeTurnQueue>(&envelope_bytes)
+        .map_err(|error| format!("Failed to parse {}: {error}", queue_path.display()))?;
+    if envelope.version != RUNTIME_TURN_QUEUE_VERSION {
+        return Err(format!(
+            "Unsupported runtime turn queue version {}",
+            envelope.version
+        ));
+    }
+    let key = read_runtime_turn_queue_key(queue_path)?;
+    let nonce = BASE64
+        .decode(envelope.nonce)
+        .map_err(|error| format!("Failed to decode runtime turn queue nonce: {error}"))?;
+    let ciphertext = BASE64
+        .decode(envelope.ciphertext)
+        .map_err(|error| format!("Failed to decode runtime turn queue payload: {error}"))?;
+    let nonce: [u8; 12] = nonce
+        .try_into()
+        .map_err(|_| "Runtime turn queue nonce must be 12 bytes".to_owned())?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|error| format!("Failed to initialize runtime turn queue cipher: {error}"))?;
+    let plaintext = cipher
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            aes_gcm::aead::Payload {
+                msg: &ciphertext,
+                aad: RUNTIME_TURN_QUEUE_AAD,
+            },
+        )
+        .map_err(|_| "Failed to decrypt runtime turn queue".to_owned())?;
+    let payload = serde_json::from_slice::<RuntimeTurnQueuePayload>(&plaintext)
+        .map_err(|error| format!("Failed to parse decrypted runtime turn queue: {error}"))?;
+    if payload.version != RUNTIME_TURN_QUEUE_VERSION {
+        return Err(format!(
+            "Unsupported decrypted runtime turn queue version {}",
+            payload.version
+        ));
+    }
+    Ok(payload.turns)
+}
+
+pub(super) fn write_runtime_turn_queue(
+    queue_path: &Path,
+    turns: &VecDeque<SpawnTurnRequest>,
+) -> Result<(), String> {
+    let parent = queue_path
+        .parent()
+        .ok_or_else(|| "Runtime turn queue path has no parent".to_owned())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    let key = load_or_create_runtime_turn_queue_key(queue_path)?;
+    let plaintext = serde_json::to_vec(&RuntimeTurnQueuePayload {
+        version: RUNTIME_TURN_QUEUE_VERSION,
+        turns: turns.clone(),
+    })
+    .map_err(|error| format!("Failed to serialize runtime turn queue: {error}"))?;
+    let mut nonce = [0_u8; 12];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| format!("Failed to generate runtime turn queue nonce: {error}"))?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|error| format!("Failed to initialize runtime turn queue cipher: {error}"))?;
+    let ciphertext = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            aes_gcm::aead::Payload {
+                msg: &plaintext,
+                aad: RUNTIME_TURN_QUEUE_AAD,
+            },
+        )
+        .map_err(|_| "Failed to encrypt runtime turn queue".to_owned())?;
+    let envelope = serde_json::to_vec_pretty(&EncryptedRuntimeTurnQueue {
+        version: RUNTIME_TURN_QUEUE_VERSION,
+        nonce: BASE64.encode(nonce),
+        ciphertext: BASE64.encode(ciphertext),
+    })
+    .map_err(|error| format!("Failed to serialize encrypted runtime turn queue: {error}"))?;
+    write_private_atomic(queue_path, &envelope)
+}
+
+fn read_runtime_turn_queue_key(queue_path: &Path) -> Result<[u8; 32], String> {
+    let key_path = runtime_turn_queue_key_path(queue_path);
+    let key = fs::read(&key_path)
+        .map_err(|error| format!("Failed to read {}: {error}", key_path.display()))?;
+    key.try_into()
+        .map_err(|_| "Runtime turn queue key must be 32 bytes".to_owned())
+}
+
+fn load_or_create_runtime_turn_queue_key(queue_path: &Path) -> Result<[u8; 32], String> {
+    match read_runtime_turn_queue_key(queue_path) {
+        Ok(key) => return Ok(key),
+        Err(_) if runtime_turn_queue_key_path(queue_path).exists() => {
+            return read_runtime_turn_queue_key(queue_path);
+        }
+        Err(_) => {}
+    }
+    let mut key = [0_u8; 32];
+    getrandom::fill(&mut key)
+        .map_err(|error| format!("Failed to generate runtime turn queue key: {error}"))?;
+    write_private_atomic(&runtime_turn_queue_key_path(queue_path), &key)?;
+    Ok(key)
+}
+
+fn write_private_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("runtime-turn-queue");
+    let temp_path = path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        now_ms()
+    ));
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(&temp_path)
+        .map_err(|error| format!("Failed to create {}: {error}", temp_path.display()))?;
+    file.write_all(content)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("Failed to write {}: {error}", temp_path.display()))?;
+    fs::rename(&temp_path, path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to replace {}: {error}", path.display())
+    })
+}
 
 fn hook_user(request: &ExecutionRequest) -> HookUser {
     let nested_user = request.extra.get("user").and_then(Value::as_object);
@@ -42,12 +211,286 @@ fn hook_user_id(value: &Value) -> Option<String> {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn spawn_turn(&self, mut turn: SpawnTurnRequest) {
+    pub(super) async fn persist_turn_queue(
+        &self,
+        turns: VecDeque<SpawnTurnRequest>,
+    ) -> Result<(), AppIpcError> {
+        let queue_path = Arc::clone(&self.turn_queue_path);
+        tokio::task::spawn_blocking(move || write_runtime_turn_queue(&queue_path, &turns))
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "runtime_queue_failed",
+                    format!("Runtime queue writer task failed: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new("runtime_queue_failed", error))
+    }
+
+    pub(super) async fn spawn_turn(&self, mut turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
         self.apply_project_workspace_roots(&mut turn.request);
+        let local_task_id = turn.local_task_id.clone();
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, turn_to_start, queued_turns) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            let previous = scheduler.clone();
+            let turn_to_start = scheduler.enqueue(turn);
+            let queued_turns = turn_to_start
+                .is_none()
+                .then(|| scheduler.queued_turns.clone());
+            (previous, turn_to_start, queued_turns)
+        };
+        if let Some(queued_turns) = queued_turns {
+            if let Err(error) = self.persist_turn_queue(queued_turns).await {
+                *self
+                    .turn_scheduler
+                    .lock()
+                    .expect("runtime turn scheduler lock should not be poisoned") = previous;
+                return Err(error);
+            }
+        }
+        if let Some(turn) = turn_to_start.as_ref() {
+            self.reserve_worktree_preparation(turn);
+        }
+        drop(_operation);
+        if let Some(turn) = turn_to_start {
+            if turn
+                .request
+                .extra
+                .contains_key("deferred_worktree_source_path")
+            {
+                self.prepare_and_start_reserved_turn(turn).await?;
+            } else {
+                self.start_turn(turn);
+            }
+        } else {
+            log_executor_event(
+                "runtime work turn queued",
+                &[("local_task_id", local_task_id)],
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) async fn prepare_deferred_worktree(
+        &self,
+        turn: &mut SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        let Some(source_path) = turn
+            .request
+            .extra
+            .remove("deferred_worktree_source_path")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        else {
+            return Ok(());
+        };
+        let git_ref = turn
+            .request
+            .extra
+            .remove("deferred_worktree_ref")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned));
+        let planned_path = turn
+            .request
+            .extra
+            .remove("deferred_worktree_path")
+            .and_then(|value| value.as_str().map(PathBuf::from));
+        let worktrees = self.worktrees.clone();
+        let worktree_id = turn.local_task_id.clone();
+        let record = tokio::task::spawn_blocking(move || match planned_path {
+            Some(planned_path) => worktrees.prepare_at(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                false,
+                &planned_path,
+            ),
+            None => worktrees.prepare(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                false,
+            ),
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_prepare_failed",
+                format!("Worktree preparation task failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        turn.request.project_workspace_path = Some(record.path.clone());
+        self.store.update_task(&turn.local_task_id, |link| {
+            link.workspace_path = record.path.clone();
+            link.updated_at = now_ms();
+        });
+        self.schedule_worktree_prune();
+        Ok(())
+    }
+
+    pub(super) fn reserve_worktree_preparation(&self, turn: &SpawnTurnRequest) {
+        if !turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            return;
+        }
+        self.preparing_worktree_turns
+            .lock()
+            .expect("preparing worktree turn map lock should not be poisoned")
+            .insert(
+                turn.local_task_id.clone(),
+                PreparingWorktreeTurn {
+                    cancellation_requested: false,
+                },
+            );
+    }
+
+    pub(super) fn cancel_preparing_worktree_turn(&self, local_task_id: &str) -> bool {
+        let mut preparing = self
+            .preparing_worktree_turns
+            .lock()
+            .expect("preparing worktree turn map lock should not be poisoned");
+        let Some(preparation) = preparing.get_mut(local_task_id) else {
+            return false;
+        };
+        preparation.cancellation_requested = true;
+        true
+    }
+
+    fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
+        let local_task_id = &turn.local_task_id;
+        self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
+        self.store.update_task(local_task_id, |link| {
+            link.running = false;
+            link.thread_status = "failed".to_owned();
+            link.turn_status = Some("failed".to_owned());
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.remove("queuePosition");
+                runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+            }
+        });
+    }
+
+    fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
+        self.store.update_task(local_task_id, |link| {
+            link.running = false;
+            link.status = "active".to_owned();
+            link.thread_status = "cancelled".to_owned();
+            link.turn_status = Some("cancelled".to_owned());
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+                runtime_handle.remove("queuePosition");
+            }
+        });
+    }
+
+    async fn cleanup_cancelled_worktree(&self, turn: &SpawnTurnRequest) {
+        let Some(path) = turn
+            .request
+            .project_workspace_path
+            .as_deref()
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+        let worktrees = self.worktrees.clone();
+        let cleanup_path = path.clone();
+        let result =
+            tokio::task::spawn_blocking(move || worktrees.delete(&cleanup_path, false)).await;
+        if let Err(error) = result
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()))
+        {
+            log_executor_event(
+                "cancelled deferred worktree cleanup failed",
+                &[
+                    ("local_task_id", turn.local_task_id.clone()),
+                    ("path", path.display().to_string()),
+                    ("error", error),
+                ],
+            );
+        }
+    }
+
+    pub(super) async fn prepare_and_start_reserved_turn(
+        &self,
+        mut turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        let preparation = self.prepare_deferred_worktree(&mut turn).await;
+        if preparation.is_ok() {
+            {
+                let mut preparing = self
+                    .preparing_worktree_turns
+                    .lock()
+                    .expect("preparing worktree turn map lock should not be poisoned");
+                if !preparing
+                    .get(&turn.local_task_id)
+                    .is_some_and(|preparation| preparation.cancellation_requested)
+                {
+                    preparing.remove(&turn.local_task_id);
+                    self.start_turn(turn);
+                    return Ok(());
+                }
+                preparing.remove(&turn.local_task_id);
+            }
+            self.cleanup_cancelled_worktree(&turn).await;
+            self.mark_deferred_worktree_cancelled(&turn.local_task_id);
+            self.finish_scheduled_turn().await;
+            return Ok(());
+        }
+        let cancelled = {
+            let mut preparing = self
+                .preparing_worktree_turns
+                .lock()
+                .expect("preparing worktree turn map lock should not be poisoned");
+            preparing
+                .remove(&turn.local_task_id)
+                .is_some_and(|preparation| preparation.cancellation_requested)
+        };
+        if cancelled {
+            self.mark_deferred_worktree_cancelled(&turn.local_task_id);
+            self.finish_scheduled_turn().await;
+            return Ok(());
+        }
+        let error = preparation.expect_err("failed preparation should contain an error");
+        self.mark_deferred_worktree_failed(&turn, &error);
+        self.finish_scheduled_turn().await;
+        Err(error)
+    }
+
+    pub(super) fn start_queued_turn(&self, turn: SpawnTurnRequest) {
+        if !turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            self.start_turn(turn);
+            return;
+        }
+        let handler = self.clone();
+        tokio::spawn(async move {
+            let _ = handler.prepare_and_start_reserved_turn(turn).await;
+        });
+    }
+
+    pub(super) fn start_turn(&self, mut turn: SpawnTurnRequest) {
+        if is_claude_runtime(&turn.runtime) {
+            self.start_claude_turn(turn.local_task_id, turn.request);
+            return;
+        }
         self.apply_backend_connection(&mut turn.request);
         crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
+            runtime: _,
             request,
             direct_thread_id,
             fork_thread_id,
@@ -98,6 +541,7 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
+            let _scheduled_turn_guard = ScheduledTurnGuard::new(handler.clone());
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
@@ -293,6 +737,158 @@ impl RuntimeWorkRpcHandler {
             let _ = stopped_tx.send(());
         });
         drop(turn_handle);
+    }
+
+    pub(super) fn is_queued_local_task(&self, local_task_id: &str) -> bool {
+        self.queued_local_task_position(local_task_id).is_some()
+    }
+
+    pub(super) fn queued_local_task_position(&self, local_task_id: &str) -> Option<usize> {
+        self.turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned")
+            .queued_position(local_task_id)
+    }
+
+    pub(super) fn is_busy_local_task(&self, local_task_id: &str) -> bool {
+        self.is_active_local_task(local_task_id) || self.is_queued_local_task(local_task_id)
+    }
+
+    pub(super) async fn remove_queued_turn(
+        &self,
+        local_task_id: &str,
+    ) -> Result<bool, AppIpcError> {
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, remaining_turns) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            let Some(position) = scheduler
+                .queued_turns
+                .iter()
+                .position(|turn| turn.local_task_id == local_task_id)
+            else {
+                return Ok(false);
+            };
+            let previous = scheduler.clone();
+            scheduler.queued_turns.remove(position);
+            (previous, scheduler.queued_turns.clone())
+        };
+        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+            *self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned") = previous;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    pub(super) async fn finish_scheduled_turn(&self) {
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, turns, remaining_turns) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            let previous = scheduler.clone();
+            let turns = scheduler.finish();
+            let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
+            (previous, turns, remaining_turns)
+        };
+        if let Some(remaining_turns) = remaining_turns {
+            if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+                let mut scheduler = self
+                    .turn_scheduler
+                    .lock()
+                    .expect("runtime turn scheduler lock should not be poisoned");
+                *scheduler = previous;
+                scheduler.active_tasks = scheduler.active_tasks.saturating_sub(1);
+                log_executor_event(
+                    "runtime turn queue drain persistence failed",
+                    &[("error", error.message)],
+                );
+                return;
+            }
+        }
+        for turn in &turns {
+            self.reserve_worktree_preparation(turn);
+        }
+        drop(_operation);
+        for turn in turns {
+            self.start_queued_turn(turn);
+        }
+    }
+
+    pub(super) async fn update_max_concurrent_tasks(&self, max_concurrent_tasks: usize) {
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, turns, remaining_turns) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            let previous = scheduler.clone();
+            let turns = scheduler.update_limit(max_concurrent_tasks);
+            let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
+            (previous, turns, remaining_turns)
+        };
+        if let Some(remaining_turns) = remaining_turns {
+            if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+                let mut scheduler = self
+                    .turn_scheduler
+                    .lock()
+                    .expect("runtime turn scheduler lock should not be poisoned");
+                *scheduler = previous;
+                scheduler.max_concurrent_tasks = max_concurrent_tasks;
+                log_executor_event(
+                    "runtime turn queue limit persistence failed",
+                    &[("error", error.message)],
+                );
+                return;
+            }
+        }
+        for turn in &turns {
+            self.reserve_worktree_preparation(turn);
+        }
+        drop(_operation);
+        for turn in turns {
+            self.start_queued_turn(turn);
+        }
+    }
+
+    pub(super) async fn resume_persisted_turns(&self) {
+        let _operation = self.turn_queue_operation.lock().await;
+        let (previous, turns, remaining_turns) = {
+            let mut scheduler = self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned");
+            let previous = scheduler.clone();
+            let turns = scheduler.take_available();
+            if turns.is_empty() {
+                return;
+            }
+            (previous, turns, scheduler.queued_turns.clone())
+        };
+        if let Err(error) = self.persist_turn_queue(remaining_turns).await {
+            *self
+                .turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler lock should not be poisoned") = previous;
+            log_executor_event(
+                "runtime turn queue drain persistence failed",
+                &[("error", error.message)],
+            );
+            return;
+        }
+        for turn in &turns {
+            self.reserve_worktree_preparation(turn);
+        }
+        drop(_operation);
+        for turn in turns {
+            self.start_queued_turn(turn);
+        }
     }
 
     pub(super) fn handle_turn_result(
@@ -526,6 +1122,189 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scheduled_turn(local_task_id: &str) -> SpawnTurnRequest {
+        SpawnTurnRequest {
+            local_task_id: local_task_id.to_owned(),
+            runtime: "codex".to_owned(),
+            request: ExecutionRequest::default(),
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_name: None,
+            initial_thread_goal: None,
+        }
+    }
+
+    #[test]
+    fn scheduler_queues_over_limit_and_starts_in_fifo_order() {
+        let mut scheduler = RuntimeTurnScheduler::new(2, VecDeque::new());
+
+        assert_eq!(
+            scheduler
+                .enqueue(scheduled_turn("task-1"))
+                .map(|turn| turn.local_task_id),
+            Some("task-1".to_owned())
+        );
+        assert_eq!(
+            scheduler
+                .enqueue(scheduled_turn("task-2"))
+                .map(|turn| turn.local_task_id),
+            Some("task-2".to_owned())
+        );
+        assert!(scheduler.enqueue(scheduled_turn("task-3")).is_none());
+        assert!(scheduler.enqueue(scheduled_turn("task-4")).is_none());
+
+        assert_eq!(
+            scheduler
+                .finish()
+                .into_iter()
+                .map(|turn| turn.local_task_id)
+                .collect::<Vec<_>>(),
+            vec!["task-3"]
+        );
+        assert_eq!(
+            scheduler
+                .finish()
+                .into_iter()
+                .map(|turn| turn.local_task_id)
+                .collect::<Vec<_>>(),
+            vec!["task-4"]
+        );
+        assert_eq!(scheduler.active_tasks, 2);
+        assert!(scheduler.queued_turns.is_empty());
+    }
+
+    #[test]
+    fn forced_turn_overcommits_without_releasing_more_queued_work() {
+        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
+        assert!(scheduler.enqueue(scheduled_turn("forced")).is_none());
+        assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
+
+        assert_eq!(
+            scheduler
+                .force_start("forced")
+                .map(|turn| turn.local_task_id),
+            Some("forced".to_owned())
+        );
+        assert_eq!(scheduler.active_tasks, 2);
+        assert!(scheduler.finish().is_empty());
+        assert_eq!(scheduler.active_tasks, 1);
+        assert_eq!(
+            scheduler
+                .finish()
+                .into_iter()
+                .map(|turn| turn.local_task_id)
+                .collect::<Vec<_>>(),
+            vec!["waiting"]
+        );
+        assert_eq!(scheduler.active_tasks, 1);
+    }
+
+    #[test]
+    fn increasing_limit_starts_queued_turns_immediately() {
+        let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
+        assert!(scheduler.enqueue(scheduled_turn("task-1")).is_some());
+        assert!(scheduler.enqueue(scheduled_turn("task-2")).is_none());
+        assert!(scheduler.enqueue(scheduled_turn("task-3")).is_none());
+
+        let started = scheduler
+            .update_limit(3)
+            .into_iter()
+            .map(|turn| turn.local_task_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(started, vec!["task-2", "task-3"]);
+        assert_eq!(scheduler.active_tasks, 3);
+        assert!(scheduler.queued_turns.is_empty());
+    }
+
+    #[test]
+    fn scheduler_reorders_the_real_fifo_queue() {
+        let scheduler = RuntimeTurnScheduler::new(
+            1,
+            VecDeque::from([
+                scheduled_turn("task-1"),
+                scheduled_turn("task-2"),
+                scheduled_turn("task-3"),
+            ]),
+        );
+
+        let reordered = scheduler
+            .reordered_queue("task-3", 1)
+            .expect("queued task should be reorderable");
+
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["task-3", "task-1", "task-2"]
+        );
+        assert_eq!(
+            scheduler
+                .queued_turns
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["task-1", "task-2", "task-3"]
+        );
+    }
+
+    #[test]
+    fn persisted_queue_round_trips_without_plaintext_credentials() {
+        let temp = tempfile::tempdir().expect("temporary queue directory should exist");
+        let queue_path = temp.path().join("turn-queue.json");
+        let mut turn = scheduled_turn("task-secret");
+        turn.runtime = "claude_code".to_owned();
+        turn.request.auth_token = Some("top-secret-auth-token".to_owned());
+        turn.request.runtime_auth_token = Some("runtime-secret-token".to_owned());
+        turn.request.model_config = json!({"api_key": "model-secret-key"});
+        let turns = VecDeque::from([turn]);
+
+        write_runtime_turn_queue(&queue_path, &turns).expect("runtime queue should be persisted");
+        let disk = fs::read_to_string(&queue_path).expect("runtime queue file should be readable");
+        assert!(!disk.contains("top-secret-auth-token"));
+        assert!(!disk.contains("runtime-secret-token"));
+        assert!(!disk.contains("model-secret-key"));
+
+        let restored =
+            read_runtime_turn_queue(&queue_path).expect("runtime queue should be restored");
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].runtime, "claude_code");
+        assert_eq!(
+            restored[0].request.auth_token.as_deref(),
+            Some("top-secret-auth-token")
+        );
+        assert_eq!(
+            restored[0].request.runtime_auth_token.as_deref(),
+            Some("runtime-secret-token")
+        );
+        assert_eq!(
+            restored[0].request.model_config["api_key"],
+            "model-secret-key"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let queue_mode = fs::metadata(&queue_path)
+                .expect("runtime queue metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o777;
+            let key_mode = fs::metadata(runtime_turn_queue_key_path(&queue_path))
+                .expect("runtime queue key metadata should be readable")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(queue_mode, 0o600);
+            assert_eq!(key_mode, 0o600);
+        }
+    }
 
     #[test]
     fn resolves_standard_hook_user_from_execution_request() {

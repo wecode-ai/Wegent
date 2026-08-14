@@ -376,6 +376,7 @@ export interface RuntimeTaskSummary {
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
@@ -384,6 +385,18 @@ export interface RuntimeTaskSummary {
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
+}
+
+export interface RuntimeSettings {
+  maxConcurrentTasks: number
+}
+
+export interface RuntimeTaskQueueReorderRequest extends RuntimeTaskAddress {
+  queuePosition: number
+}
+
+export interface RuntimeTaskQueueReorderResponse extends RuntimeTaskCancelResponse {
+  orderedTaskIds?: string[]
 }
 
 export type RuntimeSupervisorMode = 'suggest' | 'auto'
@@ -791,6 +804,10 @@ export interface RuntimeSupervisorClearRequest {
   address: RuntimeTaskAddress
 }
 
+export interface RuntimeSupervisorRunNowRequest {
+  address: RuntimeTaskAddress
+}
+
 export interface RuntimeSupervisorResolveRequest {
   address: RuntimeTaskAddress
   suggestionId: string
@@ -924,6 +941,7 @@ export interface RuntimeTaskPinRequest {
 export interface BindRuntimeTaskIMSessionsRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface BindRuntimeTaskIMSessionsResponse {
@@ -1219,6 +1237,8 @@ export interface RuntimeTaskCreateResponse {
   workspacePath: string
   runtime: RuntimeName
   runtimeHandle?: Record<string, unknown> | null
+  status?: 'queued' | 'running'
+  queuePosition?: number | null
   error?: string | null
 }
 
@@ -2058,7 +2078,7 @@ export interface InstalledPlugin {
     pluginId?: number | null
     releaseId?: number | null
     desiredVersion?: string | null
-    updatePolicy?: 'manual'
+    updatePolicy?: 'manual' | 'auto'
     sourceProvider?: 'wegent' | 'codex' | 'user'
     sourceLabel?: string
     visibility?: 'personal' | 'workspace' | 'public'
@@ -2188,6 +2208,20 @@ export interface PluginDeviceSyncResponse {
   sync: DeviceCapabilitySyncResponse
 }
 
+export interface PluginAutoUpdateItem {
+  installedPluginId: number
+  pluginId: number
+  fromReleaseId: number
+  toReleaseId: number
+  version: string
+}
+
+export interface PluginAutoUpdateBatchResponse {
+  updated: PluginAutoUpdateItem[]
+  updatedCount: number
+  remainingCount: number
+}
+
 export interface PluginMarketplaceCapabilities {
   canPublish: boolean
   canSharePersonalPlugins?: boolean
@@ -2199,6 +2233,7 @@ export interface InstalledPluginUpdateRequest {
   displayName?: string
   description?: string
   releaseId?: number
+  updatePolicy?: 'manual' | 'auto'
 }
 
 export interface PluginSubmissionInitRequest {

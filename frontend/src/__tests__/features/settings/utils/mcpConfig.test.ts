@@ -61,6 +61,22 @@ describe('mcpConfig', () => {
 
       expect((normalized.demo as Record<string, unknown>).type).toBe('streamable-http')
     })
+
+    it('normalizes legacy URL-encoded marketplace server names', () => {
+      expect(
+        normalizeMcpServers({
+          '%40weibo%2FimagedLogMcpServer': {
+            type: 'streamable-http',
+            url: 'http://g-mcp',
+          },
+        })
+      ).toEqual({
+        imagedLogMcpServer: {
+          type: 'streamable-http',
+          url: 'http://g-mcp',
+        },
+      })
+    })
   })
 
   describe('config mutations', () => {

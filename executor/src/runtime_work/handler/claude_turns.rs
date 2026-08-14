@@ -172,13 +172,33 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    pub(super) fn spawn_claude_turn(&self, local_task_id: String, request: ExecutionRequest) {
+    pub(super) async fn spawn_claude_turn(
+        &self,
+        local_task_id: String,
+        request: ExecutionRequest,
+    ) -> Result<(), AppIpcError> {
+        self.spawn_turn(SpawnTurnRequest {
+            local_task_id,
+            runtime: "claude_code".to_owned(),
+            request,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_name: None,
+            initial_thread_goal: None,
+        })
+        .await
+    }
+
+    pub(super) fn start_claude_turn(&self, local_task_id: String, request: ExecutionRequest) {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
         let handler = self.clone();
         tokio::spawn(async move {
+            let _scheduled_turn_guard = ScheduledTurnGuard::new(handler.clone());
             let (request, model_proxy_token) = prepare_claude_model_proxy(request);
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);

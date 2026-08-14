@@ -102,7 +102,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       setValue(value, selectionOffset = value.length) {
         const view = viewRef.current
         if (!view) return
-        replaceComposerValue(view, value, selectionOffset)
+        replaceComposerValue(view, value, selectionOffset, false, true)
       },
     }),
     []
@@ -180,7 +180,8 @@ export const ComposerProseMirrorEditor = forwardRef<
         if (!text) return false
         const paragraph = createComposerDocument(text).firstChild
         if (!paragraph) return false
-        const transaction = view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0))
+        let transaction = view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0))
+        transaction = transaction.setSelection(TextSelection.atEnd(transaction.doc))
         view.dispatch(
           transaction.setMeta('paste', true).setMeta('uiEvent', 'paste').scrollIntoView()
         )
@@ -452,7 +453,8 @@ function replaceComposerValue(
   view: EditorView,
   value: string,
   selectionOffset?: number,
-  external = false
+  external = false,
+  scrollSelectionIntoView = false
 ): void {
   if (serializeComposerDocument(view.state.doc) === value) {
     if (selectionOffset === undefined) return
@@ -460,9 +462,13 @@ function replaceComposerValue(
       view.state.doc,
       positionFromSerializedOffset(view.state.doc, selectionOffset)
     )
-    if (selection.eq(view.state.selection)) return
+    if (selection.eq(view.state.selection)) {
+      if (scrollSelectionIntoView) view.dispatch(view.state.tr.scrollIntoView())
+      return
+    }
     let selectionTransaction = view.state.tr.setSelection(selection)
     if (external) selectionTransaction = selectionTransaction.setMeta(EXTERNAL_VALUE_META, true)
+    if (scrollSelectionIntoView) selectionTransaction = selectionTransaction.scrollIntoView()
     view.dispatch(selectionTransaction)
     return
   }
@@ -478,6 +484,7 @@ function replaceComposerValue(
     )
   }
   if (external) transaction = transaction.setMeta(EXTERNAL_VALUE_META, true)
+  if (scrollSelectionIntoView) transaction = transaction.scrollIntoView()
   view.dispatch(transaction)
 }
 

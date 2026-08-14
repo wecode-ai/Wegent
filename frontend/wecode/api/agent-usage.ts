@@ -30,6 +30,17 @@ export interface UsageRow {
 
 export interface UsageResult {
   rows: UsageRow[]
+  daily_rows: UsageDailyRow[]
+  pv: number
+  uv: number
+  ai_rounds?: number
+  completed_ai_rounds?: number
+}
+
+export interface UsageDailyRow {
+  date: string
+  agent_name: string
+  agent_namespace: string
   pv: number
   uv: number
   ai_rounds?: number

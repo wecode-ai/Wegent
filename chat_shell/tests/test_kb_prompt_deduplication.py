@@ -41,6 +41,21 @@ class TestKBPromptMarkerDetection:
         request.model_config = None
         return self.ChatContext(request)
 
+    @pytest.mark.asyncio
+    async def test_provider_native_mode_skips_unified_kb_tools(self):
+        request = self.ExecutionRequest(
+            system_prompt="Base prompt",
+            knowledge_base_ids=[1],
+            provider_native_knowledge=True,
+        )
+        context = self.ChatContext(request)
+
+        result = await context._prepare_kb_tools(MagicMock())
+
+        assert result.extra_tools == []
+        assert result.enhanced_system_prompt == "Base prompt"
+        assert result.kb_meta_prompt == ""
+
     @patch("chat_shell.services.context.settings")
     def test_skip_when_strict_marker_present_http_mode(self, mock_settings):
         """Should skip KB prompt enhancement when strict marker present in HTTP mode."""

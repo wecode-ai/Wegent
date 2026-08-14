@@ -8,6 +8,7 @@ import {
 describe('appearance typography', () => {
   test('uses the Codex desktop defaults', () => {
     expect(resolveUiTypographyVariables(14)).toEqual({
+      '--text-2xs': '10px',
       '--text-xs': '12px',
       '--text-sm': '13px',
       '--text-base': '14px',
@@ -24,6 +25,7 @@ describe('appearance typography', () => {
 
   test('scales and rounds the complete UI ramp like Codex', () => {
     expect(resolveUiTypographyVariables(16)).toMatchObject({
+      '--text-2xs': '11px',
       '--text-xs': '14px',
       '--text-sm': '15px',
       '--text-base': '16px',

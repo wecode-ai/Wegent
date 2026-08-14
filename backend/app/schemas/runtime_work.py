@@ -10,7 +10,7 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
-LocalTaskStatus = Literal["active", "archived"]
+LocalTaskStatus = Literal["active", "archived", "queued", "running"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
 
@@ -28,6 +28,16 @@ class RuntimeTaskAddress(BaseModel):
         validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
         min_length=1,
     )
+
+
+class RuntimeModelSelection(BaseModel):
+    """Model selection persisted with a device-local runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    model_name: str = Field(..., alias="modelName", min_length=1)
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
@@ -112,6 +122,7 @@ class LocalTaskSummary(BaseModel):
         alias="runtimeHandle",
         exclude=True,
     )
+    queue_position: Optional[int] = Field(default=None, alias="queuePosition", ge=1)
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
@@ -427,6 +438,10 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     source: Optional[RuntimeMessageSource] = None
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
@@ -571,6 +586,10 @@ class BindRuntimeTaskIMSessionsRequest(BaseModel):
 
     address: RuntimeTaskAddress
     session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
 
 
 class BindRuntimeTaskIMSessionsResponse(BaseModel):
@@ -712,6 +731,18 @@ class RuntimeTaskCancelResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeTaskQueueReorderRequest(RuntimeTaskAddress):
+    """Move one queued runtime task to a one-based queue position."""
+
+    queue_position: int = Field(..., alias="queuePosition", ge=1)
+
+
+class RuntimeTaskQueueReorderResponse(RuntimeTaskCancelResponse):
+    """Acknowledgement and resulting task order for a queue reorder."""
+
+    ordered_task_ids: list[str] = Field(default_factory=list, alias="orderedTaskIds")
+
+
 class RuntimeTaskCreateRequest(BaseModel):
     """Request to create a device-local runtime task without DB Task rows."""
 
@@ -735,6 +766,10 @@ class RuntimeTaskCreateRequest(BaseModel):
     model_options: dict[str, Any] = Field(
         default_factory=dict,
         alias="modelOptions",
+    )
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
     )
     additional_skills: list[Any] = Field(
         default_factory=list,

@@ -95,112 +95,6 @@ async def test_retrieve_is_blocked_when_ap_knowledge_is_not_configured(
 
 
 @pytest.mark.asyncio
-async def test_retrieve_filters_document_scoped_ap_refs():
-    provider = ApExternalKnowledgeProvider(external_knowledge_settings)
-
-    async def fake_call(self, name, arguments, employee_id):
-        assert employee_id == "230473"
-        assert name == SEARCH_CONTENT_TOOL
-        assert arguments["knowledge_base_ids"] == ["kb-1"]
-        return {
-            "query": arguments["query"],
-            "total": 2,
-            "searched_knowledge_base_ids": ["kb-1"],
-            "ignored_knowledge_base_ids": [],
-            "warnings": [],
-            "records": [
-                {
-                    "content": "ignored content",
-                    "title": "Ignored.pdf",
-                    "score": 0.7,
-                    "knowledge_base_id": "kb-1",
-                    "knowledge_base_name": "Quarterly",
-                    "document_id": "doc-1",
-                },
-                {
-                    "content": "selected content",
-                    "title": "Selected.pdf",
-                    "score": 0.9,
-                    "knowledge_base_id": "kb-1",
-                    "knowledge_base_name": "Quarterly",
-                    "document_id": "doc-2",
-                },
-            ],
-        }
-
-    refs = [
-        ExternalKnowledgeRef(
-            provider="ap",
-            mode="explicit",
-            id="kb-1",
-            target_type="document",
-            node_id="document:node-2",
-            document_id="doc-2",
-        )
-    ]
-    with (
-        patch.object(provider, "_resolve_employee_id", return_value="230473"),
-        patch.object(ApKnowledgeMcpClient, "call_tool", fake_call),
-    ):
-        result = await provider.retrieve("plan", refs, RetrievalContext(user_id=1))
-
-    assert len(result.records) == 1
-    assert result.records[0].title == "Selected.pdf"
-    assert result.records[0].source_uri == "ap://kb-1/doc-2"
-
-
-@pytest.mark.asyncio
-async def test_list_documents_filters_document_scoped_ap_refs():
-    provider = ApExternalKnowledgeProvider(external_knowledge_settings)
-
-    async def fake_call(self, name, arguments, employee_id):
-        assert employee_id == "230473"
-        assert name == LIST_NODES_TOOL
-        assert arguments["knowledge_base_id"] == "kb-1"
-        return {
-            "knowledge_base_id": "kb-1",
-            "knowledge_base_name": "Quarterly",
-            "items": [
-                {
-                    "node_id": "document:doc-allowed",
-                    "raw_id": "doc-allowed",
-                    "name": "Allowed.pdf",
-                    "node_type": "document",
-                },
-                {
-                    "node_id": "document:doc-denied",
-                    "raw_id": "doc-denied",
-                    "name": "Denied.pdf",
-                    "node_type": "document",
-                },
-            ],
-        }
-
-    refs = [
-        ExternalKnowledgeRef(
-            provider="ap",
-            mode="explicit",
-            id="kb-1",
-            target_type="document",
-            node_id="document:doc-allowed",
-            document_id="doc-allowed",
-        )
-    ]
-    with (
-        patch.object(provider, "_resolve_employee_id", return_value="230473"),
-        patch.object(ApKnowledgeMcpClient, "call_tool", fake_call),
-    ):
-        result = await provider.list_documents(
-            refs,
-            RetrievalContext(user_id=1),
-            limit=20,
-            offset=0,
-        )
-
-    assert [document.document_id for document in result.documents] == ["doc-allowed"]
-
-
-@pytest.mark.asyncio
 async def test_list_documents_pages_ap_nodes_before_slicing_results():
     provider = ApExternalKnowledgeProvider(external_knowledge_settings)
     offsets: list[int] = []
@@ -244,220 +138,6 @@ async def test_list_documents_pages_ap_nodes_before_slicing_results():
 
 
 @pytest.mark.asyncio
-async def test_list_documents_finds_selected_document_after_first_ap_node_page():
-    provider = ApExternalKnowledgeProvider(external_knowledge_settings)
-    offsets: list[int] = []
-
-    async def fake_call(self, name, arguments, employee_id):
-        assert employee_id == "230473"
-        assert name == LIST_NODES_TOOL
-        node_offset = arguments["offset"]
-        offsets.append(node_offset)
-        if node_offset == 0:
-            return {
-                "knowledge_base_id": "kb-1",
-                "knowledge_base_name": "Quarterly",
-                "total_returned": 500,
-                "has_more": True,
-                "items": [
-                    {
-                        "node_id": f"document:doc-{index}",
-                        "raw_id": f"doc-{index}",
-                        "name": f"Doc {index}.pdf",
-                        "node_type": "document",
-                    }
-                    for index in range(500)
-                ],
-            }
-        return {
-            "knowledge_base_id": "kb-1",
-            "knowledge_base_name": "Quarterly",
-            "total_returned": 1,
-            "has_more": False,
-            "items": [
-                {
-                    "node_id": "document:doc-allowed",
-                    "raw_id": "doc-allowed",
-                    "name": "Allowed.pdf",
-                    "node_type": "document",
-                }
-            ],
-        }
-
-    refs = [
-        ExternalKnowledgeRef(
-            provider="ap",
-            mode="explicit",
-            id="kb-1",
-            target_type="document",
-            node_id="document:doc-allowed",
-            document_id="doc-allowed",
-        )
-    ]
-    with (
-        patch.object(provider, "_resolve_employee_id", return_value="230473"),
-        patch.object(ApKnowledgeMcpClient, "call_tool", fake_call),
-    ):
-        result = await provider.list_documents(
-            refs,
-            RetrievalContext(user_id=1),
-            limit=20,
-            offset=0,
-        )
-
-    assert offsets == [0, 500]
-    assert [document.document_id for document in result.documents] == ["doc-allowed"]
-
-
-@pytest.mark.asyncio
-async def test_retrieve_whole_ap_ref_overrides_document_filters():
-    provider = ApExternalKnowledgeProvider(external_knowledge_settings)
-
-    async def fake_call(self, name, arguments, employee_id):
-        assert employee_id == "230473"
-        assert name == SEARCH_CONTENT_TOOL
-        assert arguments["knowledge_base_ids"] == ["kb-1"]
-        return {
-            "query": arguments["query"],
-            "total": 2,
-            "searched_knowledge_base_ids": ["kb-1"],
-            "ignored_knowledge_base_ids": [],
-            "warnings": [],
-            "records": [
-                {
-                    "content": "first content",
-                    "title": "First.pdf",
-                    "score": 0.7,
-                    "knowledge_base_id": "kb-1",
-                    "knowledge_base_name": "Quarterly",
-                    "document_id": "doc-1",
-                },
-                {
-                    "content": "second content",
-                    "title": "Second.pdf",
-                    "score": 0.9,
-                    "knowledge_base_id": "kb-1",
-                    "knowledge_base_name": "Quarterly",
-                    "document_id": "doc-2",
-                },
-            ],
-        }
-
-    refs = [
-        ExternalKnowledgeRef(provider="ap", mode="explicit", id="kb-1"),
-        ExternalKnowledgeRef(
-            provider="ap",
-            mode="explicit",
-            id="kb-1",
-            target_type="document",
-            node_id="document:node-2",
-            document_id="doc-2",
-        ),
-    ]
-    with (
-        patch.object(provider, "_resolve_employee_id", return_value="230473"),
-        patch.object(ApKnowledgeMcpClient, "call_tool", fake_call),
-    ):
-        result = await provider.retrieve("plan", refs, RetrievalContext(user_id=1))
-
-    assert [record.title for record in result.records] == ["First.pdf", "Second.pdf"]
-
-
-@pytest.mark.asyncio
-async def test_all_accessible_is_resolved_dynamically_for_each_retrieve():
-    provider = ApExternalKnowledgeProvider(external_knowledge_settings)
-    listed_ids = [["kb-first"], ["kb-second"]]
-    searched_ids = []
-
-    async def fake_call(self, name, arguments, employee_id):
-        if name == LIST_KNOWLEDGE_BASES_TOOL:
-            kb_id = listed_ids.pop(0)[0]
-            return {
-                "total": 1,
-                "total_returned": 1,
-                "has_more": False,
-                "limit": arguments["limit"],
-                "offset": arguments["offset"],
-                "items": [
-                    {
-                        "knowledge_base_id": kb_id,
-                        "knowledge_base_name": kb_id,
-                        "scope": "organization",
-                        "updated_at": "2026-06-16T00:00:00Z",
-                    }
-                ],
-            }
-        assert name == SEARCH_CONTENT_TOOL
-        searched_ids.append(arguments["knowledge_base_ids"])
-        return {
-            "query": arguments["query"],
-            "total": 0,
-            "searched_knowledge_base_ids": arguments["knowledge_base_ids"],
-            "ignored_knowledge_base_ids": [],
-            "warnings": [],
-            "records": [],
-        }
-
-    refs = [ExternalKnowledgeRef(provider="ap", mode="all_accessible")]
-    with (
-        patch.object(provider, "_resolve_employee_id", return_value="230473"),
-        patch.object(ApKnowledgeMcpClient, "call_tool", fake_call),
-    ):
-        await provider.retrieve("plan", refs, RetrievalContext(user_id=1))
-        await provider.retrieve("plan", refs, RetrievalContext(user_id=1))
-
-    assert searched_ids == [["kb-first"], ["kb-second"]]
-
-
-@pytest.mark.asyncio
-async def test_all_accessible_applies_stable_100_limit_with_warning():
-    provider = ApExternalKnowledgeProvider(external_knowledge_settings)
-    search_ids = []
-    ids = [f"kb-{index:03d}" for index in range(MAX_SEARCH_KNOWLEDGE_BASES + 1)]
-
-    async def fake_call(self, name, arguments, employee_id):
-        if name == LIST_KNOWLEDGE_BASES_TOOL:
-            return {
-                "total": len(ids),
-                "total_returned": len(ids),
-                "has_more": False,
-                "limit": arguments["limit"],
-                "offset": arguments["offset"],
-                "items": [
-                    {
-                        "knowledge_base_id": kb_id,
-                        "knowledge_base_name": kb_id,
-                        "scope": "organization",
-                        "updated_at": "2026-06-16T00:00:00Z",
-                    }
-                    for kb_id in reversed(ids)
-                ],
-            }
-        assert name == SEARCH_CONTENT_TOOL
-        search_ids.extend(arguments["knowledge_base_ids"])
-        return {
-            "query": arguments["query"],
-            "total": 0,
-            "searched_knowledge_base_ids": arguments["knowledge_base_ids"],
-            "ignored_knowledge_base_ids": [],
-            "warnings": [],
-            "records": [],
-        }
-
-    refs = [ExternalKnowledgeRef(provider="ap", mode="all_accessible")]
-    with (
-        patch.object(provider, "_resolve_employee_id", return_value="230473"),
-        patch.object(ApKnowledgeMcpClient, "call_tool", fake_call),
-    ):
-        result = await provider.retrieve("plan", refs, RetrievalContext(user_id=1))
-
-    assert search_ids == ids[:MAX_SEARCH_KNOWLEDGE_BASES]
-    assert result.summary is not None
-    assert result.summary.ignored_source_ids == [ids[MAX_SEARCH_KNOWLEDGE_BASES]]
-    assert result.warnings
-
-
-@pytest.mark.asyncio
 async def test_explicit_ap_refs_over_100_raise_before_search():
     provider = ApExternalKnowledgeProvider(external_knowledge_settings)
     refs = [
@@ -488,7 +168,7 @@ def test_validate_refs_rejects_explicit_ap_selection_over_100():
         provider.validate_refs(refs, binding_level="conversation")
 
 
-def test_validate_refs_counts_document_refs_by_unique_ap_knowledge_base():
+def test_validate_refs_rejects_document_scoped_ap_selection():
     provider = ApExternalKnowledgeProvider(external_knowledge_settings)
     refs = [
         ExternalKnowledgeRef(
@@ -496,13 +176,16 @@ def test_validate_refs_counts_document_refs_by_unique_ap_knowledge_base():
             mode="explicit",
             id="kb-1",
             target_type="document",
-            node_id=f"document:doc-{index}",
-            document_id=f"doc-{index}",
+            node_id="document:doc-1",
+            document_id="doc-1",
         )
-        for index in range(MAX_SEARCH_KNOWLEDGE_BASES + 1)
     ]
 
-    provider.validate_refs(refs, binding_level="conversation")
+    with pytest.raises(
+        ExternalRefValidationError,
+        match="whole knowledge base selection only",
+    ):
+        provider.validate_refs(refs, binding_level="conversation")
 
 
 def test_ap_registration_failure_registers_unavailable_provider():

@@ -101,7 +101,8 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let running = self.is_active_local_task(&link.local_task_id);
-            apply_local_execution_state(&mut link, running);
+            let queue_position = self.queued_local_task_position(&link.local_task_id);
+            apply_local_execution_state(&mut link, running, queue_position);
             link.list_order = Some(links.len());
             links.push(link);
         }
@@ -548,11 +549,17 @@ impl RuntimeWorkRpcHandler {
         let local_active = local_link
             .as_ref()
             .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
+        let queue_position = local_link
+            .as_ref()
+            .and_then(|link| self.queued_local_task_position(&link.local_task_id));
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
         let mut link =
             RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);
+        if queue_position.is_some() {
+            apply_local_execution_state(&mut link, local_active, queue_position);
+        }
         if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
@@ -654,10 +661,14 @@ impl RuntimeWorkRpcHandler {
             .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned")
-            .insert(local_task_id, control)
+            .insert(local_task_id.clone(), control)
         {
             let _ = previous.cancel.send(());
         }
+        self.store.update_task(&local_task_id, |link| {
+            apply_local_execution_state(link, true, None);
+            link.completed_at = None;
+        });
         execution_id
     }
 
@@ -688,7 +699,13 @@ impl RuntimeWorkRpcHandler {
         thread_id: String,
         turn_id: String,
     ) {
-        if !self.is_local_task_execution_active(local_task_id, execution_id) {
+        let current_execution_id = self
+            .active_turn_cancellations
+            .lock()
+            .expect("active turn cancellation map lock should not be poisoned")
+            .get(local_task_id)
+            .map(|control| control.execution_id);
+        if current_execution_id.is_some_and(|current| current != execution_id) {
             return;
         }
         self.active_codex_turns
@@ -766,18 +783,18 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
-        self.active_turn_cancellations
+        let has_active_execution = self
+            .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned")
+            .contains_key(local_task_id);
+        if has_active_execution {
+            return true;
+        }
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
             .contains_key(local_task_id)
-    }
-
-    fn is_local_task_execution_active(&self, local_task_id: &str, execution_id: u64) -> bool {
-        self.active_turn_cancellations
-            .lock()
-            .expect("active turn cancellation map lock should not be poisoned")
-            .get(local_task_id)
-            .is_some_and(|control| control.execution_id == execution_id)
     }
 
     pub(super) fn clear_active_request_user_input(&self, local_task_id: &str, execution_id: u64) {
@@ -807,6 +824,7 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
+            apply_local_execution_state(link, false, None);
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);

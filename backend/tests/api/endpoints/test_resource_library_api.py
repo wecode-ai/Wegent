@@ -74,7 +74,6 @@ def test_discovery_can_be_limited_to_system_resources(
         json={
             "resource_type": "skill",
             "source_id": user_skill.id,
-            "name": user_skill.name,
             "display_name": "Published User Skill",
             "tags": ["technical_development"],
             "version": "1.0.0",
@@ -133,7 +132,6 @@ def test_publish_and_change_publication_rules(
         json={
             "resource_type": "skill",
             "source_id": skill.id,
-            "name": "owned-api-skill",
             "display_name": "Owned API Skill",
             "tags": ["technical_development"],
             "version": "1.0.0",
@@ -197,7 +195,6 @@ def test_publish_requires_configured_marketplace_tag(
         json={
             "resource_type": "skill",
             "source_id": skill.id,
-            "name": skill.name,
             "display_name": "Invalid Tag Skill",
             "tags": [],
             "version": "1.0.0",
@@ -209,7 +206,6 @@ def test_publish_requires_configured_marketplace_tag(
         json={
             "resource_type": "skill",
             "source_id": skill.id,
-            "name": skill.name,
             "display_name": "Invalid Tag Skill",
             "tags": ["not_configured"],
             "version": "1.0.0",
@@ -221,7 +217,6 @@ def test_publish_requires_configured_marketplace_tag(
         json={
             "resource_type": "skill",
             "source_id": skill.id,
-            "name": skill.name,
             "display_name": "Invalid Tag Skill",
             "tags": [
                 "product_design",

@@ -637,6 +637,13 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
+    if let Some(queue_position) = link
+        .runtime_handle
+        .get("queuePosition")
+        .and_then(Value::as_u64)
+    {
+        task.insert("queuePosition".to_owned(), json!(queue_position));
+    }
     task.insert("running".to_owned(), Value::Bool(link.running));
     task.insert("continuable".to_owned(), Value::Bool(link.continuable));
     task.insert(
