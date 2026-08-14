@@ -39,6 +39,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskFriendlyTitleConfig,
+  RuntimeWorkListResponse,
   SkillRef,
   TurnFileChangesSummary,
   UnifiedModel,
@@ -66,6 +67,7 @@ import {
   createRuntimeTaskId,
   createRuntimeTaskIdFromSeed,
   findProjectDeviceWorkspace,
+  findRuntimeTask,
   getCommandStdoutObject,
   isRecord,
   isSameRuntimeTaskIdentity,
@@ -206,6 +208,33 @@ export function runtimeThreadId(address?: RuntimeTaskAddress | null): string | n
   if (!isRecord(handle)) return null
   const threadId = handle.sessionId ?? handle.session_id ?? handle.threadId ?? handle.thread_id
   return typeof threadId === 'string' && threadId.trim() ? threadId : null
+}
+
+export function resolveTemporaryChatSource(
+  source: RuntimeTaskAddress | null | undefined,
+  runtimeWork: WorkbenchState['runtimeWork']
+): RuntimeTaskAddress | null {
+  if (!source) return null
+  const task = findRuntimeTask(runtimeWork, source)
+  if (!task) return source
+  const runtimeHandle = mergeRuntimeTaskHandles(source.runtimeHandle, task.runtimeHandle)
+  return {
+    ...source,
+    runtime: task.runtime,
+    workspacePath: task.workspacePath || source.workspacePath,
+    ...(task.threadId ? { threadId: task.threadId } : {}),
+    ...(runtimeHandle ? { runtimeHandle } : {}),
+  }
+}
+
+export async function loadTemporaryChatSource(
+  source: RuntimeTaskAddress | null | undefined,
+  runtimeWork: WorkbenchState['runtimeWork'],
+  listRuntimeWork: () => Promise<RuntimeWorkListResponse>
+): Promise<RuntimeTaskAddress | null> {
+  const cachedSource = resolveTemporaryChatSource(source, runtimeWork)
+  if (!cachedSource || runtimeThreadId(cachedSource)) return cachedSource
+  return resolveTemporaryChatSource(cachedSource, await listRuntimeWork())
 }
 
 export function friendlyTitleForTask(
@@ -1477,13 +1506,18 @@ export function useWorkbenchRuntimeMessaging({
       input: string,
       options?: CreateTemporaryRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
-      if (!options?.source || !runtimeThreadId(options.source)) {
+      const source = await loadTemporaryChatSource(
+        options?.source,
+        state.runtimeWork,
+        executorClient.runtime.listRuntimeWork
+      ).catch(() => resolveTemporaryChatSource(options?.source, state.runtimeWork))
+      if (!source || !runtimeThreadId(source)) {
         reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
         return false
       }
-      return createEphemeralRuntimeTask(input, options)
+      return createEphemeralRuntimeTask(input, { ...options, source })
     },
-    [createEphemeralRuntimeTask, reportSendBlocked]
+    [createEphemeralRuntimeTask, executorClient, reportSendBlocked, state.runtimeWork]
   )
 
   const createProjectRuntimeTask = useCallback(
