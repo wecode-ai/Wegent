@@ -721,7 +721,9 @@ impl LocalSessionHandler {
 
     fn project_path(&self, path: &str, create_if_missing: bool) -> Result<PathBuf, String> {
         let requested_path = PathBuf::from(path);
-        let project_path = if requested_path.is_absolute() {
+        let project_path = if path.trim().is_empty() {
+            self.workspace_root.clone()
+        } else if requested_path.is_absolute() {
             requested_path
         } else {
             self.workspace_root.join(requested_path)

@@ -44,6 +44,7 @@ import {
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyModelProtocolMatrix,
+  verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
   writeCodexConfig,
 } from './desktop-build-flows.mjs'
@@ -509,7 +510,12 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+    if (
+      CLOUD_ONLY ||
+      CLOUD_FEATURES_ONLY ||
+      CLOUD_VISION_ONLY ||
+      DESKTOP_SEGMENT === 'remote-device-onboarding'
+    ) {
       cloudEnvironment = new RealCloudEnvironment({
         codexBinary,
         modelServerUrl: control.url,
@@ -758,6 +764,15 @@ last_updated = "2026-07-30T00:00:00Z"`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
+      phase = 'remote-device-onboarding'
+      await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+      console.log(
+        `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
+      )
       return
     }
 

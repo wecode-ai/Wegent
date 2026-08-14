@@ -895,7 +895,7 @@ export function useWorkbenchDataRefresh({
       if (!createCommand) {
         throw new Error('当前连接不支持生成云设备启动脚本')
       }
-      return createCommand({ client_origin: window.location.origin })
+      return createCommand()
     }, [services.deviceApi])
 
   return {
