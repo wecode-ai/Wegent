@@ -2220,7 +2220,7 @@ pub fn embedded_browser_set_bounds(
             .show()
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
         #[cfg(target_os = "macos")]
-        force_embedded_browser_redraw(&state, &label, &webview);
+        force_embedded_browser_redraw(&webview);
     } else {
         webview
             .hide()
@@ -2247,11 +2247,7 @@ pub fn embedded_browser_set_bounds(
 }
 
 #[cfg(target_os = "macos")]
-fn force_embedded_browser_redraw(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    webview: &Webview<Wry>,
-) {
+fn force_embedded_browser_redraw(webview: &Webview<Wry>) {
     // Hiding and re-showing a WKWebView with setHidden can leave its rendered
     // layer blank (white) on macOS. Ask the native view to redraw once it is
     // visible again so the browser content does not stay white after a menu or
@@ -2264,12 +2260,6 @@ fn force_embedded_browser_redraw(
             view.displayIfNeeded();
         }
     });
-    log_embedded_browser_diagnostic(
-        state,
-        label,
-        "bounds_visible_redraw",
-        json!({ "nativeView": "nsview", "forced": true }),
-    );
 }
 
 fn browser_download_control(
