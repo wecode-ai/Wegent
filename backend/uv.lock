@@ -207,6 +207,28 @@ wheels = [
 ]
 
 [[package]]
+name = "aliyun-python-sdk-core"
+version = "2.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "jmespath" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/09/da9f58eb38b4fdb97ba6523274fbf445ef6a06be64b433693da8307b4bec/aliyun-python-sdk-core-2.16.0.tar.gz", hash = "sha256:651caad597eb39d4fad6cf85133dffe92837d53bdf62db9d8f37dab6508bb8f9", size = 449555, upload-time = "2024-10-09T06:01:01.762Z" }
+
+[[package]]
+name = "aliyun-python-sdk-kms"
+version = "2.16.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aliyun-python-sdk-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/2c/9877d0e6b18ecf246df671ac65a5d1d9fecbf85bdcb5d43efbde0d4662eb/aliyun-python-sdk-kms-2.16.5.tar.gz", hash = "sha256:f328a8a19d83ecbb965ffce0ec1e9930755216d104638cd95ecd362753b813b3", size = 12018, upload-time = "2024-08-30T09:01:20.104Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/5c/0132193d7da2c735669a1ed103b142fd63c9455984d48c5a88a1a516efaa/aliyun_python_sdk_kms-2.16.5-py2.py3-none-any.whl", hash = "sha256:24b6cdc4fd161d2942619479c8d050c63ea9cd22b044fe33b60bbb60153786f0", size = 99495, upload-time = "2024-08-30T09:01:18.462Z" },
+]
+
+[[package]]
 name = "alphashape"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1149,6 +1171,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/e2/ac/879c9367487035a67
 wheels = [
     { url = "https://files.pythonhosted.org/packages/43/97/cecb942d60a79d20b4d718a17ef599aee80ce54c32f0f214a880f406b5b8/crawl4ai-0.8.0-py3-none-any.whl", hash = "sha256:0a822400a0968e1e92cc844ecc79a24873d61d801b4147c0ee23bc3d3ad34482", size = 453341, upload-time = "2026-01-16T10:40:13.617Z" },
 ]
+
+[[package]]
+name = "crcmod"
+version = "1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/b0/e595ce2a2527e169c3bcd6c33d2473c1918e0b7f6826a043ca1245dd4e5b/crcmod-1.7.tar.gz", hash = "sha256:dc7051a0db5f2bd48665a990d3ec1cc305a466a77358ca4492826f41f283601e", size = 89670, upload-time = "2010-06-27T14:35:29.538Z" }
 
 [[package]]
 name = "croniter"
@@ -2283,11 +2311,11 @@ wheels = [
 
 [[package]]
 name = "jmespath"
-version = "1.1.0"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d3/59/322338183ecda247fb5d1763a6cbe46eff7222eaeebafd9fa65d4bf5cb11/jmespath-1.1.0.tar.gz", hash = "sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d", size = 27377, upload-time = "2026-01-22T16:35:26.279Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/56/3f325b1eef9791759784aa5046a8f6a1aff8f7c898a2e34506771d3b99d8/jmespath-0.10.0.tar.gz", hash = "sha256:b85d0567b8666149a93172712e68920734333c0ce7e89b78b3e987f71e5ed4f9", size = 21607, upload-time = "2020-05-12T22:03:47.267Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/2f/967ba146e6d58cf6a652da73885f52fc68001525b4197effc174321d70b4/jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64", size = 20419, upload-time = "2026-01-22T16:35:24.919Z" },
+    { url = "https://files.pythonhosted.org/packages/07/cb/5f001272b6faeb23c1c9e0acc04d48eaaf5c862c17709d20e3469c6e0139/jmespath-0.10.0-py2.py3-none-any.whl", hash = "sha256:cdf6525904cc597730141d61b36f2e4b8ecc257c420fa2f4549bac2c2d0cb72f", size = 24489, upload-time = "2020-05-12T22:03:45.643Z" },
 ]
 
 [[package]]
@@ -3911,6 +3939,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/6a/ec26e3f44e9632ecd2f43638b7b37b500eaea5d79cab984ad0b94be14f82/ormsgpack-1.12.1-cp313-cp313-win_amd64.whl", hash = "sha256:c418390b47a1d367e803f6c187f77e4d67c7ae07ba962e3a4a019001f4b0291a", size = 116195, upload-time = "2025-12-14T07:57:25.626Z" },
     { url = "https://files.pythonhosted.org/packages/7d/64/bfa5f4a34d0f15c6aba1b73e73f7441a66d635bd03249d334a4796b7a924/ormsgpack-1.12.1-cp313-cp313-win_arm64.whl", hash = "sha256:cfa22c91cffc10a7fbd43729baff2de7d9c28cef2509085a704168ae31f02568", size = 109986, upload-time = "2025-12-14T07:57:26.569Z" },
 ]
+
+[[package]]
+name = "oss2"
+version = "2.19.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aliyun-python-sdk-core" },
+    { name = "aliyun-python-sdk-kms" },
+    { name = "crcmod" },
+    { name = "pycryptodome" },
+    { name = "requests" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/b5/f2cb1950dda46ac2284d6c950489fdacd0e743c2d79a347924d3cc44b86f/oss2-2.19.1.tar.gz", hash = "sha256:a8ab9ee7eb99e88a7e1382edc6ea641d219d585a7e074e3776e9dec9473e59c1", size = 298845, upload-time = "2024-10-25T11:37:46.638Z" }
 
 [[package]]
 name = "packaging"
@@ -6377,6 +6419,7 @@ dependencies = [
     { name = "opentelemetry-instrumentation-system-metrics" },
     { name = "opentelemetry-sdk" },
     { name = "orjson" },
+    { name = "oss2" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pathlib2" },
     { name = "pdf2image" },
@@ -6491,6 +6534,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-system-metrics", specifier = ">=0.48b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
     { name = "orjson", specifier = ">=3.9.0" },
+    { name = "oss2", specifier = ">=2.19.1" },
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
     { name = "pathlib2", specifier = ">=2.3.7" },
     { name = "pdf2image", specifier = ">=1.16.0" },

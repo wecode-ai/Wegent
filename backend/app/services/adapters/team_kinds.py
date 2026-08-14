@@ -36,6 +36,7 @@ from app.schemas.kind import (
     Shell,
     Task,
     Team,
+    TeamInputPlaceholder,
     dump_team_display_config,
 )
 from app.schemas.namespace import GroupRole
@@ -268,6 +269,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         quick_phrases = getattr(obj_in, "quick_phrases", None)
         if quick_phrases is not None:
             spec["quick_phrases"] = normalize_quick_phrases(quick_phrases)
+
+        input_placeholder = getattr(obj_in, "inputPlaceholder", None)
+        if input_placeholder is not None:
+            spec["inputPlaceholder"] = input_placeholder.model_dump(exclude_none=True)
 
         metadata = {"name": obj_in.name, "namespace": namespace}
         display_name = getattr(obj_in, "displayName", None)
@@ -1455,6 +1460,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 update_data["quick_phrases"]
             )
 
+        if "inputPlaceholder" in update_data:
+            input_placeholder = update_data["inputPlaceholder"]
+            team_crd.spec.inputPlaceholder = (
+                TeamInputPlaceholder.model_validate(input_placeholder)
+                if input_placeholder
+                else None
+            )
+
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
         team.updated_at = datetime.now()
@@ -1958,6 +1971,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = team_crd.spec.requiresWorkspace
 
         quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+        input_placeholder = (
+            team_crd.spec.inputPlaceholder.model_dump(exclude_none=True)
+            if team_crd.spec.inputPlaceholder
+            else None
+        )
         capability = (team.json.get("spec") or {}).get("capability") or {}
         publication_status = capability.get("publishStatus")
 
@@ -1986,6 +2004,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "icon": icon,  # Add icon field
             "display_config": display_config,
             "quick_phrases": quick_phrases,
+            "inputPlaceholder": input_placeholder,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
             "publication_status": publication_status,
         }
@@ -2167,6 +2186,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = team_crd.spec.requiresWorkspace
 
         quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+        input_placeholder = (
+            team_crd.spec.inputPlaceholder.model_dump(exclude_none=True)
+            if team_crd.spec.inputPlaceholder
+            else None
+        )
         capability = (team.json.get("spec") or {}).get("capability") or {}
         publication_status = capability.get("publishStatus")
 
@@ -2189,6 +2213,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "icon": icon,
             "display_config": display_config,
             "quick_phrases": quick_phrases,
+            "inputPlaceholder": input_placeholder,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
             "publication_status": publication_status,
         }

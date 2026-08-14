@@ -8,12 +8,29 @@ Seedance video generation provider.
 
 import logging
 from typing import Any, Dict, Literal, Optional
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
+from ..extensions import (
+    VideoResultOverride,
+    VideoStatusOverride,
+    build_external_provider_content,
+    parse_extended_result,
+    parse_extended_status,
+)
 from .base import VideoJobResult, VideoJobStatus, VideoProvider
 
 logger = logging.getLogger(__name__)
+
+_CREDENTIAL_QUERY_KEYS = {
+    "ossaccesskeyid",
+    "signature",
+    "security-token",
+    "x-oss-signature",
+    "x-oss-credential",
+    "x-oss-security-token",
+}
 
 
 def _resolve_capability_value(
@@ -43,6 +60,83 @@ def _extract_api_error(response: httpx.Response) -> str:
     except Exception:
         text = response.text[:200] if response.text else "Unknown error"
         return text
+
+
+def _media_url_for_log(item: dict[str, Any]) -> Optional[str]:
+    """Return a signed-media URL without its credentials."""
+    media = item.get(item.get("type"))
+    if not isinstance(media, dict):
+        return None
+    url = media.get("url")
+    if not isinstance(url, str):
+        return None
+    parsed = urlsplit(url)
+    if not parsed.scheme or not parsed.netloc:
+        return "<invalid-url>"
+    safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    return f"{safe_url}?<redacted>" if parsed.query else safe_url
+
+
+def _media_url_diagnostics(item: dict[str, Any]) -> dict[str, Any]:
+    """Expose whether a provider URL unexpectedly contains credential parameters."""
+    media = item.get(item.get("type"))
+    if not isinstance(media, dict):
+        return {}
+    url = media.get("url")
+    if not isinstance(url, str):
+        return {}
+    query_keys = [key for key, _ in parse_qsl(urlsplit(url).query)]
+    credential_keys = [
+        key for key in query_keys if key.lower() in _CREDENTIAL_QUERY_KEYS
+    ]
+    return {
+        "has_query": bool(query_keys),
+        "query_keys": query_keys,
+        "credential_query_detected": bool(credential_keys),
+        "credential_query_keys": credential_keys,
+    }
+
+
+def _reject_credential_media_urls(content: list[dict[str, Any]]) -> None:
+    """Fail closed before a provider request can expose URL credentials."""
+    credential_items = []
+    for item in content:
+        diagnostics = _media_url_diagnostics(item)
+        if diagnostics.get("credential_query_detected"):
+            credential_items.append(
+                {
+                    "type": item.get("type"),
+                    "role": item.get("role"),
+                    "url": _media_url_for_log(item),
+                    "credential_query_keys": diagnostics["credential_query_keys"],
+                }
+            )
+    if credential_items:
+        logger.error(
+            "[Seedance] Blocked credential-bearing media URLs: items=%s",
+            credential_items,
+        )
+        raise ValueError(
+            "Credential-bearing media URLs are not allowed in video provider "
+            "requests; configure a public CDN endpoint"
+        )
+
+
+def _content_item_for_log(item: dict[str, Any]) -> dict[str, Any]:
+    """Mirror request content while redacting signed URL credentials."""
+    item_type = item.get("type")
+    logged = {"type": item_type}
+    if item.get("role") is not None:
+        logged["role"] = item["role"]
+    if item_type == "text":
+        logged["text"] = item.get("text")
+    elif item_type in {"video_media_id", "audio_media_id"}:
+        logged[item_type] = item.get(item_type)
+    elif media_url := _media_url_for_log(item):
+        media_key = str(item_type)
+        logged[media_key] = {"url": media_url}
+        logged.update(_media_url_diagnostics(item))
+    return logged
 
 
 class SeedanceProvider(VideoProvider):
@@ -120,6 +214,16 @@ class SeedanceProvider(VideoProvider):
             )
 
         for video in reference_videos or []:
+            descriptor = video if isinstance(video, dict) else {"url": video}
+            external_content = build_external_provider_content(
+                protocol="seedance",
+                media_type="video",
+                descriptor=descriptor,
+                role="reference_video",
+            )
+            if external_content is not None:
+                content.append(external_content)
+                continue
             url = video.get("url") if isinstance(video, dict) else video
             if url:
                 content.append(
@@ -131,6 +235,16 @@ class SeedanceProvider(VideoProvider):
                 )
 
         for audio in reference_audios or []:
+            descriptor = audio if isinstance(audio, dict) else {"url": audio}
+            external_content = build_external_provider_content(
+                protocol="seedance",
+                media_type="audio",
+                descriptor=descriptor,
+                role="reference_audio",
+            )
+            if external_content is not None:
+                content.append(external_content)
+                continue
             url = audio.get("url") if isinstance(audio, dict) else audio
             if url:
                 content.append(
@@ -166,25 +280,22 @@ class SeedanceProvider(VideoProvider):
 
         if image_mode:
             payload["image_mode"] = image_mode
-        request_log_params = {
+        _reject_credential_media_urls(content)
+        request_log_payload = {
             key: value for key, value in payload.items() if key != "content"
         }
-        request_log_params["content"] = [
-            {
-                "type": item.get("type"),
-                "role": item.get("role"),
-            }
-            for item in content
+        request_log_payload["content"] = [
+            _content_item_for_log(item) for item in content
         ]
-        request_log_params.update(
+        logger.info(
+            "[Seedance] Sending request: payload=%s, material_counts=%s",
+            request_log_payload,
             {
-                "reference_image_count": len(images),
-                "reference_video_count": len(reference_videos or []),
-                "reference_audio_count": len(reference_audios or []),
-                "prompt_preview": prompt.replace("\n", " ")[:500],
-            }
+                "images": len(images),
+                "videos": len(reference_videos or []),
+                "audios": len(reference_audios or []),
+            },
         )
-        logger.info("[Seedance] Sending request:,params=%s", request_log_params)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/contents/generations/tasks",
@@ -253,11 +364,20 @@ class SeedanceProvider(VideoProvider):
         status = data.get("status", "running")
         api_progress = data.get("progress", 0)
 
+        parsed = parse_extended_status(
+            data,
+            VideoStatusOverride(
+                progress=api_progress,
+                is_completed=(status == "succeeded"),
+                is_failed=(status == "failed"),
+                error=data.get("error"),
+            ),
+        )
         return VideoJobStatus(
-            progress=api_progress,
-            is_completed=(status == "succeeded"),
-            is_failed=(status == "failed"),
-            error=data.get("error"),
+            progress=parsed.progress,
+            is_completed=parsed.is_completed,
+            is_failed=parsed.is_failed,
+            error=parsed.error,
         )
 
     async def get_result(self, job_id: str) -> VideoJobResult:
@@ -273,9 +393,18 @@ class SeedanceProvider(VideoProvider):
 
         # Video URL is in content.video_url
         content = data.get("content", {})
+        parsed = parse_extended_result(
+            data,
+            VideoResultOverride(
+                video_url=content.get("video_url", ""),
+                thumbnail=None,
+                duration=data.get("duration"),
+            ),
+        )
         return VideoJobResult(
-            video_url=content.get("video_url", ""),
-            thumbnail=None,
-            duration=data.get("duration"),
+            video_url=parsed.video_url or "",
+            thumbnail=parsed.thumbnail,
+            duration=parsed.duration,
             image=None,
+            metadata=parsed.metadata,
         )

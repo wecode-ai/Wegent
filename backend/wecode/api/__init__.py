@@ -92,6 +92,9 @@ from wecode.api.published_apps import router as published_apps_router
 from wecode.api.transition_page import router as transition_page_router
 from wecode.api.user_search_with_erp import router as user_search_with_erp_router
 from wecode.config.task_sharding_config import task_sharding_settings
+from wecode.runtime import initialize_internal_runtime
+
+initialize_internal_runtime()
 
 task_sharding_store_patch = None
 if (

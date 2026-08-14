@@ -6,9 +6,10 @@ import type { CreateBotRequest, KnowledgeBaseDefaultRef, SkillRefMeta } from '@/
 import type { ModelTypeEnum } from '@/apis/models'
 import type { UnifiedSkill } from '@/apis/skills'
 import type { CreateTeamRequest } from '@/apis/team'
-import type { TaskType } from '@/types/api'
+import type { TaskType, TeamInputPlaceholder } from '@/types/api'
 import { createPredefinedModelConfig } from '@/features/settings/services/bots'
 import { buildSkillRefsFromSelection } from '@/features/settings/utils/skillRefResolver'
+import { normalizeInputPlaceholder } from './InputPlaceholderEditor'
 
 export interface SimpleBotFormValue {
   name: string
@@ -32,6 +33,7 @@ export interface SimpleTeamFormValue {
   bindMode: TaskType[]
   showFinalAnswerOnly?: boolean
   quickPhrases: string[]
+  inputPlaceholder?: TeamInputPlaceholder
   icon?: string | null
   requiresWorkspace?: boolean | null
   namespace?: string
@@ -116,6 +118,7 @@ export function buildSimpleTeamRequest(
       show_final_answer_only: form.showFinalAnswerOnly === true,
     },
     quick_phrases: quickPhrases,
+    inputPlaceholder: normalizeInputPlaceholder(form.inputPlaceholder || {}),
     namespace: form.namespace,
     icon: form.icon || undefined,
     requires_workspace: form.requiresWorkspace ?? undefined,
