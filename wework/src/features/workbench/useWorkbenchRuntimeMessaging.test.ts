@@ -3,6 +3,7 @@ import type { Attachment, DeviceInfo } from '@/types/api'
 import {
   friendlyTitleForTask,
   prepareRuntimeAttachmentsForDevice,
+  resolveTemporaryChatSource,
   runtimeThreadId,
 } from './useWorkbenchRuntimeMessaging'
 
@@ -51,6 +52,52 @@ describe('runtimeThreadId', () => {
         runtimeHandle: { threadId: 'thread-from-handle' },
       })
     ).toBe('thread-from-handle')
+  })
+})
+
+describe('resolveTemporaryChatSource', () => {
+  test('hydrates a stale source address from the runtime work list', () => {
+    expect(
+      resolveTemporaryChatSource(
+        {
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          runtimeHandle: { modelSelection: { modelName: 'gpt-5' } },
+        },
+        {
+          projects: [],
+          chats: [
+            {
+              deviceId: 'local-device',
+              workspacePath: '/workspace',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'task-1',
+                  threadId: 'thread-1',
+                  workspacePath: '/workspace',
+                  title: 'Task',
+                  runtime: 'codex',
+                  runtimeHandle: { threadId: 'thread-1' },
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        }
+      )
+    ).toEqual({
+      deviceId: 'local-device',
+      taskId: 'task-1',
+      runtime: 'codex',
+      threadId: 'thread-1',
+      workspacePath: '/workspace',
+      runtimeHandle: {
+        modelSelection: { modelName: 'gpt-5' },
+        threadId: 'thread-1',
+      },
+    })
   })
 })
 
