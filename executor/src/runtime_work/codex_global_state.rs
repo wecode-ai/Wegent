@@ -1719,6 +1719,7 @@ fn reorder_project_thread_payload(
             .unwrap_or(0)
     };
     order.insert(index, thread_id.to_owned());
+    project_order.insert("sortKey".to_owned(), Value::String("manual".to_owned()));
     project_order.insert("threadIds".to_owned(), serde_json::json!(order));
 }
 
@@ -2105,6 +2106,34 @@ mod tests {
             json!({"color": "blue"})
         );
         assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
+    }
+
+    #[test]
+    fn reordering_thread_creates_manual_order_used_by_project_index() {
+        let mut payload = payload(json!({
+            "unknown-codex-setting": {"keep": true}
+        }));
+
+        apply_codex_global_state_ops(
+            &mut payload,
+            &[CodexGlobalStateOplogRecord {
+                kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
+                project_key: Some("project".to_owned()),
+                thread_id: Some("moved".to_owned()),
+                before_id: Some("target".to_owned()),
+                ..Default::default()
+            }],
+        );
+
+        assert_eq!(
+            payload["sidebar-project-thread-orders"]["project"],
+            json!({"threadIds": ["moved"], "sortKey": "manual"})
+        );
+        assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
+
+        let index = index_from_payload(&payload);
+        assert_eq!(index.thread_sort_order("project", "moved", 1), 0);
+        assert_eq!(index.thread_sort_order("project", "target", 0), 1);
     }
 
     #[test]
