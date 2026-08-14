@@ -33,6 +33,109 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('settles a stale reconnecting block when the turn resumes with new work', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'reconnecting-turn-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        createdAt: 100,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'command-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'exec_command',
+        status: 'streaming',
+        createdAt: 200,
+      },
+    })
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'reconnecting-turn-1',
+        block: expect.objectContaining({
+          status: 'done',
+          completedAt: expect.any(Number),
+        }),
+      }),
+      expect.objectContaining({
+        id: 'command-1',
+        block: expect.objectContaining({ status: 'streaming' }),
+      }),
+    ])
+  })
+
+  test('keeps the reconnecting block active until actual turn progress arrives', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'reconnecting-turn-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        createdAt: 100,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      blocks: [],
+    })
+
+    expect(turns[0].items[0]).toMatchObject({
+      id: 'reconnecting-turn-1',
+      block: { status: 'streaming' },
+    })
+  })
+
+  test('settles a reconnecting block when the turn reaches an error terminal state', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'reconnecting-turn-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        createdAt: 100,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_error',
+      subtaskId: 'turn-1',
+      error: 'upstream unavailable',
+    })
+
+    expect(turns[0]).toMatchObject({
+      status: 'failed',
+      items: [
+        {
+          id: 'reconnecting-turn-1',
+          block: {
+            status: 'done',
+            completedAt: expect.any(Number),
+          },
+        },
+      ],
+    })
+  })
+
   test('binds only the exact optimistic user to the real Codex turn id', () => {
     let turns = reduceRuntimeConversationTurns([], {
       type: 'user_added',

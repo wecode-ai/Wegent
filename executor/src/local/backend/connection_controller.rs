@@ -5,7 +5,10 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex as StdMutex,
+    },
 };
 
 use serde_json::{json, Value};
@@ -32,6 +35,7 @@ pub struct LocalBackendConnectionController {
     /// runtime-work handler so App-IPC task runs can resolve backend
     /// credentials without relying on the executor process environment.
     connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
+    connection_status: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -75,6 +79,7 @@ impl LocalBackendConnectionController {
             runtime_event_tx,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             connection_snapshot,
+            connection_status: Arc::new(AtomicBool::new(false)),
         };
         controller.replace_connection(initial_connection).await;
         controller
@@ -94,6 +99,7 @@ impl LocalBackendConnectionController {
         }
 
         if let Some(task) = state.task.take() {
+            self.connection_status.store(false, Ordering::Release);
             task.abort();
         }
         if let Some(transport) = state.transport.take() {
@@ -125,7 +131,8 @@ impl LocalBackendConnectionController {
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                 )
-            };
+            }
+            .with_connection_status(Arc::clone(&self.connection_status));
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
@@ -179,6 +186,20 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
                 "connected": connection.is_some(),
                 "backend_url": connection.as_ref().map(|value| &value.backend_url),
                 "socket_url": connection.as_ref().map(resolved_socket_url),
+            }))
+        })
+    }
+
+    fn backend_status<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let state = self.state.lock().await;
+            Ok(json!({
+                "configured": state.connection.is_some(),
+                "connected": self.connection_status.load(Ordering::Acquire),
+                "backend_url": state.connection.as_ref().map(|value| &value.backend_url),
+                "socket_url": state.connection.as_ref().map(resolved_socket_url),
             }))
         })
     }
@@ -263,7 +284,10 @@ mod tests {
     use serde_json::json;
 
     use super::{connection_from_params, normalized_connection, LocalBackendConnectionController};
-    use crate::config::device::{ConnectionConfig, DeviceConfig};
+    use crate::{
+        config::device::{ConnectionConfig, DeviceConfig},
+        local::app_ipc::BackendConnectionHandler,
+    };
 
     #[tokio::test]
     async fn publishes_the_initial_connection_to_the_shared_snapshot() {
@@ -279,14 +303,23 @@ mod tests {
 
         let controller = LocalBackendConnectionController::start(config).await;
         let snapshot = controller.connection_snapshot();
-        let guard = snapshot.lock().unwrap();
-        let connection = guard
-            .as_ref()
-            .expect("initial connection should be published");
+        {
+            let guard = snapshot.lock().unwrap();
+            let connection = guard
+                .as_ref()
+                .expect("initial connection should be published");
 
-        assert_eq!(connection.backend_url, "https://backend.example.com");
-        assert_eq!(connection.auth_token, "wg-token");
-        assert_eq!(connection.runtime_auth_token, "runtime-wg-token");
+            assert_eq!(connection.backend_url, "https://backend.example.com");
+            assert_eq!(connection.auth_token, "wg-token");
+            assert_eq!(connection.runtime_auth_token, "runtime-wg-token");
+        }
+
+        let status = controller
+            .backend_status()
+            .await
+            .expect("backend status should be available");
+        assert_eq!(status["configured"], true);
+        assert_eq!(status["connected"], false);
     }
 
     #[test]

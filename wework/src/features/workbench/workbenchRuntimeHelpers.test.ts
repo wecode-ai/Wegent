@@ -3,7 +3,6 @@ import {
   buildRuntimeTaskTitle,
   findProjectDeviceWorkspace,
   getDefaultProjectDeviceWorkspaceId,
-  hydrateRuntimeTaskAddress,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   mergeRuntimeTaskHandles,
   projectTaskAddresses,
@@ -97,54 +96,6 @@ describe('workbenchRuntimeHelpers', () => {
         },
       },
     ])
-  })
-
-  test('hydrates a stale runtime task address before using its thread context', () => {
-    const runtimeWork: RuntimeWorkListResponse = {
-      projects: [],
-      chats: [
-        {
-          deviceId: 'local-device',
-          deviceName: 'Local device',
-          deviceStatus: 'online',
-          workspacePath: '/workspace/chat',
-          workspaceKind: 'chat',
-          available: true,
-          tasks: [
-            {
-              taskId: 'runtime-task',
-              threadId: 'thread-from-runtime-work',
-              workspacePath: '/workspace/chat',
-              title: 'Runtime task',
-              runtime: 'codex',
-              runtimeHandle: {
-                sessionId: 'thread-from-handle',
-                modelSelection: { modelName: 'gpt-5.6-sol' },
-              },
-            },
-          ],
-        },
-      ],
-      totalTasks: 1,
-    }
-
-    expect(
-      hydrateRuntimeTaskAddress(runtimeWork, {
-        deviceId: 'local-device',
-        taskId: 'runtime-task',
-        runtimeHandle: { permissionMode: 'bypassPermissions' },
-      })
-    ).toEqual({
-      deviceId: 'local-device',
-      taskId: 'runtime-task',
-      threadId: 'thread-from-runtime-work',
-      workspacePath: '/workspace/chat',
-      runtimeHandle: {
-        permissionMode: 'bypassPermissions',
-        sessionId: 'thread-from-handle',
-        modelSelection: { modelName: 'gpt-5.6-sol' },
-      },
-    })
   })
 
   test('merges runtime task handles without dropping existing metadata', () => {

@@ -33,7 +33,10 @@ export function RuntimeTaskExecutionOverlay({
 }: RuntimeTaskExecutionOverlayProps) {
   const { t } = useTranslation('common')
   const { state, cancelRuntimeTask, openRuntimeTask } = useWorkbenchPaneContext()
-  const session = useWorkbenchPaneSession({ currentRuntimeTask: address })
+  const session = useWorkbenchPaneSession({
+    currentRuntimeTask: address,
+    debugSnapshotEnabled: false,
+  })
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
