@@ -56,11 +56,13 @@ PROJECT_CHAT_FAILED_EVENTS = {
     "failed",
     "task.failed",
     "turn.failed",
-    "cancelled",
-    "canceled",
     "runtime.task.failed",
     "runtime_task.failed",
     "runtime.tasks.failed",
+}
+PROJECT_CHAT_CANCELLED_EVENTS = {
+    "cancelled",
+    "canceled",
     "runtime.task.cancelled",
     "runtime_task.cancelled",
     "runtime.tasks.cancelled",
@@ -75,7 +77,8 @@ def _task_id_filter(column: object, task_id: str | None) -> object:
 
 
 PROJECT_CHAT_COMPLETED_STATUSES = {"completed", "done", "succeeded", "success", "idle"}
-PROJECT_CHAT_FAILED_STATUSES = {"failed", "failure", "error", "cancelled", "canceled"}
+PROJECT_CHAT_FAILED_STATUSES = {"failed", "failure", "error"}
+PROJECT_CHAT_CANCELLED_STATUSES = {"cancelled", "canceled"}
 PROJECT_CHAT_TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "canceled"}
 TASK_AI_STATE_KEY = "ai_state"
 TASK_AI_RUNNING_LEASE_SECONDS = 10 * 60
@@ -571,6 +574,16 @@ class ProjectChatService:
                 payload.get("status"),
             )
             return None
+        if self._project_automation_activity_is_terminal(db, row):
+            logger.info(
+                "[ProjectChat] Runtime event ignored for terminal automation run: "
+                "event=%s message_id=%s runtime_device_id=%s runtime_task_id=%s",
+                event_name,
+                row.message_id,
+                device_id,
+                runtime_task_id,
+            )
+            return None
         data = payload.get("data")
         data = data if isinstance(data, dict) else {}
         subagent_result = self._handle_subagent_runtime_event(
@@ -579,6 +592,7 @@ class ProjectChatService:
         if subagent_result is not None:
             return subagent_result
         terminal_status = self._project_chat_terminal_status(event_name, payload, data)
+        self._update_project_automation_run(db, row, terminal_status, event_name)
         if terminal_status is not None:
             logger.info(
                 "[ProjectChat] Runtime terminal event matched: "
@@ -639,6 +653,11 @@ class ProjectChatService:
             snapshot = data.get("text") or data.get("value") or data.get("output_text")
             if isinstance(snapshot, str):
                 row.content = snapshot
+        elif event_name in {"response.created", "response.in_progress"}:
+            row.status = "streaming"
+            metadata = dict(row.metadata_json or {})
+            metadata["run_status"] = "running"
+            row.metadata_json = metadata
         elif terminal_status == "completed":
             self._finish_activity(
                 db,
@@ -656,11 +675,61 @@ class ProjectChatService:
                 content=error,
                 error=error,
             )
+        elif terminal_status == "cancelled":
+            error = data.get("error") or payload.get("error")
+            self._finish_activity(
+                db,
+                row,
+                status_value="cancelled",
+                content=error or "AI execution was cancelled.",
+                error=error,
+            )
         else:
             return None
         db.commit()
         db.refresh(row)
         return self.to_view(row), "snapshot"
+
+    @staticmethod
+    def _project_automation_activity_is_terminal(
+        db: Session, row: ProjectChatMessage
+    ) -> bool:
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        run_id = metadata.get("automation_run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return False
+        from app.models.delivery import ProjectAutomationRun
+        from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
+
+        run = db.get(ProjectAutomationRun, run_id)
+        return run is not None and run.status in TERMINAL_RUN_STATUSES
+
+    @staticmethod
+    def _update_project_automation_run(
+        db: Session,
+        row: ProjectChatMessage,
+        terminal_status: str | None,
+        event_name: str,
+    ) -> None:
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        run_id = metadata.get("automation_run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return
+        from app.models.delivery import ProjectAutomationRun
+
+        run = db.get(ProjectAutomationRun, run_id)
+        if run is None:
+            return
+        from app.services.project_automation_domain import TERMINAL_RUN_STATUSES
+
+        if run.status in TERMINAL_RUN_STATUSES:
+            return
+        if terminal_status == "completed":
+            run.status = "succeeded"
+        elif terminal_status in {"failed", "cancelled"}:
+            run.status = terminal_status
+        elif event_name in {"response.created", "response.in_progress"}:
+            run.status = "running"
 
     @staticmethod
     def _streaming_activity_for_runtime(
@@ -676,7 +745,7 @@ class ProjectChatService:
                 ProjectChatMessage.runtime_device_id == runtime_device_id,
                 ProjectChatMessage.runtime_task_id == runtime_task_id,
                 ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status == "streaming",
+                ProjectChatMessage.status.in_(["pending", "streaming"]),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .order_by(ProjectChatMessage.id.desc())
@@ -779,6 +848,20 @@ class ProjectChatService:
             )
             self._advance_task_to_review(db, row)
             return
+        if status_value == "cancelled":
+            if not row.content and isinstance(content, str) and content:
+                row.content = content
+            row.status = "cancelled"
+            row.message_type = "text"
+            self._set_task_ai_state(
+                db,
+                row=row,
+                trigger=None,
+                agent=None,
+                status_value="cancelled",
+                error=error or content,
+            )
+            return
         if not row.content and isinstance(content, str) and content:
             row.content = content
         row.status = "failed"
@@ -797,23 +880,30 @@ class ProjectChatService:
     ) -> str | None:
         """Normalize runtime terminal signals to the durable AI-run status."""
 
-        if event_name in PROJECT_CHAT_COMPLETED_EVENTS:
-            return "completed"
-        if event_name in PROJECT_CHAT_FAILED_EVENTS:
-            return "failed"
+        if event_name in PROJECT_CHAT_CANCELLED_EVENTS:
+            return "cancelled"
         status_value = (
             data.get("status")
             or data.get("taskStatus")
             or data.get("task_status")
             or payload.get("status")
         )
-        if not isinstance(status_value, str):
-            return None
-        normalized = status_value.strip().replace("_", "").replace("-", "").lower()
-        if normalized in PROJECT_CHAT_COMPLETED_STATUSES:
+        if isinstance(status_value, str):
+            normalized = status_value.strip().replace("_", "").replace("-", "").lower()
+            # Some runtimes report cancellation as response.incomplete plus a
+            # CANCELLED status. The explicit runtime state is more precise
+            # than the generic incomplete event family.
+            if normalized in PROJECT_CHAT_CANCELLED_STATUSES:
+                return "cancelled"
+        if event_name in PROJECT_CHAT_COMPLETED_EVENTS:
             return "completed"
-        if normalized in PROJECT_CHAT_FAILED_STATUSES:
+        if event_name in PROJECT_CHAT_FAILED_EVENTS:
             return "failed"
+        if isinstance(status_value, str):
+            if normalized in PROJECT_CHAT_COMPLETED_STATUSES:
+                return "completed"
+            if normalized in PROJECT_CHAT_FAILED_STATUSES:
+                return "failed"
         return None
 
     @staticmethod
@@ -1184,16 +1274,37 @@ class ProjectChatService:
     def _advance_task_to_review(db: Session, row: ProjectChatMessage) -> None:
         """Move the work item to human review when its assigned AI finishes."""
 
-        if not row.task_id or not row.agent_id:
+        if not row.task_id:
             return
         task = db.get(LoopItem, row.task_id)
         if (
             task is None
-            or task.assignee_agent_id != row.agent_id
             or task.status in {"completed", "in_review"}
             or not loop_datetime_value_is_unset(task.deleted_at)
         ):
             return
+        if row.agent_id:
+            if task.assignee_agent_id != row.agent_id:
+                return
+        else:
+            metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+            execution_id = metadata.get("execution_id")
+            if metadata.get("executor_type") != "inline_custom" or not isinstance(
+                execution_id, int
+            ):
+                return
+            from app.models.loop_item_execution import LoopItemExecution
+
+            execution = db.get(LoopItemExecution, execution_id)
+            if (
+                execution is None
+                or execution.executor_type != "inline_custom"
+                or execution.agent_id is not None
+                or execution.status != "completed"
+                or execution.loop_item_id != row.task_id
+                or execution.cloud_project_id != row.project_id
+            ):
+                return
         task_metadata = (
             task.metadata_json if isinstance(task.metadata_json, dict) else {}
         )
@@ -1373,33 +1484,18 @@ class ProjectChatService:
         environment: str,
         execution_device_id: str | None,
     ) -> None:
-        """The robot's bound device must belong to its creator and match its
-        execution environment (local device for local runs, cloud device for
-        cloud runs)."""
+        """Delegate to the single Wework execution-target validator."""
 
-        if not execution_device_id:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Robot must bind an execution device",
-            )
-        from app.services.device_service import device_service
-
-        device = device_service.get_device_by_device_id(
-            db, user_id=user_id, device_id=execution_device_id
+        from app.services.loop_item_executions.profile import (
+            validate_wework_execution_target,
         )
-        if device is None:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Execution device not found",
-            )
-        actual_type = device.json.get("spec", {}).get("deviceType", "local")
-        expected = {"local": {"local", "app"}, "cloud": {"cloud", "remote"}}
-        if actual_type not in expected.get(environment, set()):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"Device '{execution_device_id}' is type '{actual_type}', "
-                f"expected a {'local' if environment == 'local' else 'cloud'} device",
-            )
+
+        validate_wework_execution_target(
+            db,
+            user_id=user_id,
+            environment=environment,
+            execution_device_id=execution_device_id,
+        )
 
     @staticmethod
     def agent_to_view(

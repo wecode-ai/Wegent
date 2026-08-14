@@ -638,14 +638,19 @@ def _project_chat_runtime_event_sync(
         ),
     )
     with get_db_session() as db:
-        projected = project_chat_service.project_runtime_event(
+        # The LoopItemExecution is the aggregate root for Wework automation
+        # outcomes. Elect its terminal state before projecting chat so a
+        # concurrent complete/fail/cancel cannot leave the run and activity
+        # disagreeing with the execution. Streaming events remain ordinary
+        # chat projections after the lease write-back.
+        matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
             device_id=device_id,
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
         )
-        matched_execution = loop_item_execution_service.handle_runtime_event(
+        projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,
             runtime_task_id=runtime_task_id,

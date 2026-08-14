@@ -660,6 +660,8 @@ def test_alive_execution_keeps_task_ai_state_running(
     execution = LoopItemExecution(
         loop_item_id=task.id,
         cloud_project_id=project.id,
+        executor_type="project_robot",
+        executor_owner_user_id=test_user.id,
         agent_id="12",
         execution_environment="local",
         execution_device_id="device-1",
@@ -681,7 +683,6 @@ def test_alive_execution_keeps_task_ai_state_running(
         rejected_reason="",
         runtime_device_id="device-1",
         runtime_task_id="runtime-task-alive",
-        execution_payload="",
     )
     test_db.add(execution)
     test_db.commit()
@@ -1323,6 +1324,51 @@ def test_runtime_completion_advances_assigned_task_to_review(
 
     test_db.refresh(task)
     assert task.status == "in_review"
+    assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
+def test_runtime_completion_keeps_project_robot_assignee_guard(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-OTHER-ASSIGNEE",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Owned by another robot",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_agent_id="another-agent",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="runtime-task-other-assignee",
+            prompt="Complete without taking ownership",
+        ),
+    )
+
+    project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="runtime-task-other-assignee",
+        event_name="response.completed",
+        payload={"data": {"value": "Finished by the non-assignee"}},
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_progress"
+    assert task.assignee_agent_id == "another-agent"
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
 

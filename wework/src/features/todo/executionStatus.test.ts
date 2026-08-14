@@ -4,7 +4,6 @@ import { executionDisplayStatus, isExecutionFailed, isExecutionRunning } from '.
 describe('executionStatus', () => {
   it('maps every automation run status to one of two display states', () => {
     expect(executionDisplayStatus('pending')).toBe('running')
-    expect(executionDisplayStatus('waiting_device')).toBe('running')
     expect(executionDisplayStatus('running')).toBe('running')
     expect(executionDisplayStatus('succeeded')).toBe('completed')
     expect(executionDisplayStatus('failed')).toBe('completed')

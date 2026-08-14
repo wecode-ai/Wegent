@@ -23,6 +23,24 @@ pub fn is_space_mcp_command() -> bool {
 }
 
 pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
+    // Board automations receive the project, task, and trigger as application
+    // context. They deliberately reuse the ordinary Wework robot execution
+    // path and must not gain project-space tools merely because the execution
+    // is associated with a cloud project.
+    if request
+        .extra
+        .get("origin")
+        .and_then(Value::as_object)
+        .and_then(|origin| origin.get("type"))
+        .and_then(Value::as_str)
+        == Some("project_automation")
+    {
+        log_executor_event(
+            "space mcp injection skipped for project automation",
+            &[("task_id", request.task_id.clone())],
+        );
+        return;
+    }
     // `wework_space` is a project-space context server. Inject it only when the
     // request is bound to a cloud project or explicitly references one, for
     // example through the workbench cloud mention picker that emits
@@ -1545,6 +1563,22 @@ mod tests {
     #[test]
     fn skips_wework_space_without_project_space_context() {
         let mut request = ExecutionRequest::default();
+
+        ensure_space_mcp_server(&mut request);
+
+        assert!(request.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn skips_wework_space_for_project_automation_with_bound_project() {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
+        request.extra.insert(
+            "origin".to_owned(),
+            json!({"type": "project_automation", "run_id": "run-1"}),
+        );
 
         ensure_space_mcp_server(&mut request);
 

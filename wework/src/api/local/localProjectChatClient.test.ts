@@ -77,7 +77,6 @@ describe('createLocalProjectChatClient', () => {
       expect.objectContaining({
         agent_id: 'a1',
         trigger_message_id: 'm-1',
-        payload: expect.objectContaining({ text: '@Bot 跑一下' }),
       })
     )
   })
@@ -98,7 +97,7 @@ describe('createLocalProjectChatClient', () => {
     expect(request).not.toHaveBeenCalledWith('executions.enqueue', expect.anything())
   })
 
-  it('carries the selected local code project into the comment and enqueue payload', async () => {
+  it('stores the selected local code project on the source comment only', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'todos.comment.create') {
         return commentRecord({
@@ -132,12 +131,12 @@ describe('createLocalProjectChatClient', () => {
         }),
       })
     )
-    expect(request).toHaveBeenCalledWith(
-      'executions.enqueue',
-      expect.objectContaining({
-        payload: expect.objectContaining({ local_project_id: 91 }),
-      })
-    )
+    expect(request).toHaveBeenCalledWith('executions.enqueue', {
+      project_id: 'p1',
+      task_id: 't1',
+      agent_id: 'a1',
+      trigger_message_id: 'm-1',
+    })
   })
 
   it('delivers initial comments and polls for status updates', async () => {

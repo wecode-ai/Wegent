@@ -164,11 +164,6 @@ export function createLocalProjectChatClient(
         task_id: input.taskId ?? '',
         agent_id: agentMention.id,
         trigger_message_id: created.message_id,
-        payload: {
-          text: input.text,
-          trigger_message_id: created.message_id,
-          ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
-        },
       })
     }
     return commentToMessage(created)

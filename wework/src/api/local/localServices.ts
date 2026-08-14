@@ -1459,6 +1459,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1469,10 +1470,15 @@ interface BuildLocalRuntimeExecutionRequestInput {
 
 function messageWithApplicationContext(
   message: string,
-  context?: RuntimeTaskCreateRequest['additionalContext']
+  context?: RuntimeTaskCreateRequest['additionalContext'],
+  includeImplicitProjectSpaceCapability = true
 ): string {
   const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
-  if (message.includes('cloud://projects') && !context?.projectSpaceCapability) {
+  if (
+    includeImplicitProjectSpaceCapability &&
+    message.includes('cloud://projects') &&
+    !context?.projectSpaceCapability
+  ) {
     entries.push([
       'projectSpaceCapability',
       {
@@ -1564,7 +1570,11 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
-    prompt: messageWithApplicationContext(input.message, input.additionalContext),
+    prompt: messageWithApplicationContext(
+      input.message,
+      input.additionalContext,
+      input.origin?.type !== 'project_automation'
+    ),
     enable_tools: true,
     enable_deep_thinking: true,
     skill_names: deployedSkillNames,
@@ -1759,6 +1769,7 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
       cloudProjectId: normalizedData.cloudProjectId,
+      origin: normalizedData.origin,
       workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
       branch: runtimeWorkspace?.branch,
       newSession: true,

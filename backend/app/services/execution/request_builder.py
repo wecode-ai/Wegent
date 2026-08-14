@@ -142,6 +142,7 @@ class TaskRequestBuilder:
         # Subscription
         is_subscription: bool = False,
         system_mcp_config: Optional[dict] = None,
+        include_wework_space_mcp: bool = False,
         # Tracing
         trace_context: Optional[dict] = None,
         # Model override (from ChatConfigBuilder)
@@ -174,6 +175,7 @@ class TaskRequestBuilder:
             attachments: List of attachment dictionaries
             is_subscription: Whether this is a subscription task
             system_mcp_config: System MCP configuration
+            include_wework_space_mcp: Whether to expose the Wework board MCP
             trace_context: OpenTelemetry trace context
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
@@ -328,6 +330,30 @@ class TaskRequestBuilder:
                     existing_skills.add(name)
             self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
 
+        # Generate task-scoped identities before finalizing MCP capabilities.
+        auth_token = self._generate_auth_token(task, subtask, user)
+        skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
+
+        managed_mcp_config: dict[str, dict] = {}
+        if include_wework_space_mcp:
+            from app.mcp_server.server import get_mcp_wework_space_config
+
+            managed_mcp_config = get_mcp_wework_space_config(
+                settings.WEGENT_BACKEND_PUBLIC_URL.rstrip("/"), auth_token
+            )
+            if bot_config:
+                managed_bot_servers = [
+                    {"name": name, **config}
+                    for name, config in managed_mcp_config.items()
+                ]
+                managed_names = {server["name"] for server in managed_bot_servers}
+                existing_bot_servers = bot_config[0].get("mcp_servers", []) or []
+                bot_config[0]["mcp_servers"] = [
+                    server
+                    for server in existing_bot_servers
+                    if server.get("name") not in managed_names
+                ] + managed_bot_servers
+
         # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
@@ -343,10 +369,6 @@ class TaskRequestBuilder:
                     self._merge_coordinate_capabilities_into_leader(bot_config)
                 self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
 
-        # Generate auth token first (needed for MCP server authentication)
-        auth_token = self._generate_auth_token(task, subtask, user)
-        skill_identity_token = self._generate_skill_identity_token(task, subtask, user)
-
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
             bot,
@@ -355,6 +377,24 @@ class TaskRequestBuilder:
             is_subscription=is_subscription,
             auth_token=auth_token,
         )
+        if managed_mcp_config:
+            managed_servers = []
+            for name, config in managed_mcp_config.items():
+                server = {"name": name, **config}
+                headers = server.pop("headers", None)
+                if headers:
+                    # ExecutionRequest's established MCP contract uses
+                    # ``auth``; OpenAI transport serializes it as
+                    # ``server_auth`` for both Chat Shell and code shells.
+                    server["auth"] = headers
+                managed_servers.append(server)
+            managed_names = {server["name"] for server in managed_servers}
+            mcp_servers = [
+                server
+                for server in mcp_servers
+                if server.get("name") not in managed_names
+            ]
+            mcp_servers.extend(managed_servers)
 
         # Determine if group chat
         is_group_chat = self._is_group_chat(task)

@@ -98,6 +98,9 @@ class ExternalLoopItemProvider:
         user_id: int,
         user_name: str,
         values: LoopItemCreate,
+        *,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> dict[str, object]:
         access = require_cloud_project_role(
             db, project_id, user_id, BaseRole.RestrictedAnalyst
@@ -620,6 +623,8 @@ class ExternalLoopItemProvider:
         agent: ProjectChatAgent,
         user_id: int,
         priority: str,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> None:
         """Create the queue run row after assigning a robot to an issue."""
 
@@ -639,6 +644,8 @@ class ExternalLoopItemProvider:
                 else None
             ),
             priority=priority,
+            automation_context=automation_context,
+            instruction=instruction,
         )
 
     def assign(
@@ -647,6 +654,9 @@ class ExternalLoopItemProvider:
         item_id: str,
         user_id: int,
         values: LoopItemAssign,
+        *,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> dict[str, object]:
         """Assign an issue to a project member or robot.
 
@@ -737,6 +747,8 @@ class ExternalLoopItemProvider:
                 agent=agent,
                 user_id=user_id,
                 priority=self._priority(current_labels),
+                automation_context=automation_context,
+                instruction=instruction,
             )
         db.commit()
         if cancelled_runs:
@@ -879,19 +891,49 @@ class ExternalLoopItemProvider:
         return self.get(db, item_id, user_id)
 
     def task_view(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
-        """Minimal live task context used to build the runtime prompt."""
+        """Return current normalized task context for runtime materialization."""
 
         project, number = self._resolve_project(db, item_id)
         issue = self._get_issue(project, number)
         labels = self._labels(issue)
+        raw_description = str(issue.get(self._body_key(project)) or "")
+        description = "\n".join(
+            line
+            for line in raw_description.splitlines()
+            if not line.strip().startswith(PARENT_MARKER)
+        ).strip()
+        assignee = self._assignee_from_labels(labels)
+        assignee_user_id = None
+        assignee_agent_id = None
+        if assignee is not None and assignee["type"] == "user":
+            try:
+                assignee_user_id = int(assignee["id"])
+            except ValueError:
+                pass
+        elif assignee is not None and assignee["type"] == "agent":
+            assignee_agent_id = assignee["id"]
         return {
             "id": item_id,
             "cloud_project_id": str(project.id),
             "title": str(issue.get("title") or ""),
-            "description": str(issue.get(self._body_key(project)) or ""),
+            "description": description,
             "status": self._status(labels, str(issue.get("state") or "")),
             "priority": self._priority(labels),
+            "parent_id": self._parent_id(project, raw_description),
+            "tags": self._public_tags(labels),
+            "assignee_user_id": assignee_user_id,
+            "assignee_agent_id": assignee_agent_id,
         }
+
+    def normalize_issue_payload(self, issue: dict[str, Any]) -> dict[str, Any]:
+        """Map provider issue fields to the task fields used by automation rules."""
+
+        normalized = dict(issue)
+        labels = self._labels(issue)
+        normalized["status"] = self._status(labels, str(issue.get("state") or ""))
+        normalized["priority"] = self._priority(labels)
+        normalized["tags"] = self._public_tags(labels)
+        return normalized
 
     def ensure_shadow(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Create a local LoopItem row for legacy binding/delivery flows.
@@ -1127,11 +1169,16 @@ class ExternalLoopItemProvider:
         if ai_status is None:
             return None
         agent = db.get(ProjectChatAgent, getattr(execution, "agent_id", None))
+        executor_type = getattr(execution, "executor_type", "project_robot")
         return {
             "run_id": f"exec-{getattr(execution, 'id', '')}",
             "status": ai_status,
             "agent_id": getattr(execution, "agent_id", None),
-            "agent_name": (agent.title or agent.name if agent is not None else None),
+            "agent_name": (
+                "AI 托管"
+                if executor_type == "inline_custom"
+                else (agent.title or agent.name if agent is not None else None)
+            ),
             "runtime_device_id": (
                 getattr(execution, "runtime_device_id", None) or None
             ),
@@ -1374,7 +1421,11 @@ class ExternalLoopItemProvider:
     def _labels(issue: dict[str, Any]) -> list[str]:
         labels = issue.get("labels") or []
         return [
-            str(label.get("name") if isinstance(label, dict) else label)
+            str(
+                (label.get("name") or label.get("title") or "")
+                if isinstance(label, dict)
+                else label
+            )
             for label in labels
         ]
 
@@ -1472,7 +1523,7 @@ class ExternalLoopItemProvider:
         )
         return (
             value
-            if value in {"inbox", "pending", "in_progress", "in_review"}
+            if value in {"inbox", "pending", "in_progress", "in_review", "completed"}
             else "pending"
         )
 

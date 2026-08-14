@@ -16,7 +16,6 @@ const EXECUTION_RUNNING_STATUSES = new Set([
   'queued',
   'running',
   'streaming',
-  'waiting_device',
 ])
 
 // Terminal states, including non-success outcomes (failed/cancelled/skipped).

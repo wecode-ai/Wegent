@@ -525,6 +525,9 @@ class LoopItemService:
         values: LoopItemCreate,
         *,
         commit: bool = True,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
+        assign_creator_if_unassigned: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
@@ -548,6 +551,11 @@ class LoopItemService:
         agent_id = payload.get("assignee_agent_id")
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
+        if automation_context is not None:
+            task_metadata["automation"] = {
+                **automation_context,
+                **({"prompt": instruction} if instruction is not None else {}),
+            }
         if agent_id:
             agent = db.get(ProjectChatAgent, agent_id)
             if (
@@ -567,7 +575,7 @@ class LoopItemService:
                 agent.id,
                 agent.title or agent.name,
             )
-        elif payload.get("assignee_user_id") is None:
+        elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
             self._write_assignment_change(
                 task_metadata,
@@ -601,11 +609,16 @@ class LoopItemService:
             **payload,
         )
         if tags:
-            item.metadata_json = {"tags": tags}
+            item.metadata_json = (
+                {**dict(item.metadata_json or {}), "tags": tags}
+                if automation_context is not None
+                else {"tags": tags}
+            )
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
         if agent_id:
+            db.flush()
             agent = db.get(ProjectChatAgent, agent_id)
             if agent is not None:
                 config = bot_config(agent)
@@ -622,6 +635,8 @@ class LoopItemService:
                         else None
                     ),
                     priority=item.priority,
+                    automation_context=automation_context,
+                    instruction=instruction,
                 )
         if commit:
             db.commit()
@@ -1014,6 +1029,8 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         values: LoopItemAssign,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> LoopItem:
         """Assign a task to a project member or to a project robot.
 
@@ -1068,6 +1085,8 @@ class LoopItemService:
                 target_id=agent.id,
                 agent=agent,
                 priority=item.priority,
+                automation_context=automation_context,
+                instruction=instruction,
             )
         elif values.assignee_type == "user":
             try:
@@ -1108,6 +1127,7 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
+
         updated = self._versioned_metadata_update(
             db, item, values.version, metadata, **assignee_updates
         )
@@ -1807,6 +1827,8 @@ class LoopItemService:
         target_id: str | None,
         agent: ProjectChatAgent | None,
         priority: str | None,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> list:
         """Create/cancel execution records when the assignee changes.
 
@@ -1852,6 +1874,8 @@ class LoopItemService:
                     else None
                 ),
                 priority=priority,
+                automation_context=automation_context,
+                instruction=instruction,
             )
         return cancelled_runs
 

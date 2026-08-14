@@ -145,7 +145,8 @@ class LoopItemExecutionView(ProjectChatSchema):
     task_title: str
     task_status: str | None
     task_priority: str | None
-    agent_id: str
+    executor_type: str = "project_robot"
+    agent_id: str | None = None
     assigner_user_id: int
     execution_environment: str
     execution_device_id: str | None
@@ -164,7 +165,9 @@ class LoopItemExecutionView(ProjectChatSchema):
     rejected_reason: str | None = None
     runtime_device_id: str | None = None
     runtime_task_id: str | None = None
-    execution_payload: Any | None = None
+    # Materialized only for an authenticated device claim. It is never stored
+    # on the execution row because model credentials are resolved just in time.
+    runtime_payload: Any | None = None
     version: int = 1
     created_at: Any
     updated_at: Any

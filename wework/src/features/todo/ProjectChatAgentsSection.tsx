@@ -254,8 +254,10 @@ export function ProjectChatAgentsSection({
   }
 
   return (
-    <section data-testid="cloud-project-chat-agents">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <section data-testid="cloud-project-chat-agents" className="mt-8 border-t border-border pt-8">
+      <div
+        className={`flex items-center justify-between gap-3${activeChatAgents.length ? ' mb-3' : ''}`}
+      >
         <div>
           <h2 className="text-heading-md font-semibold">
             {t('workbench.project_chat_agents_title')}
@@ -365,33 +367,42 @@ export function ProjectChatAgentsSection({
                   name: editingChatAgent?.name ?? '',
                 })
           }
-          width="wide"
+          width="workspace"
           onClose={() => {
             setCreatingChatAgent(false)
             setEditingChatAgent(null)
           }}
         >
           <div
-            className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-4"
+            className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto border-t border-border md:grid-cols-[minmax(0,1.65fr)_minmax(360px,1fr)] md:overflow-hidden"
             data-testid="cloud-project-chat-agent-editor"
           >
-            <input
-              data-testid="cloud-project-chat-agent-name"
-              value={agentName}
-              autoFocus={creatingChatAgent}
-              onChange={event => setAgentName(event.target.value)}
-              placeholder={t('workbench.project_chat_agent_name')}
-              className="w-full border-0 bg-transparent p-0 text-heading-md font-medium tracking-[-0.02em] text-text-primary outline-none placeholder:text-text-tertiary"
-            />
-            <textarea
-              data-testid="cloud-project-chat-agent-system-prompt"
-              value={agentSystemPrompt}
-              onChange={event => setAgentSystemPrompt(event.target.value)}
-              placeholder={t('workbench.project_chat_agent_prompt')}
-              className="mt-3 min-h-24 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
-            />
+            <div className="flex min-h-[560px] flex-col px-7 py-6 md:min-h-0">
+              <input
+                data-testid="cloud-project-chat-agent-name"
+                value={agentName}
+                autoFocus={creatingChatAgent}
+                onChange={event => setAgentName(event.target.value)}
+                placeholder={t('workbench.project_chat_agent_name')}
+                className="w-full border-0 bg-transparent p-0 text-heading-lg font-semibold tracking-[-0.03em] text-text-primary outline-none placeholder:text-text-tertiary"
+              />
+              <label
+                htmlFor="cloud-project-chat-agent-system-prompt-field"
+                className="mt-6 text-xs font-semibold uppercase tracking-wider text-text-muted"
+              >
+                {t('workbench.project_chat_agent_prompt')}
+              </label>
+              <textarea
+                id="cloud-project-chat-agent-system-prompt-field"
+                data-testid="cloud-project-chat-agent-system-prompt"
+                value={agentSystemPrompt}
+                onChange={event => setAgentSystemPrompt(event.target.value)}
+                placeholder={t('workbench.project_chat_agent_prompt')}
+                className="mt-2 min-h-72 flex-1 resize-none rounded-2xl border border-border bg-background px-5 py-4 text-sm leading-6 text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-text-tertiary"
+              />
+            </div>
 
-            <div className="mt-7">
+            <div className="min-h-0 border-t border-border px-6 pb-6 pt-6 md:overflow-y-auto md:border-l md:border-t-0">
               <SettingsGroup>
                 <SettingsRow label={t('workbench.project_chat_agent_environment')}>
                   <MenuSelect
@@ -546,13 +557,16 @@ export function ProjectChatAgentsSection({
                   />
                 </SettingsRow>
               </SettingsGroup>
-            </div>
 
-            {error ? (
-              <p className="mt-4 text-sm text-red-600" data-testid="cloud-project-chat-agent-error">
-                {error}
-              </p>
-            ) : null}
+              {error ? (
+                <p
+                  className="mt-4 text-sm text-red-600"
+                  data-testid="cloud-project-chat-agent-error"
+                >
+                  {error}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-6 py-3">

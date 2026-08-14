@@ -2191,6 +2191,7 @@ export function CloudTodoWorkspace({
                   executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
                   modelApi={services.modelApi}
+                  teamApi={services.teamApi}
                   localProjects={localProjects}
                   runtimeWork={runtimeWork}
                   project={selectedProject}

@@ -29,6 +29,11 @@ const AGENT = {
   systemPrompt: '',
   executionEnvironment: 'local',
   executionDeviceId: 'desktop-e2e-local-device',
+  executionMode: 'auto',
+  visibility: 'creator_admin',
+  localProjectId: null,
+  createdByUserId: 9001,
+  createdByUserName: 'E2E Owner',
   status: 'active',
   version: 1,
   createdAt: '2026-08-11T00:00:00',
@@ -55,9 +60,17 @@ const RULE = {
   projectId: PROJECT_ID,
   name: '每天扫描 Bug',
   prompt: '扫描当前项目中的可复现 Bug。',
+  triggerType: 'schedule',
+  eventType: null,
+  eventConfig: {},
+  executorType: 'project_robot',
+  webhookEventId: null,
+  webhookSecret: null,
   cronExpression: '0 3 * * *',
   timezone: 'Asia/Shanghai',
   agentId: AGENT_ID,
+  wegentTeamId: null,
+  model: null,
   agentName: AGENT.name,
   executionEnvironment: 'local',
   executionDeviceId: AGENT.executionDeviceId,
@@ -156,11 +169,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       if (request.method === 'POST' && runNowMatch) {
         const run = {
-          id: 'automation-run-waiting',
+          id: 'automation-run-queued',
           automationId: runNowMatch[1],
           projectId: PROJECT_ID,
           trigger: 'manual',
-          status: 'waiting_device',
+          status: 'queued',
           scheduledFor: '2026-08-11T10:00:00',
           expiresAt: null,
           taskId: null,
@@ -176,7 +189,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       if (
         request.method === 'POST' &&
         url.pathname ===
-          `/api/v1/cloud-projects/${PROJECT_ID}/automation-runs/automation-run-waiting/cancel`
+          `/api/v1/cloud-projects/${PROJECT_ID}/automation-runs/automation-run-queued/cancel`
       ) {
         cancelRequested = true
         runs[0] = { ...runs[0], status: 'cancelled' }
@@ -229,8 +242,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
       }
       assert.ok(modelRequests >= 1, 'cloud model catalog did not load before the automation view')
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       await control.command('click', '[data-testid="cloud-project-automation-view"]')
+      await control.command('waitFor', '[data-testid="project-automation-view"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="project-automation-rules"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -266,12 +281,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('click', '[data-testid="project-automation-run-now"]')
       await control.command(
         'waitFor',
-        '[data-testid="project-automation-cancel-run-automation-run-waiting"]',
+        '[data-testid="project-automation-cancel-run-automation-run-queued"]',
         { timeoutMs: uiTimeoutMs }
       )
       await control.command(
         'click',
-        '[data-testid="project-automation-cancel-run-automation-run-waiting"]'
+        '[data-testid="project-automation-cancel-run-automation-run-queued"]'
       )
       const cancelDeadline = Date.now() + uiTimeoutMs
       while (!cancelRequested && Date.now() < cancelDeadline) {

@@ -4,7 +4,10 @@
 
 """API tests for cloud projects, TODOs, and local task associations."""
 
+import hashlib
+import hmac
 import io
+import json
 from datetime import datetime
 from typing import BinaryIO
 
@@ -14,8 +17,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
+from app.models.delivery import (
+    CloudProject,
+    Delivery,
+    DeliveryAsset,
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectChatAgent,
+)
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
@@ -77,6 +88,115 @@ def cloud_file_storage(monkeypatch: pytest.MonkeyPatch) -> FakeCloudFileStorage:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _create_runnable_wegent_team(
+    db: Session,
+    *,
+    user_id: int,
+    prefix: str,
+) -> Kind:
+    model_name = f"{prefix}-model"
+    shell_name = f"{prefix}-shell"
+    ghost_name = f"{prefix}-ghost"
+    bot_name = f"{prefix}-bot"
+    team_name = f"{prefix}-team"
+    resources = [
+        Kind(
+            kind="Model",
+            name=model_name,
+            namespace="default",
+            user_id=user_id,
+            is_active=True,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {"name": model_name, "namespace": "default"},
+                "spec": {
+                    "modelConfig": {
+                        "env": {
+                            "api_key": "test-key",
+                            "base_url": "https://models.invalid/v1",
+                            "model_id": "test-model",
+                            "model": "openai",
+                        }
+                    },
+                    "protocol": "openai",
+                },
+            },
+        ),
+        Kind(
+            kind="Shell",
+            name=shell_name,
+            namespace="default",
+            user_id=user_id,
+            is_active=True,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Shell",
+                "metadata": {"name": shell_name, "namespace": "default"},
+                "spec": {"shellType": "Chat"},
+            },
+        ),
+        Kind(
+            kind="Ghost",
+            name=ghost_name,
+            namespace="default",
+            user_id=user_id,
+            is_active=True,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Ghost",
+                "metadata": {"name": ghost_name, "namespace": "default"},
+                "spec": {"systemPrompt": "Handle the board automation."},
+            },
+        ),
+        Kind(
+            kind="Bot",
+            name=bot_name,
+            namespace="default",
+            user_id=user_id,
+            is_active=True,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Bot",
+                "metadata": {"name": bot_name, "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": ghost_name, "namespace": "default"},
+                    "shellRef": {"name": shell_name, "namespace": "default"},
+                    "modelRef": {"name": model_name, "namespace": "default"},
+                },
+            },
+        ),
+        Kind(
+            kind="Team",
+            name=team_name,
+            namespace="default",
+            user_id=user_id,
+            is_active=True,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Team",
+                "metadata": {"name": team_name, "namespace": "default"},
+                "spec": {
+                    "members": [
+                        {
+                            "botRef": {
+                                "name": bot_name,
+                                "namespace": "default",
+                            }
+                        }
+                    ],
+                    "collaborationModel": "solo",
+                },
+            },
+        ),
+    ]
+    db.add_all(resources)
+    db.commit()
+    team = resources[-1]
+    db.refresh(team)
+    return team
 
 
 def test_cloud_project_tag_registry(
@@ -1100,6 +1220,244 @@ def test_cloud_project_robot_binds_local_project(
     assert cleared.json()["localProjectId"] is None
 
 
+def test_project_automation_webhook_verifies_github_signature(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="hook-cloud-device",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "cloud"},
+                "metadata": {"name": "hook-cloud-device"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "hook",
+            "name": "Webhook project",
+            "task_provider": "github",
+            "provider_config": {
+                "repository": "acme/hook",
+                "token": "provider-token",
+            },
+        },
+    ).json()
+    agent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/chat-agents",
+        headers=_auth(test_token),
+        json={
+            "name": "Dispatcher",
+            "runtime": "codex",
+            "executionEnvironment": "cloud",
+            "executionDeviceId": "hook-cloud-device",
+        },
+    ).json()
+    rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "External issue",
+            "prompt": "Dispatch the issue.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "agentId": agent["id"],
+        },
+    ).json()
+    assert rule["webhookSecret"]
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+    ).json()
+    assert listed[0]["webhookSecret"] is None
+
+    rotated_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}"
+        "/rotate-webhook-secret",
+        headers=_auth(test_token),
+    )
+    assert rotated_response.status_code == 200, rotated_response.text
+    rotated = rotated_response.json()
+    assert rotated["webhookSecret"]
+    assert rotated["webhookSecret"] != rule["webhookSecret"]
+    assert rotated["version"] == rule["version"] + 1
+    stored_rule = test_db.get(ProjectAutomationRule, rule["id"])
+    assert stored_rule is not None
+    stored_metadata = dict(stored_rule.metadata_json)
+    stored_credential = stored_metadata["webhook_secret_encrypted"]
+    assert stored_credential["algorithm"] == "aes-256-gcm"
+    assert "nonce" in stored_credential
+
+    captured: dict[str, object] = {}
+
+    async def fake_process(
+        db: Session, event: object, *, automation_id: str | None = None
+    ) -> int:
+        captured["event"] = event
+        captured["automation_id"] = automation_id
+        return 1
+
+    monkeypatch.setattr(
+        "app.api.endpoints.project_automations.project_automation_processor.process",
+        fake_process,
+    )
+    payload = {"action": "opened", "issue": {"number": 42, "title": "Bug"}}
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    signature = (
+        "sha256="
+        + hmac.new(rotated["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+    )
+    rejected = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": "sha256=bad",
+        },
+    )
+    response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
+    )
+
+    assert rejected.status_code == 401
+    assert response.status_code == 202, response.text
+    assert response.json() == {"status": "accepted", "dispatched": 1}
+    assert captured["automation_id"] == rule["id"]
+    event = captured["event"]
+    assert getattr(event, "event_type") == "task.created"
+    assert getattr(event, "subject_id") == f"{project['project_key']}-42"
+    assert getattr(event, "actor_user_id") == test_user.id
+
+    old_signature = (
+        "sha256="
+        + hmac.new(rule["webhookSecret"].encode(), body, hashlib.sha256).hexdigest()
+    )
+    old_secret_response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": old_signature,
+        },
+    )
+    assert old_secret_response.status_code == 401
+
+    tampered_credential = dict(stored_credential)
+    ciphertext = str(tampered_credential["ciphertext"])
+    replacement = "A" if ciphertext[-2] != "A" else "B"
+    tampered_credential["ciphertext"] = ciphertext[:-2] + replacement + ciphertext[-1]
+    stored_metadata["webhook_secret_encrypted"] = tampered_credential
+    stored_rule.metadata_json = stored_metadata
+    test_db.commit()
+    tampered_response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        content=body,
+        headers={"Content-Type": "application/json", "X-Hub-Signature-256": signature},
+    )
+    assert tampered_response.status_code == 401
+
+    manual_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
+        headers=_auth(test_token),
+    )
+    assert manual_response.status_code == 409
+
+
+def test_project_automation_webhook_verifies_gitlab_token(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={
+            "project_key": "labhook",
+            "name": "GitLab webhook project",
+            "task_provider": "gitlab",
+            "provider_config": {
+                "repository": "acme/hook",
+                "token": "provider-token",
+            },
+        },
+    ).json()
+    agent = ProjectChatAgent(
+        cloud_project_id=project["id"],
+        name="Dispatcher",
+        title="Dispatcher",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={"runtime": "codex"},
+    )
+    test_db.add(agent)
+    test_db.commit()
+    rule = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "External issue",
+            "prompt": "Dispatch the issue.",
+            "triggerType": "event",
+            "eventType": "task.created",
+            "agentId": agent.id,
+        },
+    ).json()
+
+    captured: dict[str, object] = {}
+
+    async def fake_process(
+        db: Session, event: object, *, automation_id: str | None = None
+    ) -> int:
+        captured["event"] = event
+        return 1
+
+    monkeypatch.setattr(
+        "app.api.endpoints.project_automations.project_automation_processor.process",
+        fake_process,
+    )
+    response = test_client.post(
+        f"/api/v1/cloud-projects/automation-events/{rule['webhookEventId']}",
+        headers={"X-Gitlab-Token": rule["webhookSecret"]},
+        json={
+            "object_kind": "issue",
+            "event_type": "issue",
+            "object_attributes": {
+                "action": "open",
+                "iid": 7,
+                "title": "Bug",
+                "state": "opened",
+                "labels": [
+                    {"title": "backend"},
+                    {"title": "wegent:status:in_progress"},
+                    {"title": "wegent:priority:high"},
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"status": "accepted", "dispatched": 1}
+    event = captured["event"]
+    assert getattr(event, "payload")["status"] == "in_progress"
+    assert getattr(event, "payload")["priority"] == "high"
+    assert getattr(event, "payload")["tags"] == ["backend"]
+
+
 def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     test_client: TestClient,
     test_db: Session,
@@ -1161,7 +1519,7 @@ def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     )
     assert started.status_code == 200, started.text
     run = started.json()
-    assert run["status"] == "running"
+    assert run["status"] == "queued"
     assert run["taskId"]
     assert run["timezone"] == "Asia/Shanghai"
     assert run["scheduledFor"].endswith("Z")
@@ -1174,6 +1532,148 @@ def test_cloud_project_automation_creates_generic_task_for_cloud_robot(
     assert task.json()["automation"]["run_id"] == run["id"]
     assert task.json()["description"] == "Summarize yesterday's completed work."
     assert task.json()["tags"] == ["automation"]
+
+
+def test_cloud_project_automation_supports_managed_executor_sources(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    test_db.add(
+        Kind(
+            kind="Device",
+            name="desktop-a",
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={
+                "spec": {"deviceType": "local"},
+                "metadata": {"name": "desktop-a"},
+            },
+        )
+    )
+    test_db.commit()
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "managed", "name": "Managed automation"},
+    ).json()
+
+    custom = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Custom AI",
+            "prompt": "Read the project and handle the event.",
+            "executorType": "custom",
+            "model": "model-a",
+            "executionEnvironment": "local",
+            "executionDeviceId": "desktop-a",
+            "cronExpression": "0 3 * * *",
+        },
+    )
+    assert custom.status_code == 201, custom.text
+    assert custom.json()["executorType"] == "custom"
+    assert custom.json()["model"] == "model-a"
+    assert custom.json()["executionDeviceId"] == "desktop-a"
+    assert custom.json()["agentId"] is None
+
+    team = _create_runnable_wegent_team(
+        test_db,
+        user_id=test_user.id,
+        prefix="managed-automation",
+    )
+    wegent = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Reusable robot",
+            "prompt": "Read the project and handle the event.",
+            "executorType": "wegent_robot",
+            "wegentTeamId": team.id,
+            "cronExpression": "0 4 * * *",
+        },
+    )
+    assert wegent.status_code == 201, wegent.text
+    assert wegent.json()["executorType"] == "wegent_robot"
+    assert wegent.json()["wegentTeamId"] == team.id
+    assert wegent.json()["agentId"] is None
+
+    team_model = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == "Model",
+            Kind.name == "managed-automation-model",
+        )
+        .one()
+    )
+    team_model.is_active = False
+    test_db.commit()
+    missing_model = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Broken reusable robot",
+            "prompt": "This request must be rejected before dispatch.",
+            "executorType": "wegent_robot",
+            "wegentTeamId": team.id,
+            "cronExpression": "0 4 * * *",
+        },
+    )
+    missing_model_update = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}/automations/{custom.json()['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": custom.json()["version"],
+            "executorType": "wegent_robot",
+            "wegentTeamId": team.id,
+        },
+    )
+    assert missing_model.status_code == 422, missing_model.text
+    assert "model is unavailable" in missing_model.json()["detail"]
+    assert missing_model_update.status_code == 422, missing_model_update.text
+    team_model.is_active = True
+    test_db.commit()
+
+    inactive_team = Kind(
+        kind="Team",
+        name="inactive-agent",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=False,
+        json={"spec": {"name": "inactive-agent"}},
+    )
+    test_db.add(inactive_team)
+    test_db.commit()
+    test_db.refresh(inactive_team)
+    inaccessible = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Inactive robot",
+            "prompt": "This request must be rejected.",
+            "executorType": "wegent_robot",
+            "wegentTeamId": inactive_team.id,
+            "cronExpression": "0 5 * * *",
+        },
+    )
+    assert inaccessible.status_code == 422, inaccessible.text
+
+    removed_contract = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Legacy executor fields",
+            "prompt": "This request must be rejected.",
+            "executorType": "wegent_robot",
+            "wegentTeamName": team.name,
+            "wegentTeamNamespace": team.namespace,
+            "cronExpression": "0 5 * * *",
+        },
+    )
+    assert removed_contract.status_code == 422, removed_contract.text
 
 
 def test_cloud_project_manual_automation_starts_when_local_device_claims(
@@ -1230,8 +1730,8 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
     )
     assert started.status_code == 200, started.text
     run = started.json()
-    assert run["status"] == "waiting_device"
-    assert run["taskId"] is None
+    assert run["status"] == "queued"
+    assert run["taskId"]
     assert run["expiresAt"] is None
 
     claimed = test_client.post(
@@ -1247,6 +1747,11 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
     execution = claimed.json()
     assert execution["executionDeviceId"] == "automation-local-device"
     assert execution["status"] == "running"
+    assert "executionPayload" not in execution
+    assert execution["runtimePayload"]["message"]
+    assert "executionRequest" not in execution["runtimePayload"]
+    assert "executorProfile" not in execution
+    assert "modelId" not in execution["runtimePayload"]
 
     started_runtime = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/executions/{execution['id']}/runtime-start",

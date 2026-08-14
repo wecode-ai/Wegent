@@ -622,9 +622,12 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps default team and skills on the local services', async () => {
+  it('lists persisted Wegent teams while keeping the local workbench default', async () => {
     const services = createServices()
 
+    await expect(services.teamApi.listTeams()).resolves.toEqual([
+      expect.objectContaining({ id: 1, name: 'cloud-wework' }),
+    ])
     await expect(services.teamApi.getDefaultWorkbenchTeam()).resolves.toMatchObject({
       id: 0,
       name: 'local-wework',
@@ -633,6 +636,8 @@ describe('createHybridWorkbenchServices', () => {
       skills: [],
       preload_skills: [],
     })
+    expect(mocks.cloudListTeams).toHaveBeenCalledTimes(1)
+    expect(mocks.localListTeams).not.toHaveBeenCalled()
     expect(mocks.cloudGetDefaultWorkbenchTeam).not.toHaveBeenCalled()
   })
 

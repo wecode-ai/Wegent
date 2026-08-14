@@ -86,6 +86,16 @@ function renderSection(mock: ReturnType<typeof services>) {
 }
 
 describe('ProjectChatAgentsSection', () => {
+  it('opens the robot editor across the webview with a split layout', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    const editor = screen.getByTestId('cloud-project-chat-agent-editor')
+    expect(editor.closest('section')?.parentElement?.parentElement).toBe(document.body)
+    expect(editor).toHaveClass('grid', 'md:grid-cols-[minmax(0,1.65fr)_minmax(360px,1fr)]')
+  })
+
   it('requires a model before a new robot can be saved', async () => {
     const mock = services()
     renderSection(mock)
