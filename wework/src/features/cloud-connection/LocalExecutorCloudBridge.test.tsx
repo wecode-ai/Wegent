@@ -1,6 +1,10 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
+import {
+  resetLocalExecutorCloudConnectionStatus,
+  useLocalExecutorCloudConnectionStatus,
+} from './localExecutorCloudConnectionStatus'
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn().mockResolvedValue({ running: true, ready: true }),
@@ -11,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   listApps: vi.fn(),
   request: vi.fn().mockResolvedValue({}),
   notifySkillsChanged: vi.fn(),
+  backendConnected: true,
 }))
 
 vi.mock('./cloudConnectionAvailability', () => ({
@@ -42,6 +47,16 @@ vi.mock('@/features/plugins/pluginTrial', () => ({
 describe('LocalExecutorCloudBridge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetLocalExecutorCloudConnectionStatus()
+    mocks.backendConnected = true
+    mocks.connect.mockResolvedValue({ running: true, ready: true })
+    mocks.request.mockImplementation((method: string) =>
+      Promise.resolve(
+        method === 'executor.backend.status'
+          ? { configured: true, connected: mocks.backendConnected }
+          : {}
+      )
+    )
     mocks.issueToken.mockResolvedValue({
       access_token: 'scoped-connector-token',
       token_type: 'bearer',
@@ -91,6 +106,115 @@ describe('LocalExecutorCloudBridge', () => {
     })
     return { promise, resolve, reject }
   }
+
+  function ConnectionStatusProbe() {
+    const status = useLocalExecutorCloudConnectionStatus()
+    return (
+      <span data-testid="local-executor-cloud-connection-status">
+        {status.connected ? `connected:${status.apiBaseUrl}` : 'disconnected'}
+      </span>
+    )
+  }
+
+  test('publishes whether the executor WebSocket connection succeeded', async () => {
+    const view = render(
+      <>
+        <LocalExecutorCloudBridge
+          apiBaseUrl="https://backend.example.com/api"
+          backendUrl="https://backend.example.com"
+          socketBaseUrl="wss://socket.example.com"
+          isConnected
+          token="token-a"
+        />
+        <ConnectionStatusProbe />
+      </>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'connected:https://backend.example.com/api'
+      )
+    )
+
+    mocks.connect.mockRejectedValueOnce(new Error('socket unavailable'))
+    view.rerender(
+      <>
+        <LocalExecutorCloudBridge
+          apiBaseUrl="https://offline.example.com/api"
+          backendUrl="https://offline.example.com"
+          socketBaseUrl="wss://offline.example.com"
+          isConnected
+          token="token-b"
+        />
+        <ConnectionStatusProbe />
+      </>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'disconnected'
+      )
+    )
+  })
+
+  test('publishes a later WebSocket disconnect', async () => {
+    render(
+      <>
+        <LocalExecutorCloudBridge
+          apiBaseUrl="https://backend.example.com/api"
+          backendUrl="https://backend.example.com"
+          socketBaseUrl="wss://socket.example.com"
+          isConnected
+          token="token-a"
+        />
+        <ConnectionStatusProbe />
+      </>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'connected:https://backend.example.com/api'
+      )
+    )
+
+    mocks.backendConnected = false
+
+    await waitFor(
+      () =>
+        expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+          'disconnected'
+        ),
+      { timeout: 2_000 }
+    )
+  })
+
+  test('clears the published connection when the bridge unmounts', async () => {
+    const view = render(
+      <>
+        <LocalExecutorCloudBridge
+          apiBaseUrl="https://backend.example.com/api"
+          backendUrl="https://backend.example.com"
+          socketBaseUrl="wss://socket.example.com"
+          isConnected
+          token="token-a"
+        />
+        <ConnectionStatusProbe />
+      </>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'connected:https://backend.example.com/api'
+      )
+    )
+
+    view.unmount()
+    render(<ConnectionStatusProbe />)
+
+    expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+      'disconnected'
+    )
+  })
 
   test('updates backend connection whenever the cloud target changes', async () => {
     const view = render(
