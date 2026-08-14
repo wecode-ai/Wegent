@@ -61,7 +61,6 @@ interface ProjectCreateDialogProps {
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   showWorkspaceKindSelect?: boolean
   preferredDeviceId?: string | null
-  onSelectDevicePreference?: (deviceId: string) => void
   onOpenCloudDeviceSettings?: () => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
@@ -187,7 +186,6 @@ function ProjectCreateDialogContent({
   onUpdateProjectName,
   showWorkspaceKindSelect = false,
   preferredDeviceId,
-  onSelectDevicePreference,
   onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
@@ -267,7 +265,6 @@ function ProjectCreateDialogContent({
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
-    onSelectDevicePreference?.(deviceId)
   }
 
   const setFolderDraft = (result: DeviceFolderPickerResult) => {

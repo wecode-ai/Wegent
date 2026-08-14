@@ -36,6 +36,7 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { refreshLocalExecutorCloudConnectionStatus } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import {
   notifyLocalPluginSkillsChanged,
   queuePluginPromptTrial,
@@ -2330,7 +2331,31 @@ export function PluginsWorkspace({
     [cloudApiBaseUrl, cloudToken]
   )
 
-  const installMarketplacePlugin = (item: PluginMarketplaceItem, promptAfterInstall?: string) => {
+  const showDeviceDisconnectedNotice = (itemId: string | number) => {
+    setPluginOperationNotice({
+      id: `install-device-disconnected-${itemId}`,
+      kind: 'error',
+      message: t(
+        'workbench.plugins_install_device_disconnected',
+        '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
+      ),
+      actionLabel: t('workbench.plugins_open_connection_settings', '连接设置'),
+      onAction: () => {
+        setPluginOperationNotice(null)
+        navigateTo('/settings/connections')
+      },
+    })
+  }
+
+  const hasLiveRuntimeCloudConnection = async () => {
+    if (!cloudApiBaseUrl || !currentDeviceId) return false
+    return refreshLocalExecutorCloudConnectionStatus(cloudApiBaseUrl)
+  }
+
+  const installMarketplacePlugin = async (
+    item: PluginMarketplaceItem,
+    promptAfterInstall?: string
+  ) => {
     const installLock = resolveMarketplacePluginLock(item)
     if (installLock) {
       setPluginOperationNotice({
@@ -2343,14 +2368,18 @@ export function PluginsWorkspace({
 
     const installFromLocal = isLocalMarketplaceItem(item)
 
-    // 检查是否已登录（未登录时没有 deviceId 或 token）
-    if (!installFromLocal && (!cloudToken || !currentDeviceId)) {
+    if (!installFromLocal && !cloudToken) {
       const shouldLogin = window.confirm(
         t('workbench.plugins_login_required', '安装插件需要登录 Wegent 账户。是否前往登录？')
       )
       if (shouldLogin) {
         navigateTo('/settings/connections')
       }
+      return
+    }
+
+    if (!installFromLocal && !(await hasLiveRuntimeCloudConnection())) {
+      showDeviceDisconnectedNotice(item.id)
       return
     }
 
@@ -2536,15 +2565,22 @@ export function PluginsWorkspace({
         }
         return preparedItem
       })
-      .then(preparedItem =>
-        installFromLocal
-          ? localPluginApi
-              .installAvailablePlugin(preparedItem.id, localMarketplaceId!)
-              .then(plugin => ({ plugin, preparedItem }))
-          : pluginApi
-              .installMarketplacePlugin(preparedItem.id, currentDeviceId)
-              .then(response => ({ plugin: response.plugin, preparedItem }))
-      )
+      .then(async preparedItem => {
+        if (installFromLocal) {
+          const plugin = await localPluginApi.installAvailablePlugin(
+            preparedItem.id,
+            localMarketplaceId!
+          )
+          return { plugin, preparedItem }
+        }
+        if (!(await hasLiveRuntimeCloudConnection())) {
+          throw Object.assign(new Error('Current device is disconnected'), {
+            code: 'PLUGIN_DEVICE_DISCONNECTED',
+          })
+        }
+        const response = await pluginApi.installMarketplacePlugin(preparedItem.id, currentDeviceId)
+        return { plugin: response.plugin, preparedItem }
+      })
       .then(async ({ plugin, preparedItem }) => {
         await ensureLocalConnectorsAfterInstall(preparedItem, plugin)
         return plugin
@@ -2661,6 +2697,11 @@ export function PluginsWorkspace({
         }
       })
       .catch((error: unknown) => {
+        if (Reflect.get(error as object, 'code') === 'PLUGIN_DEVICE_DISCONNECTED') {
+          setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+          showDeviceDisconnectedNotice(item.id)
+          return
+        }
         const rawErrorMessage = getErrorMessage(
           error,
           t('workbench.plugins_install_failed', '安装失败，请稍后重试')

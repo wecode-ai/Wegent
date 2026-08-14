@@ -6192,6 +6192,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('creates a runtime task from an explicitly opened standalone workspace', async () => {
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
       createRuntimeTask: vi.fn().mockResolvedValue({
@@ -6210,6 +6211,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
     })
 
     renderWorkbench(<ProjectSendProbe />, services)
@@ -6239,6 +6243,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
       'deviceWorkspaceId'
     )
+    expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
   test('registers multiple selected local folders as one Codex project', async () => {
