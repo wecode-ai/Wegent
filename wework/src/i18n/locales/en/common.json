@@ -993,6 +993,7 @@
     "close_split_task": "Remove task from split view",
     "focus_split_task": "View this task only",
     "restore_split_view": "Return to split view",
+    "split_group_badge": "Split {{number}}",
     "split_empty_title": "Select a task",
     "split_empty_description": "Open a task from the sidebar to show it here",
     "task_fallback_title": "Task {{taskId}}",
