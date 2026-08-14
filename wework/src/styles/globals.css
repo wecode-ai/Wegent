@@ -659,6 +659,25 @@ button:disabled {
     cursor: pointer;
   }
 
+  .composer-prosemirror-editor {
+    contain: paint;
+  }
+
+  .composer-prosemirror-editor:has(.composer-empty-caret) {
+    caret-color: transparent;
+  }
+
+  .composer-empty-caret {
+    display: inline-block;
+    width: 1px;
+    height: 1em;
+    margin-right: -1px;
+    background: currentcolor;
+    vertical-align: text-bottom;
+    pointer-events: none;
+    animation: local-skill-caret-blink 1s step-end infinite;
+  }
+
   .composer-mention-link {
     color: rgb(46 95 158);
     background: rgb(237 243 255);

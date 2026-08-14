@@ -318,4 +318,16 @@ describe('browser annotation injection', () => {
 
     expect(target.style.color).toBe('green')
   })
+
+  test('uses dark theme colors when isDark is enabled', () => {
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.destroy()
+    window.eval(browserAnnotationInjectionScript({ browserTabId: 'test-browser', isDark: true }))
+
+    const input = openEditor(document.querySelector('#first-target')!)
+    const editor = document.querySelector<HTMLElement>('[data-wework-annotation="editor"]')!
+
+    expect(editor.style.background).toBe('rgb(28, 31, 36)')
+    expect(editor.style.color).toBe('rgb(241, 245, 249)')
+    expect(input!.style.color).toBe('rgb(241, 245, 249)')
+  })
 })
