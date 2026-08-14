@@ -145,6 +145,7 @@ export interface CreateProjectRuntimeTaskOptions {
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  silentBusyRetry?: boolean
 }
 
 export interface RuntimePaneGuidanceResult {

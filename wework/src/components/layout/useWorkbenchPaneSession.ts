@@ -126,6 +126,7 @@ interface SendRuntimeMessageOptions {
   appendLocalMessage?: boolean
   initialGoal?: RuntimeGoalCreateInput | null
   onError?: (error: string) => void
+  silentBusyRetry?: boolean
 }
 
 interface LoadedTranscriptRange {
@@ -146,8 +147,7 @@ interface PendingRuntimeGoalState {
 }
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
-const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
-const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
+const QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 3_000, 3_250] as const
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const configuredRuntimeTranscriptPageSize = Number(
   import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
@@ -1005,9 +1005,29 @@ export function useWorkbenchPaneSession({
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
         },
-        { onError: options.onError ?? setError }
+        {
+          onError: options.onError ?? setError,
+          silentBusyRetry: options.silentBusyRetry,
+        }
       )
       if (sent) {
+        if (!appendedLocalMessage) {
+          const visibleMessage =
+            message.displayContent === undefined
+              ? retryMessage
+              : createLocalUserMessage(message.displayContent, message.attachments, {
+                  id: message.id,
+                  createdAt: message.createdAt,
+                  runtimeGoalRequest: message.runtimeGoalRequest,
+                  codeComments: message.codeComments,
+                })
+          setMessages(
+            applyRuntimeConversationAction(currentRuntimeTask, {
+              type: 'user_added',
+              message: visibleMessage,
+            })
+          )
+        }
         markRuntimeTerminalAdditionalContextDelivered(terminalContext)
       } else if (appendedLocalMessage) {
         const rolledBackMessages = rollbackRejectedRuntimeConversationTurn(
@@ -1380,10 +1400,12 @@ export function useWorkbenchPaneSession({
       )
 
       try {
-        for (let attempt = 0; attempt <= QUEUED_MESSAGE_MAX_BUSY_RETRIES; attempt += 1) {
+        for (let attempt = 0; attempt <= QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS.length; attempt += 1) {
           let sendError: string | null = null
           const sent = await sendRuntimeMessage(queuedMessage, {
+            appendLocalMessage: attempt === 0,
             initialGoal: queuedMessage.initialGoal,
+            silentBusyRetry: attempt > 0,
             onError: error => {
               sendError = error
             },
@@ -1397,7 +1419,10 @@ export function useWorkbenchPaneSession({
             }
             return
           }
-          if (!isRuntimeTaskBusyError(sendError) || attempt === QUEUED_MESSAGE_MAX_BUSY_RETRIES) {
+          if (
+            !isRuntimeTaskBusyError(sendError) ||
+            attempt === QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS.length
+          ) {
             setQueuedMessages(messages =>
               messages.map(message =>
                 message.id === queuedMessage.id
@@ -1407,7 +1432,9 @@ export function useWorkbenchPaneSession({
             )
             return
           }
-          await new Promise(resolve => window.setTimeout(resolve, QUEUED_MESSAGE_RETRY_DELAY_MS))
+          await new Promise(resolve =>
+            window.setTimeout(resolve, QUEUED_MESSAGE_BUSY_RETRY_DELAYS_MS[attempt])
+          )
         }
       } catch (error) {
         console.error('[Wework] Queued runtime message send failed', {
