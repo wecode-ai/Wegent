@@ -192,10 +192,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       setDevices(prev =>
         prev.map(d => (d.device_id === data.device_id ? { ...d, status: 'offline' } : d))
       )
-      // Clear selection if selected device went offline
-      if (selectedDeviceId === data.device_id) {
-        setSelectedDeviceId(null)
-      }
+      void refreshDevices()
     }
 
     // Device status changed (online/busy)
@@ -263,7 +260,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       socket.off(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
       socket.off(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
     }
-  }, [socket, isConnected, selectedDeviceId, refreshDevices])
+  }, [socket, isConnected, refreshDevices])
 
   const value: DeviceContextType = {
     devices,
