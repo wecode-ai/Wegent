@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createAttachmentDownloadUrl,
   downloadAttachment,
   fetchAttachmentFile,
   formatsToAcceptString,
   getErrorMessageFromCode,
   getWeiboChunkUploadError,
   isVideoFileName,
+  uploadFile,
   uploadVideoToWeibo,
 } from '@/apis/attachments'
 
@@ -205,6 +207,29 @@ describe('downloadAttachment', () => {
   })
 })
 
+describe('createAttachmentDownloadUrl', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    localStorage.clear()
+    jest.restoreAllMocks()
+  })
+
+  it('returns a browser-native URL with a short-lived token', async () => {
+    localStorage.setItem('auth_token', 'test-token')
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ download_token: 'playback-token' }),
+    }) as typeof fetch
+
+    await expect(createAttachmentDownloadUrl(42)).resolves.toBe(
+      '/api/attachments/42/download?download_token=playback-token'
+    )
+  })
+})
+
 describe('getErrorMessageFromCode', () => {
   // Mock translation function
   const mockT = jest.fn((key: string, params?: Record<string, unknown>) => {
@@ -288,6 +313,61 @@ describe('getErrorMessageFromCode', () => {
     expect(result).toBeDefined()
     expect(result).toContain('File is too large')
     expect(result).toContain('100')
+  })
+})
+
+describe('uploadFile', () => {
+  beforeEach(() => {
+    MockXMLHttpRequest.instances = []
+    MockXMLHttpRequest.activeCount = 0
+    MockXMLHttpRequest.maxActiveCount = 0
+    global.XMLHttpRequest = MockXMLHttpRequest as unknown as typeof XMLHttpRequest
+  })
+
+  afterEach(() => {
+    localStorage.clear()
+    jest.restoreAllMocks()
+  })
+
+  it('uploads video through the unified attachment endpoint', async () => {
+    const file = new File(['video'], 'reference.mp4', { type: 'video/mp4' })
+    const resultPromise = uploadFile(file)
+
+    expect(MockXMLHttpRequest.instances).toHaveLength(1)
+    const request = MockXMLHttpRequest.instances[0]
+    expect(request.requestUrl).toBe('/api/attachments/upload?storage_purpose=default')
+
+    request.complete({
+      id: 42,
+      filename: 'reference.mp4',
+      file_size: file.size,
+      mime_type: 'video/mp4',
+      status: 'ready',
+    })
+
+    await expect(resultPromise).resolves.toMatchObject({
+      id: 42,
+      filename: 'reference.mp4',
+      mime_type: 'video/mp4',
+    })
+  })
+
+  it('marks video model materials for reference storage', async () => {
+    const file = new File(['video'], 'reference.mp4', { type: 'video/mp4' })
+    const resultPromise = uploadFile(file, undefined, undefined, 'video_reference')
+
+    const request = MockXMLHttpRequest.instances[0]
+    expect(request.requestUrl).toBe('/api/attachments/upload?storage_purpose=video_reference')
+
+    request.complete({
+      id: 43,
+      filename: 'reference.mp4',
+      file_size: file.size,
+      mime_type: 'video/mp4',
+      status: 'ready',
+    })
+
+    await expect(resultPromise).resolves.toMatchObject({ id: 43 })
   })
 })
 

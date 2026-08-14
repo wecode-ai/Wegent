@@ -100,13 +100,6 @@
     "confirm_hint": "用这条消息继续",
     "confirming": "处理中..."
   },
-  "weiboVideoBinding": {
-    "title": "绑定微博账号以获得完整视频能力",
-    "description": "建议绑定微博账号以获得完整视频能力。也可以暂不绑定并继续上传，后续可在个人设置里调整微博账号绑定。",
-    "confirmBind": "确认绑定并上传",
-    "continueWithoutBinding": "暂不绑定，继续上传",
-    "bindSuccess": "微博账号已绑定，继续上传视频"
-  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",

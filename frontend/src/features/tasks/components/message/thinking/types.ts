@@ -189,6 +189,7 @@ export interface VideoBlock extends BaseBlock {
   type: 'video'
   video_url: string // Video URL
   video_thumbnail?: string | null // Base64 encoded thumbnail
+  cover_url?: string | null // Remote poster image URL
   video_duration?: number | null // Video duration in seconds
   video_attachment_id?: number | null // Attachment ID for download
   video_progress?: number // Video generation progress (0-100)

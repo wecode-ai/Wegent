@@ -50,7 +50,7 @@ const makeAttachmentContext = (
   }) as SubtaskContextBrief
 
 describe('ContextBadgeList', () => {
-  it('renders image attachments as compact thumbnails', () => {
+  it('renders sent media compactly and keeps documents full width', () => {
     render(
       <ContextBadgeList
         contexts={[

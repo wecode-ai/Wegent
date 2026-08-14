@@ -520,6 +520,20 @@ class TeamMember(BaseModel):
     )
 
 
+class LocalizedInputPlaceholder(BaseModel):
+    """Localized input placeholder text."""
+
+    en: Optional[str] = None
+    zh: Optional[str] = None
+
+
+class TeamInputPlaceholder(LocalizedInputPlaceholder):
+    """Team input placeholder text with device-specific overrides."""
+
+    mobile: Optional[LocalizedInputPlaceholder] = None
+    desktop: Optional[LocalizedInputPlaceholder] = None
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
@@ -539,6 +553,7 @@ class TeamSpec(QuickPhraseMixin):
         default=None,
         description="Capability Center publication metadata.",
     )
+    inputPlaceholder: Optional[TeamInputPlaceholder] = None
 
     @field_serializer("displayConfig")
     def serialize_display_config(

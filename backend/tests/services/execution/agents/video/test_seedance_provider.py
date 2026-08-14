@@ -4,8 +4,15 @@
 
 import pytest
 
+import wecode.service.video_generation_extension  # noqa: F401
 from app.services.execution.agents.video.providers import get_video_provider
-from app.services.execution.agents.video.providers.seedance import SeedanceProvider
+from app.services.execution.agents.video.providers.seedance import (
+    SeedanceProvider,
+    _content_item_for_log,
+    _media_url_diagnostics,
+    _media_url_for_log,
+    _reject_credential_media_urls,
+)
 
 
 class _Response:
@@ -50,6 +57,99 @@ def test_factory_does_not_override_default_model_with_none() -> None:
     )
 
     assert "model" not in provider.video_config
+
+
+def test_media_url_for_log_removes_signed_query() -> None:
+    item = {
+        "type": "image_url",
+        "image_url": {
+            "url": (
+                "https://cdn.example.com/path/image.png"
+                "?OSSAccessKeyId=secret&Signature=token"
+            )
+        },
+    }
+
+    assert (
+        _media_url_for_log(item) == "https://cdn.example.com/path/image.png?<redacted>"
+    )
+
+
+def test_media_url_for_log_keeps_public_cdn_url() -> None:
+    item = {
+        "type": "image_url",
+        "image_url": {
+            "url": "https://cdn.example.com/path/image.png",
+        },
+    }
+
+    assert _media_url_for_log(item) == "https://cdn.example.com/path/image.png"
+
+
+def test_media_url_diagnostics_exposes_credential_parameter_names() -> None:
+    item = {
+        "type": "image_url",
+        "image_url": {
+            "url": (
+                "https://cdn.example.com/path/image.png"
+                "?OSSAccessKeyId=secret&Signature=token&style=preview"
+            ),
+        },
+    }
+
+    assert _media_url_diagnostics(item) == {
+        "has_query": True,
+        "query_keys": ["OSSAccessKeyId", "Signature", "style"],
+        "credential_query_detected": True,
+        "credential_query_keys": ["OSSAccessKeyId", "Signature"],
+    }
+
+
+def test_rejects_credential_media_urls() -> None:
+    with pytest.raises(ValueError, match="public CDN endpoint"):
+        _reject_credential_media_urls(
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": (
+                            "https://oss.example.com/image.png"
+                            "?OSSAccessKeyId=secret&Signature=token"
+                        ),
+                    },
+                    "role": "reference_image",
+                }
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_seedance_does_not_send_credential_media_url(monkeypatch) -> None:
+    client = _Client()
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
+        lambda **kwargs: client,
+    )
+    provider = SeedanceProvider(
+        base_url="https://example.com",
+        api_key="test-key",
+    )
+
+    with pytest.raises(ValueError, match="public CDN endpoint"):
+        await provider.create_job(
+            prompt="Generate a video",
+            reference_images=[
+                {
+                    "url": (
+                        "https://oss.example.com/image.png"
+                        "?OSSAccessKeyId=secret&Signature=token"
+                    )
+                }
+            ],
+            image_mode="reference",
+        )
+
+    assert client.post_kwargs is None
 
 
 @pytest.mark.asyncio
@@ -125,3 +225,114 @@ async def test_seedance_assigns_extra_images_as_references(monkeypatch) -> None:
         "last_frame",
         "reference_image",
     ]
+
+
+@pytest.mark.asyncio
+async def test_seedance_uses_external_media_id_blocks(monkeypatch) -> None:
+    client = _Client()
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
+        lambda **kwargs: client,
+    )
+    provider = SeedanceProvider(
+        base_url="https://example.com",
+        api_key="test-key",
+    )
+
+    await provider.create_job(
+        prompt="Generate a video",
+        reference_videos=[
+            {"external_reference": {"id": "video-123"}},
+        ],
+        reference_audios=[
+            {"external_reference": {"id": "audio-456"}},
+        ],
+    )
+
+    assert client.post_kwargs["json"]["content"][1:] == [
+        {
+            "type": "video_media_id",
+            "video_media_id": "video-123",
+            "role": "reference_video",
+        },
+        {
+            "type": "audio_media_id",
+            "audio_media_id": "audio-456",
+            "role": "reference_audio",
+        },
+    ]
+
+
+def test_seedance_request_log_includes_external_media_ids() -> None:
+    assert _content_item_for_log(
+        {
+            "type": "text",
+            "text": "大乱炖",
+        }
+    ) == {
+        "type": "text",
+        "text": "大乱炖",
+    }
+    assert _content_item_for_log(
+        {
+            "type": "video_media_id",
+            "video_media_id": "video-123",
+            "role": "reference_video",
+        }
+    ) == {
+        "type": "video_media_id",
+        "video_media_id": "video-123",
+        "role": "reference_video",
+    }
+    assert _content_item_for_log(
+        {
+            "type": "audio_media_id",
+            "audio_media_id": "audio-456",
+            "role": "reference_audio",
+        }
+    ) == {
+        "type": "audio_media_id",
+        "audio_media_id": "audio-456",
+        "role": "reference_audio",
+    }
+
+
+def test_seedance_request_log_redacts_only_url_credentials() -> None:
+    assert _content_item_for_log(
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://cdn.example.com/image.png?Signature=secret",
+            },
+            "role": "reference_image",
+        }
+    ) == {
+        "type": "image_url",
+        "image_url": {
+            "url": "https://cdn.example.com/image.png?<redacted>",
+        },
+        "role": "reference_image",
+        "has_query": True,
+        "query_keys": ["Signature"],
+        "credential_query_detected": True,
+        "credential_query_keys": ["Signature"],
+    }
+    assert _content_item_for_log(
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "https://cdn.example.com/image.png",
+            },
+            "role": "reference_image",
+        }
+    ) == {
+        "type": "image_url",
+        "image_url": {
+            "url": "https://cdn.example.com/image.png",
+        },
+        "role": "reference_image",
+        "has_query": False,
+        "query_keys": [],
+        "credential_query_detected": False,
+        "credential_query_keys": [],
+    }

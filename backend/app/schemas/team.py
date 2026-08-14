@@ -8,7 +8,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel
 
 from app.schemas.bot import BotInDB
-from app.schemas.kind import TeamDisplayConfig
+from app.schemas.kind import TeamDisplayConfig, TeamInputPlaceholder
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.schemas.user import UserInDB
 
@@ -56,6 +56,7 @@ class TeamBase(QuickPhraseMixin):
     is_active: bool = True
     icon: Optional[str] = None  # Icon ID from preset icon library
     display_config: Optional[TeamDisplayConfig] = None
+    inputPlaceholder: Optional[TeamInputPlaceholder] = None
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
     )
@@ -82,6 +83,7 @@ class TeamUpdate(QuickPhraseMixin):
     namespace: Optional[str] = None  # Group namespace
     icon: Optional[str] = None  # Icon ID from preset icon library
     display_config: Optional[TeamDisplayConfig] = None
+    inputPlaceholder: Optional[TeamInputPlaceholder] = None
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
     )
@@ -126,6 +128,7 @@ class TeamDetail(BaseModel):
     user: Optional[UserInDB] = None
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
     display_config: Optional[TeamDisplayConfig] = None
+    inputPlaceholder: Optional[TeamInputPlaceholder] = None
 
     class Config:
         from_attributes = True

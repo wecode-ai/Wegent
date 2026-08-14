@@ -26,14 +26,21 @@ Beat Scheduler Storage:
 import logging
 
 from celery import Celery
-from celery.signals import after_setup_logger, after_setup_task_logger
+from celery.signals import (
+    after_setup_logger,
+    after_setup_task_logger,
+    task_postrun,
+    task_prerun,
+)
 
 from app.core.config import settings
 from app.core.logging import RequestIdFilter, _create_file_handler
+from wecode.runtime import initialize_internal_runtime
 from wecode.task_sharding.store_patch import (
     install_task_sharding_store_patch_if_enabled,
 )
 
+initialize_internal_runtime()
 install_task_sharding_store_patch_if_enabled()
 
 # Use configured broker/backend or fallback to REDIS_URL
@@ -164,6 +171,22 @@ def setup_celery_task_logger(logger, *args, **kwargs):
     and write to the rotating log file.
     """
     _apply_backend_format(logger)
+
+
+@task_prerun.connect
+def clear_stale_request_context_before_task(*args, **kwargs):
+    """Prevent a worker thread from leaking request IDs between Celery tasks."""
+    from shared.telemetry.context import set_request_context
+
+    set_request_context("")
+
+
+@task_postrun.connect
+def clear_request_context_after_task(*args, **kwargs):
+    """Clear request context after task completion or retry."""
+    from shared.telemetry.context import set_request_context
+
+    set_request_context("")
 
 
 # Import dead letter queue handlers to register signal handlers
