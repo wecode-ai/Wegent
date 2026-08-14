@@ -205,13 +205,12 @@ impl RuntimeWorkRpcHandler {
                 if let Some(thread_id) = link.thread_id.as_deref() {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
-                    if infer_workspace_kind(&link.workspace_path) == "chat" {
-                        link.list_order = Some(project_index.thread_sort_order(
-                            "chats",
-                            thread_id,
-                            link.list_order.unwrap_or(usize::MAX / 2),
-                        ));
-                    }
+                    let project_key = runtime_task_sidebar_project_key(&link);
+                    link.list_order = Some(project_index.thread_sort_order(
+                        &project_key,
+                        thread_id,
+                        link.list_order.unwrap_or(usize::MAX / 2),
+                    ));
                 }
                 link
             })
@@ -888,4 +887,21 @@ impl RuntimeWorkRpcHandler {
             }
         });
     }
+}
+
+fn runtime_task_sidebar_project_key(link: &RuntimeTaskLink) -> String {
+    if infer_workspace_kind(&link.workspace_path) == "chat" {
+        return "chats".to_owned();
+    }
+    link.runtime_project_key
+        .clone()
+        .filter(|project_key| !project_key.trim().is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "local:{}",
+                link.group_workspace_path
+                    .clone()
+                    .unwrap_or_else(|| workspace_group_path(&link.workspace_path))
+            )
+        })
 }
