@@ -651,6 +651,12 @@ importers:
       lz-string:
         specifier: 1.5.0
         version: 1.5.0
+      mermaid:
+        specifier: 11.15.0
+        version: 11.15.0
+      plantuml-encoder:
+        specifier: 1.4.0
+        version: 1.4.0
       posthog-js:
         specifier: ^1.409.5
         version: 1.413.2(preact-render-to-string@6.6.5(preact@11.0.0-beta.0))
@@ -15942,7 +15948,7 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
       dayjs: 1.11.21
-      dompurify: 3.4.9
+      dompurify: 3.4.13
       es-toolkit: 1.47.0
       katex: 0.16.47
       khroma: 2.1.0

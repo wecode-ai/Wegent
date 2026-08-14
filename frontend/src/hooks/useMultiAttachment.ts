@@ -6,7 +6,7 @@
  * Hook for managing multiple file attachments state and upload.
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   uploadAttachment,
@@ -15,15 +15,13 @@ import {
   isValidFileSize,
   MAX_FILE_SIZE,
   getErrorMessageFromCode,
-} from '@/apis/attachments'
-import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api'
-import { toast } from '@/hooks/use-toast'
-import {
+  getFileExtension,
   isAudioExtension,
   isImageExtension,
   isVideoExtension,
-  getFileExtension,
 } from '@/apis/attachments'
+import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api'
+import { toast } from '@/hooks/use-toast'
 
 interface UseMultiAttachmentReturn {
   /** Current attachment state */
@@ -54,11 +52,13 @@ export function useMultiAttachment(options?: {
   maxAttachments?: number
   maxByType?: AttachmentTypeLimits
   validateFile?: (file: File) => Promise<string | null>
+  storagePurpose?: 'default' | 'video_reference'
 }): UseMultiAttachmentReturn {
   const { t } = useTranslation()
   const maxAttachments = options?.maxAttachments
   const maxByType = options?.maxByType
-  const validateFile = options?.validateFile
+  const customValidateFile = options?.validateFile
+  const storagePurpose = options?.storagePurpose ?? 'default'
   const [state, setState] = useState<MultiAttachmentUploadState>({
     attachments: [],
     uploadingFiles: new Map(),
@@ -67,11 +67,35 @@ export function useMultiAttachment(options?: {
   const [truncatedAttachments, setTruncatedAttachments] = useState<Map<number, TruncationInfo>>(
     new Map()
   )
+  const localPreviewUrlsRef = useRef(new Set<string>())
 
-  const handleFileSelect = useCallback(
-    async (files: File | File[]) => {
-      const fileList = Array.isArray(files) ? files : [files]
+  const createLocalPreviewUrl = useCallback((file: File, mediaType: string | null) => {
+    if (
+      !['video', 'audio'].includes(mediaType ?? '') ||
+      typeof URL.createObjectURL !== 'function'
+    ) {
+      return undefined
+    }
+    const url = URL.createObjectURL(file)
+    localPreviewUrlsRef.current.add(url)
+    return url
+  }, [])
 
+  const revokeLocalPreviewUrl = useCallback((url?: string) => {
+    if (!url || !localPreviewUrlsRef.current.delete(url)) return
+    URL.revokeObjectURL(url)
+  }, [])
+
+  useEffect(() => {
+    const previewUrls = localPreviewUrlsRef.current
+    return () => {
+      previewUrls.forEach(url => URL.revokeObjectURL(url))
+      previewUrls.clear()
+    }
+  }, [])
+
+  const uploadSelectedFiles = useCallback(
+    async (fileList: File[]) => {
       // Clear previous errors before new upload attempt
       setState(prev => ({
         ...prev,
@@ -144,8 +168,8 @@ export function useMultiAttachment(options?: {
           }
         }
 
-        if (validateFile) {
-          const validationError = await validateFile(file)
+        if (customValidateFile) {
+          const validationError = await customValidateFile(file)
           if (validationError) {
             toast({
               title: validationError,
@@ -155,7 +179,6 @@ export function useMultiAttachment(options?: {
           }
         }
 
-        // Validate file type
         if (!isSupportedExtension(file.name)) {
           toast({
             title: t('common:attachment.errors.unsupported_type'),
@@ -167,7 +190,6 @@ export function useMultiAttachment(options?: {
           continue
         }
 
-        // Validate file size
         if (!isValidFileSize(file.size)) {
           toast({
             title: t('common:attachment.errors.file_too_large'),
@@ -193,16 +215,20 @@ export function useMultiAttachment(options?: {
         })
 
         try {
-          const attachment = await uploadAttachment(file, progress => {
-            setState(prev => {
-              const newUploadingFiles = new Map(prev.uploadingFiles)
-              const existing = newUploadingFiles.get(fileId)
-              if (existing) {
-                newUploadingFiles.set(fileId, { ...existing, progress })
-              }
-              return { ...prev, uploadingFiles: newUploadingFiles }
-            })
-          })
+          const attachment = await uploadAttachment(
+            file,
+            progress => {
+              setState(prev => {
+                const newUploadingFiles = new Map(prev.uploadingFiles)
+                const existing = newUploadingFiles.get(fileId)
+                if (existing) {
+                  newUploadingFiles.set(fileId, { ...existing, progress })
+                }
+                return { ...prev, uploadingFiles: newUploadingFiles }
+              })
+            },
+            storagePurpose
+          )
 
           // Check if parsing succeeded
           if (attachment.status === 'failed') {
@@ -237,7 +263,6 @@ export function useMultiAttachment(options?: {
               newMap.set(attachment.id, attachment.truncation_info!)
               return newMap
             })
-            // Show toast notification for truncation
             toast({
               title: t('common:attachment.errors.content_truncated'),
               description: t('common:attachment.truncation.notice', {
@@ -247,6 +272,8 @@ export function useMultiAttachment(options?: {
               variant: 'default',
             })
           }
+
+          const localPreviewUrl = createLocalPreviewUrl(file, mediaType)
 
           // Add to attachments list
           setState(prev => {
@@ -269,6 +296,7 @@ export function useMultiAttachment(options?: {
                   file_extension: file.name.substring(file.name.lastIndexOf('.')),
                   created_at: new Date().toISOString(),
                   truncation_info: attachment.truncation_info,
+                  local_preview_url: localPreviewUrl,
                 },
               ],
               uploadingFiles: newUploadingFiles,
@@ -293,7 +321,15 @@ export function useMultiAttachment(options?: {
         }
       }
     },
-    [state, t, maxAttachments, maxByType, validateFile]
+    [state, t, maxAttachments, maxByType, customValidateFile, createLocalPreviewUrl, storagePurpose]
+  )
+
+  const handleFileSelect = useCallback(
+    async (files: File | File[]) => {
+      const fileList = Array.isArray(files) ? files : [files]
+      await uploadSelectedFiles(fileList)
+    },
+    [uploadSelectedFiles]
   )
 
   const addExistingAttachment = useCallback(
@@ -321,6 +357,7 @@ export function useMultiAttachment(options?: {
   const handleRemove = useCallback(
     async (attachmentId: number) => {
       const attachment = state.attachments.find(a => a.id === attachmentId)
+      revokeLocalPreviewUrl(attachment?.local_preview_url)
 
       // Remove from state immediately for better UX
       setState(prev => ({
@@ -344,7 +381,7 @@ export function useMultiAttachment(options?: {
         }
       }
     },
-    [state.attachments]
+    [state.attachments, revokeLocalPreviewUrl]
   )
 
   const swapAttachments = useCallback((firstAttachmentId: number, secondAttachmentId: number) => {
@@ -367,13 +404,16 @@ export function useMultiAttachment(options?: {
   }, [])
 
   const reset = useCallback(() => {
+    state.attachments.forEach(attachment => {
+      revokeLocalPreviewUrl(attachment.local_preview_url)
+    })
     setState({
       attachments: [],
       uploadingFiles: new Map(),
       errors: new Map(),
     })
     setTruncatedAttachments(new Map())
-  }, [])
+  }, [state.attachments, revokeLocalPreviewUrl])
 
   const isUploading = state.uploadingFiles.size > 0
   const isReadyToSend = !isUploading && state.attachments.every(att => att.status === 'ready')

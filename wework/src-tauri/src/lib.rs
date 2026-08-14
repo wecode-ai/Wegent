@@ -3,6 +3,7 @@ mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
 mod desktop_capture;
+mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
@@ -4300,9 +4301,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalize_local_harness_preferences,
-        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
-        wework_cli_launcher_content, LocalHarnessPreference,
+        normalize_local_harness_preferences, normalized_browser_link_target,
+        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4560,28 +4561,6 @@ mod tests {
             *transport.shutdown_timeouts.lock().unwrap(),
             vec![Duration::ZERO]
         );
-    }
-
-    #[test]
-    fn maps_local_workspace_openers_to_macos_app_names() {
-        assert_eq!(
-            local_workspace_opener_app_name("vscode"),
-            Some("Visual Studio Code")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("vscode-insiders"),
-            Some("Visual Studio Code - Insiders")
-        );
-        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
-        assert_eq!(
-            local_workspace_opener_app_name("android-studio"),
-            Some("Android Studio")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("intellij-idea"),
-            Some("IntelliJ IDEA")
-        );
-        assert_eq!(local_workspace_opener_app_name("unknown"), None);
     }
 
     #[test]
@@ -5125,6 +5104,8 @@ pub fn run() {
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            diagram_image::copy_diagram_png,
+            diagram_image::save_diagram_png,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,

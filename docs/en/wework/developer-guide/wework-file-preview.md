@@ -8,9 +8,17 @@ The Wework file panel renders Markdown documents as formatted content, sends oth
 
 ## Supported Formats
 
-The initial viewer enables the office and lite capabilities: PDF, Word, Excel, PowerPoint, images, HTML, Markdown, code, audio, and video. Unknown formats or rendering failures can be opened with the system default application in the macOS Tauri app.
+The viewer enables the office, lite, and engineering capabilities: PDF, Word, Excel, PowerPoint, images, HTML, Markdown, code, audio, video, Mermaid, and PlantUML diagrams. Unknown formats or rendering failures can be opened with the system default application in the macOS Tauri app.
 
 HTML must remain sandboxed and must not allow preview content to access Wework's same-origin state.
+
+## Diagram Preview and Export
+
+`.mermaid`, `.mmd`, `.plantuml`, and `.puml` files use the same diagram renderer as code blocks in conversations. The preview must follow the active Wework light or dark theme and fit proportionally when the panel changes size without clipping SVG edges.
+
+Diagram previews provide copy and save actions. Copy generates a PNG and writes it to the system clipboard through a native desktop command. Save opens the system save dialog and writes the PNG to the location selected by the user. During Mermaid export, HTML labels are converted to pure SVG text so the macOS WebView does not mark a Canvas containing `foreignObject` as non-exportable.
+
+PlantUML requests SVG from `https://www.plantuml.com/plantuml/svg` by default. Deployments can point to a self-hosted service through the `plantumlServerUrl` runtime setting or the `VITE_WEWORK_PLANTUML_SERVER_URL` build environment variable. The URL should include the PlantUML SVG path.
 
 ## Markdown Preview
 
@@ -32,8 +40,8 @@ The file panel determines workspace changes from the target's `deviceId`, `path`
 
 ## Build Assets
 
-`@file-viewer/vite-plugin` copies selected renderer Workers, WASM, fonts, and other offline assets for development and production. Install only `preset-office` and `preset-lite`; do not use `preset-all` unless CAD, 3D, archive, or other heavy formats are explicitly required.
+`@file-viewer/vite-plugin` copies selected renderer Workers, WASM, fonts, and other offline assets for development and production. Install `preset-office`, `preset-lite`, and `preset-engineering`, but do not use `preset-all` unless every heavy format is explicitly required. Vite must prebundle the Mermaid and PlantUML encoding dependencies so the drawing renderer's dynamic imports resolve consistently in the WebKit development environment.
 
 ## Validation
 
-When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.
+When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, Mermaid, PlantUML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Diagram coverage must include light and dark themes, complete SVG fitting, PNG copy, and the system save dialog. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.

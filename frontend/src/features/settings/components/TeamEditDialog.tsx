@@ -38,6 +38,7 @@ import {
   TaskType,
   type KnowledgeBaseDefaultRef,
   type PipelineContextPassing,
+  type TeamInputPlaceholder,
 } from '@/types/api'
 import {
   TeamMode,
@@ -72,6 +73,7 @@ import {
   type SimpleExecutorMode,
 } from './team-edit/simple-team-edit-utils'
 import { buildSimpleBotRequest, buildSimpleTeamRequest } from './team-edit/simple-team-edit-save'
+import { normalizeInputPlaceholder } from './team-edit/InputPlaceholderEditor'
 import {
   getModelFromConfig,
   getModelNamespaceFromConfig,
@@ -193,6 +195,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [quickPhrases, setQuickPhrases] = useState<string[]>([])
+  const [inputPlaceholder, setInputPlaceholder] = useState<TeamInputPlaceholder>({})
   const [mode, setMode] = useState<TeamMode>('solo')
   const [bindMode, setBindMode] = useState<TaskType[]>(['chat', 'code'])
   const [icon, setIcon] = useState<string | null>(null)
@@ -516,6 +519,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setDisplayName(formTeam.displayName || '')
       setDescription(formTeam.description || '')
       setQuickPhrases(formTeam.quick_phrases || [])
+      setInputPlaceholder(formTeam.inputPlaceholder || {})
       setIcon(formTeam.icon || null)
       const m = (formTeam.workflow?.mode as TeamMode) || 'solo'
       setMode(m)
@@ -582,6 +586,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setInitialEditingGroupNames([])
       setMarketplaceTags([])
       setMarketplaceExampleConversations([])
+      setInputPlaceholder({})
       setName('')
       setDisplayName('')
       setDescription('')
@@ -1035,6 +1040,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           displayName,
           description,
           quickPhrases,
+          inputPlaceholder,
           bindMode,
           icon,
           requiresWorkspace,
@@ -1154,6 +1160,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
     const quickPhrasePayload = getQuickPhrasePayload(quickPhrases)
+    const inputPlaceholderPayload = normalizeInputPlaceholder(inputPlaceholder)
 
     // For solo mode, save bot first via BotEdit ref
     if (mode === 'solo') {
@@ -1197,6 +1204,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     bind_mode: bindMode,
                     bots: botsData,
                     quick_phrases: quickPhrasePayload,
+                    inputPlaceholder: inputPlaceholderPayload,
                     namespace:
                       isEditing && editingPublishTarget === 'personal'
                         ? 'default'
@@ -1216,6 +1224,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   bind_mode: bindMode,
                   bots: botsData,
                   quick_phrases: quickPhrasePayload,
+                  inputPlaceholder: inputPlaceholderPayload,
                   namespace: scope === 'group' && groupName ? groupName : undefined,
                   icon: icon || undefined,
                   requires_workspace: requiresWorkspace ?? undefined,
@@ -1307,6 +1316,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 bind_mode: bindMode,
                 bots: botsData,
                 quick_phrases: quickPhrasePayload,
+                inputPlaceholder: inputPlaceholderPayload,
                 namespace:
                   isEditing && editingPublishTarget === 'personal'
                     ? 'default'
@@ -1326,6 +1336,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bind_mode: bindMode,
               bots: botsData,
               quick_phrases: quickPhrasePayload,
+              inputPlaceholder: inputPlaceholderPayload,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
               requires_workspace: requiresWorkspace ?? undefined,
@@ -1467,6 +1478,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setDescription={setDescription}
                   quickPhrases={quickPhrases}
                   onQuickPhrasesChange={setQuickPhrases}
+                  inputPlaceholder={inputPlaceholder}
+                  onInputPlaceholderChange={setInputPlaceholder}
                   bindMode={bindMode}
                   setBindMode={setBindMode}
                   icon={icon}
@@ -1539,6 +1552,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setDescription={setDescription}
                   quickPhrases={quickPhrases}
                   onQuickPhrasesChange={setQuickPhrases}
+                  inputPlaceholder={inputPlaceholder}
+                  onInputPlaceholderChange={setInputPlaceholder}
                   bindMode={bindMode}
                   setBindMode={setBindMode}
                   icon={icon}
