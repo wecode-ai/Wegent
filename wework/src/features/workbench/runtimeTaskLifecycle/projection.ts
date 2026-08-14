@@ -71,6 +71,7 @@ export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean 
   return (
     task.optimistic !== true &&
     task.running === true &&
+    task.completedAt == null &&
     (isRuntimeTaskRunningStatus(task.threadStatus) || isRuntimeTaskRunningStatus(task.turnStatus))
   )
 }

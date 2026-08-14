@@ -1386,6 +1386,8 @@ describe('createLocalAppServices', () => {
       },
       message: 'edited question',
       messageId: 'user-last',
+      clientUserMessageId: 'user-edited',
+      retrySourceTurnId: 'turn-last',
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -1404,6 +1406,8 @@ describe('createLocalAppServices', () => {
         },
         message: 'edited question',
         messageId: 'user-last',
+        clientUserMessageId: 'user-edited',
+        retrySourceTurnId: 'turn-last',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -1413,6 +1417,7 @@ describe('createLocalAppServices', () => {
           task_id: 'task-1',
           subtask_id: expect.any(String),
           prompt: 'edited question',
+          client_user_message_id: 'user-edited',
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
@@ -2726,6 +2731,40 @@ describe('createLocalAppServices', () => {
       },
       intervalSeconds: 60,
     })
+
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      mode: 'auto',
+      instructions: 'Keep scope focused',
+      modelSelection: {
+        modelName: 'gpt-5.6-sol',
+        modelType: 'runtime',
+        options: {
+          reasoning: 'high',
+        },
+      },
+      intervalSeconds: 30,
+    })
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.tasks.supervisor.set',
+      expect.objectContaining({
+        address: { deviceId: 'device-uuid', taskId: 'task-1' },
+        modelSelection: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'runtime',
+          options: {
+            reasoning: 'high',
+          },
+        },
+        modelConfig: expect.objectContaining({
+          model_id: 'gpt-5.6-sol',
+          wework_model_kind: 'codex-official',
+          reasoning: {
+            effort: 'high',
+          },
+        }),
+      })
+    )
 
     await services.runtimeWorkApi?.runRuntimeSupervisorNow({
       address: { deviceId: 'local-device', taskId: 'task-1' },

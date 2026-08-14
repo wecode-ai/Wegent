@@ -918,7 +918,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-sm text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
       data-processing-block-id={block.id}
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}

@@ -8,6 +8,7 @@ Attachment API endpoints for file upload and management.
 Uses the unified context service for managing attachments as subtask contexts.
 """
 
+import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
@@ -39,6 +40,9 @@ from app.schemas.subtask_context import (
     AttachmentPreviewResponse,
     AttachmentResponse,
     TruncationInfo,
+)
+from app.services.attachment.external_storage import (
+    resolve_external_attachment_playback,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.attachment.public_link import (
@@ -160,6 +164,40 @@ async def _stream_remote_media(
         media_type=response.headers.get("content-type", default_media_type),
         headers=headers,
         status_code=response.status_code,
+    )
+
+
+async def _stream_external_attachment(
+    context,
+    *,
+    range_header: Optional[str] = None,
+) -> Optional[StreamingResponse]:
+    """Resolve and stream externally stored media when an adapter handles it."""
+    type_data = context.type_data if isinstance(context.type_data, dict) else {}
+    try:
+        playback = await asyncio.to_thread(
+            resolve_external_attachment_playback,
+            type_data=type_data,
+            user_id=context.user_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to resolve external attachment playback: attachment_id=%s",
+            context.id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="External media playback URL is unavailable",
+        ) from exc
+
+    if playback is None:
+        return None
+    return await _stream_remote_media(
+        playback.url,
+        context.original_filename,
+        default_media_type=playback.media_type,
+        range_header=range_header,
     )
 
 
@@ -442,6 +480,7 @@ def _validate_share_token_access(
 async def upload_attachment(
     file: UploadFile = File(...),
     overwrite_attachment_id: Optional[int] = None,
+    storage_purpose: str = "default",
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     authorization: str = Header(default=""),
@@ -474,8 +513,12 @@ async def upload_attachment(
 
     logger.info(
         f"[attachments.py] upload_attachment: user_id={current_user.id}, "
-        f"filename={file.filename}, subtask_id={subtask_id}"
+        f"filename={file.filename}, subtask_id={subtask_id}, "
+        f"storage_purpose={storage_purpose}"
     )
+
+    if storage_purpose not in {"default", "video_reference"}:
+        raise HTTPException(status_code=400, detail="Invalid storage_purpose")
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
@@ -517,6 +560,7 @@ async def upload_attachment(
                 filename=file.filename,
                 binary_data=binary_data,
                 subtask_id=subtask_id,
+                storage_purpose=storage_purpose,
             )
 
         return _build_attachment_response(context, truncation_info)
@@ -732,6 +776,13 @@ async def download_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    external_response = await _stream_external_attachment(
+        context,
+        range_header=range_header,
+    )
+    if external_response is not None:
+        return external_response
+
     # Generated videos are streamed through the backend so the browser receives
     # attachment headers without the service buffering the complete file.
     if context.type_data and isinstance(context.type_data, dict):
@@ -822,6 +873,10 @@ async def executor_download_attachment(
     # Verify it's an attachment type
     if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    external_response = await _stream_external_attachment(context)
+    if external_response is not None:
+        return external_response
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(
@@ -1076,6 +1131,7 @@ async def create_public_share_link(
 @router.get("/download/shared")
 async def public_download_attachment(
     token: str = Query(..., description="Public share token"),
+    range_header: Optional[str] = Header(None, alias="Range"),
     db: Session = Depends(get_db),
 ):
     """
@@ -1102,6 +1158,13 @@ async def public_download_attachment(
 
     if context is None or context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    external_response = await _stream_external_attachment(
+        context,
+        range_header=range_header,
+    )
+    if external_response is not None:
+        return external_response
 
     # Get binary data
     binary_data = context_service.get_attachment_binary_data(db=db, context=context)

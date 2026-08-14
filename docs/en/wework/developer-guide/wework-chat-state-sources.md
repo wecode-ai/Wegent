@@ -260,6 +260,8 @@ The mode pill's cancel button appears only on hover and is absolutely positioned
 
 `BufferedChatInput` preserves a pane-level draft during editing and submission, while the external `value` remains the source of truth for the confirmed draft. After a non-empty draft is submitted, the local empty state must be associated with the expected empty external value instead of the text that was just submitted. Otherwise, returning the same text from a queue or guidance row for editing is mistaken for stale draft state and the composer remains empty. Changes to this path must cover the regression sequence “submit text → external value clears → edit the queued row to restore the same text.”
 
+When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. Confirmation must synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
+
 ## Referenced Conversation Context
 
 The composer's `@` menu supports explicit references to other Wework conversations. An empty query shows the five most recent conversations from the current `runtimeWork`; a typed query filters by title, project, and workspace path. The current conversation is always excluded so its in-progress context cannot be recursively injected into itself.
@@ -306,6 +308,20 @@ assistant message share a timestamp, the user input must remain first.
 Canonical `turns` are the frontend transcript's only input, so restoring a
 message only in the compatibility `messages` array is insufficient.
 
+### Assistant In-Turn Display Order and Typography
+
+Final text, process text, and tool blocks within one assistant turn must be
+projected in runtime item arrival order. The UI must not group them by type and
+then render them in a fixed layout. In particular, when final text arrives
+before a later process update, that process update must appear below the final
+text, and transcript restoration must preserve the same order.
+
+The thinking indicator, process body text, and final answer body all use the
+semantic `text-chat` size. Tool summaries, timestamps, and other metadata may
+retain their compact roles, but a chat body must not change font size when it
+moves between streaming and completed states because that causes a visible
+flash.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
@@ -327,18 +343,19 @@ After inserting guidance, the message area must scroll to the bottom and briefly
 The right workspace **Temporary chat** feature starts a short side conversation next to the current local Codex thread. It is not a fork and it is not a normal runtime task shown in the left task list:
 
 - Each temporary chat tab has an independent `chat:<id>` instance id, so the right workspace can hold multiple temporary chats at the same time.
-- UI state lives inside `TemporaryChatPanel`, using the instance id as the `conversationKey` before a runtime thread exists. Hidden temporary chat tabs stay mounted so local messages and input state are not lost when switching tabs.
+- Before a runtime thread exists, `TemporaryChatPanel` uses the instance id as its `conversationKey`. After creation, pane workspace state retains the tab's runtime address and `runtimeConversationCache` restores its live message projection. Temporary threads do not support `thread/turns/list`, so a main-conversation switch that unmounts and remounts the panel cannot depend on transcript loading to recover content.
 - Attachment selection, upload progress, and errors are also isolated per temporary-chat instance and must not reuse the main composer attachment state. The first message passes that instance's attachments explicitly to `createTemporaryRuntimeTask`.
 - When a temporary chat is the only open right-workspace tab, the panel defaults to a compact `420px` width. Opening another workspace tab restores the general split default, while a user-resized width remains authoritative.
 - The first message calls `createTemporaryRuntimeTask`, creating an `ephemeral` runtime task with the current main thread as `sideSource`. This task does not enter the left task list and does not navigate the main pane.
 - Follow-up messages must continue the already loaded temporary thread. The Codex app-server path uses `direct_thread_id` and calls `turn/start` directly; it must not use the normal `resume_thread_id` / `thread/resume` path, because temporary threads do not have rollout mappings and would otherwise fail with `no rollout found`.
+- A regular follow-up must write its user message into the conversation cache before awaiting `runtime.tasks.sendMessage`, keeping it ahead of the current turn's Thinking indicator. A failed send removes that same client message id from the cache.
 - `TemporaryChatPanel` must preserve the running-send options supplied by `BufferedChatInput`. When the user selects **Guide current response** or sends a queued row as guidance, the temporary chat must call `runtime.tasks.guidance` and settle the matching queue item by `clientGuidanceId`; it must not downgrade guidance to a regular follow-up after the active turn.
 - Temporary chats reuse only the current workspace and current thread context. If no main thread source is available, sending should be blocked and the user should be asked to open an existing conversation first.
 - After a runtime-work refresh, the reducer must hydrate the current task address with the authoritative `threadId/runtimeHandle` from the same device and task. Keeping an optimistic address without its thread merely because the device is still online prevents the temporary chat from establishing `sideSource`.
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, verifies that the main composer never inherits that attachment, and confirms that a running temporary-chat follow-up enters the same active turn through guidance. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real-Tauri scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 

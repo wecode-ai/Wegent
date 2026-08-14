@@ -724,9 +724,15 @@ export function WorkbenchProvider({
         }
       )
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
-        dispatch({ type: 'error_set', error: '启动模式保存失败' })
-      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: {
+            wework_project_work_preferences: preferences.wework_project_work_preferences,
+          },
+        })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动模式保存失败' })
+        })
     },
     [currentUser.preferences, projectWorktreeBranch, resolvedServices.userApi, state.currentProject]
   )
@@ -763,9 +769,15 @@ export function WorkbenchProvider({
         }
       )
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
-        dispatch({ type: 'error_set', error: '启动分支保存失败' })
-      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: {
+            wework_project_work_preferences: preferences.wework_project_work_preferences,
+          },
+        })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动分支保存失败' })
+        })
     },
     [currentUser.preferences, projectExecutionMode, resolvedServices.userApi, state.currentProject]
   )
@@ -790,9 +802,13 @@ export function WorkbenchProvider({
         wework_new_chat_model_selection: selection,
       }
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
-        dispatch({ type: 'error_set', error: '模型配置保存失败' })
-      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: { wework_new_chat_model_selection: selection },
+        })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '模型配置保存失败' })
+        })
     },
     [currentUser.preferences, resolvedServices.userApi]
   )
@@ -1008,6 +1024,7 @@ export function WorkbenchProvider({
         updateWorkbenchDebugSnapshot({
           state,
           lifecycle: lifecycleSnapshot,
+          taskReminders: runtimeTaskReminders,
           cloudWorkStatus,
           composer: {
             scopeKey: projectChatScopeKey,
@@ -1040,6 +1057,7 @@ export function WorkbenchProvider({
     draftInputByScope,
     modelSelection.models,
     projectChatScopeKey,
+    runtimeTaskReminders,
     state,
   ])
 
@@ -1050,26 +1068,6 @@ export function WorkbenchProvider({
     services: resolvedServices,
     refreshDevices,
   })
-
-  const rememberExecutionDevice = useCallback(
-    (deviceId: string) => {
-      dispatch({
-        type: 'standalone_device_preference_changed',
-        standaloneDeviceId: getPreferredStandaloneDeviceId(state.devices, deviceId) ?? deviceId,
-      })
-      void resolvedServices.userApi
-        ?.updateCurrentUser({
-          preferences: {
-            ...(currentUser.preferences ?? {}),
-            default_execution_target: deviceId,
-          },
-        })
-        .catch(() => {
-          // Keep the in-session selection even if preference persistence fails.
-        })
-    },
-    [currentUser.preferences, resolvedServices.userApi, state.devices]
-  )
 
   const selectProject = useCallback(
     (projectId: number | null) => {
@@ -1122,9 +1120,6 @@ export function WorkbenchProvider({
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
       )
-      if (standaloneDeviceId) {
-        rememberExecutionDevice(standaloneDeviceId)
-      }
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId,
@@ -1133,13 +1128,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [
-      rememberExecutionDevice,
-      state.devices,
-      state.standaloneDeviceId,
-      user.id,
-      user.preferences?.default_execution_target,
-    ]
+    [state.devices, state.standaloneDeviceId, user.id, user.preferences?.default_execution_target]
   )
 
   const openStandaloneWorkspace = useCallback(
@@ -1191,7 +1180,6 @@ export function WorkbenchProvider({
           throw new Error(response.error || 'Failed to register local project')
         }
         response.roots.forEach(clearRemoteProjectSyncRemoval)
-        rememberExecutionDevice(response.deviceId)
         await refreshWorkLists()
         dispatch({
           type: 'runtime_workspace_opened',
@@ -1223,7 +1211,6 @@ export function WorkbenchProvider({
         requestDeviceId
 
       writeLastProjectId(user.id, null)
-      rememberExecutionDevice(openedDeviceId)
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
@@ -1232,14 +1219,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [
-      clearRemoteProjectSyncRemoval,
-      executorClient,
-      refreshWorkLists,
-      rememberExecutionDevice,
-      state.devices,
-      user.id,
-    ]
+    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, user.id]
   )
 
   const startNewChat = useCallback(() => {
@@ -1533,7 +1513,6 @@ export function WorkbenchProvider({
     markRuntimeProjectRemoved,
     invalidateRemoteProjectSync,
     clearRemoteProjectSyncRemoval,
-    rememberExecutionDevice,
     enqueueRemoteProjectStateMutation,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
@@ -1550,7 +1529,6 @@ export function WorkbenchProvider({
     modelSelection,
     skillSelection,
     refreshWorkLists,
-    rememberExecutionDevice,
   })
   const stableSelectProject = useStableEvent(selectProject)
   const stableSetProjectExecutionMode = useStableEvent(selectProjectExecutionMode)
@@ -1889,7 +1867,6 @@ export function WorkbenchProvider({
   const stableUnsubscribeRuntimeTaskNotifications = useStableEvent(
     unsubscribeRuntimeTaskNotifications
   )
-  const stableRememberExecutionDevice = useStableEvent(rememberExecutionDevice)
   const stableRefreshDevices = useStableEvent(refreshDevices)
   const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
@@ -2438,7 +2415,6 @@ export function WorkbenchProvider({
     updateGlobalImNotification,
     subscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications,
-    rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
@@ -2528,7 +2504,6 @@ export function WorkbenchProvider({
       updateGlobalImNotification: stableUpdateGlobalImNotification,
       subscribeRuntimeTaskNotifications: stableSubscribeRuntimeTaskNotifications,
       unsubscribeRuntimeTaskNotifications: stableUnsubscribeRuntimeTaskNotifications,
-      rememberExecutionDevice: stableRememberExecutionDevice,
       refreshWorkLists: stableRefreshWorkLists,
       refreshDevices: stableRefreshDevices,
       getRemoteDeviceStartupCommand: stableGetRemoteDeviceStartupCommand,
@@ -2626,7 +2601,6 @@ export function WorkbenchProvider({
       stablePrepareDeviceWorkspace,
       stableRefreshDevices,
       stableRefreshWorkLists,
-      stableRememberExecutionDevice,
       stableRemoveProject,
       stableReorderRuntimeProjects,
       stableReorderRuntimeProjectTasks,

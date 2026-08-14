@@ -26,6 +26,7 @@ import {
   verifyBackgroundTaskPlanRestoration,
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
+  verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
   verifyStandaloneViewImageTask,
@@ -155,6 +156,7 @@ import {
   LOCAL_VISION_SIDECAR_CASE,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
+  MESSAGE_EDIT_ONLY,
   MESSAGE_RESTORATION_ONLY,
   MIXED_TOOL_TURNS_ONLY,
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
@@ -235,6 +237,7 @@ import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyPriorityFilter,
+  verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
 
@@ -257,6 +260,7 @@ import {
   waitForFolderPickerInitialized,
   waitForPersistedComposerInput,
   waitForWorkbenchDebugState,
+  waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
 async function verifyLocalModelRouting({
@@ -1054,6 +1058,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (MESSAGE_EDIT_ONLY) {
+      phase = 'edit-last-user-message'
+      await verifyLastUserMessageEdit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop message-edit E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'automation-lifecycle' || AUTOMATION_ONLY) {
       phase = 'automation-lifecycle'
       await verifyAutomationLifecycle(control, executorHome, homePath)
@@ -1238,6 +1252,12 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'runtime-task-order-unread'
+      await verifyRuntimeTaskOrderAndUnreadVisibility({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2294,6 +2314,18 @@ last_updated = "2026-07-30T00:00:00Z"`
         composerSelector,
         control,
       })
+
+      phase = 'edit-last-user-message'
+      await verifyLastUserMessageEdit({ composerSelector, control })
+      await ensureTaskRowVisible(control, secondTaskRowTestId)
+      await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await waitForWorkbenchTask(
+        control,
+        secondTaskRowTestId.replace('runtime-local-task-row-', ''),
+        'The edit-message scenario did not restore the previous conversation'
+      )
 
       phase = 'task-draft-isolation'
       await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })

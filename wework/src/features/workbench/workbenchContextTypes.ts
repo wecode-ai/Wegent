@@ -276,7 +276,6 @@ export interface WorkbenchContextValue {
   unsubscribeRuntimeTaskNotifications: (
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
-  rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>

@@ -254,6 +254,53 @@ describe('useWorkbenchCloudProjectContext', () => {
     await waitFor(() => expect(result.current.pendingCloudProject).toEqual(defaultProject))
   })
 
+  test('does not reload task context when equivalent service and task wrappers rerender', async () => {
+    const findCloudContextForTask = vi.fn().mockRejectedValue(new Error('Not bound yet'))
+    const deliveryApi = {
+      findCloudContextForTask,
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    const { rerender } = renderHook(
+      ({
+        currentRuntimeTask,
+        services,
+      }: {
+        currentRuntimeTask: RuntimeTaskAddress
+        services: WorkbenchServices
+      }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskTitle: null,
+          services,
+          userId: 1,
+        }),
+      {
+        initialProps: {
+          currentRuntimeTask: runtimeTask,
+          services: { deliveryApi } as unknown as WorkbenchServices,
+        },
+      }
+    )
+
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledOnce())
+
+    rerender({
+      currentRuntimeTask: { ...runtimeTask },
+      services: { deliveryApi } as unknown as WorkbenchServices,
+    })
+    await act(async () => {})
+
+    expect(findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
   test('loads mentions from the selected local project-space API', async () => {
     const localProject = project('space-local', 'local')
     const item = loopItem(localProject.id)

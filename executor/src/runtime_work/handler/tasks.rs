@@ -424,7 +424,9 @@ impl RuntimeWorkRpcHandler {
                 .get("initialSupervisor")
                 .or_else(|| payload.get("initial_supervisor"))
             {
-                link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+                let configured = super::supervisor::configured_supervisor(supervisor, None)?;
+                self.configure_supervisor_model(&local_task_id, &configured, supervisor)?;
+                link.supervisor = Some(configured);
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
@@ -459,6 +461,10 @@ impl RuntimeWorkRpcHandler {
                 .await
             {
                 self.store.delete_task(&local_task_id);
+                self.supervisor_model_configs
+                    .lock()
+                    .expect("supervisor model config map lock should not be poisoned")
+                    .remove(&local_task_id);
                 return Err(error);
             }
         }
@@ -934,20 +940,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(cwd) = request.cwd() {
             fields.push(("cwd", cwd.to_owned()));
         }
-        log_executor_event("runtime work rollback prepared", &fields);
-
-        if let Err(error) = self
-            .call_codex_thread_method(
-                "thread/rollback",
-                json!({
-                    "threadId": thread_id,
-                    "numTurns": 1,
-                }),
-            )
-            .await
-        {
-            return Ok(task_action_failure(&existing_link, error));
-        }
+        log_executor_event("runtime work message edit prepared", &fields);
 
         self.mark_task_running_for_send(
             &local_task_id,
@@ -956,14 +949,17 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        if let Some(turn_id) = retry_source_turn_id(&payload) {
+            self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
+        }
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
-            direct_thread_id: Some(thread_id),
+            direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
-            resume_thread_id: None,
+            resume_thread_id: Some(thread_id),
             initial_thread_name: None,
             initial_thread_goal: None,
         })

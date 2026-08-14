@@ -95,6 +95,7 @@ interface ActiveComposerMenu {
 }
 
 export interface ComposerTextareaHandle {
+  focus: () => void
   getValue: () => string
   setValue: (value: string, selectionOffset?: number) => void
 }
@@ -161,6 +162,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => editorRef.current?.focus(),
         getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
         setValue: (nextValue, selectionOffset = nextValue.length) => {
           valueRef.current = nextValue

@@ -4430,8 +4430,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
-  test('opens a new task before configured model preparation completes', async () => {
-    const prepareRuntimeModel = vi.fn(() => deferred<boolean>().promise)
+  test('prepares a configured model before opening a new task', async () => {
+    const modelPreparation = deferred<boolean>()
+    const prepareRuntimeModel = vi.fn(() => modelPreparation.promise)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -4473,6 +4474,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set input'))
     await userEvent.click(screen.getByText('send'))
 
+    await waitFor(() => expect(prepareRuntimeModel).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).not.toHaveBeenCalled()
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+
+    modelPreparation.resolve(true)
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
     await waitFor(() =>
@@ -4480,7 +4486,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         `device-1:${request.taskId}`
       )
     )
-    expect(prepareRuntimeModel).not.toHaveBeenCalled()
   })
 
   test('restores and records the active project from Codex global state metadata', async () => {
@@ -6281,6 +6286,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('creates a runtime task from an explicitly opened standalone workspace', async () => {
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
       createRuntimeTask: vi.fn().mockResolvedValue({
@@ -6299,6 +6305,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
     })
 
     renderWorkbench(<ProjectSendProbe />, services)
@@ -6328,6 +6337,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
       'deviceWorkspaceId'
     )
+    expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
   test('registers multiple selected local folders as one Codex project', async () => {

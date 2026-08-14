@@ -1701,6 +1701,22 @@ async function createLocalRuntimeTaskPayload(
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
+  const initialSupervisor = normalizedData.initialSupervisor
+  if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
+    payload.initialSupervisor = {
+      ...initialSupervisor,
+      modelConfig: applyRuntimeModelOptions(
+        localRuntimeModelConfig(
+          'codex',
+          initialSupervisor.modelSelection.modelName,
+          initialSupervisor.modelSelection.modelType,
+          initialSupervisor.modelSelection.options,
+          cloudModelGateway
+        ),
+        initialSupervisor.modelSelection.options
+      ),
+    }
+  }
   const friendlyTitleExecutionRequest = normalizedData.friendlyTitle
     ? buildLocalRuntimeExecutionRequest({
         taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
@@ -2198,15 +2214,38 @@ export function createRuntimeWorkApiFromIpc(
       .join('|')
     const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
     const deviceCatalogKey = `${deviceId}\0${catalogKey}`
-    if (syncedModelCatalogKeys.has(deviceCatalogKey)) return true
+    console.info('[Wework] Cloud model catalog preparation started', {
+      deviceId,
+      modelId: data.modelId,
+      catalogModelCount: catalogModels.length,
+      alreadySynced: syncedModelCatalogKeys.has(deviceCatalogKey),
+      syncInFlight: modelCatalogSyncInFlight.has(deviceCatalogKey),
+    })
+    if (syncedModelCatalogKeys.has(deviceCatalogKey)) {
+      console.info('[Wework] Cloud model catalog preparation reused synced catalog', {
+        deviceId,
+        modelId: data.modelId,
+      })
+      return true
+    }
     const pendingSync = modelCatalogSyncInFlight.get(deviceCatalogKey)
-    if (pendingSync) return pendingSync
+    if (pendingSync) {
+      console.info('[Wework] Cloud model catalog preparation joined pending sync', {
+        deviceId,
+        modelId: data.modelId,
+      })
+      return pendingSync
+    }
     let appliedCatalogKey = ''
     const sync = async () => {
       const previousSync = modelCatalogSyncQueues.get(deviceId) ?? Promise.resolve()
       const queuedSync = previousSync
         .catch(() => undefined)
         .then(async () => {
+          console.info('[Wework] Cloud model catalog sync started', {
+            deviceId,
+            modelId: data.modelId,
+          })
           const currentCatalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
           const currentCatalogKey = currentCatalogModels
             .map(model => `${model.id}:${model.updatedAt}`)
@@ -2215,6 +2254,10 @@ export function createRuntimeWorkApiFromIpc(
           const currentDeviceCatalogKey = `${deviceId}\0${currentCatalogKey}`
           if (syncedModelCatalogKeys.has(currentDeviceCatalogKey)) {
             appliedCatalogKey = currentCatalogKey
+            console.info('[Wework] Cloud model catalog sync reused queued result', {
+              deviceId,
+              modelId: data.modelId,
+            })
             return
           }
           const currentSelectedModel = findLocalModelConfigByModelName(data.modelId)
@@ -2232,6 +2275,11 @@ export function createRuntimeWorkApiFromIpc(
             },
             deviceId
           )
+          console.info('[Wework] Cloud model catalog write completed', {
+            deviceId,
+            modelId: data.modelId,
+            catalogModelCount: currentCatalogModels.length,
+          })
           let restart: {
             restarted?: boolean
             requiresConfirmation?: boolean
@@ -2246,6 +2294,12 @@ export function createRuntimeWorkApiFromIpc(
             }
             throw error
           }
+          console.info('[Wework] Cloud Codex app server restart completed', {
+            deviceId,
+            modelId: data.modelId,
+            restarted: restart.restarted === true,
+            requiresConfirmation: restart.requiresConfirmation === true,
+          })
           if (!restart.restarted) {
             throw new Error(
               restart.requiresConfirmation
@@ -2256,7 +2310,17 @@ export function createRuntimeWorkApiFromIpc(
           const models = await request<{
             data?: Array<{ id?: string }>
           }>('runtime.codex.models.list', { includeHidden: true }, deviceId)
-          if (!expectedModelId || !models.data?.some(model => model.id === expectedModelId)) {
+          const expectedModelAvailable = Boolean(
+            expectedModelId && models.data?.some(model => model.id === expectedModelId)
+          )
+          console.info('[Wework] Cloud model catalog verification completed', {
+            deviceId,
+            modelId: data.modelId,
+            expectedModelId: expectedModelId ?? null,
+            expectedModelAvailable,
+            availableModelCount: models.data?.length ?? 0,
+          })
+          if (!expectedModelAvailable) {
             throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
           }
           appliedCatalogKey = currentCatalogKey
@@ -2280,12 +2344,23 @@ export function createRuntimeWorkApiFromIpc(
     if (!confirmation) {
       throw new Error(i18n.t('workbench.cloud_model_catalog_sync_failed'))
     }
+    console.info('[Wework] Cloud model catalog confirmation requested', {
+      deviceId,
+      modelId: data.modelId,
+      modelName: selectedModel.displayName,
+    })
     const syncPromise = confirmation({
       deviceId,
       deviceName: options.resolveDeviceName?.(deviceId) ?? deviceId,
       modelName: selectedModel.displayName,
       sync,
     }).then(confirmed => {
+      console.info('[Wework] Cloud model catalog confirmation settled', {
+        deviceId,
+        modelId: data.modelId,
+        confirmed,
+        catalogApplied: Boolean(appliedCatalogKey),
+      })
       const currentCatalogKey = listLocalModelConfigs()
         .filter(model => model.catalogEntry)
         .map(model => `${model.id}:${model.updatedAt}`)
@@ -2298,7 +2373,13 @@ export function createRuntimeWorkApiFromIpc(
     })
     modelCatalogSyncInFlight.set(deviceCatalogKey, syncPromise)
     try {
-      return await syncPromise
+      const confirmed = await syncPromise
+      console.info('[Wework] Cloud model catalog preparation completed', {
+        deviceId,
+        modelId: data.modelId,
+        confirmed,
+      })
+      return confirmed
     } finally {
       if (modelCatalogSyncInFlight.get(deviceCatalogKey) === syncPromise) {
         modelCatalogSyncInFlight.delete(deviceCatalogKey)
@@ -2533,8 +2614,43 @@ export function createRuntimeWorkApiFromIpc(
     getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
       return requestWithLocalDevice('runtime.tasks.supervisor.get', data)
     },
-    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
-      return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+    async setRuntimeSupervisor(
+      data: RuntimeSupervisorSetRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      const selection = data.modelSelection
+      if (selection?.modelType !== 'runtime') {
+        return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+      }
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      if (
+        !(await prepareRuntimeModel({
+          deviceId: localDeviceId,
+          modelId: selection.modelName,
+        }))
+      ) {
+        throw modelCatalogSyncCancelled()
+      }
+      const modelConfig = applyRuntimeModelOptions(
+        localRuntimeModelConfig(
+          'codex',
+          selection.modelName,
+          selection.modelType,
+          selection.options,
+          options.cloudModelGateway
+        ),
+        selection.options
+      )
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.supervisor.set',
+        {
+          ...data,
+          address: normalizedAddress,
+          modelConfig,
+        },
+        localDeviceId
+      )
     },
     clearRuntimeSupervisor(
       data: RuntimeSupervisorClearRequest
@@ -2693,6 +2809,24 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
+      console.info('[Wework] Runtime task primary model preparation completed', {
+        deviceId: localDeviceId,
+        taskId: data.taskId,
+        modelId: data.modelId ?? null,
+      })
+      const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
+      if (
+        supervisorModelId &&
+        !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: supervisorModelId }))
+      ) {
+        throw modelCatalogSyncCancelled()
+      }
+      console.info('[Wework] Runtime task model preparation completed', {
+        deviceId: localDeviceId,
+        taskId: data.taskId,
+        modelId: data.modelId ?? null,
+        supervisorModelId: supervisorModelId ?? null,
+      })
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,

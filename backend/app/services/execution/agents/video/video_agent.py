@@ -16,20 +16,21 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from app.core.shutdown import shutdown_manager
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
-from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
+from .image_staging import stage_video_reference_images
 from .intent_analyzer import VideoIntentAnalyzer, VideoIntentResult
 from .materials import (
     determine_image_mode,
     resolve_uploaded_media,
     validate_reference_materials,
 )
+from .prompt import normalize_video_prompt
 from .providers import get_video_provider
 
 logger = logging.getLogger(__name__)
@@ -119,33 +120,33 @@ class VideoAgent(PollingAgent):
                 raise ValueError("Video generation requires an authenticated user")
 
             # Step 0: Extract user-provided reference materials.
-            user_reference_images = self._extract_reference_images(request)
+            reference_image_descriptors = self._extract_reference_images(request)
             prompt_text, prompt_images = self._normalize_prompt(request.prompt)
-            user_reference_images.extend(prompt_images)
-            reference_image_descriptors = [
-                {"url": image} for image in user_reference_images
-            ]
+            reference_image_descriptors.extend(
+                {"url": image} for image in prompt_images
+            )
             uploaded_images, reference_videos, reference_audios = (
                 resolve_uploaded_media(
                     request.user_subtask_id,
                     user_id,
                 )
             )
-            known_image_urls = {
-                descriptor["url"] for descriptor in reference_image_descriptors
+            images_by_identity = {
+                self._image_identity(descriptor): descriptor
+                for descriptor in reference_image_descriptors
             }
-            reference_image_descriptors.extend(
-                descriptor
-                for descriptor in uploaded_images
-                if descriptor["url"] not in known_image_urls
-            )
-            user_reference_images = [
-                descriptor["url"] for descriptor in reference_image_descriptors
-            ]
+            for descriptor in uploaded_images:
+                identity = self._image_identity(descriptor)
+                existing = images_by_identity.get(identity)
+                if existing is not None:
+                    existing.update(descriptor)
+                    continue
+                reference_image_descriptors.append(descriptor)
+                images_by_identity[identity] = descriptor
 
             # Step 1: Intent analysis for follow-ups (only without uploaded media).
             if (
-                not user_reference_images
+                not reference_image_descriptors
                 and not reference_videos
                 and not reference_audios
                 and request.task_id
@@ -164,12 +165,8 @@ class VideoAgent(PollingAgent):
                 )
             else:
                 # User explicitly provided attachments - use them directly
-                final_prompt = prompt_text or (
-                    request.prompt if isinstance(request.prompt, str) else ""
-                )
-                reference_image = (
-                    user_reference_images[0] if user_reference_images else None
-                )
+                final_prompt = prompt_text
+                reference_image = None
                 image_mode = determine_image_mode(
                     model_config,
                     reference_image_descriptors,
@@ -182,6 +179,15 @@ class VideoAgent(PollingAgent):
                 reference_image_descriptors,
                 reference_videos,
                 reference_audios,
+            )
+            reference_image_descriptors = await stage_video_reference_images(
+                reference_image_descriptors,
+                user_id,
+            )
+            reference_image = (
+                reference_image_descriptors[0]["url"]
+                if reference_image_descriptors
+                else None
             )
 
             # Step 2: Get video provider based on protocol
@@ -275,23 +281,40 @@ class VideoAgent(PollingAgent):
             await session_manager.unregister_stream(subtask_id)
             await shutdown_manager.unregister_stream(subtask_id)
 
-    def _extract_reference_images(self, request: ExecutionRequest) -> list[str]:
+    def _extract_reference_images(
+        self,
+        request: ExecutionRequest,
+    ) -> list[dict[str, Any]]:
         """Extract reference images from request.attachments (user-uploaded files).
 
         NOTE:
         - Newer chat flows may provide images via request.prompt vision blocks instead.
           Those are handled by _normalize_prompt().
         """
-        reference_images: list[str] = []
+        reference_images: list[dict[str, Any]] = []
 
         if request.attachments:
             for att in request.attachments:
                 if att.get("mime_type", "").startswith("image/"):
                     url = att.get("url") or att.get("content")
                     if url:
-                        reference_images.append(url)
+                        descriptor: dict[str, Any] = {"url": url}
+                        attachment_id = att.get("id") or att.get("attachment_id")
+                        if isinstance(attachment_id, int):
+                            descriptor["attachment_id"] = attachment_id
+                        reference_images.append(descriptor)
 
         return reference_images
+
+    @staticmethod
+    def _image_identity(image: dict[str, Any]) -> str:
+        attachment_id = image.get("attachment_id")
+        if isinstance(attachment_id, int):
+            return f"attachment:{attachment_id}"
+        url = str(image.get("url") or "")
+        if url:
+            return f"url:{url}"
+        raise ValueError("Video reference image has no stable identity")
 
     def _normalize_prompt(
         self,
@@ -308,10 +331,10 @@ class VideoAgent(PollingAgent):
         - If text contains our context wrapper, prefer the actual user question part
         """
         if isinstance(prompt, str):
-            return extract_user_question(prompt), []
+            return normalize_video_prompt(prompt), []
 
         if not isinstance(prompt, list):
-            return extract_user_question(str(prompt)), []
+            return normalize_video_prompt(str(prompt)), []
 
         text_parts: list[str] = []
         images: list[str] = []
@@ -331,7 +354,7 @@ class VideoAgent(PollingAgent):
                     images.append(image_url)
 
         combined_text = "\n".join(text_parts).strip()
-        combined_text = extract_user_question(combined_text)
+        combined_text = normalize_video_prompt(combined_text)
         return combined_text, images
 
     async def _analyze_intent(

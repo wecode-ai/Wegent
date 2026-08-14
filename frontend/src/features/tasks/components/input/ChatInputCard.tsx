@@ -320,6 +320,7 @@ export function ChatInputCard({
   onGenerateModeChange,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
+  const taskDetailMatchesTaskId = taskId != null && selectedTaskDetail?.id === taskId
   // State for expanded input mode (2x height for easier large text editing)
   const [isInputExpanded, setIsInputExpanded] = useState(false)
   const frameInputRef = useRef<HTMLInputElement>(null)
@@ -647,8 +648,9 @@ export function ChatInputCard({
           <div className="absolute -top-[29px] left-4 z-10">
             <DeviceSelectorTab
               disabled={isStreaming || !!projectId}
-              hasMessages={hasMessages}
-              taskDeviceId={selectedTaskDetail?.device_id}
+              taskId={taskId}
+              taskType={taskDetailMatchesTaskId ? selectedTaskDetail?.task_type : null}
+              taskDeviceId={taskDetailMatchesTaskId ? selectedTaskDetail?.device_id : null}
               className="rounded-t-lg"
             />
           </div>

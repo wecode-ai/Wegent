@@ -9,6 +9,9 @@ const fileViewerMocks = vi.hoisted(() => ({
 const codeViewMocks = vi.hoisted(() => ({
   render: vi.fn(),
 }))
+const appearanceMocks = vi.hoisted(() => ({
+  resolvedMode: 'light' as 'dark' | 'light',
+}))
 
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
   AssistantMarkdown: ({ content }: { content: string }) => (
@@ -24,7 +27,7 @@ vi.mock('@pierre/diffs/react', () => ({
 }))
 
 vi.mock('@file-viewer/react', () => ({
-  default: (props: { filename: string }) => {
+  default: (props: { filename: string; type?: string; options?: Record<string, unknown> }) => {
     fileViewerMocks.render(props)
     return <div data-testid="file-viewer">{props.filename}</div>
   },
@@ -33,10 +36,14 @@ vi.mock('@file-viewer/react', () => ({
 vi.mock('@file-viewer/preset-engineering', () => ({ default: {} }))
 vi.mock('@file-viewer/preset-office', () => ({ default: {} }))
 vi.mock('@file-viewer/preset-lite', () => ({ default: {} }))
+vi.mock('@/features/appearance', () => ({
+  useOptionalAppearance: () => ({ resolvedMode: appearanceMocks.resolvedMode }),
+}))
 
 beforeEach(() => {
   fileViewerMocks.render.mockClear()
   codeViewMocks.render.mockClear()
+  appearanceMocks.resolvedMode = 'light'
 })
 
 const markdownFile = {
@@ -117,4 +124,64 @@ test('does not rebuild a binary image preview when its parent rerenders', () => 
   )
 
   expect(fileViewerMocks.render).toHaveBeenCalledTimes(1)
+})
+
+test.each([
+  ['architecture.mmd', 'mermaid'],
+  ['architecture.puml', 'plantuml'],
+])('routes %s files to the diagram renderer', (name, type) => {
+  const binaryFile = {
+    path: `/workspace/project/${name}`,
+    name,
+    size: 12,
+    file: new File(['diagram source'], name, { type: 'application/octet-stream' }),
+  }
+
+  render(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={binaryFile}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(fileViewerMocks.render).toHaveBeenCalledWith(
+    expect.objectContaining({
+      filename: name,
+      type,
+    })
+  )
+  expect(screen.getByTestId('diagram-copy-image-button')).toBeInTheDocument()
+  expect(screen.getByTestId('diagram-save-image-button')).toBeInTheDocument()
+})
+
+test('uses the current Wework theme for diagram files', () => {
+  appearanceMocks.resolvedMode = 'dark'
+  const name = 'architecture.mmd'
+  const binaryFile = {
+    path: `/workspace/project/${name}`,
+    name,
+    size: 12,
+    file: new File(['graph LR\nA --> B'], name, { type: 'application/octet-stream' }),
+  }
+
+  render(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={binaryFile}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(fileViewerMocks.render).toHaveBeenCalledWith(
+    expect.objectContaining({
+      options: expect.objectContaining({
+        theme: 'dark',
+      }),
+    })
+  )
 })

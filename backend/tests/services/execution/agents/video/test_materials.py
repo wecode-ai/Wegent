@@ -2,12 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.services.context import context_service
 from app.services.execution.agents.video.materials import (
     normalize_reference_materials,
+    resolve_uploaded_media,
     validate_reference_materials,
 )
 
@@ -147,3 +151,49 @@ def test_normalize_reference_materials_rejects_local_paths() -> None:
             "image",
             user_id=1,
         )
+
+
+def test_uploaded_image_does_not_require_public_attachment_url() -> None:
+    attachment = SimpleNamespace(
+        id=51,
+        user_id=1,
+        storage_backend="local",
+        storage_key="attachments/reference",
+        updated_at=datetime(2026, 8, 12),
+        original_filename="reference.png",
+        file_extension=".png",
+        file_size=100,
+        mime_type="image/png",
+    )
+    db = MagicMock()
+
+    with (
+        patch(
+            "app.db.session.SessionLocal",
+            return_value=db,
+        ),
+        patch.object(
+            context_service,
+            "get_attachments_by_subtask",
+            return_value=[attachment],
+        ),
+    ):
+        images, videos, audios = resolve_uploaded_media(
+            user_subtask_id=10,
+            user_id=1,
+        )
+
+    assert videos == []
+    assert audios == []
+    assert images == [
+        {
+            "attachment_id": 51,
+            "storage_backend": "local",
+            "storage_key": "attachments/reference",
+            "updated_at": "2026-08-12T00:00:00",
+            "filename": "reference.png",
+            "file_extension": ".png",
+            "file_size": 100,
+            "mime_type": "image/png",
+        }
+    ]

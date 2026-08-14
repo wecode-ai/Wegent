@@ -17,6 +17,29 @@ import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutoco
 import SkillFlyAnimation from '../chat/SkillFlyAnimation'
 import { useToast } from '@/hooks/use-toast'
 
+type PlaceholderLanguage = 'zh' | 'en'
+
+export function resolveTeamInputPlaceholder(
+  team: Team | null,
+  language: PlaceholderLanguage,
+  isMobile: boolean
+): string | null {
+  const inputPlaceholder = team?.inputPlaceholder
+  if (!inputPlaceholder) return null
+
+  const languageOrder: PlaceholderLanguage[] = language === 'zh' ? ['zh', 'en'] : ['en', 'zh']
+  const devicePlaceholder = isMobile ? inputPlaceholder.mobile : inputPlaceholder.desktop
+
+  for (const source of [devicePlaceholder, inputPlaceholder]) {
+    for (const locale of languageOrder) {
+      const value = source?.[locale]?.trim()
+      if (value) return value
+    }
+  }
+
+  return null
+}
+
 interface ChatInputProps {
   message: string
   setMessage: (message: string) => void
@@ -97,6 +120,7 @@ export default function ChatInput({
 }: ChatInputProps) {
   const { toast } = useToast()
   const { t, i18n } = useTranslation()
+  const isMobile = useIsMobile()
 
   // Get current language for tip text
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en'
@@ -111,6 +135,10 @@ export default function ChatInput({
     if (hasNoTeams) {
       return t('chat:input.no_team_placeholder')
     }
+    const teamPlaceholder = resolveTeamInputPlaceholder(team, currentLang, isMobile)
+    if (teamPlaceholder) {
+      return teamPlaceholder
+    }
     if (tipText) {
       return tipText[currentLang] || tipText.en || t('chat:placeholder.input')
     }
@@ -119,7 +147,7 @@ export default function ChatInput({
       return t('chat:groupChat.mentionToTrigger', { teamName: team.name })
     }
     return t('chat:placeholder.input')
-  }, [disabledReason, tipText, currentLang, t, isGroupChat, team?.name, hasNoTeams])
+  }, [disabledReason, tipText, currentLang, t, isGroupChat, team, hasNoTeams, isMobile])
 
   // Combine disabled, hasNoTeams and disabledReason for input disabled state
   const isInputDisabled = disabled || hasNoTeams || !!disabledReason
@@ -127,7 +155,6 @@ export default function ChatInput({
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false)
-  const isMobile = useIsMobile()
   const { user } = useUser()
   const editableRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLSpanElement>(null)

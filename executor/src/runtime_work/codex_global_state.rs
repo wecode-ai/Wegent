@@ -401,15 +401,28 @@ pub(crate) fn reorder_codex_global_project_thread(
     before_thread_id: Option<&str>,
     insert_at_end: bool,
 ) -> Result<(), String> {
+    let project_key = canonical_sidebar_project_key(&CodexGlobalProjectIndex::load(), project_key);
     record_sidebar_op(CodexGlobalStateOplogRecord {
         kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
-        project_key: clean_text(project_key),
+        project_key: clean_text(&project_key),
         thread_id: clean_text(thread_id),
         before_id: before_thread_id.and_then(clean_text),
         insert_at_end: Some(insert_at_end),
         updated_at: now_ms(),
         ..Default::default()
     })
+}
+
+fn canonical_sidebar_project_key(index: &CodexGlobalProjectIndex, project_key: &str) -> String {
+    index
+        .project_for_key(project_key)
+        .or_else(|| {
+            project_key
+                .strip_prefix("local:")
+                .and_then(|workspace_path| index.project_for_key(workspace_path))
+        })
+        .map(|project| project.key.clone())
+        .unwrap_or_else(|| project_key.to_owned())
 }
 
 pub(crate) fn set_codex_global_thread_pinned(
@@ -1795,8 +1808,8 @@ fn is_codex_gui_process_command(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_codex_global_state_ops, codex_app_running_probe_args, index_from_payload,
-        is_codex_gui_process_command, remove_codex_global_project_payload,
+        apply_codex_global_state_ops, canonical_sidebar_project_key, codex_app_running_probe_args,
+        index_from_payload, is_codex_gui_process_command, remove_codex_global_project_payload,
         rename_codex_global_project_payload, runtime_project_ui_id, CodexGlobalStateOplogRecord,
         ACTIVE_REMOTE_PROJECT_ID_KEY, CODEX_GLOBAL_STATE_OPLOG_FILENAME,
         OPLOG_KIND_ACTIVATE_PROJECT, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
@@ -1864,6 +1877,27 @@ mod tests {
             project.workspace_path,
             "/Volumes/OuterHD/OuterIdeaProjects/Wegent"
         );
+    }
+
+    #[test]
+    fn canonicalizes_sidebar_project_path_aliases_before_reordering_threads() {
+        let index = index_from_payload(&payload(json!({
+            "local-projects": {
+                "entry": {
+                    "id": "local-id",
+                    "name": "Wegent"
+                }
+            },
+            "project-writable-roots": {
+                "local-id": [{"kind": "local", "path": "/repo"}]
+            }
+        })));
+
+        assert_eq!(
+            canonical_sidebar_project_key(&index, "local:/repo"),
+            "local-id"
+        );
+        assert_eq!(canonical_sidebar_project_key(&index, "chats"), "chats");
     }
 
     #[test]

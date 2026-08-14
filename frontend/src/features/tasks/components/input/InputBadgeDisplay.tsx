@@ -4,15 +4,18 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { X, Loader2 } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { AudioLines, Pause, Play, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import ContextBadge from '../chat/ContextBadge'
 import {
   formatFileSize,
   getFileIcon,
+  isAudioExtension,
   isImageExtension,
+  isVideoExtension,
   getAttachmentPreviewUrl,
 } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
@@ -182,7 +185,7 @@ export function useAuthenticatedImageInline(attachmentId: number, isImage: boole
 /**
  * Inline attachment preview component
  */
-function AttachmentPreviewInline({
+export function AttachmentPreviewInline({
   attachment,
   disabled,
   onRemove,
@@ -192,15 +195,29 @@ function AttachmentPreviewInline({
   attachment: Attachment
   disabled?: boolean
   onRemove: () => void
-  t: (key: string) => string
+  t: (key: string, params?: Record<string, unknown>) => string
   label?: string
 }) {
   const isImage = isImageExtension(attachment.file_extension)
+  const isVideo = isVideoExtension(attachment.file_extension)
+  const isAudio = isAudioExtension(attachment.file_extension)
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
   } = useAuthenticatedImageInline(attachment.id, isImage)
+
+  if ((isVideo || isAudio) && attachment.local_preview_url) {
+    return (
+      <MediaAttachmentPreview
+        attachment={attachment}
+        disabled={disabled}
+        isVideo={isVideo}
+        label={label}
+        onRemove={onRemove}
+      />
+    )
+  }
 
   // For images, show thumbnail preview
   if (isImage && !imageError) {
@@ -303,6 +320,158 @@ function AttachmentPreviewInline({
         </Button>
       )}
     </div>
+  )
+}
+
+function MediaAttachmentPreview({
+  attachment,
+  disabled,
+  isVideo,
+  label,
+  onRemove,
+}: {
+  attachment: Attachment
+  disabled?: boolean
+  isVideo: boolean
+  label?: string
+  onRemove: () => void
+}) {
+  const mediaRef = useRef<HTMLMediaElement>(null)
+  const [isPaused, setIsPaused] = useState(true)
+  const [isHovered, setIsHovered] = useState(false)
+  const [isVideoDialogOpen, setIsVideoDialogOpen] = useState(false)
+
+  const play = async () => {
+    try {
+      await mediaRef.current?.play()
+      setIsPaused(false)
+    } catch {
+      setIsPaused(true)
+    }
+  }
+
+  const pause = () => {
+    mediaRef.current?.pause()
+    setIsPaused(true)
+  }
+
+  const handleClick = () => {
+    if (isVideo) {
+      pause()
+      setIsVideoDialogOpen(true)
+      return
+    }
+    if (isPaused) {
+      void play()
+    } else {
+      pause()
+    }
+  }
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      handleClick()
+    }
+  }
+
+  const handleRemoveClick = (event: React.MouseEvent) => {
+    event.stopPropagation()
+    pause()
+    onRemove()
+  }
+
+  const handleMouseEnter = () => {
+    setIsHovered(true)
+    void play()
+  }
+
+  const handleMouseLeave = () => {
+    setIsHovered(false)
+    pause()
+  }
+
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid={`attachment-media-preview-${attachment.id}`}
+        aria-label={attachment.filename}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        className={`group relative z-0 flex cursor-pointer items-center overflow-hidden rounded-lg border border-border bg-muted transition-[width,height] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+          isVideo && isHovered ? 'z-10 h-24 w-40' : 'h-14 w-14'
+        }`}
+      >
+        {isVideo ? (
+          <video
+            ref={mediaRef as React.RefObject<HTMLVideoElement>}
+            src={attachment.local_preview_url}
+            muted
+            playsInline
+            preload="metadata"
+            onEnded={() => setIsPaused(true)}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <>
+            <audio
+              ref={mediaRef as React.RefObject<HTMLAudioElement>}
+              src={attachment.local_preview_url}
+              preload="metadata"
+              onEnded={() => setIsPaused(true)}
+            />
+            <div className="flex h-14 w-20 items-center justify-center bg-surface">
+              <AudioLines className="h-6 w-6 text-primary" />
+            </div>
+          </>
+        )}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
+          {isPaused ? (
+            <Play className="h-5 w-5 fill-white text-white" />
+          ) : (
+            <Pause className="h-5 w-5 fill-white text-white" />
+          )}
+        </div>
+        {label && (
+          <span className="pointer-events-none absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1 py-0.5 text-center text-[10px] text-white">
+            {label}
+          </span>
+        )}
+        {!disabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            data-testid={`remove-attachment-${attachment.id}`}
+            onClick={handleRemoveClick}
+            className="absolute right-0 top-0 h-5 w-5 rounded-bl-md rounded-tr-lg bg-black/50 text-white hover:bg-black/70 hover:text-white"
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        )}
+      </div>
+
+      {isVideo && (
+        <Dialog open={isVideoDialogOpen} onOpenChange={setIsVideoDialogOpen}>
+          <DialogContent className="w-[calc(100vw-32px)] max-w-4xl overflow-hidden border-0 bg-black p-0">
+            <DialogTitle className="sr-only">{attachment.filename}</DialogTitle>
+            <DialogDescription className="sr-only">{attachment.filename}</DialogDescription>
+            <video
+              data-testid={`attachment-video-dialog-${attachment.id}`}
+              src={attachment.local_preview_url}
+              controls
+              autoPlay
+              playsInline
+              className="max-h-[80vh] w-full bg-black object-contain"
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   )
 }
 

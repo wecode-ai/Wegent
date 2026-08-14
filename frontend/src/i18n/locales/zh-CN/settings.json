@@ -186,6 +186,17 @@
       "placeholder": "例如：帮我创建一个产品路线图 PPT",
       "add": "添加短语"
     },
+    "input_placeholder": {
+      "label": "输入框提示语",
+      "description": "优先使用当前设备和语言的提示语；设备提示未填写时使用通用提示，全部未填写时使用系统默认提示。",
+      "generic": "通用（兜底）",
+      "desktop": "桌面端",
+      "mobile": "移动端",
+      "zh": "中文",
+      "en": "英文",
+      "zh_placeholder": "中文提示语",
+      "en_placeholder": "英文提示语"
+    },
     "simple": {
       "advanced_title": "高级配置",
       "advanced_description": "协作模式、多机器人编排和更细的角色设置都在这里。",

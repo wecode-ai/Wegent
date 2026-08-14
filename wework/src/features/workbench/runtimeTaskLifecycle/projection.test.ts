@@ -91,4 +91,22 @@ describe('runtimeTaskProjection', () => {
 
     expect(shouldReplaceRuntimeTaskProjection(completed, active)).toBe(true)
   })
+
+  test('rejects a stale active projection that still carries completion', () => {
+    const completed = task({
+      running: false,
+      status: 'done',
+      completedAt: 1_786_676_400_000,
+    })
+    const staleActive = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      completedAt: 1_786_676_400_000,
+      updatedAt: 1_786_676_401_000,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, staleActive)).toBe(false)
+  })
 })

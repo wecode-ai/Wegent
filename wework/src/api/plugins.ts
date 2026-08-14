@@ -6,6 +6,9 @@ import type {
   PluginAccessUpdateRequest,
   PluginAutoUpdateBatchResponse,
   PluginCopyResponse,
+  PluginDeleteImpactResponse,
+  PluginDeleteRequest,
+  PluginDeleteResponse,
   PluginDeviceSyncResponse,
   PluginMarketplaceInstallResponse,
   PluginMarketplaceCapabilities,
@@ -97,6 +100,15 @@ export function createPluginApi(client: HttpClient) {
       data: PluginAccessUpdateRequest
     ): Promise<PluginAccessResponse> {
       return client.put(`/plugins/marketplace/${id}/access`, data)
+    },
+    getMarketplacePluginDeleteImpact(id: string | number): Promise<PluginDeleteImpactResponse> {
+      return client.get(`/plugins/marketplace/${id}/delete-impact`)
+    },
+    deleteMarketplacePlugin(
+      id: string | number,
+      data: PluginDeleteRequest
+    ): Promise<PluginDeleteResponse> {
+      return client.delete(`/plugins/marketplace/${id}`, data)
     },
     copyMarketplacePlugin(id: string | number): Promise<PluginCopyResponse> {
       return client.post(`/plugins/marketplace/${id}/copy`)

@@ -792,6 +792,173 @@ describe('ConnectionsSettingsPage', () => {
     }
   })
 
+  test('adds multiple models from the same provider in one configuration flow', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'k3' }, { id: 'kimi-for-coding-highspeed' }],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [{ function: { name: 'wework_capability_probe', arguments: '{}' } }],
+                },
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      )
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: fetchMock,
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-select'),
+        'kimi-coding'
+      )
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'shared-key')
+      await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select')).toBeInTheDocument()
+      )
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-model-select'), 'k3')
+      await userEvent.click(screen.getByTestId('local-model-provider-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-model-select-1'),
+        'kimi-for-coding-highspeed'
+      )
+      await userEvent.click(screen.getByTestId('local-model-test-button-1'))
+      expect(await screen.findByTestId('local-model-test-result-1')).toHaveTextContent(
+        '模型连接正常'
+      )
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+        model: 'kimi-for-coding-highspeed',
+      })
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored).toHaveLength(2)
+      expect(stored).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            providerProfileId: 'kimi-coding',
+            modelId: 'k3',
+            apiKey: 'shared-key',
+            codexCatalogModelId: 'wework-kimi-k3',
+          }),
+          expect.objectContaining({
+            providerProfileId: 'kimi-coding',
+            modelId: 'kimi-for-coding-highspeed',
+            apiKey: 'shared-key',
+            codexCatalogModelId: 'wework-kimi-k2-7',
+          }),
+        ])
+      )
+      expect(new Set(stored.map((model: { id: string }) => model.id)).size).toBe(2)
+      expect(screen.getByTestId('local-model-settings')).toHaveTextContent('k3')
+      expect(screen.getByTestId('local-model-settings')).toHaveTextContent(
+        'kimi-for-coding-highspeed'
+      )
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('adds another model while editing an existing provider configuration', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    saveLocalModelConfig({
+      id: 'deepseek-flash',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek Flash',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'shared-key',
+      enabled: true,
+    })
+    const originalFetch = globalThis.fetch
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-pro' }],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      ),
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-edit-deepseek-flash'))
+      await userEvent.click(screen.getByTestId('local-model-provider-model-add-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select-1')).toBeInTheDocument()
+      )
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-model-select-1'),
+        'deepseek-v4-pro'
+      )
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored).toHaveLength(2)
+      expect(stored).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'deepseek-flash',
+            providerProfileId: 'deepseek',
+            modelId: 'deepseek-v4-flash',
+            apiKey: 'shared-key',
+          }),
+          expect.objectContaining({
+            providerProfileId: 'deepseek',
+            modelId: 'deepseek-v4-pro',
+            apiKey: 'shared-key',
+          }),
+        ])
+      )
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
   test.each([
     ['minimax', 'https://api.minimaxi.com/anthropic'],
     ['minimax-global', 'https://api.minimax.io/anthropic'],

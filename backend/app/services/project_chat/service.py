@@ -564,14 +564,6 @@ class ProjectChatService:
                 runtime_task_id=runtime_task_id,
             )
         if row is None:
-            logger.info(
-                "[ProjectChat] Runtime event ignored because no streaming AI message matched: "
-                "event=%s runtime_device_id=%s runtime_task_id=%s payload_status=%s",
-                event_name,
-                device_id,
-                runtime_task_id,
-                payload.get("status"),
-            )
             return None
         data = payload.get("data")
         data = data if isinstance(data, dict) else {}
@@ -593,24 +585,6 @@ class ProjectChatService:
                 row.message_id,
                 device_id,
                 runtime_task_id,
-            )
-        elif event_name not in {
-            "response.output_text.delta",
-            "response.refusal.delta",
-            "response.output_text.done",
-        }:
-            logger.info(
-                "[ProjectChat] Runtime event matched message but was not terminal: "
-                "event=%s project_id=%s task_id=%s message_id=%s "
-                "runtime_device_id=%s runtime_task_id=%s payload_status=%s data_status=%s",
-                event_name,
-                row.project_id,
-                row.task_id,
-                row.message_id,
-                device_id,
-                runtime_task_id,
-                payload.get("status"),
-                data.get("status"),
             )
         if event_name in {"response.output_text.delta", "response.refusal.delta"}:
             delta = data.get("delta")
@@ -1103,7 +1077,7 @@ class ProjectChatService:
         task_metadata[TASK_AI_STATE_KEY] = next_state
         task.metadata_json = task_metadata
         task.version += 1
-        logger.info(
+        logger.debug(
             "[ProjectChat] Task AI state set: "
             "project_id=%s task_id=%s task_status=%s ai_status=%s "
             "message_id=%s run_id=%s runtime_device_id=%s runtime_task_id=%s "
