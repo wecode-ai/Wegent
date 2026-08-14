@@ -28,7 +28,7 @@ function LinkChipIcon({
     if (provider !== 'web') return
     let cancelled = false
     void resolveFavicon(url).then(favicon => {
-      if (favicon && !cancelled) {
+      if (favicon && favicon !== defaultIconUrl && !cancelled) {
         setIconUrl(favicon)
         setIconFailed(false)
       }
@@ -36,7 +36,7 @@ function LinkChipIcon({
     return () => {
       cancelled = true
     }
-  }, [provider, url])
+  }, [provider, url, defaultIconUrl])
 
   if (iconUrl && !iconFailed) {
     return (
@@ -54,20 +54,21 @@ function LinkChipIcon({
 
 export function ComposerLinkChip({ payload }: ComposerLinkChipProps) {
   const recognized = useMemo(() => getRecognizedLink(payload.url), [payload.url])
+  const href = recognized?.fullUrl ?? payload.url
 
   return (
     <a
       data-testid="composer-link-chip"
-      data-composer-link-url={payload.url}
+      data-composer-link-url={href}
       data-composer-link-provider={recognized?.provider ?? 'external'}
-      href={payload.url}
+      href={href}
       className="composer-link-node composer-mention-link inline-flex cursor-pointer items-center"
       onClick={event => {
         event.preventDefault()
         event.stopPropagation()
-        void openExternalUrl(payload.url)
+        void openExternalUrl(href)
       }}
-      title={payload.url}
+      title={href}
     >
       <span className="composer-mention-icon-slot" aria-hidden="true">
         <LinkChipIcon

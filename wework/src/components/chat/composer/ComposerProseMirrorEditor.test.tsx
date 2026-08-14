@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Activity, createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
-import { GENERIC_LINK_ICON_SRC } from '@/lib/favicon-resolver'
+import { GENERIC_LINK_ICON_SRC, resolveFavicon } from '@/lib/favicon-resolver'
 import { GITHUB_ICON } from '@/lib/link-preview'
 import { ComposerProseMirrorEditor, type ComposerEditorHandle } from './ComposerProseMirrorEditor'
 import {
@@ -638,6 +638,20 @@ test('renders generic web URLs as recognized inline link chips', () => {
   expect(chip).toHaveAttribute('data-composer-link-url', 'https://example.com/page')
   expect(chip).toHaveTextContent('example.com/page')
   expect(chip.querySelector('img')).toHaveAttribute('src', 'https://example.com/favicon.ico')
+})
+
+test('upgrades the web link chip favicon when the backend resolves one', async () => {
+  vi.mocked(resolveFavicon).mockResolvedValue('https://cdn.example.com/real-icon.png')
+  renderEditor('Visit https://example.com/page')
+
+  const chip = screen.getByTestId('composer-link-chip')
+  await waitFor(() => {
+    expect(chip.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://cdn.example.com/real-icon.png'
+    )
+  })
+  expect(resolveFavicon).toHaveBeenCalledWith('https://example.com/page')
 })
 
 test('keeps non-http strings as plain text', () => {

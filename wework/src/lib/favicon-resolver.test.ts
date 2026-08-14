@@ -64,6 +64,36 @@ describe('favicon-resolver', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  test('caches a success:false response without retrying within the TTL', async () => {
+    const { resolveFavicon } = await loadResolver()
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ url: 'https://blocked.example/x', favicon: null, success: false }),
+    })
+
+    await expect(resolveFavicon('https://blocked.example/x')).resolves.toBeUndefined()
+    await resolveFavicon('https://blocked.example/y')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('shares one cache entry across www and bare domains', async () => {
+    const { resolveFavicon } = await loadResolver()
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        url: 'https://www.example.com/a',
+        favicon: 'https://example.com/icon.png',
+        success: true,
+      }),
+    })
+
+    await resolveFavicon('https://www.example.com/a')
+    await resolveFavicon('https://example.com/b')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   test('returns undefined for invalid URLs', async () => {
     const { resolveFavicon } = await loadResolver()
     await expect(resolveFavicon('not a url')).resolves.toBeUndefined()

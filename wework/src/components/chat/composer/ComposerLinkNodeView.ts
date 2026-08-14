@@ -2,7 +2,7 @@ import type { Node as ProseMirrorNode } from 'prosemirror-model'
 import type { NodeView } from 'prosemirror-view'
 import { TextSelection } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
-import { createComposerLinkElement, type ComposerLinkPayload } from './composerLinks'
+import { applyLinkIcon, createComposerLinkElement, type ComposerLinkPayload } from './composerLinks'
 import { serializeComposerLinkNode, serializeComposerSlice } from './composerProseMirrorModel'
 
 export interface ComposerLinkNodeViewCallbacks {
@@ -19,6 +19,7 @@ export class ComposerLinkNodeView implements NodeView {
   private readonly view: EditorView
   private readonly getPos: () => number | undefined
   private readonly callbacks: ComposerLinkNodeViewCallbacks
+  private appliedUrl: string
 
   constructor(
     node: ProseMirrorNode,
@@ -31,6 +32,7 @@ export class ComposerLinkNodeView implements NodeView {
     this.getPos = getPos
     this.callbacks = callbacks
     this.dom = createComposerLinkElement(node.attrs as ComposerLinkPayload)
+    this.appliedUrl = node.attrs.url
     this.dom.addEventListener('mousedown', this.handleMouseDown)
     this.dom.addEventListener('click', this.handleClick)
     this.dom.addEventListener('keydown', this.handleKeyDown)
@@ -43,8 +45,14 @@ export class ComposerLinkNodeView implements NodeView {
     const label = this.dom.querySelector('.composer-mention-label')
     if (label) label.textContent = payload.label
     this.dom.setAttribute('data-composer-link-url', payload.url)
+    this.dom.setAttribute('data-composer-link-provider', payload.provider)
     this.dom.setAttribute('data-composer-link-label', payload.label)
     this.dom.setAttribute('aria-label', payload.label)
+    if (payload.url !== this.appliedUrl) {
+      this.appliedUrl = payload.url
+      const icon = this.dom.querySelector<HTMLImageElement>('.composer-mention-icon')
+      if (icon) applyLinkIcon(icon, payload)
+    }
     return true
   }
 
