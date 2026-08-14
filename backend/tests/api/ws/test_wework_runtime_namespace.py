@@ -4,6 +4,7 @@
 
 """Tests for the Wework runtime IPC relay namespace."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -60,6 +61,62 @@ async def test_device_runtime_event_persists_project_chat_before_browser_relay(
         "wework:project_chat:message:created"
     )
     assert sio.emit.await_args_list[1].args[0] == "runtime:event"
+
+
+@pytest.mark.asyncio
+async def test_device_runtime_events_preserve_socket_order(monkeypatch):
+    namespace = DeviceNamespace()
+    calls: list[str] = []
+    first_persist_started = asyncio.Event()
+    release_first_persist = asyncio.Event()
+    sio = AsyncMock()
+
+    async def project_event(_func, _device_id, payload):
+        event_name = payload["event"]
+        calls.append(f"persist:{event_name}")
+        if event_name == "response.block.created":
+            first_persist_started.set()
+            await release_first_persist.wait()
+        return None
+
+    async def emit(_event_name, payload, **_kwargs):
+        calls.append(f"emit:{payload['event']}")
+
+    sio.emit.side_effect = emit
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", project_event)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
+
+    created = asyncio.create_task(
+        namespace.on_runtime_event(
+            "device-sid",
+            {"event": "response.block.created", "payload": {}},
+        )
+    )
+    await first_persist_started.wait()
+    updated = asyncio.create_task(
+        namespace.on_runtime_event(
+            "device-sid",
+            {"event": "response.block.updated", "payload": {}},
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert calls == ["persist:response.block.created"]
+
+    release_first_persist.set()
+    assert await created == {"success": True}
+    assert await updated == {"success": True}
+    assert calls == [
+        "persist:response.block.created",
+        "emit:response.block.created",
+        "persist:response.block.updated",
+        "emit:response.block.updated",
+    ]
 
 
 @pytest.mark.asyncio
