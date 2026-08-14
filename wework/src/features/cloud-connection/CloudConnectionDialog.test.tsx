@@ -20,13 +20,13 @@ function cloudConnection(backendUrl?: string): CloudConnectionContextValue {
   }
 }
 
-function renderDialog(connection: CloudConnectionContextValue) {
+function renderDialog(connection: CloudConnectionContextValue, onClose = vi.fn()) {
   render(
     <CloudConnectionContext.Provider value={connection}>
       <CloudConnectionDialog
         open
         onlineCloudDeviceCount={0}
-        onClose={vi.fn()}
+        onClose={onClose}
         onOpenSettings={vi.fn()}
       />
     </CloudConnectionContext.Provider>
@@ -83,5 +83,34 @@ describe('CloudConnectionDialog', () => {
     expect(screen.getByTestId('cloud-connection-error')).not.toHaveTextContent(
       'Cloud login has expired'
     )
+  })
+
+  it.each(['error', 'expired'] as const)(
+    'allows disconnecting when the cloud connection status is %s',
+    async status => {
+      const disconnect = vi.fn()
+      const onClose = vi.fn()
+
+      renderDialog(
+        {
+          ...cloudConnection('https://saved.example.com'),
+          status,
+          error: 'Cloud connection failed',
+          disconnect,
+        },
+        onClose
+      )
+
+      await userEvent.click(screen.getByTestId('cloud-disconnect-button'))
+
+      expect(disconnect).toHaveBeenCalledTimes(1)
+      expect(onClose).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('does not show disconnect for a fresh disconnected state', () => {
+    renderDialog(cloudConnection('https://saved.example.com'))
+
+    expect(screen.queryByTestId('cloud-disconnect-button')).not.toBeInTheDocument()
   })
 })
