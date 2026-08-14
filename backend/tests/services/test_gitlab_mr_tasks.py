@@ -165,3 +165,27 @@ def test_event_processing_creates_card(
     assert card.status == "inbox"
     assert "boom" in card.description
     assert card.source_task_binding_id == "gitlab:mr:group/project:1"
+
+
+def test_process_gitlab_event_reraises_instead_of_swallowing(
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, Any],
+) -> None:
+    """A failed webhook apply must surface for celery retry, not ack as ok."""
+    import contextlib
+
+    from app.db import session as db_session_module
+    from app.tasks.gitlab_mr_tasks import process_gitlab_event
+
+    monkeypatch.setattr(
+        db_session_module,
+        "get_db_session",
+        lambda: contextlib.nullcontext(env["db"]),
+    )
+
+    def boom(db, integration_id, event_kind, payload):
+        raise RuntimeError("transient provider failure")
+
+    monkeypatch.setattr("app.tasks.gitlab_mr_tasks._process_integration_event", boom)
+    with pytest.raises(RuntimeError):
+        process_gitlab_event(env["integration"].id, "merge_request", {})

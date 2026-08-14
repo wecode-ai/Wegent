@@ -270,3 +270,62 @@ def test_reconcile_marks_repository_drift(
     test_db.commit()
     assert integration.status == "error"
     assert "Repository changed" in integration.last_error
+
+
+def test_reconcile_settles_stale_evaluating_round_in_db_timezone(
+    env: dict[str, Any],
+) -> None:
+    """The stale-evaluating cutoff must use the DB session timezone (+08:00 for
+    MySQL, UTC for sqlite), not naive UTC, or rounds settle ~8h late."""
+    from datetime import datetime, timedelta
+
+    from app.db.timezone import database_datetime_timezone
+
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    fake.open_mrs = [
+        {
+            "iid": 1,
+            "title": "X",
+            "state": "opened",
+            "source_branch": "feat/x",
+            "target_branch": "main",
+            "sha": SHA1,
+            "web_url": "u",
+            "author": {"id": 11, "username": "alice"},
+        }
+    ]
+    fake.pipelines = []
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    db.commit()
+    record = db.query(MRRecord).filter(MRRecord.mr_iid == 1).one()
+    assert record.state == "evaluating"
+    # One hour old in DB-local time: well past the 10-minute cutoff.
+    db_tz = database_datetime_timezone(db)
+    record.updated_at = datetime.now(db_tz).replace(tzinfo=None) - timedelta(hours=1)
+    db.commit()
+    mr_integration_service.reconcile(db, env["integration"])
+    db.commit()
+    record = db.query(MRRecord).filter(MRRecord.mr_iid == 1).one()
+    assert record.state == "clean"
+
+
+def test_enable_rejects_loopback_public_url(
+    env: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Installing a webhook pointed at localhost would silently drop every
+    event; enable() must refuse instead."""
+    from fastapi import HTTPException
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "http://localhost:8000")
+    with pytest.raises(HTTPException) as exc_info:
+        mr_integration_service.enable(
+            env["db"], env["project"], env["integration"].created_by_user_id
+        )
+    assert exc_info.value.status_code == 502
+    assert env["fake"].hooks == []  # no hook was installed

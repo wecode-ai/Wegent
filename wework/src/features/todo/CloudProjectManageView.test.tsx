@@ -133,4 +133,34 @@ describe('CloudProjectManageView GitLab MR integration', () => {
     await user.click(toggle)
     await waitFor(() => expect(api.disableGitLabMrIntegration).toHaveBeenCalledWith('11'))
   })
+
+  it('retries the status fetch when the initial load failed', async () => {
+    // The initial mount fetch fails (GitLab down); clicking the toggle must
+    // retry the fetch instead of being a silent dead-end.
+    let calls = 0
+    const api = makeApi({
+      getGitLabMrIntegration: vi.fn(async (): Promise<GitLabMrIntegration> => {
+        calls += 1
+        if (calls === 1) throw new Error('gitlab down')
+        return {
+          enabled: false,
+          repository: 'group/project',
+          domain: 'gitlab.internal',
+          webhook_url: null,
+          hook_installed: false,
+          hook_id: 0,
+          status: '',
+          last_error: '',
+          last_reconcile_at: null,
+        }
+      }),
+    })
+    const user = userEvent.setup()
+    renderView(api, makeProject('gitlab'))
+    const toggle = await screen.findByTestId('gitlab-mr-integration-toggle')
+    expect(calls).toBe(1)
+    await user.click(toggle)
+    await waitFor(() => expect(calls).toBeGreaterThan(1))
+    await waitFor(() => expect(api.enableGitLabMrIntegration).toHaveBeenCalledWith('11'))
+  })
 })

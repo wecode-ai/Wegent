@@ -16,7 +16,6 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -187,19 +186,13 @@ class MrService:
             "description": data.get("description") or "",
         }
         record = self._create_record(integration, mr_iid, attrs)
+        # The FOR UPDATE miss above holds a gap lock on the (integration, iid)
+        # unique key, so a concurrent worker's insert cannot race this one in
+        # MySQL; any residual conflict surfaces as an IntegrityError that the
+        # caller's retry / next reconcile pass absorbs instead of silently
+        # discarding flushed work here.
         db.add(record)
-        try:
-            db.flush()
-        except IntegrityError:
-            db.rollback()
-            return (
-                db.query(MRRecord)
-                .filter(
-                    MRRecord.integration_id == integration.id,
-                    MRRecord.mr_iid == mr_iid,
-                )
-                .first()
-            )
+        db.flush()
         return record
 
     def _update_snapshot(
@@ -263,9 +256,12 @@ class MrService:
         if mr_state == "reopened" and record.state == "closed":
             record.state = "evaluating"
             record.closed_at = EPOCH_TIME
+            # A reopen is a fresh MR lifecycle: reset the auto-run cap so the
+            # robot can retry the reopened MR (the cap stays per lifecycle).
+            record.auto_retrigger_count = 0
             self._move_card(db, project, record, "in_progress")
-            db.flush()
-            return
+            # Fall through to the head_sha check: a reopen may carry a new head,
+            # which must start a fresh round instead of keeping the stale sha.
         last_commit = (
             attrs.get("last_commit")
             if isinstance(attrs.get("last_commit"), dict)
@@ -316,20 +312,46 @@ class MrService:
         )
         if not records:
             return
-        ref = str(attrs.get("ref") or "")
-        if ref.startswith("refs/heads/"):
-            ref = ref[len("refs/heads/") :]
-        candidates = [r for r in records if not ref or r.source_branch == ref]
-        if not candidates:
-            candidates = records
+        record = self._pipeline_target(records, str(attrs.get("ref") or ""))
+        if record is None:
+            # Ambiguous or unmatched ref; settle by sha in reconcile instead of
+            # finalizing the wrong MR.
+            return
         self.finalize_round(
             db,
             integration,
             project,
-            candidates[0],
+            record,
             terminal_status=status,
             pipeline_id=pipeline_id,
         )
+
+    @staticmethod
+    def _pipeline_target(records: list[MRRecord], ref: str) -> MRRecord | None:
+        """Pick the record a pipeline event belongs to.
+
+        ``ref`` may be an MR-pipeline ref (``refs/merge-requests/{iid}/head``),
+        a branch ref (``refs/heads/...`` or bare branch), or empty. Match it
+        precisely and never guess among multiple records that share a head sha;
+        an unmatched event is left for reconcile to settle by sha."""
+        if ref.startswith("refs/merge-requests/"):
+            raw = ref[len("refs/merge-requests/") :].split("/", 1)[0]
+            try:
+                iid = int(raw)
+            except ValueError:
+                iid = 0
+            if iid:
+                for record in records:
+                    if record.mr_iid == iid:
+                        return record
+            return None
+        branch = ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
+        if not branch:
+            return records[0] if len(records) == 1 else None
+        for record in records:
+            if record.source_branch == branch:
+                return record
+        return None
 
     def handle_note_event(
         self,
@@ -459,7 +481,7 @@ class MrService:
                 fetch_error = True
         notes: list[dict[str, object]] = []
         try:
-            notes_data = client.request(
+            notes_data = client.request_all(
                 "GET",
                 self._api_path(client, f"/merge_requests/{record.mr_iid}/notes"),
                 not_found_ok=True,
@@ -609,7 +631,9 @@ class MrService:
             sequence = project.next_item_number
             project.next_item_number += 1
             card = LoopItem(
-                id=f"{project.project_key}-{sequence}",
+                # Distinct namespace so MR cards never collide with GitLab issue
+                # ids ({project_key}-{iid}) in the merged board list.
+                id=f"{project.project_key}-mr-{sequence}",
                 cloud_project_id=str(project.id),
                 sequence_number=sequence,
                 title=title,
@@ -666,8 +690,9 @@ class MrService:
         )
         ai_automation = metadata.get("ai_automation")
         ai_automation = ai_automation if isinstance(ai_automation, dict) else {}
+        raw = ai_automation.get("max_retry_count")
         try:
-            max_retries = int(ai_automation.get("max_retry_count") or 3)
+            max_retries = int(raw) if raw is not None else 3
         except (TypeError, ValueError):
             max_retries = 3
         if record.auto_retrigger_count >= max_retries:
@@ -806,10 +831,12 @@ class MrService:
         }
 
     def _unseen_note_ids(self, record: MRRecord) -> set[int]:
+        """Note ids the latest robot run did not see at dispatch.
+
+        Called only after a run completes (``reconcile_pending_feedback``), so an
+        empty ``seen_note_ids`` means the run dispatched with no comments — every
+        note present now arrived mid-run and must re-pull the card."""
         seen = set(int(x) for x in (record.seen_note_ids or []))
-        if not seen:
-            # No robot run has dispatched yet; nothing is "unseen by a run".
-            return set()
         return self._all_note_ids(record) - seen
 
     def _has_active_run(self, db: Session, record: MRRecord) -> bool:

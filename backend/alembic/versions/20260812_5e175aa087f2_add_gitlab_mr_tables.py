@@ -267,6 +267,19 @@ def upgrade() -> None:
             comment="Board card loop_items id; empty when no card",
         ),
         sa.Column(
+            "auto_retrigger_count",
+            _bigint(),
+            nullable=False,
+            server_default="0",
+            comment="Times the state machine auto-re-triggered a robot run on new feedback; capped by project ai_automation",
+        ),
+        sa.Column(
+            "seen_note_ids",
+            sa.JSON(),
+            nullable=False,
+            comment="Note ids the last robot run saw at dispatch; others are pending",
+        ),
+        sa.Column(
             "snapshot_json",
             sa.JSON(),
             nullable=False,

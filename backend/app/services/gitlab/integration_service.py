@@ -16,9 +16,11 @@ from secrets import token_hex, token_urlsafe
 from urllib.parse import quote
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.timezone import database_datetime_timezone
 from app.models.cloud_project import CloudProject
 from app.models.gitlab_mr import MRIntegration, MRRecord
 from app.services.gitlab.client import ProjectScopedGitlabClient, resolve_repository
@@ -50,12 +52,16 @@ class MrIntegrationService:
         existing = (
             db.query(MRIntegration)
             .filter(MRIntegration.cloud_project_id == str(project.id))
+            .with_for_update()
             .first()
         )
         webhook_token = existing.webhook_token if existing else token_urlsafe(32)
         webhook_secret = existing.webhook_secret if existing else token_hex(16)
-        if existing and existing.gitlab_hook_id:
-            self._delete_hook(client, repository, existing.gitlab_hook_id)
+        if not self._configured_public_url():
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "Backend public URL is not configured; set WEGENT_BACKEND_PUBLIC_URL",
+            )
         try:
             hook = client.request(
                 "POST",
@@ -76,6 +82,10 @@ class MrIntegrationService:
                 f"Failed to install GitLab webhook: {exc.detail}",
             ) from exc
         hook_id = int((hook or {}).get("id") or 0) if isinstance(hook, dict) else 0
+        if existing and existing.gitlab_hook_id and existing.gitlab_hook_id != hook_id:
+            # Replace the old hook only after the new one installed successfully;
+            # a failed install must leave the old hook live.
+            self._delete_hook(client, repository, existing.gitlab_hook_id)
         if existing:
             existing.repository = repository
             existing.domain = client.domain
@@ -99,7 +109,17 @@ class MrIntegrationService:
                 created_by_user_id=user_id,
             )
             db.add(existing)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            # A concurrent enable inserted first; return the winning row instead
+            # of surfacing the constraint violation as a 500.
+            db.rollback()
+            existing = (
+                db.query(MRIntegration)
+                .filter(MRIntegration.cloud_project_id == str(project.id))
+                .first()
+            )
         return existing
 
     def disable(self, db: Session, project: CloudProject) -> None:
@@ -190,13 +210,20 @@ class MrIntegrationService:
         client = ProjectScopedGitlabClient(project)
         self._reconcile_hook(db, client, integration)
 
-        cutoff = _utcnow() - timedelta(seconds=RECONCILE_EVALUATING_AGE_SECONDS)
+        # ``updated_at`` is written by ``func.now()`` under the session's forced
+        # timezone; compute the cutoff in that same clock so stale evaluating
+        # rounds settle at the intended age rather than ~8h late.
+        db_tz = database_datetime_timezone(db)
+        cutoff = datetime.now(db_tz).replace(tzinfo=None) - timedelta(
+            seconds=RECONCILE_EVALUATING_AGE_SECONDS
+        )
         records = (
             db.query(MRRecord)
             .filter(
                 MRRecord.integration_id == integration.id,
                 MRRecord.state != "closed",
             )
+            .with_for_update()
             .all()
         )
         open_iids = self._open_mr_iids(client, integration)
@@ -289,6 +316,18 @@ class MrIntegrationService:
         )
 
     @staticmethod
+    def _configured_public_url() -> bool:
+        """Whether the webhook callback URL is reachable from GitLab.
+
+        A missing or loopback default would install a hook GitLab can never
+        reach, silently dropping every event; refuse to install instead."""
+        url = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").strip().rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            return False
+        host = url.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0].lower()
+        return host not in {"localhost", "127.0.0.1"}
+
+    @staticmethod
     def _delete_hook(
         client: ProjectScopedGitlabClient, repository: str, hook_id: int
     ) -> None:
@@ -303,10 +342,10 @@ class MrIntegrationService:
         client: ProjectScopedGitlabClient,
         integration: MRIntegration,
     ) -> set[int]:
-        mrs = client.request(
+        mrs = client.request_all(
             "GET",
             f"/projects/{quote(integration.repository, safe='')}/merge_requests",
-            params={"state": "opened", "per_page": 100, "scope": "all"},
+            params={"state": "opened", "scope": "all"},
             not_found_ok=True,
         )
         if not isinstance(mrs, list):

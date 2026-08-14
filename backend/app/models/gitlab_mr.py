@@ -21,6 +21,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     func,
 )
 
@@ -68,6 +69,8 @@ class MRIntegration(Base):
 
     __table_args__ = (
         # A project owns at most one MR integration (one repo per project).
+        UniqueConstraint("cloud_project_id", name="uniq_mr_integrations_project"),
+        UniqueConstraint("webhook_token", name="uniq_mr_integrations_webhook_token"),
         Index("idx_mr_integrations_enabled", "enabled"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )

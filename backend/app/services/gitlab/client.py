@@ -230,6 +230,37 @@ class ProjectScopedGitlabClient:
             not_found_ok=not_found_ok,
         )
 
+    def request_all(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, object] | None = None,
+        not_found_ok: bool = False,
+        page_size: int = 100,
+    ) -> list[Any]:
+        """Page through a list-returning GitLab endpoint until exhausted.
+
+        GitLab caps ``per_page`` at 100, so a single request truncates lists
+        longer than that. Returns the concatenated pages; a non-list response
+        (e.g. 404 with ``not_found_ok``) yields the pages collected so far.
+        """
+        results: list[Any] = []
+        page = 1
+        while True:
+            batch = self.request(
+                method,
+                path,
+                params={**(params or {}), "per_page": page_size, "page": page},
+                not_found_ok=not_found_ok,
+            )
+            if not isinstance(batch, list):
+                return results
+            results.extend(batch)
+            if len(batch) < page_size:
+                return results
+            page += 1
+
     def text(
         self,
         method: str,

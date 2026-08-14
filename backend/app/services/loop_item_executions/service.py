@@ -1089,12 +1089,19 @@ class LoopItemExecutionService:
                 or data.get("error")
                 or f"Runtime task ended with {terminal}"
             )
-            return self.fail(
+            row = self.fail(
                 db,
                 execution_id=row.id,
                 error=self._error_text(error_value),
                 requeue=True,
             )
+            db.commit()
+            if row is not None:
+                # Mid-run comments are pending even when the run did not succeed;
+                # re-pull the card so the next run sees them.
+                self._maybe_settle_mr_pending(db, row)
+                db.refresh(row)
+            return row
         db.commit()
         if terminal == STATUS_COMPLETED:
             self._finish_project_automation_run(db, row.loop_item_id, "succeeded", None)
@@ -1121,8 +1128,10 @@ class LoopItemExecutionService:
             if record is None:
                 return
             integration = db.get(MRIntegration, record.integration_id)
-            project = db.get(CloudProject, record.cloud_project_id)
-            if integration is None or project is None or not integration.enabled:
+            if integration is None or not integration.enabled:
+                return
+            project = db.get(CloudProject, integration.cloud_project_id)
+            if project is None:
                 return
             mr_service.reconcile_pending_feedback(db, integration, project, record)
         except Exception:

@@ -118,6 +118,11 @@ class ExternalLoopItemProvider:
         """
         from app.services.loop_items.service import loop_item_service
 
+        if assignee_type == "agent":
+            # MR fix cards are user-assigned (assignee_agent_id="" always), so an
+            # agent filter must not dump every MR card into the board.
+            return []
+
         query = db.query(LoopItem).filter(
             LoopItem.cloud_project_id == str(project.id),
             LoopItem.source == "gitlab",

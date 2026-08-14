@@ -218,3 +218,36 @@ def test_client_exposes_repository_and_token(
     assert client.domain == "gitlab.internal"
     assert client.token == "secret-token"
     assert client.api_base == "https://gitlab.internal/api/v4"
+
+
+def test_request_all_pages_until_short_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """request_all follows GitLab pagination and stops on a short/empty page."""
+    pages_seen: list[int] = []
+
+    def fake_httpx_request(method, url, **kwargs):
+        params = kwargs.get("params", {})
+        page = int(params.get("page", 1))
+        pages_seen.append(page)
+        if page <= 2:
+            return _FakeResponse([{"n": i} for i in range(100)])
+        return _FakeResponse([{"n": 1}, {"n": 2}])
+
+    monkeypatch.setattr(httpx, "request", fake_httpx_request)
+    client = ProjectScopedGitlabClient(_project())
+    results = client.request_all("GET", "/projects/group%2Fproject/merge_requests")
+    assert len(results) == 202
+    assert pages_seen == [1, 2, 3]
+
+
+def test_request_all_returns_empty_on_short_first_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        httpx,
+        "request",
+        lambda method, url, **kwargs: _FakeResponse([{"n": 1}]),
+    )
+    client = ProjectScopedGitlabClient(_project())
+    assert client.request_all("GET", "/projects/g/merge_requests") == [{"n": 1}]

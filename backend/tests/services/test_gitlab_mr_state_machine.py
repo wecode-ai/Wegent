@@ -1108,3 +1108,136 @@ def test_diff_note_position_and_author_from_webhook(env: dict[str, Any]) -> None
     assert note["position"]["path"] == "review_demo/calculator.py"
     assert note["position"]["line"] == 17
     assert "calculator.py:17" in render_card_description(record)
+
+
+def _settle_with_run(env: dict[str, Any], terminal_status: str) -> None:
+    """Drive the run-completion settle wrapper (not reconcile_pending_feedback
+    directly) so the resolution of project from the MRRecord is exercised."""
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    _start_run(env, db, card)
+    mr_service.handle_note_event(
+        db, env["integration"], env["project"], _note_event(1, 12, "c_mid")
+    )
+    db.commit()
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    assert execution is not None
+    execution.status = terminal_status
+    db.commit()
+    from app.services.loop_item_executions.service import (
+        loop_item_execution_service,
+    )
+
+    loop_item_execution_service._maybe_settle_mr_pending(db, execution)
+    db.commit()
+
+
+def test_settle_wrapper_repulls_unseen_comments_after_completed_run(
+    env: dict[str, Any],
+) -> None:
+    """Regression: the settle wrapper crashed on ``record.cloud_project_id``
+    (MRRecord has no such column), so the mid-run re-pull was dead code."""
+    _settle_with_run(env, "completed")
+    db = env["db"]
+    card = _card(db, env["project"])
+    record = _record(db, env["integration"])
+    assert record.auto_retrigger_count == 1
+    assert (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .count()
+        == 2
+    )
+
+
+def test_settle_wrapper_repulls_unseen_comments_after_failed_run(
+    env: dict[str, Any],
+) -> None:
+    """A run ending failed/cancelled (retries exhausted) must also re-pull
+    mid-run comments instead of leaving the card stale."""
+    _settle_with_run(env, "failed")
+    record = _record(env["db"], env["integration"])
+    assert record.auto_retrigger_count == 1
+
+
+def test_first_mid_run_comment_repulls_when_run_saw_nothing(
+    env: dict[str, Any],
+) -> None:
+    """Empty seen_note_ids (a run dispatched with zero comments) must not
+    suppress the first mid-run comment re-pull."""
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    _start_run(env, db, card)
+    record = _record(db, env["integration"])
+    assert record.seen_note_ids == []
+    mr_service.handle_note_event(
+        db, env["integration"], env["project"], _note_event(1, 13, "c_first")
+    )
+    db.commit()
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    assert execution is not None
+    execution.status = "completed"
+    db.commit()
+    mr_service.reconcile_pending_feedback(
+        db, env["integration"], env["project"], record
+    )
+    db.commit()
+    assert record.state == "actionable"
+    assert record.auto_retrigger_count == 1
+
+
+def test_pipeline_ref_mismatch_does_not_finalize_wrong_record(
+    env: dict[str, Any],
+) -> None:
+    """A pipeline event whose ref matches neither the MR branch nor its iid is
+    left for reconcile instead of finalizing an arbitrary record."""
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    assert record.state == "evaluating"
+    mr_service.handle_pipeline_event(
+        db,
+        env["integration"],
+        env["project"],
+        _pipeline_event(SHA1, "failed", ref="refs/merge-requests/9/head"),
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    assert record.state == "evaluating"
+    # An MR-pipeline ref carrying the correct iid finalizes it.
+    env["fake"].notes = []
+    env["fake"].jobs = []
+    mr_service.handle_pipeline_event(
+        db,
+        env["integration"],
+        env["project"],
+        _pipeline_event(SHA1, "success", ref="refs/merge-requests/1/head"),
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    assert record.state == "clean"

@@ -46,23 +46,29 @@ def _process_integration_event(
     db.commit()
 
 
-@celery_app.task(bind=True, name="app.tasks.gitlab_mr_tasks.process_gitlab_event")
+@celery_app.task(
+    bind=True,
+    name="app.tasks.gitlab_mr_tasks.process_gitlab_event",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+)
 def process_gitlab_event(
     self, integration_id: int, event_kind: str, payload: dict[str, object]
 ) -> dict[str, object]:
-    """Apply one validated GitLab webhook event to the MR state machine."""
+    """Apply one validated GitLab webhook event to the MR state machine.
+
+    The webhook endpoint already acked with 202, so GitLab will not re-deliver;
+    a failure must surface and retry here instead of being swallowed as a
+    successful ack."""
     from app.db.session import get_db_session
 
     with get_db_session() as db:
         try:
             _process_integration_event(db, integration_id, event_kind, payload)
         except Exception:
-            logger.exception(
-                "Failed to process GitLab %s event for integration %s",
-                event_kind,
-                integration_id,
-            )
             db.rollback()
+            raise
     return {"status": "ok"}
 
 

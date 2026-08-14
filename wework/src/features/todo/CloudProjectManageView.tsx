@@ -128,13 +128,16 @@ export function CloudProjectManageView({
       .catch(cause => setError(cause instanceof Error ? cause.message : '加载字段失败'))
   }, [aitableApi, isAITable, project])
 
-  const refreshMrStatus = useCallback(async () => {
-    if (externalProvider !== 'gitlab') return
+  const refreshMrStatus = useCallback(async (): Promise<GitLabMrIntegration | null> => {
+    if (externalProvider !== 'gitlab') return null
     try {
-      setMrStatus(await api.getGitLabMrIntegration(project.id))
+      const status = await api.getGitLabMrIntegration(project.id)
+      setMrStatus(status)
       setMrError(null)
+      return status
     } catch (cause) {
       setMrError(cause instanceof Error ? cause.message : t('todo.mr_integration_error'))
+      return null
     }
   }, [api, externalProvider, project.id, t])
 
@@ -158,10 +161,17 @@ export function CloudProjectManageView({
   }, [api, externalProvider, project.id, t])
 
   const toggleMrIntegration = async (): Promise<void> => {
-    if (mrBusy || !mrStatus) return
+    if (mrBusy) return
+    let status = mrStatus
+    if (!status) {
+      // The initial status fetch failed earlier; retry so the toggle is not a
+      // silent dead-end.
+      status = await refreshMrStatus()
+      if (!status) return
+    }
     setMrBusy(true)
     try {
-      if (mrStatus.enabled) {
+      if (status.enabled) {
         await api.disableGitLabMrIntegration(project.id)
       } else {
         await api.enableGitLabMrIntegration(project.id)
@@ -832,7 +842,7 @@ export function CloudProjectManageView({
               <button
                 type="button"
                 data-testid="gitlab-mr-integration-toggle"
-                disabled={mrBusy || mrStatus === null}
+                disabled={mrBusy}
                 onClick={() => void toggleMrIntegration()}
                 className="h-9 rounded-lg bg-black px-3.5 text-sm text-white disabled:opacity-60"
               >

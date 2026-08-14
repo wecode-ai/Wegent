@@ -412,8 +412,11 @@ function ProjectDialog({
       if (mrEnabled && taskProvider === 'gitlab') {
         try {
           await selectedApi.enableGitLabMrIntegration(project.id)
-        } catch {
+        } catch (cause) {
+          // The project was created; surface the MR integration failure instead
+          // of silently dropping the checked "接入该仓库的 MR" intent.
           track('operation_failed', { operation: 'project_space_action' })
+          setError(cloudProjectRequestError(cause))
         }
       }
       track('feature_action_completed', { domain: 'project_space', action: 'create' })
