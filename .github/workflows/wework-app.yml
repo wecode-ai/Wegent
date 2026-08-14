@@ -195,14 +195,6 @@ jobs:
             fi
             echo ""
             cat "$generated_notes"
-            echo ""
-            echo "## macOS Distribution Notes"
-            echo ""
-            echo "Wework macOS DMG build, signed with an Apple Developer ID Application certificate and notarized by Apple."
-            echo ""
-            echo "## Windows Distribution Notes"
-            echo ""
-            echo "Wework Windows x64 NSIS installer."
           } > "$release_notes"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
