@@ -28,6 +28,7 @@ impl RuntimeWorkRpcHandler {
         let link = self.task_link_from_payload(&payload, false).await?;
         let existing = link.supervisor.clone();
         let supervisor = configured_supervisor(&payload, existing)?;
+        self.configure_supervisor_model(&link.local_task_id, &supervisor, &payload)?;
         self.store.update_task(&link.local_task_id, |task| {
             task.supervisor = Some(supervisor);
             task.updated_at = now_ms();
@@ -68,6 +69,10 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn clear_task_supervisor(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
+        self.supervisor_model_configs
+            .lock()
+            .expect("supervisor model config map lock should not be poisoned")
+            .remove(&link.local_task_id);
         self.store.update_task(&link.local_task_id, |task| {
             task.supervisor = None;
             task.updated_at = now_ms();
@@ -272,7 +277,8 @@ impl RuntimeWorkRpcHandler {
         let visible_progress =
             serde_json::to_string(&visible_progress).map_err(|error| error.to_string())?;
         let content = self
-            .evaluate_supervisor_with_model_api(
+            .evaluate_supervisor_with_model(
+                &link,
                 &supervisor,
                 supervisor_prompt(&supervisor, &visible_progress),
             )
@@ -335,15 +341,110 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    async fn evaluate_supervisor_with_model_api(
+    pub(super) fn configure_supervisor_model(
         &self,
+        local_task_id: &str,
+        supervisor: &RuntimeSupervisorState,
+        payload: &Value,
+    ) -> Result<(), AppIpcError> {
+        let selection = supervisor
+            .model_selection
+            .as_ref()
+            .ok_or_else(|| AppIpcError::new("bad_request", "supervisor model is required"))?;
+        if supervisor_model_type(selection).as_deref() != Some("runtime") {
+            self.supervisor_model_configs
+                .lock()
+                .expect("supervisor model config map lock should not be poisoned")
+                .remove(local_task_id);
+            return Ok(());
+        }
+        let model_config = payload
+            .get("modelConfig")
+            .or_else(|| payload.get("model_config"))
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "runtime supervisor model configuration is missing",
+                )
+            })?;
+        self.supervisor_model_configs
+            .lock()
+            .expect("supervisor model config map lock should not be poisoned")
+            .insert(local_task_id.to_owned(), model_config);
+        Ok(())
+    }
+
+    async fn evaluate_supervisor_with_model(
+        &self,
+        link: &RuntimeTaskLink,
         supervisor: &RuntimeSupervisorState,
         prompt: String,
     ) -> Result<String, String> {
         let selection = supervisor
             .model_selection
             .as_ref()
-            .ok_or_else(|| "supervisor requires a cloud model selection".to_owned())?;
+            .ok_or_else(|| "supervisor model is missing".to_owned())?;
+        if supervisor_model_type(selection).as_deref() == Some("runtime") {
+            return self
+                .evaluate_supervisor_with_runtime_model(link, prompt)
+                .await;
+        }
+        self.evaluate_supervisor_with_cloud_model(selection, prompt)
+            .await
+    }
+
+    async fn evaluate_supervisor_with_runtime_model(
+        &self,
+        link: &RuntimeTaskLink,
+        prompt: String,
+    ) -> Result<String, String> {
+        let model_config = self
+            .supervisor_model_configs
+            .lock()
+            .map_err(|_| "supervisor model config map lock is poisoned".to_owned())?
+            .get(&link.local_task_id)
+            .cloned()
+            .ok_or_else(|| "runtime supervisor model configuration is missing".to_owned())?;
+        let mut request = ExecutionRequest {
+            task_id: format!("supervisor-{}", link.local_task_id),
+            subtask_id: format!("supervisor-evaluation-{}", now_ms()),
+            model_config,
+            system_prompt: supervisor_model_instructions(),
+            prompt: Value::String(prompt),
+            project_workspace_path: Some(link.workspace_path.clone()),
+            runtime_workspace_roots: link.runtime_workspace_roots.clone(),
+            runtime_project_key: link.runtime_project_key.clone(),
+            ephemeral: true,
+            new_session: true,
+            ..ExecutionRequest::default()
+        };
+        self.apply_backend_connection(&mut request);
+        let turn = tokio::time::timeout(
+            SUPERVISOR_EVALUATION_TIMEOUT,
+            self.codex_app_server
+                .run_turn_with_cancel(request, CodexAppServerTurnOptions::default()),
+        )
+        .await
+        .map_err(|_| "runtime supervisor model request timed out".to_owned())?
+        .map_err(|error| format!("runtime supervisor model request failed: {error}"))?;
+        match turn.outcome {
+            ExecutionOutcome::Completed { content } => Ok(content),
+            ExecutionOutcome::Failed { message } => Err(format!(
+                "runtime supervisor model request failed: {message}"
+            )),
+            outcome => Err(format!(
+                "runtime supervisor model request did not complete: {outcome:?}"
+            )),
+        }
+    }
+
+    async fn evaluate_supervisor_with_cloud_model(
+        &self,
+        selection: &Value,
+        prompt: String,
+    ) -> Result<String, String> {
         let model_ref = supervisor_model_reference(selection)?;
         let connection = self
             .backend_connection
@@ -568,10 +669,10 @@ pub(super) fn configured_supervisor(
     let Some(model_selection) = model_selection else {
         return Err(AppIpcError::new(
             "bad_request",
-            "supervisor requires a cloud model selection",
+            "supervisor model is required",
         ));
     };
-    supervisor_model_reference(&model_selection)
+    validate_supervisor_model_selection(&model_selection)
         .map_err(|error| AppIpcError::new("bad_request", error))?;
     let interval_seconds = payload
         .get("intervalSeconds")
@@ -708,6 +809,25 @@ fn supervisor_model_reference(selection: &Value) -> Result<Value, String> {
         "namespace": namespace,
         "resource_user_id": resource_user_id,
     }))
+}
+
+fn supervisor_model_type(selection: &Value) -> Option<String> {
+    string_field(selection, "modelType").or_else(|| string_field(selection, "model_type"))
+}
+
+fn validate_supervisor_model_selection(selection: &Value) -> Result<(), String> {
+    let name = string_field(selection, "modelName")
+        .or_else(|| string_field(selection, "model_name"))
+        .ok_or_else(|| "supervisor model name is missing".to_owned())?;
+    if name.trim().is_empty() {
+        return Err("supervisor model name is missing".to_owned());
+    }
+    match supervisor_model_type(selection).as_deref() {
+        Some("runtime") => Ok(()),
+        Some("public" | "user" | "group") => supervisor_model_reference(selection).map(drop),
+        Some(_) => Err("supervisor model type is unsupported".to_owned()),
+        None => Err("supervisor model type is missing".to_owned()),
+    }
 }
 
 fn supervisor_needs_scheduled_check(link: &RuntimeTaskLink, active: bool, now: i64) -> bool {
@@ -1033,6 +1153,34 @@ mod tests {
         .expect("supervisor should configure");
 
         assert_eq!(supervisor.mode, "auto");
+    }
+
+    #[test]
+    fn supervisor_accepts_runtime_model_selection() {
+        let supervisor = configured_supervisor(
+            &json!({
+                "modelSelection": {
+                    "modelName": "deepseek-v4-pro",
+                    "modelType": "runtime",
+                    "options": {
+                        "reasoning": "high"
+                    }
+                }
+            }),
+            None,
+        )
+        .expect("runtime supervisor should configure");
+
+        assert_eq!(
+            supervisor.model_selection,
+            Some(json!({
+                "modelName": "deepseek-v4-pro",
+                "modelType": "runtime",
+                "options": {
+                    "reasoning": "high"
+                }
+            }))
+        );
     }
 
     #[test]

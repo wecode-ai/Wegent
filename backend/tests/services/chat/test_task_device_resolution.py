@@ -5,9 +5,7 @@
 """Tests for chat task execution device resolution."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
 
-import pytest
 from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
@@ -19,9 +17,7 @@ from app.services.chat.storage.task_manager import TaskCreationParams
 from app.services.chat.task_device_resolution import (
     ensure_task_device_id,
     resolve_chat_task_device_id,
-    resolve_chat_task_dispatch_device_id,
 )
-from app.services.device.local_provider import LocalDeviceProvider
 
 
 def test_resolve_chat_task_device_prefers_explicit_device(
@@ -275,7 +271,7 @@ def test_resolve_chat_task_device_maps_project_app_device_id(
     )
 
 
-def test_resolve_chat_task_device_uses_existing_task_project(
+def test_resolve_chat_task_device_does_not_rederive_existing_task_from_project(
     test_db: Session,
     test_user: User,
 ):
@@ -310,7 +306,7 @@ def test_resolve_chat_task_device_uses_existing_task_project(
             params=params,
             task=task,
         )
-        == "project-device"
+        is None
     )
 
 
@@ -332,6 +328,51 @@ def test_resolve_chat_task_device_falls_back_to_task_spec(
             task=task,
         )
         == "task-device"
+    )
+
+
+def test_resolve_chat_task_device_does_not_override_existing_task_target(
+    test_db: Session,
+    test_user: User,
+):
+    task = _task(task_id=2501, user_id=test_user.id, device_id="task-device")
+    params = TaskCreationParams(
+        message="pwd",
+        device_id="different-device",
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
+            task=task,
+        )
+        == "task-device"
+    )
+
+
+def test_resolve_chat_task_device_keeps_existing_managed_task_managed(
+    test_db: Session,
+    test_user: User,
+):
+    task = _task(task_id=2501, user_id=test_user.id, task_type="chat")
+    params = TaskCreationParams(
+        message="pwd",
+        device_id="stale-device-selection",
+        project_id=49,
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
+            task=task,
+        )
+        is None
     )
 
 
@@ -370,8 +411,7 @@ def test_ensure_task_device_id_rejects_existing_code_task(test_user: User):
     assert "device_id" not in task.json["spec"]
 
 
-@pytest.mark.asyncio
-async def test_resolve_chat_dispatch_device_uses_only_online_local_device_when_project_device_is_stale(
+def test_resolve_chat_dispatch_device_does_not_replace_offline_target(
     test_db: Session,
     test_user: User,
 ):
@@ -394,36 +434,23 @@ async def test_resolve_chat_dispatch_device_uses_only_online_local_device_when_p
     )
     test_db.commit()
 
-    stale_key = LocalDeviceProvider.generate_online_key(test_user.id, "stale-device")
-    online_key = LocalDeviceProvider.generate_online_key(test_user.id, "online-device")
-
     params = TaskCreationParams(
         message="pwd",
         project_id=49,
         client_origin=CLIENT_ORIGIN_FRONTEND,
     )
 
-    with patch(
-        "app.services.chat.task_device_resolution.cache_manager.mget",
-        new=AsyncMock(
-            return_value={
-                stale_key: None,
-                online_key: {"status": "online"},
-            }
-        ),
-    ):
-        assert (
-            await resolve_chat_task_dispatch_device_id(
-                test_db,
-                user_id=test_user.id,
-                params=params,
-            )
-            == "online-device"
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
         )
+        == "stale-device"
+    )
 
 
-@pytest.mark.asyncio
-async def test_resolve_chat_dispatch_device_uses_only_online_local_device_when_project_device_is_inactive(
+def test_resolve_chat_dispatch_device_does_not_replace_inactive_target(
     test_db: Session,
     test_user: User,
 ):
@@ -448,36 +475,29 @@ async def test_resolve_chat_dispatch_device_uses_only_online_local_device_when_p
     )
     test_db.commit()
 
-    online_key = LocalDeviceProvider.generate_online_key(test_user.id, "online-device")
     params = TaskCreationParams(
         message="pwd",
         project_id=49,
         client_origin=CLIENT_ORIGIN_FRONTEND,
     )
 
-    with patch(
-        "app.services.chat.task_device_resolution.cache_manager.mget",
-        new=AsyncMock(return_value={online_key: {"status": "online"}}),
-    ):
-        assert (
-            await resolve_chat_task_dispatch_device_id(
-                test_db,
-                user_id=test_user.id,
-                params=params,
-            )
-            == "online-device"
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
         )
+        == "inactive-device"
+    )
 
 
-@pytest.mark.asyncio
-async def test_resolve_chat_dispatch_device_keeps_unknown_device_id_when_one_local_device_is_online(
+def test_resolve_chat_dispatch_device_keeps_unknown_device_id(
     test_db: Session,
     test_user: User,
 ):
     test_db.add(_device(user_id=test_user.id, device_id="online-device"))
     test_db.commit()
 
-    online_key = LocalDeviceProvider.generate_online_key(test_user.id, "online-device")
     params = TaskCreationParams(
         message="pwd",
         device_id="unknown-device",
@@ -485,18 +505,14 @@ async def test_resolve_chat_dispatch_device_keeps_unknown_device_id_when_one_loc
         client_origin=CLIENT_ORIGIN_FRONTEND,
     )
 
-    with patch(
-        "app.services.chat.task_device_resolution.cache_manager.mget",
-        new=AsyncMock(return_value={online_key: {"status": "online"}}),
-    ):
-        assert (
-            await resolve_chat_task_dispatch_device_id(
-                test_db,
-                user_id=test_user.id,
-                params=params,
-            )
-            == "unknown-device"
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
         )
+        == "unknown-device"
+    )
 
 
 def _device(

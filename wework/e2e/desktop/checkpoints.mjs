@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'supervisor-lifecycle',
   'resilience',
   'conversation-state',
+  'temporary-chat',
   'workspace-attachments',
   'rendering-extensions',
   'change-request-status',

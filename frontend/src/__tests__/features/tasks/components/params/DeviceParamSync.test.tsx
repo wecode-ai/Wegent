@@ -42,10 +42,11 @@ describe('DeviceParamSync', () => {
     mockSelectedTaskDetail = { id: 42, task_type: 'code' }
   })
 
-  it('removes a stale device parameter from an existing code task', async () => {
+  it('removes a device parameter from an existing task without changing its target', async () => {
     render(<DeviceParamSync />)
 
-    await waitFor(() => expect(mockSetSelectedDeviceId).toHaveBeenCalledWith(null))
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/chat?taskId=42'))
+    expect(mockSetSelectedDeviceId).not.toHaveBeenCalled()
     expect(mockReplace).toHaveBeenCalledWith('/chat?taskId=42')
   })
 })

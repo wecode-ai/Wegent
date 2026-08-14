@@ -25,12 +25,13 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { Monitor, WifiOff } from 'lucide-react'
-import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
+import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
 import { useDeviceVncState } from '@wecode/hooks'
-import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
+import { getAccountDefaultDeviceId } from '@/features/devices/utils/execution-target'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { useUser } from '@/features/common/UserContext'
 
 const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
   ssr: false,
@@ -48,13 +49,15 @@ export default function DeviceChatPage() {
 
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
+  const { user } = useUser()
 
   // Check if deviceId is specified in URL
   const searchParams = useSearchParams()
   const hasDeviceIdParam = !!(searchParams.get('deviceId') || searchParams.get('device_id'))
-
-  // Get selected device info
-  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+  const routeTaskId =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  const isExistingTask = Boolean(routeTaskId)
+  const selectedTaskMatchesRoute = isExistingTask && String(selectedTaskDetail?.id) === routeTaskId
 
   // Project context — when projectId is in URL, device is locked to project config
   const projectIdParam = searchParams.get('projectId')
@@ -72,12 +75,6 @@ export default function DeviceChatPage() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  // VNC panel state using wecode hook
-  const { isCloudDevice, isVncOpen, sandboxId, setIsVncOpen, handleToggleVnc } = useDeviceVncState({
-    selectedDevice,
-    selectedDeviceId,
-  })
-
   // VNC fullscreen state
   const [isVncFullscreen, setIsVncFullscreen] = useState(false)
 
@@ -93,16 +90,13 @@ export default function DeviceChatPage() {
     saveLastTab('devices')
   }, [])
 
-  // Auto-select preferred device if none selected and no URL param
+  // Initialize a new task from the account default without substituting a
+  // different available device. Existing tasks use their persisted target.
   useEffect(() => {
-    if (hasDeviceIdParam) return
-    if (!selectedDeviceId && devices.length > 0) {
-      const preferredDevice = getPreferredExecutionDevice(devices)
-      if (preferredDevice) {
-        setSelectedDeviceId(preferredDevice.device_id)
-      }
-    }
-  }, [devices, selectedDeviceId, setSelectedDeviceId, hasDeviceIdParam])
+    if (hasDeviceIdParam || isExistingTask || selectedDeviceId) return
+    const defaultDeviceId = getAccountDefaultDeviceId(user?.preferences?.default_execution_target)
+    if (defaultDeviceId) setSelectedDeviceId(defaultDeviceId)
+  }, [hasDeviceIdParam, isExistingTask, selectedDeviceId, setSelectedDeviceId, user])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -137,6 +131,7 @@ export default function DeviceChatPage() {
 
   // Handle device selection
   const handleDeviceSelect = (deviceId: string) => {
+    if (isExistingTask) return
     setSelectedDeviceId(deviceId)
     // Clear any existing task when selecting a new device
     selectTask(null)
@@ -146,10 +141,24 @@ export default function DeviceChatPage() {
   }
 
   // Get current task title for top navigation
-  const currentTaskTitle = selectedTaskDetail?.title
+  const currentTaskTitle = selectedTaskMatchesRoute ? selectedTaskDetail?.title : undefined
 
-  // Show VNC panel only when open and device is a cloud device with sandboxId
-  const showVncPanel = isVncOpen && sandboxId && selectedDeviceId && !isMobile
+  const persistedTaskDeviceId =
+    selectedTaskMatchesRoute && selectedTaskDetail?.task_type === 'task'
+      ? selectedTaskDetail.device_id || null
+      : null
+  const activeDeviceId = isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
+
+  // VNC state follows the persisted device for existing tasks and the selected
+  // device for new tasks.
+  const { isCloudDevice, isVncOpen, sandboxId, setIsVncOpen, handleToggleVnc } = useDeviceVncState({
+    selectedDevice,
+    selectedDeviceId: activeDeviceId,
+  })
+
+  // Show VNC panel only when open and the active cloud device has a sandbox.
+  const showVncPanel = isVncOpen && sandboxId && activeDeviceId && !isMobile
 
   // Check if selected device is OpenClaw type (used for conditional rendering)
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
@@ -158,7 +167,6 @@ export default function DeviceChatPage() {
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* URL parameter sync */}
       <TaskParamSync />
-      <DeviceTaskSync />
       <DeviceParamSync />
 
       {/* Collapsed sidebar floating buttons */}
@@ -194,9 +202,9 @@ export default function DeviceChatPage() {
           <div className="flex items-center gap-2 mr-2">
             <Monitor className="w-4 h-4 text-text-muted" />
             <select
-              value={selectedDeviceId || ''}
+              value={activeDeviceId || ''}
               onChange={e => handleDeviceSelect(e.target.value)}
-              disabled={isProjectContext}
+              disabled={isProjectContext || isExistingTask}
               className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="" disabled>
@@ -222,7 +230,7 @@ export default function DeviceChatPage() {
         </TopNavigation>
 
         {/* Chat area or placeholder */}
-        {selectedDeviceId || selectedTaskDetail ? (
+        {activeDeviceId || isExistingTask ? (
           <div className="flex flex-1 min-h-0">
             {/* Chat area - width adjusts based on VNC panel and fullscreen state */}
             <div
@@ -251,7 +259,7 @@ export default function DeviceChatPage() {
             {/* VNC Panel */}
             {showVncPanel && (
               <DeviceVncPanel
-                deviceId={selectedDeviceId}
+                deviceId={activeDeviceId}
                 hideFilesTab={isOpenClaw}
                 onClose={() => setIsVncOpen(false)}
                 title={t('vnc_panel_title')}

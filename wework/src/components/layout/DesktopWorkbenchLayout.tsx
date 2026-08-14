@@ -108,7 +108,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
-    rememberExecutionDevice: onRememberExecutionDevice,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
@@ -1007,7 +1006,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
-        onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}
         onUpgradeDevice={onUpgradeDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}

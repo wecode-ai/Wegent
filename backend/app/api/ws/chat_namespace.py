@@ -78,7 +78,7 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.task_device_resolution import (
-    resolve_chat_task_dispatch_device_id,
+    resolve_chat_task_device_id,
 )
 from app.services.chat.trigger import (
     collect_completed_result,
@@ -939,7 +939,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     user=user,
                     params=params,
                 )
-            resolved_device_id = await resolve_chat_task_dispatch_device_id(
+            resolved_device_id = resolve_chat_task_device_id(
                 db,
                 user_id=user_id,
                 params=params,

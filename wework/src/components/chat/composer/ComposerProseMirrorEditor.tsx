@@ -24,6 +24,13 @@ import { ComposerMentionNodeView } from './ComposerMentionNodeView'
 import { ComposerLinkNodeView } from './ComposerLinkNodeView'
 import type { ComposerLinkPayload } from './composerLinks'
 import {
+  allocateComposerDiagnosticId,
+  classifyComposerInputData,
+  diagnosticKeyboardKey,
+  recordComposerDiagnostic,
+  roundComposerDuration,
+} from './composerDiagnostics'
+import {
   composerSchema,
   createComposerDocument,
   OBJECT_REPLACEMENT_CHARACTER,
@@ -76,6 +83,7 @@ interface ComposerProseMirrorEditorProps {
 }
 
 const EXTERNAL_VALUE_META = 'composer-external-value'
+const SLOW_INPUT_FRAME_MS = 32
 
 export const ComposerProseMirrorEditor = forwardRef<
   ComposerEditorHandle,
@@ -86,6 +94,7 @@ export const ComposerProseMirrorEditor = forwardRef<
   const textareaRefRef = useRef(props.textareaRef)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
+  const composerDiagnosticIdRef = useRef<number | null>(null)
   const [hasContent, setHasContent] = useState(props.value !== '')
   callbacksRef.current = props
 
@@ -109,6 +118,11 @@ export const ComposerProseMirrorEditor = forwardRef<
       setValue(value, selectionOffset = value.length) {
         const view = viewRef.current
         if (!view) return
+        recordComposerDiagnostic('value-set', {
+          composerId: composerDiagnosticIdRef.current,
+          valueLength: value.length,
+          selectionEnd: selectionOffset,
+        })
         replaceComposerValue(view, value, selectionOffset, false, true)
       },
     }),
@@ -119,7 +133,17 @@ export const ComposerProseMirrorEditor = forwardRef<
     const mount = mountRef.current
     if (!mount) return
     const initialProps = callbacksRef.current
+    const composerId = allocateComposerDiagnosticId()
+    composerDiagnosticIdRef.current = composerId
+    recordComposerDiagnostic('editor-mounted', {
+      composerId,
+      valueLength: initialProps.value.length,
+    })
     internalValueRef.current = initialProps.value
+    let lastBeforeInputAt: number | null = null
+    let inputFrameStartedAt: number | null = null
+    let inputFrameRequest: number | null = null
+    let inputFrameEventCount = 0
 
     const view: EditorView = new EditorView(mount, {
       state: EditorState.create({
@@ -197,6 +221,7 @@ export const ComposerProseMirrorEditor = forwardRef<
         },
       },
       dispatchTransaction(transaction) {
+        const transactionStartedAt = performance.now()
         const nextState = view.state.apply(transaction)
         view.updateState(nextState)
         const snapshot = readComposerSnapshot(nextState)
@@ -206,6 +231,20 @@ export const ComposerProseMirrorEditor = forwardRef<
           callbacksRef.current.onChange(snapshot.value)
         }
         callbacksRef.current.onSnapshotChange(snapshot)
+        if (transaction.docChanged) {
+          recordComposerDiagnostic('transaction', {
+            composerId,
+            docChanged: true,
+            external: Boolean(transaction.getMeta(EXTERNAL_VALUE_META)),
+            viewIsComposing: view.composing,
+            valueLength: snapshot.value.length,
+            selectionStart: snapshot.selectionStart,
+            selectionEnd: snapshot.selectionEnd,
+            transactionMs: performance.now() - transactionStartedAt,
+            elapsedMs: lastBeforeInputAt === null ? null : performance.now() - lastBeforeInputAt,
+          })
+          lastBeforeInputAt = null
+        }
       },
       handleTextInput(_view, from, to, text): boolean {
         if (!text.includes(OBJECT_REPLACEMENT_CHARACTER)) return false
@@ -237,10 +276,20 @@ export const ComposerProseMirrorEditor = forwardRef<
           return false
         },
         compositionstart() {
+          recordComposerDiagnostic('composition-start', {
+            composerId,
+            viewIsComposing: view.composing,
+            valueLength: internalValueRef.current.length,
+          })
           callbacksRef.current.onCompositionStart()
           return false
         },
         compositionend() {
+          recordComposerDiagnostic('composition-end', {
+            composerId,
+            viewIsComposing: view.composing,
+            valueLength: internalValueRef.current.length,
+          })
           callbacksRef.current.onCompositionEnd()
           return false
         },
@@ -260,6 +309,21 @@ export const ComposerProseMirrorEditor = forwardRef<
     })
 
     const handleKeyDownCapture = (event: KeyboardEvent) => {
+      const diagnosticKey = diagnosticKeyboardKey(event.key)
+      if (diagnosticKey) {
+        recordComposerDiagnostic('keyboard', {
+          composerId,
+          key: diagnosticKey,
+          code: event.code,
+          eventIsComposing: event.isComposing,
+          viewIsComposing: view.composing,
+          shiftKey: event.shiftKey,
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          valueLength: internalValueRef.current.length,
+        })
+      }
       if (selectAllComposerContent(view, event)) {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -284,6 +348,36 @@ export const ComposerProseMirrorEditor = forwardRef<
       event.stopImmediatePropagation()
     }
     const handleBeforeInputCapture = (event: InputEvent) => {
+      const now = performance.now()
+      lastBeforeInputAt = now
+      inputFrameStartedAt ??= now
+      inputFrameEventCount += 1
+      recordComposerDiagnostic('before-input', {
+        composerId,
+        inputType: event.inputType,
+        eventIsComposing: event.isComposing,
+        viewIsComposing: view.composing,
+        valueLength: internalValueRef.current.length,
+        ...classifyComposerInputData(event.data),
+      })
+      if (inputFrameRequest === null) {
+        inputFrameRequest = window.requestAnimationFrame(() => {
+          const frameDelayMs =
+            inputFrameStartedAt === null ? 0 : performance.now() - inputFrameStartedAt
+          if (frameDelayMs >= SLOW_INPUT_FRAME_MS) {
+            recordComposerDiagnostic('input-frame', {
+              composerId,
+              frameDelayMs: roundComposerDuration(frameDelayMs),
+              eventCount: inputFrameEventCount,
+              viewIsComposing: view.composing,
+              valueLength: internalValueRef.current.length,
+            })
+          }
+          inputFrameRequest = null
+          inputFrameStartedAt = null
+          inputFrameEventCount = 0
+        })
+      }
       const handledByComposer = callbacksRef.current.onBeforeInput(
         event,
         readComposerSnapshot(view.state)
@@ -303,6 +397,12 @@ export const ComposerProseMirrorEditor = forwardRef<
     callbacksRef.current.onSnapshotChange(readComposerSnapshot(view.state))
 
     return () => {
+      if (inputFrameRequest !== null) window.cancelAnimationFrame(inputFrameRequest)
+      recordComposerDiagnostic('editor-unmounted', {
+        composerId,
+        valueLength: internalValueRef.current.length,
+      })
+      composerDiagnosticIdRef.current = null
       if (viewRef.current === view) viewRef.current = null
       if (textareaRefRef.current.current === view.dom) {
         ;(textareaRefRef.current as { current: HTMLElement | null }).current = null
@@ -328,6 +428,12 @@ export const ComposerProseMirrorEditor = forwardRef<
     const view = viewRef.current
     if (!view || props.value === internalValueRef.current) return
     const selectionOffset = view.hasFocus() ? props.value.length : undefined
+    recordComposerDiagnostic('external-value-apply', {
+      composerId: composerDiagnosticIdRef.current,
+      valueLength: props.value.length,
+      selectionEnd: selectionOffset ?? null,
+      viewIsComposing: view.composing,
+    })
     setHasContent(props.value !== '')
     replaceComposerValue(view, props.value, selectionOffset, true)
   }, [props.value])
