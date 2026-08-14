@@ -419,6 +419,20 @@ function desktopControlSnapshot(selector = 'body'): string {
   })
 }
 
+function desktopControlTestIdOrder(selector = 'body'): string {
+  const root = findDesktopControlElements(selector)[0]
+  if (!root) throw new Error(`Unable to find selector "${selector}"`)
+  const testIdElements = [
+    ...(root.dataset.testid ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>('[data-testid]')),
+  ]
+  const testIds = testIdElements
+    .map(element => element.dataset.testid)
+    .filter((testId): testId is string => Boolean(testId))
+
+  return JSON.stringify(Array.from(new Set(testIds)))
+}
+
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
   const currentWindow = getCurrentWindow()
   const restoreCurrentWindow = async () => {
@@ -907,6 +921,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'reloadMainWindow':
       return ''
+    case 'getTestIdOrder':
+      return desktopControlTestIdOrder(command.selector)
+    case 'reorderRuntimeProjectTasks':
+      return JSON.stringify(
+        await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+          method: 'runtime.sidebar.tasks.reorder',
+          params: JSON.parse(command.value ?? '{}'),
+        })
+      )
+    case 'getLocalRuntimeWork':
+      return JSON.stringify(
+        await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+          method: 'runtime.tasks.list',
+          params: {},
+        })
+      )
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
