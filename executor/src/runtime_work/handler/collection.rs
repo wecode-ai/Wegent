@@ -205,7 +205,7 @@ impl RuntimeWorkRpcHandler {
                 if let Some(thread_id) = link.thread_id.as_deref() {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
-                    let project_key = runtime_task_sidebar_project_key(&link);
+                    let project_key = runtime_task_sidebar_project_key(&link, project_index);
                     link.list_order = Some(project_index.thread_sort_order(
                         &project_key,
                         thread_id,
@@ -889,7 +889,17 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn runtime_task_sidebar_project_key(link: &RuntimeTaskLink) -> String {
+fn runtime_task_sidebar_project_key(
+    link: &RuntimeTaskLink,
+    project_index: &CodexGlobalProjectIndex,
+) -> String {
+    if let Some(project_key) = link
+        .thread_id
+        .as_deref()
+        .and_then(|thread_id| project_index.sidebar_project_key_for_thread(thread_id))
+    {
+        return project_key.to_owned();
+    }
     if let Some(project_key) = link
         .runtime_project_key
         .as_deref()

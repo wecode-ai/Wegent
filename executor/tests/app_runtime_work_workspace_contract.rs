@@ -597,9 +597,12 @@ async fn runtime_task_list_applies_manual_order_without_project_state() {
     let _lock = env_lock().await;
     let home = temp_path("runtime-local-order-home", "dir");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let executor_home = temp_path("runtime-local-order-executor-home", "dir");
-    let _executor_home =
-        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-local-order-executor-home", "dir")
+            .display()
+            .to_string(),
+    );
     let codex_home = temp_path("runtime-local-order-codex-home", "dir");
     let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
     let task_workspace = home
@@ -607,47 +610,6 @@ async fn runtime_task_list_applies_manual_order_without_project_state() {
         .join("Codex")
         .join("2026-08-14")
         .join("project-task");
-    let index_path = executor_home.join("runtime-work").join("index.json");
-    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
-    fs::write(
-        &index_path,
-        serde_json::to_vec_pretty(&json!({
-            "version": 1,
-            "tasks": {
-                "runtime-target": {
-                    "local_task_id": "runtime-target",
-                    "thread_id": "thread-target",
-                    "workspace_path": task_workspace,
-                    "title": "Target task",
-                    "runtime": "codex",
-                    "status": "active",
-                    "running": false,
-                    "created_at": 1780000000000_i64,
-                    "updated_at": 1780000200000_i64,
-                    "runtime_handle": {"threadId": "thread-target"},
-                    "runtime_project_key": "local:/repo/Manual",
-                    "parent": null
-                },
-                "runtime-source": {
-                    "local_task_id": "runtime-source",
-                    "thread_id": "thread-source",
-                    "workspace_path": task_workspace,
-                    "title": "Source task",
-                    "runtime": "codex",
-                    "status": "active",
-                    "running": false,
-                    "created_at": 1780000000000_i64,
-                    "updated_at": 1780000100000_i64,
-                    "runtime_handle": {"threadId": "thread-source"},
-                    "runtime_project_key": "local:/repo/Manual",
-                    "parent": null
-                }
-            },
-            "workspaces": {}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
     let threads = json!([
         {
             "id": "thread-target",
@@ -701,7 +663,7 @@ async fn runtime_task_list_applies_manual_order_without_project_state() {
             .iter()
             .map(|task| task["taskId"].as_str().expect("task id"))
             .collect::<Vec<_>>(),
-        vec!["runtime-source", "runtime-target"]
+        vec!["thread-source", "thread-target"]
     );
     assert_eq!(listed["workspaces"][0]["tasks"][0]["sidebarOrder"], 0);
     assert_eq!(listed["workspaces"][0]["tasks"][1]["sidebarOrder"], 1);

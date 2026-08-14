@@ -267,6 +267,12 @@ impl CodexGlobalProjectIndex {
             .unwrap_or(order.len() + fallback)
     }
 
+    pub fn sidebar_project_key_for_thread(&self, thread_id: &str) -> Option<&str> {
+        self.thread_project_assignments
+            .get(thread_id)
+            .map(String::as_str)
+    }
+
     pub fn project_for_key(&self, value: &str) -> Option<&CodexGlobalProject> {
         self.project_by_key_or_path(value)
     }
@@ -1693,6 +1699,10 @@ fn reorder_project_thread_payload(
     before_thread_id: Option<&str>,
     insert_at_end: bool,
 ) {
+    assign_thread_to_project_payload(payload, thread_id, project_key);
+    if let Some(before_thread_id) = before_thread_id {
+        assign_thread_to_project_payload(payload, before_thread_id, project_key);
+    }
     let orders = payload
         .entry(SIDEBAR_PROJECT_THREAD_ORDERS_KEY.to_owned())
         .or_insert_with(|| Value::Object(Map::new()));
@@ -1721,6 +1731,20 @@ fn reorder_project_thread_payload(
     order.insert(index, thread_id.to_owned());
     project_order.insert("sortKey".to_owned(), Value::String("manual".to_owned()));
     project_order.insert("threadIds".to_owned(), serde_json::json!(order));
+}
+
+fn assign_thread_to_project_payload(
+    payload: &mut Map<String, Value>,
+    thread_id: &str,
+    project_key: &str,
+) {
+    let assignments = payload
+        .entry(THREAD_PROJECT_ASSIGNMENTS_KEY.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Some(assignments) = assignments.as_object_mut() {
+        assignments.insert(thread_id.to_owned(), json!({"projectId": project_key}));
+    }
+    remove_text_list_item(payload, PROJECTLESS_THREAD_IDS_KEY, thread_id);
 }
 
 fn normalized_text_list(value: Option<&Value>) -> Vec<String> {
@@ -2129,9 +2153,25 @@ mod tests {
             payload["sidebar-project-thread-orders"]["project"],
             json!({"threadIds": ["moved"], "sortKey": "manual"})
         );
+        assert_eq!(
+            payload["thread-project-assignments"]["moved"],
+            json!({"projectId": "project"})
+        );
+        assert_eq!(
+            payload["thread-project-assignments"]["target"],
+            json!({"projectId": "project"})
+        );
         assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
 
         let index = index_from_payload(&payload);
+        assert_eq!(
+            index.sidebar_project_key_for_thread("moved"),
+            Some("project")
+        );
+        assert_eq!(
+            index.sidebar_project_key_for_thread("target"),
+            Some("project")
+        );
         assert_eq!(index.thread_sort_order("project", "moved", 1), 0);
         assert_eq!(index.thread_sort_order("project", "target", 0), 1);
     }
