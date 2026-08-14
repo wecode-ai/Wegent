@@ -513,11 +513,12 @@ async function verifyFailedCloudConnectionCanDisconnect(control) {
     text: '云端工作',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="settings-button"]')
-  await control.command('waitFor', '[data-testid="logout-menu-button"]', {
+  await control.command('hover', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('click', '[data-testid="sidebar-cloud-management-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-disconnect-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="logout-menu-button"]')
+  await control.command('click', '[data-testid="settings-cloud-disconnect-button"]')
   await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
     text: '连接云端',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
