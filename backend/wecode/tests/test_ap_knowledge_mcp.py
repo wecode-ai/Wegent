@@ -70,6 +70,16 @@ async def test_ap_mcp_schema_exposes_max_results_bounds():
     assert max_results_schema["maximum"] == 50
 
 
+async def test_ap_mcp_exposes_list_nodes_schema():
+    tools = await ap_knowledge.ap_knowledge_mcp_server.list_tools()
+    tool = next(tool for tool in tools if tool.name == "ks_kb_list_nodes")
+
+    assert tool.inputSchema["required"] == ["knowledge_base_id"]
+    assert tool.inputSchema["properties"]["limit"]["minimum"] == 1
+    assert tool.inputSchema["properties"]["limit"]["maximum"] == 500
+    assert tool.inputSchema["properties"]["offset"]["minimum"] == 0
+
+
 def test_ap_mcp_is_mounted_and_sets_task_auth_context():
     async def context_response(_request):
         token_info = ap_knowledge._ap_request_token_info.get()
@@ -144,4 +154,47 @@ def test_ap_mcp_tool_call_uses_task_authentication():
         query="roadmap",
         knowledge_base_ids=["kb-1"],
         max_results=10,
+    )
+
+
+async def test_list_nodes_uses_authenticated_user_and_forwards_raw_folder_id():
+    db = MagicMock()
+    user = SimpleNamespace(id=3, is_active=True)
+    db.query.return_value.filter.return_value.first.return_value = user
+    result = SimpleNamespace(
+        model_dump_json=lambda **_kwargs: '{"items":[],"knowledge_base_id":"kb-1"}'
+    )
+    token = ap_knowledge._ap_request_token_info.set(SimpleNamespace(user_id=3))
+
+    try:
+        with (
+            patch.object(ap_knowledge, "get_db_session") as get_db_session,
+            patch.object(
+                ap_knowledge.external_knowledge_service,
+                "list_nodes",
+                new=AsyncMock(return_value=result),
+            ) as list_nodes,
+        ):
+            get_db_session.return_value.__enter__.return_value = db
+
+            response = await ap_knowledge.ks_kb_list_nodes(
+                knowledge_base_id=" kb-1 ",
+                folder_id=" folder-1 ",
+                recursive=True,
+                limit=200,
+                offset=10,
+            )
+    finally:
+        ap_knowledge._ap_request_token_info.reset(token)
+
+    assert response == '{"items":[],"knowledge_base_id":"kb-1"}'
+    list_nodes.assert_awaited_once_with(
+        db,
+        user,
+        "ap",
+        kb_id="kb-1",
+        folder_id="folder-1",
+        recursive=True,
+        limit=200,
+        offset=10,
     )

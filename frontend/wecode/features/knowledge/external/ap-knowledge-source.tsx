@@ -6,11 +6,7 @@
 
 import { registerExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import type { ExternalKnowledgeRef } from '@/types/context'
-import {
-  getExternalKnowledgePreview,
-  listExternalKnowledgeBases,
-  listExternalKnowledgeNodes,
-} from '@wecode/api/external-knowledge'
+import { listExternalKnowledgeBases } from '@wecode/api/external-knowledge'
 import type { ExternalKnowledgeBase } from '@wecode/types/external-knowledge'
 import { getExternalKnowledgeBaseCount } from './utils'
 
@@ -31,10 +27,10 @@ registerExternalKnowledgeSource(AP_PROVIDER, {
   label: 'WeiboAP',
   capabilities: {
     supportsKnowledgeBaseSelection: true,
-    supportsDocumentSelection: true,
-    supportsDocumentTree: true,
+    supportsDocumentSelection: false,
+    supportsDocumentTree: false,
     supportsScopedRetrieval: false,
-    supportsPreview: true,
+    supportsPreview: false,
   },
   selectionLimits: {
     maxKnowledgeBases: 100,
@@ -53,8 +49,5 @@ registerExternalKnowledgeSource(AP_PROVIDER, {
   ],
   listKnowledgeBases: params => listExternalKnowledgeBases(AP_PROVIDER, params),
   getKnowledgeBaseCount: () => getExternalKnowledgeBaseCount(AP_PROVIDER),
-  listNodes: (knowledgeBaseId, params) =>
-    listExternalKnowledgeNodes(AP_PROVIDER, knowledgeBaseId, params),
-  getPreview: params => getExternalKnowledgePreview(AP_PROVIDER, params),
   toRef,
 })

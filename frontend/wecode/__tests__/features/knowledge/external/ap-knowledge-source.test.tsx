@@ -103,6 +103,21 @@ describe('AP knowledge source registration', () => {
     expect(source!.selectionLimits?.maxKnowledgeBases).toBe(100)
   })
 
+  it('exposes whole-knowledge-base selection without document browsing', async () => {
+    const { getExternalKnowledgeSource } = await loadApSource()
+    const source = getExternalKnowledgeSource('ap')
+
+    expect(source!.capabilities).toEqual({
+      supportsKnowledgeBaseSelection: true,
+      supportsDocumentSelection: false,
+      supportsDocumentTree: false,
+      supportsScopedRetrieval: false,
+      supportsPreview: false,
+    })
+    expect(source!.listNodes).toBeUndefined()
+    expect(source!.getPreview).toBeUndefined()
+  })
+
   it('declares AP scopes through the provider registry', async () => {
     const { getExternalKnowledgeSource } = await loadApSource()
     const source = getExternalKnowledgeSource('ap')
