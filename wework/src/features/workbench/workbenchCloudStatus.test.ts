@@ -101,6 +101,79 @@ describe('mergeRuntimeWorkLists', () => {
     ).toEqual(['task-local', 'task-remote'])
   })
 
+  test('deduplicates one completed task projected through different workspace paths', () => {
+    const staleProjection: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'remote-project', name: 'Remote descriptor' },
+          deviceWorkspaces: [
+            {
+              ...workspace('remote-device'),
+              workspacePath: '/local/mapped/repo',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/local/mapped/repo',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: true,
+                  status: 'active',
+                  updatedAt: 1_786_686_568_000,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const completedProjection: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: '/srv/repo', name: 'Remote executor project' },
+          deviceWorkspaces: [
+            {
+              ...workspace('remote-device'),
+              workspacePath: '/srv/repo',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/srv/repo',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: false,
+                  status: 'active',
+                  turnStatus: 'completed',
+                  updatedAt: 1_786_686_568_931,
+                  completedAt: 1_786_686_568_931,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    const merged = mergeRuntimeWorkLists(staleProjection, completedProjection)
+    const tasks = merged.projects.flatMap(project =>
+      project.deviceWorkspaces.flatMap(deviceWorkspace => deviceWorkspace.tasks)
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'runtime-a',
+        running: false,
+        status: 'done',
+        turnStatus: 'completed',
+        completedAt: 1_786_686_568_931,
+      }),
+    ])
+    expect(merged.totalTasks).toBe(1)
+  })
+
   test('keeps mapped project workspaces without tasks so the first task has a target', () => {
     const localWork: RuntimeWorkListResponse = {
       projects: [

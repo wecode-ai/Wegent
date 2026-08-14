@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -424,7 +425,9 @@ export interface WorkbenchProviderProps {
   children: ReactNode
   user: User
   services?: WorkbenchServices
+  lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
   syncRemoteProjects?: boolean
+  syncRuntimeTaskLifecycle?: boolean
 }

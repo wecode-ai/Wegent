@@ -16,6 +16,7 @@ core_segments=(
   conversation-state
   workspace-attachments
   rendering-extensions
+  claude-runtime
   local-harness
   embedded-browser
 )
@@ -186,7 +187,14 @@ classify_wework_path() {
       return
       ;;
 
-    # Local PTY-backed coding harnesses have a dedicated real-Tauri scenario.
+    # Claude conversations cover both local and remote executor routing.
+    wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
+      select_target "core:core-task-flow"
+      select_target "core:claude-runtime"
+      return
+      ;;
+
+    # Local PTY-backed coding harnesses have dedicated real-Tauri scenarios.
     wework/src-tauri/src/local_terminal* | \
       wework/src/lib/local-harness* | \
       wework/src/lib/local-terminal* | \
@@ -194,7 +202,9 @@ classify_wework_path() {
       wework/src/components/layout/WorkbenchHarnessSelector* | \
       wework/src/components/layout/localHarnessWorkbench* | \
       wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/claude-runtime.scenario.mjs | \
       wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:claude-runtime"
       select_target "core:local-harness"
       return
       ;;

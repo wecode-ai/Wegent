@@ -13,6 +13,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
@@ -22,6 +23,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'change-request-status',
+  'claude-runtime',
   'local-harness',
   'runtime-task-queue',
   'split-workbench',

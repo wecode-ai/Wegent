@@ -27,6 +27,10 @@ import {
   updateRuntimeWorkTask,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
+import {
+  normalizeRuntimeTaskSummary,
+  shouldReplaceRuntimeTaskProjection,
+} from './runtimeTaskLifecycle/projection'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
@@ -133,12 +137,6 @@ export type WorkbenchAction =
       type: 'runtime_task_title_updated'
       address: RuntimeTaskAddress
       title: string
-    }
-  | {
-      type: 'runtime_task_execution_updated'
-      address: RuntimeTaskAddress
-      running: boolean
-      status: string
     }
   | {
       type: 'runtime_task_supervisor_updated'
@@ -328,21 +326,11 @@ function mergeRuntimeTasks(
   deviceId: string,
   resolvedTaskKeys: ReadonlySet<string>
 ) {
-  const nextById = new Map(nextTasks.map(task => [task.taskId, task]))
+  const nextById = new Map(nextTasks.map(task => [task.taskId, normalizeRuntimeTaskSummary(task)]))
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) {
-        if (
-          isFreshOptimisticRuntimeTask(task) &&
-          isActiveOptimisticRuntimeTask(task) &&
-          nextTask.running === false &&
-          nextTask.status !== 'queued'
-        ) {
-          return task
-        }
-        return nextTask
-      }
+      if (nextTask) return shouldReplaceRuntimeTaskProjection(task, nextTask) ? nextTask : task
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
@@ -363,10 +351,6 @@ function mergeRuntimeTasks(
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
   return task.status === 'creating' || task.optimistic === true
-}
-
-function isActiveOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating' || task.status === 'queued' || task.status === 'running'
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -1217,15 +1201,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
-      }
-    case 'runtime_task_execution_updated':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
-          running: action.running,
-          status: action.status,
-          optimistic: true,
-        }),
       }
     case 'runtime_task_supervisor_updated':
       return {

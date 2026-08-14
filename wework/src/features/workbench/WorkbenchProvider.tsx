@@ -103,6 +103,7 @@ import {
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import {
+  createRuntimeTaskLifecycleOwnershipView,
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
@@ -218,9 +219,11 @@ export function WorkbenchProvider({
   children,
   user,
   services,
+  lifecycleStore: providedLifecycleStore,
   onStartupReadyChange,
   workspaceTabId,
   syncRemoteProjects = true,
+  syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -267,8 +270,16 @@ export function WorkbenchProvider({
     if (!resolvedServices.localLoopItemExecutionApi) return
     return startLocalRobotQueueDispatcher(resolvedServices)
   }, [resolvedServices])
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
+  const sharedLifecycleStore = useMemo(
+    () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),
+    [providedLifecycleStore, user.id]
+  )
+  const lifecycleStore = useMemo(
+    () =>
+      createRuntimeTaskLifecycleOwnershipView(sharedLifecycleStore, () => syncRuntimeTaskLifecycle),
+    [sharedLifecycleStore, syncRuntimeTaskLifecycle]
+  )
+  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
@@ -850,7 +861,6 @@ export function WorkbenchProvider({
     refreshWorkLists,
     refreshRuntimeTask,
     refreshDevices,
-    updateLocalRuntimeTaskExecution,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
@@ -1755,13 +1765,6 @@ export function WorkbenchProvider({
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
-            updateLocalRuntimeTaskExecution(address, true, 'active')
-            dispatch({
-              type: 'runtime_task_execution_updated',
-              address,
-              running: true,
-              status: 'active',
-            })
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -1773,21 +1776,6 @@ export function WorkbenchProvider({
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address, turnId, outcome)
-            const running = lifecycleStore.getTask(address)?.derived.isRunning ?? false
-            const status = running
-              ? 'active'
-              : outcome === 'succeeded'
-                ? 'done'
-                : outcome === 'failed'
-                  ? 'failed'
-                  : 'cancelled'
-            updateLocalRuntimeTaskExecution(address, running, status)
-            dispatch({
-              type: 'runtime_task_execution_updated',
-              address,
-              running,
-              status,
-            })
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
@@ -1839,7 +1827,6 @@ export function WorkbenchProvider({
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
-      updateLocalRuntimeTaskExecution,
       updateLocalRuntimeTaskSnapshot,
       updateLocalRuntimeTaskSupervisor,
       updateLocalRuntimeTaskTitle,
@@ -2679,7 +2666,7 @@ export function WorkbenchProvider({
   )
 
   return (
-    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+    <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
         <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>

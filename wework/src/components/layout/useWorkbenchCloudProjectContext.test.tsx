@@ -133,6 +133,51 @@ describe('useWorkbenchCloudProjectContext', () => {
     )
   })
 
+  test('does not reload task context when only the address object identity changes', async () => {
+    const findCloudContextForTask = vi.fn().mockRejectedValue(new Error('Not bound yet'))
+    const services = {
+      deliveryApi: {
+        findCloudContextForTask,
+      },
+    } as unknown as WorkbenchServices
+    const { rerender } = renderHook(
+      ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskTitle: null,
+          services,
+          userId: 1,
+        }),
+      {
+        initialProps: {
+          currentRuntimeTask: {
+            deviceId: 'cloud-device',
+            taskId: 'claude-task',
+            runtime: 'claude_code',
+          },
+        },
+      }
+    )
+
+    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledOnce())
+
+    rerender({
+      currentRuntimeTask: {
+        deviceId: 'cloud-device',
+        taskId: 'claude-task',
+        runtime: 'claude_code',
+        workspacePath: '/updated/workspace',
+      },
+    })
+    await act(async () => {})
+
+    expect(findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
   test('automatically selects the configured default project space', async () => {
     const defaultProject = project('space-default')
     const deliveryApi = {

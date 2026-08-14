@@ -506,13 +506,20 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+    const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
+    if (
+      CLOUD_ONLY ||
+      CLOUD_FEATURES_ONLY ||
+      CLOUD_VISION_ONLY ||
+      scenarioRequiresCloudEnvironment
+    ) {
       cloudEnvironment = new RealCloudEnvironment({
+        claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         modelServerUrl: control.url,
         scenarioConfigToml:
           SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
-        workspacePath,
+        workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
       executorBinary = builtExecutor
@@ -535,6 +542,7 @@ async function main() {
           ])
         )[0]
       : await desktopAppPromise
+    desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary

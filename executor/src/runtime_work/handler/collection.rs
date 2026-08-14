@@ -824,11 +824,12 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
-            apply_local_execution_state(link, false, None);
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
+                link.status = status.to_owned();
             }
+            apply_local_execution_state(link, status == "running", None);
             if link.thread_id.is_some() {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }

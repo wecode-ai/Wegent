@@ -1138,6 +1138,75 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('accepts a completed executor snapshot over a fresh optimistic runtime task', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_task_optimistic_upserted',
+      project: { id: 7, name: 'Repo', tasks: [] },
+      workspace: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/repo',
+        projectId: 7,
+        available: true,
+        mapped: true,
+        tasks: [],
+      },
+      task: {
+        taskId: 'claude-task',
+        workspacePath: '/workspace/repo',
+        title: 'Claude task',
+        runtime: 'claude_code',
+        running: true,
+        status: 'running',
+        optimistic: true,
+        updatedAt: new Date().toISOString(),
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'cloud-device',
+                workspacePath: '/workspace/repo',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'claude-task',
+                    workspacePath: '/workspace/repo',
+                    title: 'Claude task',
+                    runtime: 'claude_code',
+                    running: false,
+                    status: 'active',
+                    completedAt: 1_786_686_568_931,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      taskId: 'claude-task',
+      running: false,
+      status: 'done',
+      turnStatus: 'completed',
+      completedAt: 1_786_686_568_931,
+    })
+    expect(
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].optimistic
+    ).toBeUndefined()
+  })
+
   test('drops an optimistic runtime task when refresh returns it in a different workspace kind', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

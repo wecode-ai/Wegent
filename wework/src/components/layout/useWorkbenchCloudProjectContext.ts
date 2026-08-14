@@ -170,6 +170,16 @@ export function useWorkbenchCloudProjectContext({
   const { t } = useTranslation('common')
   const workspaceTabs = useOptionalWorkspaceTabs()
   const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
+  const contextRuntimeTask = useMemo<RuntimeTaskAddress | null>(
+    () =>
+      currentRuntimeTask
+        ? {
+            deviceId: currentRuntimeTask.deviceId,
+            taskId: currentRuntimeTask.taskId,
+          }
+        : null,
+    [currentRuntimeTask]
+  )
   const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
   const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
   const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
@@ -234,7 +244,7 @@ export function useWorkbenchCloudProjectContext({
 
   useEffect(() => {
     let active = true
-    if (!currentRuntimeTask) {
+    if (!contextRuntimeTask) {
       queueMicrotask(() => {
         if (!active) return
         setBoundCloudItem(null)
@@ -247,14 +257,14 @@ export function useWorkbenchCloudProjectContext({
     }
     const contextApis = todoBindingApis
     if (contextApis.length > 0) {
-      void findProjectSpaceContextForTask(contextApis, currentRuntimeTask)
+      void findProjectSpaceContextForTask(contextApis, contextRuntimeTask)
         .then(context => {
           if (!active) return
           setBoundCloudProject(context.project)
           setBoundCloudItem(context.loop_item)
           setDeliveryItem(
             context.loop_item
-              ? cloudItemAsLocalWorkItem(context.loop_item, currentRuntimeTask)
+              ? cloudItemAsLocalWorkItem(context.loop_item, contextRuntimeTask)
               : null
           )
         })
@@ -277,8 +287,8 @@ export function useWorkbenchCloudProjectContext({
           items.find(item =>
             item.runtimeRefs.some(
               reference =>
-                reference.taskId === currentRuntimeTask.taskId &&
-                reference.deviceId === currentRuntimeTask.deviceId
+                reference.taskId === contextRuntimeTask.taskId &&
+                reference.deviceId === contextRuntimeTask.deviceId
             )
           ) ?? null
         )
@@ -292,7 +302,7 @@ export function useWorkbenchCloudProjectContext({
     return () => {
       active = false
     }
-  }, [currentRuntimeTask, todoBindingApis, userId])
+  }, [contextRuntimeTask, todoBindingApis, userId])
 
   useEffect(() => {
     const projectToBind = pendingCloudProject ?? pendingTodoBinding?.project ?? null
