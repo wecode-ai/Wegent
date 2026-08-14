@@ -7,7 +7,10 @@ export class ProviderNativeKnowledgePage {
     await this.page.getByTestId('knowledge-context-button').click()
     await expect(this.page.getByTestId('knowledge-source-picker')).toBeVisible()
     const personalSource = this.page.getByTestId('knowledge-picker-source-personal')
-    if (await personalSource.isVisible().catch(() => false)) {
+    const personalSourceIsActive = await personalSource.evaluate(element =>
+      element.classList.contains('bg-primary/10')
+    )
+    if (!personalSourceIsActive) {
       await personalSource.click()
     }
   }
