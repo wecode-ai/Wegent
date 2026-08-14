@@ -163,10 +163,7 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
-import {
-  debugRuntimeSidebarState,
-  warnRuntimeSidebarMismatch,
-} from '@/features/workbench/runtimeSidebarDiagnostics'
+import { debugRuntimeSidebarState } from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
@@ -2365,8 +2362,13 @@ function ProjectItem({
   )
   const prioritizedRuntimeTaskItems = runtimeTaskItems
   const visibleRuntimeTaskItems = useMemo(
-    () => getVisibleRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit),
-    [prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit]
+    () =>
+      getVisibleRuntimeSidebarTaskItems(
+        prioritizedRuntimeTaskItems,
+        runtimeTaskVisibleLimit,
+        currentRuntimeTask?.taskId
+      ),
+    [currentRuntimeTask?.taskId, prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
@@ -2384,19 +2386,15 @@ function ProjectItem({
       allTaskIds: prioritizedRuntimeTaskItems.map(item => item.task.taskId),
       visibleTaskIds: visibleRuntimeTaskItems.map(item => item.task.taskId),
       hiddenTaskIds: prioritizedRuntimeTaskItems
-        .slice(visibleRuntimeTaskItems.length)
+        .filter(
+          item =>
+            !visibleRuntimeTaskItems.some(
+              visibleItem => visibleItem.task.taskId === item.task.taskId
+            )
+        )
         .map(item => item.task.taskId),
     }
     debugRuntimeSidebarState('project-visible-items', details)
-
-    const currentTaskId = currentRuntimeTask?.taskId
-    if (
-      currentTaskId &&
-      prioritizedRuntimeTaskItems.some(item => item.task.taskId === currentTaskId) &&
-      !visibleRuntimeTaskItems.some(item => item.task.taskId === currentTaskId)
-    ) {
-      warnRuntimeSidebarMismatch(details)
-    }
   }, [
     currentRuntimeTask?.taskId,
     prioritizedRuntimeTaskItems,

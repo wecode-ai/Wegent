@@ -42,6 +42,64 @@ describe('runtimeTaskSidebarHelpers', () => {
     ])
   })
 
+  test('keeps the current task visible beyond the collapsed ordered task list', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: Array.from({ length: RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 2 }, (_, index) => ({
+        taskId: `ordered-${index + 1}`,
+        workspacePath: '/workspace/repo',
+        title: `Ordered ${index + 1}`,
+        runtime: 'codex' as const,
+        sidebarOrder: index,
+        completedAt: `2026-08-12T0${index + 1}:00:00.000Z`,
+        running: index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1,
+      })),
+    }
+
+    const items = getRuntimeSidebarTaskItems([workspace])
+
+    expect(
+      getVisibleRuntimeSidebarTaskItems(items, RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, 'ordered-6').map(
+        item => item.task.taskId
+      )
+    ).toEqual([
+      'ordered-1',
+      'ordered-2',
+      'ordered-3',
+      'ordered-4',
+      'ordered-5',
+      'ordered-6',
+      'ordered-7',
+    ])
+  })
+
+  test('keeps the most recently completed task visible beyond the collapsed ordered task list', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: Array.from({ length: RUNTIME_PROJECT_TASK_PREVIEW_LIMIT + 1 }, (_, index) => ({
+        taskId: `ordered-${index + 1}`,
+        workspacePath: '/workspace/repo',
+        title: `Ordered ${index + 1}`,
+        runtime: 'codex' as const,
+        sidebarOrder: index,
+        completedAt:
+          index === RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+            ? '2026-08-14T09:00:00.000Z'
+            : `2026-08-12T0${index + 1}:00:00.000Z`,
+      })),
+    }
+
+    expect(
+      getVisibleRuntimeSidebarTaskItems(getRuntimeSidebarTaskItems([workspace])).map(
+        item => item.task.taskId
+      )
+    ).toEqual(['ordered-1', 'ordered-2', 'ordered-3', 'ordered-4', 'ordered-5', 'ordered-6'])
+  })
+
   test('sorts runtime task items newest first across workspaces', () => {
     const oldWorkspace: RuntimeDeviceWorkspace = {
       deviceId: 'device-1',

@@ -998,6 +998,7 @@ export function WorkbenchProvider({
         updateWorkbenchDebugSnapshot({
           state,
           lifecycle: lifecycleSnapshot,
+          taskReminders: runtimeTaskReminders,
           cloudWorkStatus,
           composer: {
             scopeKey: projectChatScopeKey,
@@ -1030,6 +1031,7 @@ export function WorkbenchProvider({
     draftInputByScope,
     modelSelection.models,
     projectChatScopeKey,
+    runtimeTaskReminders,
     state,
   ])
 

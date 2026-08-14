@@ -120,13 +120,34 @@ export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
 
 export function getVisibleRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
-  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
+  alwaysVisibleTaskId?: string | null
 ) {
   const { pinnedItems, unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
-  return [
-    ...pinnedItems,
-    ...unpinnedItems.slice(0, Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)),
-  ]
+  const visibleUnpinnedItems = unpinnedItems.slice(
+    0,
+    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+  )
+  const mostRecentItem = unpinnedItems.reduce<RuntimeSidebarTaskItem | undefined>(
+    (latest, item) =>
+      !latest || getRuntimeTaskSortTime(item.task) > getRuntimeTaskSortTime(latest.task)
+        ? item
+        : latest,
+    undefined
+  )
+  const alwaysVisibleItems = unpinnedItems.filter(
+    item =>
+      item === mostRecentItem ||
+      item.task.taskId === alwaysVisibleTaskId ||
+      Boolean(item.task.running) ||
+      isRuntimeTaskQueued(item.task)
+  )
+  for (const item of alwaysVisibleItems) {
+    if (!visibleUnpinnedItems.some(visibleItem => visibleItem.task.taskId === item.task.taskId)) {
+      visibleUnpinnedItems.push(item)
+    }
+  }
+  return [...pinnedItems, ...visibleUnpinnedItems]
 }
 
 export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, totalCount: number) {
