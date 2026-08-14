@@ -870,7 +870,10 @@ export function ProjectAutomationRulesSection({
                   <h3 className="mb-2 px-1 text-sm font-medium text-text-tertiary">
                     {t('workbench.project_automation_runs')}
                   </h3>
-                  <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border px-4">
+                  <div
+                    className="max-h-80 divide-y divide-border overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-border px-4"
+                    data-testid="project-automation-run-list"
+                  >
                     {runs.map(run => {
                       const finished = !isExecutionRunning(run.status)
                       const failed = isExecutionFailed(run.status) || Boolean(run.error)

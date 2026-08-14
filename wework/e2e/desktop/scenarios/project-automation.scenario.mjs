@@ -90,6 +90,25 @@ function json(response, status, body) {
   response.end(JSON.stringify(body))
 }
 
+function createHistoricalRuns() {
+  return Array.from({ length: 8 }, (_, index) => ({
+    id: `automation-run-history-${index + 1}`,
+    automationId: 'automation-rule-created',
+    projectId: PROJECT_ID,
+    trigger: 'schedule',
+    status: 'succeeded',
+    scheduledFor: `2026-08-${String(10 - index).padStart(2, '0')}T09:00:00`,
+    expiresAt: null,
+    taskId: `AUTO-${100 - index}`,
+    taskTitle: `历史自动化任务 ${index + 1}`,
+    deviceId: AGENT.executionDeviceId,
+    error: null,
+    createdAt: `2026-08-${String(10 - index).padStart(2, '0')}T09:00:00`,
+    updatedAt: `2026-08-${String(10 - index).padStart(2, '0')}T09:01:00`,
+    retryable: false,
+  }))
+}
+
 async function readJson(request) {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
@@ -115,6 +134,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       updatedAt: '2026-08-11T09:01:00',
       retryable: true,
     },
+    ...createHistoricalRuns(),
   ]
   const createdPayloads = []
   let archivedAgentPayload = null
@@ -326,7 +346,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(createdPayloads[0]?.assignmentMode, 'manual')
       assert.equal(createdPayloads[0]?.managerType, null)
       assert.equal(createdPayloads[0]?.agentId, AGENT_ID)
+      await control.command(
+        'click',
+        '[data-testid="project-automation-rule-automation-rule-created"]'
+      )
+      await control.command('waitFor', '[data-testid="project-automation-run-list"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const runListSelector = '[data-testid="project-automation-run-list"]'
+      const [runListMetrics] = JSON.parse(
+        await control.command('getElementMetrics', runListSelector)
+      )
+      assert.ok(
+        runListMetrics.scrollHeight > runListMetrics.clientHeight,
+        'Long automation run history did not become scrollable'
+      )
+      await control.command(
+        'scrollIntoView',
+        '[data-testid="project-automation-run-task-automation-run-history-8"]'
+      )
+      const [scrolledRunListMetrics] = JSON.parse(
+        await control.command('getElementMetrics', runListSelector)
+      )
+      assert.ok(scrolledRunListMetrics.scrollTop > 0, 'Automation run history did not scroll')
       await captureScreenshot(control, 'project-automation-01-created-rule.png')
+      await control.command('click', '[data-testid="cloud-todo-modal-close"]')
 
       await control.command('click', '[data-testid="project-automation-create"]')
       await control.command('fill', '[data-testid="project-automation-name"]', {

@@ -1906,6 +1906,65 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('hides project automation manager sessions from standalone tasks', () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-14/automation'
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'automation-manager',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Automation manager',
+                runtime: 'codex',
+                runtimeHandle: {
+                  origin: {
+                    type: 'project_automation',
+                    automationRole: 'manager',
+                    run_id: 'run-1',
+                  },
+                },
+              },
+              {
+                taskId: 'project-robot',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Project robot',
+                runtime: 'codex',
+                runtimeHandle: {
+                  origin: {
+                    type: 'project_automation',
+                    run_id: 'run-1',
+                  },
+                },
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+      onOpenRuntimeTask: vi.fn(),
+    })
+
+    expect(
+      screen.queryByTestId('runtime-local-task-row-automation-manager')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-project-robot')).toHaveTextContent(
+      'Project robot'
+    )
+  })
+
   test('sweeps a runtime task title after it is updated', async () => {
     const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-06/title-update'
     const runtimeWork = (title: string) => ({

@@ -80,6 +80,7 @@ export function AiChatModal({ project, localProjects, task, open, onClose }: AiC
     ) => {
       const address = await createProjectRuntimeTask(message, {
         project: selectedLocalProject,
+        runtime: 'codex',
         attachments: options.attachments,
         collaborationMode: 'default',
         cloudProjectId: String(project.id),

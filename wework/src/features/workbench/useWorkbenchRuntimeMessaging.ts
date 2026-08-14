@@ -1543,6 +1543,7 @@ export function useWorkbenchRuntimeMessaging({
           ? { ...prepared.payload, force_override_bot_model: options.modelId }
           : prepared.payload
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
+        ...(options.runtime ? { runtime: options.runtime } : {}),
         initialGoal: options.initialGoal,
         initialSupervisor: options.initialSupervisor,
         collaborationMode: options.collaborationMode,

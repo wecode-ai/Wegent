@@ -113,6 +113,9 @@ export interface CreateTemporaryRuntimeTaskOptions {
 
 export interface CreateProjectRuntimeTaskOptions {
   project?: ProjectWithTasks | null
+  /** Project-space entry points can pin the shell independently from the
+   * globally selected model. */
+  runtime?: RuntimeName
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null

@@ -686,6 +686,11 @@ describe('ProjectAutomationRulesSection', () => {
     expect(screen.getByTestId('project-automation-run-task-run-older-5')).toHaveTextContent(
       '更早失败任务 5'
     )
+    expect(screen.getByTestId('project-automation-run-list')).toHaveClass(
+      'max-h-80',
+      'overflow-y-auto',
+      'overscroll-contain'
+    )
     expect(screen.queryByText('Robot is unavailable')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('project-automation-run-detail-run-2'))
     expect(screen.getByTestId('project-automation-run-detail-dialog')).toHaveTextContent(

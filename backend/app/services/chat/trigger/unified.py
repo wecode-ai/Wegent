@@ -340,6 +340,9 @@ def _build_codex_runtime_model_config(
                     }:
                         upstream_format = "openai-chat-completions"
                 if upstream_format:
+                    upstream_format = _canonical_codex_upstream_api_format(
+                        str(upstream_format)
+                    )
                     resolved_config["upstream_api_format"] = upstream_format
                     if upstream_format == "anthropic-messages":
                         # The executor appends /responses by default, which the
@@ -368,6 +371,20 @@ def _build_codex_runtime_model_config(
     if catalog_model_id:
         resolved_config["codex_catalog_model_id"] = catalog_model_id
     return resolved_config
+
+
+def _canonical_codex_upstream_api_format(api_format: str) -> str:
+    """Map provider API endpoint names to the executor's protocol names."""
+
+    normalized = api_format.strip().lower()
+    return {
+        "responses": "openai-responses",
+        "openai-responses": "openai-responses",
+        "chat/completions": "openai-chat-completions",
+        "openai-chat-completions": "openai-chat-completions",
+        "messages": "anthropic-messages",
+        "anthropic-messages": "anthropic-messages",
+    }.get(normalized, normalized)
 
 
 def _build_cloud_gateway_model_config(

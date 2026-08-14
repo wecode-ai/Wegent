@@ -4,10 +4,13 @@
 
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chrono::Local;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -17,6 +20,8 @@ use crate::protocol::ExecutionRequest;
 use super::{BinaryInput, ProjectCreate, TaskRuntime, TaskSearch};
 
 const SPACE_MCP_SERVER_NAME: &str = "wework_space";
+const SPACE_MCP_LOG_FILE: &str = "space-mcp.log";
+static SPACE_MCP_LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 
 pub fn is_space_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("space-mcp-server")
@@ -181,14 +186,14 @@ fn id_value(value: &Value) -> Option<String> {
 
 pub async fn run() -> Result<(), String> {
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
-    eprintln!(
+    write_space_mcp_log(&format!(
         "[wework-space-mcp] lifecycle=start pid={} manager_mode={} space_id_present={} backend_url_present={} auth_token_present={}",
         std::process::id(),
         is_automation_manager(),
         env_value_present("WEWORK_SPACE_ID"),
         env_value_present("WEWORK_SPACE_BACKEND_URL"),
         env_value_present("WEWORK_SPACE_AUTH_TOKEN"),
-    );
+    ));
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
     let mut request_count = 0_u64;
@@ -207,13 +212,19 @@ pub async fn run() -> Result<(), String> {
                     .pointer("/params/name")
                     .and_then(Value::as_str)
                     .unwrap_or("-");
-                eprintln!(
+                write_space_mcp_log(&format!(
                     "[wework-space-mcp] request={} stage=received method={} tool={}",
                     request_count, method, tool,
-                );
+                ));
                 handle_request(&runtime, &request).await
             }
-            Err(error) => Some(error_response(Value::Null, -32700, &error.to_string())),
+            Err(error) => {
+                write_space_mcp_log(&format!(
+                    "[wework-space-mcp] request={} stage=parse_failed error={}",
+                    request_count, error,
+                ));
+                Some(error_response(Value::Null, -32700, &error.to_string()))
+            }
         };
         if let Some(response) = response {
             let mut encoded = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
@@ -225,11 +236,11 @@ pub async fn run() -> Result<(), String> {
             stdout.flush().await.map_err(|error| error.to_string())?;
         }
     }
-    eprintln!(
+    write_space_mcp_log(&format!(
         "[wework-space-mcp] lifecycle=stdin_closed pid={} requests={}",
         std::process::id(),
         request_count,
-    );
+    ));
     Ok(())
 }
 
@@ -266,12 +277,12 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
                 .filter_map(|tool| tool.get("name").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join(",");
-            eprintln!(
+            write_space_mcp_log(&format!(
                 "[wework-space-mcp] stage=tools_list manager_mode={} tool_count={} tools={}",
                 is_automation_manager(),
                 tools.len(),
                 names,
-            );
+            ));
             result_response(id, json!({"tools": tools}))
         }),
         "tools/call" => {
@@ -285,10 +296,10 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
                 .as_object()
                 .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
                 .unwrap_or_default();
-            eprintln!(
+            write_space_mcp_log(&format!(
                 "[wework-space-mcp] stage=tool_call tool={} argument_keys={}",
                 name, argument_keys,
-            );
+            ));
             Some(result_response(
                 id,
                 call_tool(runtime, name, arguments).await,
@@ -296,6 +307,54 @@ async fn handle_request(runtime: &TaskRuntime, request: &Value) -> Option<Value>
         }
         method => id.map(|id| error_response(id, -32601, &format!("Unknown method: {method}"))),
     }
+}
+
+fn write_space_mcp_log(message: &str) {
+    eprintln!("{message}");
+    let path = space_mcp_log_path();
+    let result = (|| -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        writeln!(file, "{timestamp} {message}")?;
+        file.flush()
+    })();
+    if let Err(error) = result {
+        if !SPACE_MCP_LOG_WRITE_ERROR_REPORTED.swap(true, Ordering::Relaxed) {
+            eprintln!(
+                "[wework-space-mcp] lifecycle=file_log_error pid={} path={} error={error}",
+                std::process::id(),
+                path.display(),
+            );
+        }
+    }
+}
+
+fn space_mcp_log_path() -> PathBuf {
+    if let Some(log_dir) = non_empty_env("WEGENT_EXECUTOR_LOG_DIR") {
+        return PathBuf::from(log_dir).join(SPACE_MCP_LOG_FILE);
+    }
+    if let Some(executor_home) = non_empty_env("WEGENT_EXECUTOR_HOME") {
+        return PathBuf::from(executor_home)
+            .join("logs")
+            .join(SPACE_MCP_LOG_FILE);
+    }
+    let home = non_empty_env("HOME").unwrap_or_else(|| ".".to_owned());
+    PathBuf::from(home)
+        .join(".wegent-executor/logs")
+        .join(SPACE_MCP_LOG_FILE)
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
