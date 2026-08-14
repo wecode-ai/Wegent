@@ -18,6 +18,8 @@
   },
   "tool_activity": {
     "reconnecting": "Connection interrupted. Reconnecting…",
+    "chatgpt_network_unavailable": "The current model uses ChatGPT, but the network is unavailable. Would you like to configure a proxy?",
+    "open_proxy_settings": "Configure proxy",
     "summary_one": "Called {{count}} tool",
     "summary_other": "Called {{count}} tools",
     "mixed_summary_one": "{{toolSummary}}, edited {{count}} file",

@@ -52,6 +52,11 @@ fn codex_retry_message(params: &Value) -> String {
         .to_owned()
 }
 
+fn reconnecting_model_kind(request: &ExecutionRequest) -> Option<String> {
+    string_field(&request.model_config, "wework_model_kind")
+        .or_else(|| string_field(&request.model_config, "weworkModelKind"))
+}
+
 fn codex_notification_resumes_turn(method: &str) -> bool {
     method.starts_with("item/") || method.starts_with("turn/")
 }
@@ -523,6 +528,7 @@ impl CodexNotificationEventMapper {
                     "tool_name": "runtime_reconnecting",
                     "tool_input": {
                         "message": codex_retry_message(params),
+                        "model_kind": reconnecting_model_kind(context.request),
                     },
                     "status": "streaming",
                     "timestamp": now_ms(),
@@ -2015,6 +2021,7 @@ mod tests {
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
+            model_config: json!({"wework_model_kind": "codex-official"}),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
@@ -2048,6 +2055,10 @@ mod tests {
         assert_eq!(
             created["payload"]["data"]["block"]["tool_name"],
             "runtime_reconnecting"
+        );
+        assert_eq!(
+            created["payload"]["data"]["block"]["tool_input"]["model_kind"],
+            "codex-official"
         );
         assert!(event_rx.try_recv().is_err());
 

@@ -663,7 +663,9 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
   let followsGuidance = false
 
   const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
-    if (assistantItems.length === 0 && !(isLast && turn.id !== null && turn.status !== 'done')) {
+    const shouldProjectEmptyAssistant =
+      isLast && turn.status !== 'done' && (turn.id !== null || turn.stoppedNotice === true)
+    if (assistantItems.length === 0 && !shouldProjectEmptyAssistant) {
       return
     }
     const textItems = assistantItems.filter(item => item.type === 'assistant_text')
