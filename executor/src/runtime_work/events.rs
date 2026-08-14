@@ -643,13 +643,24 @@ impl CodexNotificationEventMapper {
         if let Some((block_id, mut updates)) = tool_update_from_notification(params) {
             let had_streamed_output = self.tool_output_deltas.remove(&block_id).is_some();
             normalize_tool_done_updates(&mut updates, had_streamed_output);
+            let block = workbench_block_from_notification(
+                params,
+                &emit_context.request.subtask_id,
+                emit_context.device_id,
+                emit_context.request.cwd().unwrap_or_default(),
+                Some("done"),
+            );
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
                 "response.block.updated",
                 emit_context.local_task_id,
                 emit_context.request,
-                json!({"block_id": block_id, "updates": updates}),
+                json!({
+                    "block_id": block_id,
+                    "updates": updates,
+                    "block": block,
+                }),
             );
         }
     }
@@ -4454,6 +4465,18 @@ mod tests {
         assert_eq!(
             first_tool_done["payload"]["data"]["updates"]["status"],
             "done"
+        );
+        assert_eq!(
+            first_tool_done["payload"]["data"]["block"]["id"],
+            first_tool_done["payload"]["data"]["block_id"]
+        );
+        assert_eq!(
+            first_tool_done["payload"]["data"]["block"]["status"],
+            "done"
+        );
+        assert_eq!(
+            first_tool_done["payload"]["data"]["block"]["tool_output"],
+            "/workspace\n"
         );
         assert!(event_rx.try_recv().is_err());
     }
