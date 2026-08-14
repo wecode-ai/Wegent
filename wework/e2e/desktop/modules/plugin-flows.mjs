@@ -715,12 +715,23 @@ async function verifyMarketplacePluginLifecycle({
     false,
     'Marketplace manage opened the management list instead of the plugin detail'
   )
-  const detailActionMenuTestId = `plugin-detail-actions-${pluginId}`
-  const detailPrimaryActionTestId = `plugin-detail-toggle-${pluginId}`
+  const detailActionMenuSelector =
+    '[data-testid^="plugin-detail-actions-"]:not([data-testid="plugin-detail-actions-bar"])'
+  const detailPrimaryActionSelector = '[data-testid^="plugin-detail-toggle-"]'
+  await control.command('waitFor', detailActionMenuSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', detailPrimaryActionSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const [detailActionMenuMetrics] = JSON.parse(
+    await control.command('getElementMetrics', detailActionMenuSelector)
+  )
+  const [detailPrimaryActionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', detailPrimaryActionSelector)
+  )
   assert.ok(
-    manageOpenedDetail.testIds.indexOf(detailActionMenuTestId) >= 0 &&
-      manageOpenedDetail.testIds.indexOf(detailActionMenuTestId) <
-        manageOpenedDetail.testIds.indexOf(detailPrimaryActionTestId),
+    detailActionMenuMetrics.right <= detailPrimaryActionMetrics.left,
     'The plugin detail overflow menu was not placed before the primary action'
   )
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
