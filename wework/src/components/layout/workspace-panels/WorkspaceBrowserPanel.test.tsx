@@ -72,7 +72,16 @@ class ResizeObserverMock {
 }
 
 function annotationSnapshot(
-  annotations: Array<{ id: string; number: number; comment: string }>,
+  annotations: Array<{
+    id: string
+    number: number
+    comment: string
+    adjustments?: Array<{
+      property: string
+      before: string
+      after: string
+    }>
+  }>,
   revision = 1
 ) {
   return {
@@ -84,7 +93,7 @@ function annotationSnapshot(
     revision,
     annotations: annotations.map(annotation => ({
       ...annotation,
-      adjustments: [],
+      adjustments: annotation.adjustments ?? [],
       target: {
         tagName: 'button',
         text: 'Example target',
@@ -1700,6 +1709,88 @@ describe('WorkspaceBrowserPanel', () => {
     expect(selectedText.type).toBe('browser_annotation')
     expect(selectedText.target.tagName).toBe('button')
     expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
+  })
+
+  test('hold-to-view-original button is enabled for queued tweaks and toggles the original page runtime', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(
+      annotationSnapshot([
+        {
+          id: 'browser-annotation-1',
+          number: 1,
+          comment: 'Make the button blue',
+          adjustments: [{ property: 'color', before: '#000000', after: '#1683ff' }],
+        },
+      ])
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    const button = await screen.findByTestId('workspace-browser-annotation-original-view-button')
+    await waitFor(() => {
+      expect(button).toBeEnabled()
+    })
+    expect(screen.getByText('正在批注 · example.com')).toBeInTheDocument()
+
+    fireEvent.pointerDown(button)
+    await waitFor(() => {
+      expect(
+        embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.some(([script]) =>
+          String(script).includes('setOriginalViewEnabled?.(true)')
+        )
+      ).toBe(true)
+    })
+    expect(screen.getByText('原网页 · example.com')).toBeInTheDocument()
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.pointerUp(button)
+    await waitFor(() => {
+      expect(
+        embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.some(([script]) =>
+          String(script).includes('setOriginalViewEnabled?.(false)')
+        )
+      ).toBe(true)
+    })
+    expect(screen.getByText('正在批注 · example.com')).toBeInTheDocument()
+    expect(button).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('hold-to-view-original button is disabled without queued tweaks', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(
+      annotationSnapshot([
+        {
+          id: 'browser-annotation-1',
+          number: 1,
+          comment: 'Plain comment without adjustments',
+        },
+      ])
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    const button = await screen.findByTestId('workspace-browser-annotation-original-view-button')
+    await waitFor(() => {
+      expect(button).toBeDisabled()
+    })
   })
 
   test('clear button wipes page annotation boxes while staying in annotation mode', async () => {
