@@ -44,15 +44,14 @@ export interface MermaidDiagramProps {
 export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   const { t } = useTranslation()
   const { theme } = useTheme()
-  const containerRef = useRef<HTMLDivElement>(null)
   const diagramRef = useRef<HTMLDivElement>(null)
+  const hasManualZoomRef = useRef(false)
 
   const [svgContent, setSvgContent] = useState<string>('')
   const [originalSvgContent, setOriginalSvgContent] = useState<string>('')
   const [error, setError] = useState<string>('')
   const [isLoading, setIsLoading] = useState(true)
   const [scale, setScale] = useState(1)
-  const [initialScale, setInitialScale] = useState(1)
   const [baseDimensions, setBaseDimensions] = useState<{ width: number; height: number } | null>(
     null
   )
@@ -292,12 +291,13 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     return { width: svgWidth, height: svgHeight }
   }, [])
 
-  // Calculate optimal initial scale based on SVG dimensions
-  // Default to 100% to ensure diagram fits within container
+  // Keep diagrams readable at their natural size, but fit large diagrams into the
+  // visible markdown column instead of making readers start by horizontal scrolling.
   const calculateInitialScale = useCallback(
-    (_dimensions: { width: number; height: number } | null): number => {
-      // Always use 100% as default to avoid overflow
-      return 1
+    (dimensions: { width: number; height: number } | null): number => {
+      const availableWidth = diagramRef.current?.clientWidth ?? 0
+      if (!dimensions || availableWidth <= 0) return 1
+      return Math.min(1, availableWidth / dimensions.width)
     },
     []
   )
@@ -371,8 +371,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
 
           // Calculate optimal initial scale for this diagram
           const optimalScale = calculateInitialScale(dimensions)
-          setInitialScale(optimalScale)
           setScale(optimalScale)
+          hasManualZoomRef.current = false
 
           // Store original SVG and sanitize
           const sanitizedSvg = sanitizeSvg(svg)
@@ -410,6 +410,24 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     scaleSvg,
   ])
 
+  useEffect(() => {
+    if (!baseDimensions || !diagramRef.current) return
+
+    const fitDiagram = () => {
+      if (hasManualZoomRef.current) return
+
+      const nextScale = calculateInitialScale(baseDimensions)
+      setScale(nextScale)
+    }
+
+    fitDiagram()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(fitDiagram)
+    observer.observe(diagramRef.current)
+    return () => observer.disconnect()
+  }, [baseDimensions, calculateInitialScale])
+
   // Update SVG when scale changes
   useEffect(() => {
     if (originalSvgContent && baseDimensions) {
@@ -420,16 +438,20 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
 
   // Zoom controls
   const zoomIn = useCallback(() => {
+    hasManualZoomRef.current = true
     setScale(prev => Math.min(prev + 0.25, 3))
   }, [])
 
   const zoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.25, 0.5))
+    hasManualZoomRef.current = true
+    setScale(prev => Math.max(prev - 0.25, 0.1))
   }, [])
 
   const resetZoom = useCallback(() => {
-    setScale(initialScale)
-  }, [initialScale])
+    const nextScale = calculateInitialScale(baseDimensions)
+    hasManualZoomRef.current = false
+    setScale(nextScale)
+  }, [baseDimensions, calculateInitialScale])
 
   // Copy image to clipboard
   const copyImage = useCallback(async () => {
@@ -994,7 +1016,6 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     <>
       {/* Main diagram container */}
       <div
-        ref={containerRef}
         className={`group/mermaid my-4 overflow-hidden rounded-lg border border-border/80 bg-white shadow-sm dark:bg-slate-950 ${className}`}
         data-testid="mermaid-diagram"
       >
@@ -1013,15 +1034,16 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
 
         {/* Diagram content */}
         <div
-          ref={diagramRef}
           className="max-h-[620px] min-h-[220px] overflow-auto bg-[radial-gradient(circle_at_1px_1px,rgba(148,163,184,0.20)_1px,transparent_0)] bg-[length:20px_20px] p-4 dark:bg-[radial-gradient(circle_at_1px_1px,rgba(71,85,105,0.35)_1px,transparent_0)] sm:p-6"
           onWheel={handleWheel}
         >
-          <div className="flex min-w-fit justify-center">
-            <div
-              className="rounded-md bg-white/90 p-4 transition-all duration-100 ease-out dark:bg-slate-950/80"
-              dangerouslySetInnerHTML={{ __html: svgContent }}
-            />
+          <div ref={diagramRef} className="w-full" data-testid="mermaid-fit-container">
+            <div className="flex min-w-fit justify-center">
+              <div
+                className="rounded-md bg-white/90 p-4 transition-all duration-100 ease-out dark:bg-slate-950/80"
+                dangerouslySetInnerHTML={{ __html: svgContent }}
+              />
+            </div>
           </div>
         </div>
       </div>

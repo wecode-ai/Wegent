@@ -10,9 +10,9 @@ sidebar_position: 4
 
 1. 为 `wiki_submit` 补齐 structure order、章节页面、内部链接、发布拒绝和 Mermaid correction
    协议的契约测试。
-2. 新增 ClaudeCode 专用 `code-wiki-mermaid` skill 及静态契约测试。
-3. 精炼 `code-wiki-ghost`：保留稳定生成策略，删除已由 skills/run prompt 定义的命令与模式
+2. 精炼 `code-wiki-ghost`：保留稳定生成策略，删除已由 skills/run prompt 定义的命令与模式
    细节，增加安全、结构深度、工程导航和条件式 Mermaid 要求。
+3. 在 Ghost 中要求结束前回看 `wiki_submit` completion requirements；不复制命令和参数。
 4. 在 incremental run prompt 增加同步维护图示的规则。
 5. 运行 Ghost、skills 与 prompt 的聚焦后端测试。
 
@@ -67,9 +67,10 @@ git diff --check
 ### 1. Prompt and skill separation
 
 1. Add contracts for structure order, section pages, links, publish refusal, and diagram correction.
-2. Add and test the ClaudeCode-only `code-wiki-mermaid` skill.
-3. Keep stable policy in the Ghost; remove command/mode duplication and add security, depth,
+2. Keep stable policy in the Ghost; remove command/mode duplication and add security, depth,
    engineering-navigation, and conditional-diagram requirements.
+3. Require the Ghost to direct the agent to the `wiki_submit` completion requirements without
+   duplicating command details.
 4. Require incremental updates to synchronize affected diagrams.
 5. Run focused Ghost, skill, and prompt tests.
 

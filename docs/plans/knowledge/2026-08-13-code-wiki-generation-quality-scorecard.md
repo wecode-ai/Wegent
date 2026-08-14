@@ -13,7 +13,8 @@ sidebar_position: 5
    重新生成 baseline。
 2. 对每个样本记录仓库 commit、执行模型完整引用、语言和 prompt 标识。任何一项不同，本轮对照
    无效。
-3. 手动更新 Ghost 与 skills 静态资源对应的实际数据。
+3. 手动更新 Ghost 与所需静态资源的实际数据，并记录 Mermaid skill 是否已挂载。本评分表的候选
+   基线为 `mermaid_skill=off`。
 4. 在 Wiki Reader 点击“重新生成”。前端会发送 `force_full=true`，所以即使 commit 未变化也会
    从空 generation 完整生成。
 5. 等待候选 generation 完成。记录失败、publish refusal、Mermaid correction 和重试；不得只
@@ -33,7 +34,8 @@ sidebar_position: 5
 | Repository commit |  |  |  |  |
 | Execution model namespace/name |  |  |  |  |
 | Language |  |  |  |  |
-| Prompt identifier | legacy | `2026-08-13-generation-quality-v1` | legacy | `2026-08-13-generation-quality-v1` |
+| Prompt identifier | legacy | `2026-08-13-generation-quality-v1-mermaid-off` | legacy | `2026-08-13-generation-quality-v1-mermaid-off` |
+| Mermaid skill | legacy | off | legacy | off |
 | Started / completed at |  |  |  |  |
 | Status / retry count |  |  |  |  |
 | Publish or correction notes |  |  |  |  |
@@ -160,7 +162,9 @@ UTC；不得直接用这两个字段相减计算耗时。优先记录任务执�
    `user-graph-ci` generations as baselines. Do not regenerate them.
 2. Record the KB ID, generation ID, repository commit, complete model namespace/name, language,
    prompt ID, timestamps, status, retries, and publish/correction notes for each baseline.
-3. Manually synchronize the updated Ghost and skills to the target environment.
+3. Manually synchronize the updated Ghost and required static resources to the target environment,
+   and record whether the Mermaid skill is attached. This candidate baseline uses
+   `mermaid_skill=off`.
 4. Click **Regenerate** in each Reader. The request sends `force_full=true`, so the unchanged commit
    is regenerated from an empty version.
 5. Record the candidate identity and every failure, refusal, correction, and retry.
@@ -179,7 +183,8 @@ For baseline and candidate in each repository, record:
 - Knowledge Base ID and Generation ID;
 - repository commit;
 - execution model namespace/name;
-- language and prompt identifier (`legacy` or `2026-08-13-generation-quality-v1`);
+- language and prompt identifier (`legacy` or
+  `2026-08-13-generation-quality-v1-mermaid-off`);
 - start/completion timestamps, status, retry count, and publish/correction notes.
 
 Always include model namespace and name so a same-name model or fallback cannot silently change the

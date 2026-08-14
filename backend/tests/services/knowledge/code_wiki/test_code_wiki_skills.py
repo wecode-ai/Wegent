@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Contracts owned by the two skills used during Code Wiki generation."""
+"""Contracts owned by the Code Wiki submission skill."""
 
 from pathlib import Path
 
@@ -30,23 +30,5 @@ def test_wiki_submit_owns_the_page_write_contract():
         "version was published",
         "Mermaid diagrams that do not render",
         "`complete` again",
-    ):
-        assert subject in body
-
-
-def test_mermaid_skill_is_for_code_wiki_not_chat():
-    metadata, body = _skill("code-wiki-mermaid")
-
-    assert metadata["bindShells"] == ["ClaudeCode"]
-    assert "render_mermaid" not in body
-    for subject in (
-        "flowchart",
-        "sequenceDiagram",
-        "stateDiagram-v2",
-        "erDiagram",
-        "Do not target a diagram count",
-        "repository-relative images",
-        "limited structural checks",
-        "does not run the Mermaid renderer",
     ):
         assert subject in body

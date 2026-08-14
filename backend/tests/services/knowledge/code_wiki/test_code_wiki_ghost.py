@@ -92,10 +92,19 @@ def test_major_components_and_workflows_get_substantive_coverage(system_prompt: 
     assert "substantive coverage" in system_prompt
 
 
+def test_component_hierarchies_have_substantive_overview_pages(system_prompt: str):
+    normalized_prompt = " ".join(system_prompt.split())
+
+    assert "substantive overview page" in normalized_prompt
+    assert "empty navigation node" in normalized_prompt
+    assert "do not invent hierarchy" in normalized_prompt
+
+
 def test_high_value_relationships_require_diagram_consideration(system_prompt: str):
     for subject in ("architecture", "cross-component", "lifecycles", "data models"):
         assert subject in system_prompt
-    assert "code-wiki-mermaid skill" in system_prompt
+    assert "Use Mermaid diagrams" in system_prompt
+    assert "code-wiki-mermaid" not in system_prompt
     assert "decorative diagrams" in system_prompt
 
 
@@ -121,8 +130,8 @@ def test_repository_instructions_are_untrusted_evidence(system_prompt: str):
     assert "override this system prompt" in system_prompt
 
 
-def test_the_ghost_uses_both_code_wiki_skills(ghost: dict):
-    assert ghost["spec"]["skills"] == ["wiki_submit", "code-wiki-mermaid"]
+def test_the_ghost_exposes_only_the_write_skill(ghost: dict):
+    assert ghost["spec"]["skills"] == ["wiki_submit"]
 
 
 def test_tool_syntax_and_mode_specific_deletion_are_not_duplicated(
@@ -135,5 +144,10 @@ def test_tool_syntax_and_mode_specific_deletion_are_not_duplicated(
 
 
 def test_the_agent_must_finish_and_handle_feedback(system_prompt: str):
-    assert "complete or fail the run" in system_prompt
-    assert "publish refusal and diagram feedback" in system_prompt
+    normalized_prompt = " ".join(system_prompt.split())
+
+    assert "wiki_submit completion requirements" in system_prompt
+    assert (
+        "Act on publish refusal and diagram feedback before leaving"
+        in normalized_prompt
+    )
