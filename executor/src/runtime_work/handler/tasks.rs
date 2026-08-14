@@ -225,14 +225,16 @@ impl RuntimeWorkRpcHandler {
         })?;
         let local_task_id = thread_id.clone();
         let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
-        let mut link = RuntimeTaskLink::new_pending(
+        let link = forked_task_link(
+            &source,
             local_task_id.clone(),
-            source.workspace_path.clone(),
+            thread_id,
             title,
-        );
-        link.thread_id = Some(thread_id);
-        link.parent = Some(
-            json!({"taskId": source.local_task_id, "threadId": source_thread_id, "lastTurnId": last_turn_id}),
+            json!({
+                "taskId": source.local_task_id,
+                "threadId": source_thread_id,
+                "lastTurnId": last_turn_id,
+            }),
         );
         self.upsert_local_task(link);
         log_executor_event(
@@ -1459,6 +1461,26 @@ impl RuntimeWorkRpcHandler {
         }
         self.upsert_local_task(link);
     }
+}
+
+pub(super) fn forked_task_link(
+    source: &RuntimeTaskLink,
+    local_task_id: String,
+    thread_id: String,
+    title: String,
+    parent: Value,
+) -> RuntimeTaskLink {
+    let mut link = RuntimeTaskLink::new_pending_with_runtime(
+        local_task_id,
+        source.workspace_path.clone(),
+        title,
+        source.runtime.clone(),
+    );
+    link.thread_id = Some(thread_id);
+    link.parent = Some(parent);
+    link.runtime_project_key = source.runtime_project_key.clone();
+    link.runtime_workspace_roots = source.runtime_workspace_roots.clone();
+    link
 }
 
 fn normalize_friendly_title(value: &str) -> Option<String> {
