@@ -16,6 +16,7 @@ import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 const mockPush = jest.fn()
+const mockRunStatusRefresh = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -32,11 +33,17 @@ jest.mock('@/contexts/TeamContext', () => ({
 }))
 
 jest.mock('@/features/knowledge/code-wiki/useCodeWikiRunStatus', () => ({
-  useCodeWikiRunStatus: () => ({ status: null, canRegenerate: true, refresh: jest.fn() }),
+  useCodeWikiRunStatus: () => ({
+    status: null,
+    canRegenerate: true,
+    refresh: mockRunStatusRefresh,
+  }),
 }))
 
 jest.mock('@/features/knowledge/code-wiki/RunHistory', () => ({
-  RunHistory: () => <div data-testid="run-history" />,
+  RunHistory: ({ onRepublished }: { onRepublished?: () => void | Promise<void> }) => (
+    <button type="button" data-testid="run-history" onClick={() => void onRepublished?.()} />
+  ),
 }))
 
 jest.mock('@/features/knowledge/code-wiki/WikiPageContent', () => ({
@@ -98,6 +105,20 @@ async function renderReader() {
 describe('navigating a wiki on a narrow screen', () => {
   beforeEach(() => {
     mockPush.mockReset()
+    mockRunStatusRefresh.mockReset()
+  })
+
+  it('reloads the published page tree after restoring a version', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    codeWikiApi.pages.mockClear()
+
+    await renderReader()
+    expect(codeWikiApi.pages).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getAllByTestId('run-history')[0])
+
+    await waitFor(() => expect(codeWikiApi.pages).toHaveBeenCalledTimes(2))
+    expect(mockRunStatusRefresh).toHaveBeenCalledTimes(1)
   })
 
   it('offers a way into the page tree', async () => {

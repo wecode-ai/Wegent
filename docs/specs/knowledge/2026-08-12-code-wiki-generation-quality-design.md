@@ -30,7 +30,7 @@ Code Wiki 的默认受众仍是需要理解和修改仓库的工程师与编码�
 - 保持工程师与编码智能体为唯一默认生成受众，不引入产品版风格。
 - 让信息深度匹配仓库复杂度；精炼表示密集且不重复，不表示页数越少越好。
 - 在架构关系、跨模块流程、生命周期和核心数据模型适合图示时生成源码有据的 Mermaid。
-- 让 Ghost、`wiki_submit`、Mermaid skill 和 run prompt 各自只有一个权威职责。
+- 让 Ghost、`wiki_submit` 和 run prompt 各自只有一个权威职责。
 - 用 prompt policy 降低凭据、个人信息、私网地址和内部 URL 意外进入正文的概率，同时明确
   这不是确定性防泄漏保证。
 - 让手动重新生成显式执行 full rebuild；自动触发继续在仓库未变化时跳过。
@@ -50,7 +50,8 @@ Ghost 只保存跨运行不变的生成策略：
 - 必须逐页写回、处理发布反馈并结束运行等高层行为。
 
 Ghost 不再保存命令参数、路径语法、read/remove/complete 示例，也不保存 full 与 incremental
-模式相反的删除语义。
+模式相反的删除语义。它在结束任务前要求 agent 回看并遵守 `wiki_submit` 的 completion
+requirements，但不重复其中的参数和反馈细节。
 
 ### `wiki_submit`
 
@@ -62,19 +63,11 @@ Ghost 不再保存命令参数、路径语法、read/remove/complete 示例，�
 - 发布拒绝与 Mermaid correction 返回后的重试方式；
 - 认证和运行环境。
 
-### `code-wiki-mermaid`
+### Mermaid baseline
 
-新增 ClaudeCode 可用的轻量 skill。它不依赖 Chat Shell 的 `render_mermaid` 工具，只说明：
-
-- 组件关系或分支控制使用 flowchart；
-- 跨组件调用使用 sequence diagram；
-- 生命周期使用 state diagram；
-- 核心实体关系使用 ER diagram；
-- 图中所有参与者、状态和关系必须来自已检查源码；
-- 图要聚焦、标签简短、复杂图拆分；
-- 更新涉及的流程或模型时同步维护图示；
-- 不引用仓库相对图片，当前 Reader 没有对应的受鉴权图片通道。
-
+Ghost 直接要求 agent 在架构、跨组件流程、生命周期、状态机、数据模型和复杂控制流确实更适合
+图示时使用 Mermaid，并要求关系有源码依据、图示聚焦且不追求固定数量。实验表明，面向当前
+模型的独立 Mermaid skill 没有带来可见收益，因此不保留该 skill；图示策略只由 Ghost 负责。
 现有服务端 Mermaid 结构检查与 correction follow-up 继续负责已知问题的反馈闭环。该检查不是
 完整 parser/render 验证，真实回归仍需在 Reader 中确认图示能够渲染且关系准确。
 
@@ -154,7 +147,7 @@ when the repository commit has not changed.
 - Match depth to repository complexity. Concise means dense and non-redundant, not fewer pages.
 - Generate source-grounded Mermaid when architecture, cross-component flows, lifecycles, or core
   data models are materially clearer visually.
-- Give the Ghost, `wiki_submit`, Mermaid skill, and run prompt one authoritative responsibility each.
+- Give the Ghost, `wiki_submit`, and run prompt one authoritative responsibility each.
 - Reduce accidental publication of credentials, PII, private addresses, and internal URLs through
   prompt policy, without claiming deterministic leak prevention.
 - Make manual regeneration a full rebuild while leaving automatic mode selection unchanged.
@@ -170,11 +163,10 @@ The `wiki_submit` skill is the sole authority for paths, complete-page replaceme
 structure order, section pages, links, publish refusal, correction retries, authentication, and the
 execution environment.
 
-The new ClaudeCode `code-wiki-mermaid` skill maps relationship types to flowchart, sequence, state,
-and ER diagrams. Every relationship must come from inspected evidence; diagrams stay focused and
-are updated with affected prose. Repository-relative images are forbidden because the Reader has no
-authenticated repository-image channel. Server-side checks are limited structural heuristics, not
-a complete parser/render validation, so regression review must confirm rendering in the Reader.
+The Ghost directly asks for source-grounded Mermaid when a relationship is materially clearer as a
+diagram. The separate `code-wiki-mermaid` experiment showed no visible benefit for the current
+model and is not retained. Server-side checks are limited structural heuristics, not a complete
+parser/render validation, so regression review must confirm rendering in the Reader.
 
 The run prompt contains only run facts. Full mode starts empty. Incremental mode starts from the
 published snapshot, requires reading before replacing a page, requires explicit removal, and asks
