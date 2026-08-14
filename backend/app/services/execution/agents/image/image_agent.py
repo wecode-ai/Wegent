@@ -19,6 +19,7 @@ import uuid
 from typing import List, Optional
 
 from app.core.shutdown import shutdown_manager
+from app.services.context import context_service
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
 from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
 
@@ -208,7 +209,6 @@ class ImageAgent(PollingAgent):
                 # Get image URL (either direct URL or convert from base64)
                 image_url = image.url
                 if not image_url and image.b64_json:
-                    # For base64, we'll store it directly
                     output_format = model_config.get("imageConfig", {}).get(
                         "output_format"
                     ) or ("png" if protocol == "gpt-image" else "jpeg")
@@ -216,9 +216,6 @@ class ImageAgent(PollingAgent):
                     image_url = f"data:image/{mime_subtype};base64,{image.b64_json}"
 
                 if image_url:
-                    image_urls.append(image_url)
-
-                    # Upload as attachment
                     attachment_id = await self._upload_attachment(
                         image_url=image_url,
                         image_size=image.size,
@@ -228,8 +225,11 @@ class ImageAgent(PollingAgent):
                         index=i,
                     )
                     attachment_ids.append(attachment_id)
+                    image_urls.append(
+                        context_service.build_attachment_url(attachment_id)
+                    )
 
-            # Emit final image block with actual image data
+            # Emit final image block with persisted attachment URLs
             final_image_block = {
                 "id": image_block_id,
                 "type": "image",
