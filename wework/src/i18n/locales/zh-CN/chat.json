@@ -18,6 +18,8 @@
   },
   "tool_activity": {
     "reconnecting": "连接中断，正在重连…",
+    "chatgpt_network_unavailable": "当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？",
+    "open_proxy_settings": "设置代理",
     "summary_other": "调用 {{count}} 个工具",
     "mixed_summary_other": "{{toolSummary}}，编辑 {{count}} 个文件",
     "edit_summary_other": "编辑 {{count}} 个文件",

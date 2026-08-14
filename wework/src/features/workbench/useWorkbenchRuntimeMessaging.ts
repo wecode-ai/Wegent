@@ -304,14 +304,6 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
-        const prepared = await executorClient.runtime.prepareRuntimeModel({
-          deviceId: outboundRequest.address.deviceId,
-          modelId: outboundRequest.modelId,
-        })
-        if (!prepared) {
-          reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
-          return false
-        }
         lifecycleStore.sendRequested(outboundRequest.address)
         sendRequested = true
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
@@ -901,14 +893,13 @@ export function useWorkbenchRuntimeMessaging({
             : {}),
         },
         modelSelection:
-          options?.modelSelection ??
-          (selectedModel
+          selectedModel && executionModel.modelId
             ? {
-                modelName: selectedModel.name,
-                modelType: selectedModel.type,
-                options: selectedModelOptions,
+                modelName: executionModel.modelId,
+                modelType: executionModel.modelType ?? selectedModel.type,
+                options: executionModel.modelOptions ?? {},
               }
-            : null),
+            : (options?.modelSelection ?? null),
         ...(friendlyTitle ? { friendlyTitle } : {}),
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: preparedAttachments.attachmentIds,

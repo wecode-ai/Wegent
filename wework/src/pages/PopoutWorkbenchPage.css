@@ -69,6 +69,10 @@
 }
 
 .popout-window-collapsed [data-testid='desktop-empty-composer-dock'] {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
 }
 
@@ -79,10 +83,17 @@
 }
 
 .popout-window-collapsed [data-testid='project-chat-composer-form'] {
+  height: 112px;
   min-height: 112px;
+  max-height: 112px;
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.popout-window-collapsed [data-testid='chat-message-input'] {
+  /* Override the editor's inline desktop auto-resize limit inside the fixed collapsed surface. */
+  max-height: 64px !important;
 }
 
 .popout-window-collapsed [data-testid='composer-toolbar'] {

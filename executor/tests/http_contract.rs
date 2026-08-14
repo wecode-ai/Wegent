@@ -21,6 +21,7 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use wegent_executor::{
+    heartbeat::RuntimeHeartbeatController,
     protocol::{ExecutionRequest, TaskStatus},
     server::{create_router, AppState, RunnerResult, TaskRunner},
 };
@@ -65,6 +66,59 @@ async fn health_check_matches_executor_readiness_contract() {
         body,
         json!({"status": "healthy", "service": "task_executor"})
     );
+}
+
+#[tokio::test]
+async fn runtime_bind_activates_sandbox_heartbeat_idempotently() {
+    let _lock = env_lock().lock().await;
+    let _base = EnvGuard::set(
+        "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",
+        "http://127.0.0.1:9/executor-manager",
+    );
+    let _interval = EnvGuard::set("HEARTBEAT_INTERVAL", "3600");
+    let state = AppState::new(RecordingRunner::default())
+        .with_runtime_heartbeat(RuntimeHeartbeatController::default());
+    let app = create_router(state);
+    let payload = json!({
+        "heartbeat_id": "21852793753137",
+        "heartbeat_type": "sandbox"
+    });
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/runtime/bind")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let conflicting = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/runtime/bind")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "heartbeat_id": "another-task",
+                        "heartbeat_type": "sandbox"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(conflicting.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]

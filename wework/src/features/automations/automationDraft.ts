@@ -1,4 +1,5 @@
 import { normalizeRuntimeWorkspacePath, runtimeProjectWorkKey } from '@/lib/runtime-project'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type {
   ModelOptions,
   RuntimeGoalCreateInput,
@@ -180,6 +181,7 @@ export function emptyAutomationDraft(
   selectedModel: UnifiedModel | null = null,
   selectedModelOptions: ModelOptions = {}
 ): AutomationDraft {
+  const modelFields = automationModelFields(selectedModel, selectedModelOptions)
   return {
     name: '',
     prompt: '',
@@ -202,9 +204,22 @@ export function emptyAutomationDraft(
     continuationAddress: null,
     goalEnabled: false,
     notificationPolicy: 'all_runs',
-    modelId: selectedModel?.modelId ?? selectedModel?.name ?? '',
-    modelType: selectedModel?.type ?? '',
-    modelOptions: { ...selectedModelOptions },
+    ...modelFields,
+  }
+}
+
+export function automationModelFields(
+  selectedModel: UnifiedModel | null,
+  selectedModelOptions: ModelOptions = {}
+): Pick<AutomationDraft, 'modelId' | 'modelType' | 'modelOptions'> {
+  if (!selectedModel) {
+    return { modelId: '', modelType: '', modelOptions: {} }
+  }
+  const execution = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+  return {
+    modelId: execution.modelId ?? '',
+    modelType: execution.modelType ?? '',
+    modelOptions: execution.modelOptions ?? {},
   }
 }
 

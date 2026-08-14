@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { RuntimeProjectWork } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import {
+  automationModelFields,
   automationDraftFromAutomation,
   automationWorkspaceTarget,
   buildAutomationProjectOptions,
@@ -10,6 +11,40 @@ import {
   initialGoalFromAutomationDraft,
   scheduleFromAutomationDraft,
 } from './automationDraft'
+
+describe('automationModelFields', () => {
+  test('preserves the complete cloud model identity for execution', () => {
+    expect(
+      automationModelFields(
+        {
+          name: 'desktop-e2e-public-model',
+          type: 'public',
+          displayName: 'Desktop E2E Public Model',
+          provider: 'openai',
+          modelId: 'desktop-e2e-public-upstream-model',
+          namespace: 'default',
+          resourceUserId: 0,
+          config: {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+          },
+          runtime: { family: 'openai.openai-responses' },
+        },
+        { reasoningEffort: 'medium' }
+      )
+    ).toEqual({
+      modelId: 'desktop-e2e-public-model',
+      modelType: 'public',
+      modelOptions: {
+        reasoningEffort: 'medium',
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+      },
+    })
+  })
+})
 
 describe('automationWorkspaceTarget', () => {
   test('uses a selected project workspace', () => {

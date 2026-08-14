@@ -720,6 +720,20 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       scroller,
     })}`
   )
+  const composerMetrics = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+    )
+  ).at(-1)
+  assert.ok(composerMetrics, 'The conversation composer was not rendered after guidance')
+  assert.ok(
+    guidanceMessage.bottom <= composerMetrics.top + 2,
+    `The newly applied guidance message rendered below the composer: ${JSON.stringify({
+      guidanceMessage,
+      composer: composerMetrics,
+    })}`
+  )
   await captureVerificationScreenshot(control, 'guidance-scroll-01-message-visible.png')
 
   control.releaseGuidanceScrollCompletion()
@@ -817,9 +831,6 @@ async function reopenCurrentTurnNavigationTask(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await restartDesktopApp()
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

@@ -35,6 +35,74 @@ def _mock_client(mocker, handler):
     )
 
 
+def test_skill_fingerprint_is_stable_across_ordering():
+    """Equivalent Skill plans must produce the same deployment fingerprint."""
+    first = ResolvedTaskSkills(
+        team_namespace="team-a",
+        skills=["sandbox", "analyzer"],
+        preload_skills=["sandbox"],
+        skill_refs={
+            "sandbox": {
+                "skill_id": 1,
+                "namespace": "default",
+                "content_hash": "sha256:a",
+            },
+            "analyzer": {
+                "skill_id": 2,
+                "namespace": "default",
+                "content_hash": "sha256:b",
+            },
+        },
+        required_skills=["analyzer", "sandbox"],
+    )
+    second = ResolvedTaskSkills(
+        team_namespace="team-a",
+        skills=["analyzer", "sandbox"],
+        preload_skills=["sandbox"],
+        skill_refs={
+            "analyzer": {
+                "content_hash": "sha256:b",
+                "namespace": "default",
+                "skill_id": 2,
+            },
+            "sandbox": {
+                "content_hash": "sha256:a",
+                "namespace": "default",
+                "skill_id": 1,
+            },
+        },
+        required_skills=["sandbox", "analyzer"],
+    )
+
+    assert first.fingerprint == second.fingerprint
+
+
+def test_skill_fingerprint_changes_with_content_hash():
+    """A hot-updated Skill package must invalidate the deployment fingerprint."""
+    old = ResolvedTaskSkills(
+        skills=["analyzer"],
+        skill_refs={
+            "analyzer": {
+                "skill_id": 2,
+                "namespace": "default",
+                "content_hash": "sha256:old",
+            }
+        },
+    )
+    new = ResolvedTaskSkills(
+        skills=["analyzer"],
+        skill_refs={
+            "analyzer": {
+                "skill_id": 2,
+                "namespace": "default",
+                "content_hash": "sha256:new",
+            }
+        },
+    )
+
+    assert old.fingerprint != new.fingerprint
+
+
 @pytest.mark.asyncio
 async def test_resolve_fetches_authoritative_task_skills(mocker):
     """Resolution should forward auth and preserve all Skill reference fields."""
@@ -94,6 +162,66 @@ async def test_resolve_rejects_required_skill_missing_from_task(mocker):
         match="Required task Skills are unavailable: abtest-file-analyzer",
     ):
         await SandboxSkillSynchronizer().resolve(sandbox)
+
+
+@pytest.mark.asyncio
+async def test_resolve_merges_required_request_scoped_skill(mocker):
+    """A Backend-resolved request Skill may extend persistent task Skills."""
+    _mock_client(
+        mocker,
+        lambda request: httpx.Response(
+            200,
+            json={
+                "team_namespace": "team-a",
+                "skills": ["sandbox"],
+                "preload_skills": ["sandbox"],
+                "skill_refs": {"sandbox": {"skill_id": 1, "namespace": "default"}},
+                "preload_skill_refs": {
+                    "sandbox": {"skill_id": 1, "namespace": "default"}
+                },
+            },
+        ),
+    )
+    sandbox = _sandbox(
+        {
+            "auth_token": "task-jwt",
+            "required_skills": ["wegent-knowledge"],
+            "bot_config": json.dumps(
+                [
+                    {
+                        "team_namespace": "team-a",
+                        "skills": ["sandbox", "wegent-knowledge", "inactive"],
+                        "preload_skills": ["sandbox", "wegent-knowledge"],
+                        "skill_refs": {
+                            "wegent-knowledge": {
+                                "skill_id": 42,
+                                "namespace": "default",
+                                "is_public": True,
+                            },
+                            "inactive": {
+                                "skill_id": 43,
+                                "namespace": "default",
+                            },
+                        },
+                        "preload_skill_refs": {
+                            "wegent-knowledge": {
+                                "skill_id": 42,
+                                "namespace": "default",
+                                "is_public": True,
+                            }
+                        },
+                    }
+                ]
+            ),
+        }
+    )
+
+    resolved = await SandboxSkillSynchronizer().resolve(sandbox)
+
+    assert resolved.skills == ["sandbox", "wegent-knowledge"]
+    assert resolved.preload_skills == ["sandbox", "wegent-knowledge"]
+    assert resolved.skill_refs["wegent-knowledge"]["skill_id"] == 42
+    assert "inactive" not in resolved.skills
 
 
 @pytest.mark.asyncio

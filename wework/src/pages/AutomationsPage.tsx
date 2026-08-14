@@ -19,6 +19,7 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { AutomationDetailWorkspace } from '@/features/automations/AutomationDetailWorkspace'
 import {
+  automationModelFields,
   automationDraftFromAutomation,
   automationWorkspaceTarget,
   buildAutomationProjectOptions,
@@ -285,6 +286,14 @@ export function AutomationsPage() {
           }
         : current
     )
+    setDirty(true)
+  }
+
+  const changeModel = (model: (typeof projectChat.models)[number] | null) => {
+    if (!draft) return
+    const reasoningEffort = draft.modelOptions.reasoningEffort ?? 'medium'
+    const modelFields = automationModelFields(model, model ? { reasoningEffort } : {})
+    setDraft(current => (current ? { ...current, ...modelFields } : current))
     setDirty(true)
   }
 
@@ -588,6 +597,7 @@ export function AutomationsPage() {
                 dirty={dirty}
                 running={Boolean(editing && runningId === editing.id)}
                 onChange={updateDraft}
+                onModelChange={changeModel}
                 onSourceChange={changeSource}
                 onClose={closeDetail}
                 onSave={() => void saveAutomation()}

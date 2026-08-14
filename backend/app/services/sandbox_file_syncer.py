@@ -18,7 +18,10 @@ from typing import Optional
 
 import httpx
 
-from shared.utils.attachment_block import sanitize_attachment_filename
+from shared.utils.attachment_block import (
+    build_sandbox_path,
+    sanitize_attachment_filename,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,21 +44,6 @@ def _sanitize_filename(filename: str) -> str:
         Sanitized filename safe for use in file paths
     """
     return sanitize_attachment_filename(filename, fallback="attachment")
-
-
-def build_sandbox_attachment_path(task_id: int, subtask_id: int, filename: str) -> str:
-    """Build the sandbox path for an attachment.
-
-    Args:
-        task_id: Task ID
-        subtask_id: Subtask ID
-        filename: Original filename
-
-    Returns:
-        Path where the attachment should be stored in sandbox
-    """
-    safe_filename = _sanitize_filename(filename)
-    return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
 
 class SandboxFileSyncer:
@@ -229,7 +217,16 @@ class SandboxFileSyncer:
             return False
 
         # Build target path
-        remote_path = build_sandbox_attachment_path(task_id, subtask_id, filename)
+        remote_path = build_sandbox_path(task_id, subtask_id, filename)
+        if not remote_path:
+            logger.warning(
+                "[SandboxFileSyncer] Cannot build attachment path: "
+                "task_id=%s, subtask_id=%s, filename=%s",
+                task_id,
+                subtask_id,
+                filename,
+            )
+            return False
 
         # Upload file
         success = await self.upload_file_to_sandbox(

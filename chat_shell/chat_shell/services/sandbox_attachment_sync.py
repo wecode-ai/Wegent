@@ -56,9 +56,17 @@ def _sandbox_skill_config(request: ExecutionRequest) -> dict[str, Any]:
 
 
 def _backend_url(request: ExecutionRequest) -> str:
-    """Resolve the Backend base URL without its internal API suffix."""
-    url = request.backend_url or settings.REMOTE_STORAGE_URL
-    return url.rstrip("/").removesuffix("/api/internal")
+    """Resolve the Backend base URL without any trailing API suffix.
+
+    Callers append ``/api/attachments/...`` themselves, so the base must not
+    already carry an ``/api`` or ``/api/internal`` suffix; otherwise the request
+    doubles up to ``/api/api/...`` and returns 404.
+    """
+    url = (request.backend_url or settings.REMOTE_STORAGE_URL).rstrip("/")
+    for suffix in ("/api/internal", "/api"):
+        if url.endswith(suffix):
+            return url[: -len(suffix)]
+    return url
 
 
 def _integer(value: Any, default: int = 0) -> int:
@@ -165,7 +173,7 @@ def _failed_attachment_warning(failed_attachments: list[dict[str, Any]]) -> str:
         download_url = build_attachment_download_url(attachment_id)
         lines.append(
             f"- {filename} (ID: {attachment_id}). Use download_attachment with "
-            f"attachment_url={download_url} and save_path={path}."
+            f"attachment_url={download_url}; it will save to {path}."
         )
     return "\n".join(lines)
 
@@ -283,22 +291,59 @@ async def _sync_attachments(
     request: ExecutionRequest,
     sandbox: Any,
     attachments: list[dict[str, Any]],
+    client: httpx.AsyncClient,
 ) -> list[dict[str, Any]]:
     backend_url = _backend_url(request)
-    async with httpx.AsyncClient(
-        timeout=_ATTACHMENT_DOWNLOAD_TIMEOUT,
-        follow_redirects=True,
-    ) as client:
-        return [
-            await _sync_one_attachment(
-                client=client,
-                sandbox=sandbox,
-                request=request,
-                attachment=attachment,
-                backend_url=backend_url,
-            )
-            for attachment in attachments
-        ]
+    return [
+        await _sync_one_attachment(
+            client=client,
+            sandbox=sandbox,
+            request=request,
+            attachment=attachment,
+            backend_url=backend_url,
+        )
+        for attachment in attachments
+    ]
+
+
+async def _load_task_attachments(
+    *,
+    client: httpx.AsyncClient,
+    request: ExecutionRequest,
+    backend_url: str,
+) -> list[dict[str, Any]]:
+    """Load trusted metadata for current and historical task attachments."""
+    url = f"{backend_url}/api/attachments/task/{request.task_id}/all"
+    response = await client.get(
+        url,
+        headers={"Authorization": f"Bearer {request.auth_token}"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise ValueError("Backend returned invalid task attachment metadata")
+    return [dict(item) for item in payload if isinstance(item, dict)]
+
+
+def _merge_attachments(
+    task_attachments: list[dict[str, Any]],
+    current_attachments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge task metadata with the richer current-turn attachment payload."""
+    merged: dict[int, dict[str, Any]] = {}
+    invalid: list[dict[str, Any]] = []
+    for attachment in task_attachments:
+        attachment_id = _integer(attachment.get("id"))
+        if attachment_id <= 0:
+            continue
+        merged[attachment_id] = dict(attachment)
+    for attachment in current_attachments:
+        attachment_id = _integer(attachment.get("id"))
+        if attachment_id <= 0:
+            invalid.append(dict(attachment))
+            continue
+        merged[attachment_id] = {**merged.get(attachment_id, {}), **attachment}
+    return [*merged.values(), *invalid]
 
 
 @trace_async(
@@ -311,24 +356,52 @@ async def _sync_attachments(
     },
 )
 async def sync_chat_attachments_to_sandbox(request: ExecutionRequest) -> None:
-    """Synchronize current-turn attachments before the model can use sandbox tools."""
-    attachments = [
+    """Synchronize task attachments before the model can use sandbox tools."""
+    current_attachments = [
         dict(item) for item in (request.attachments or []) if isinstance(item, dict)
     ]
-    if not attachments or not _sandbox_skill_available(request):
+    if not _sandbox_skill_available(request):
         return
 
     if not request.auth_token:
-        _mark_all_failed(request, attachments, "Task authentication token is missing")
+        _mark_all_failed(
+            request,
+            current_attachments,
+            "Task authentication token is missing",
+        )
         return
 
-    # Import and initialize E2B only for requests that can use the sandbox.
-    sandbox, error = await _create_task_sandbox(request)
-    if error or sandbox is None:
-        _mark_all_failed(request, attachments, error or "Sandbox is unavailable")
-        return
+    backend_url = _backend_url(request)
+    async with httpx.AsyncClient(
+        timeout=_ATTACHMENT_DOWNLOAD_TIMEOUT,
+        follow_redirects=True,
+    ) as client:
+        try:
+            task_attachments = await _load_task_attachments(
+                client=client,
+                request=request,
+                backend_url=backend_url,
+            )
+        except Exception as exc:
+            task_attachments = []
+            logger.warning(
+                "[sandbox_attachment_sync] Failed to load task attachments: "
+                "task_id=%s, error=%s",
+                request.task_id,
+                exc,
+            )
 
-    synced = await _sync_attachments(request, sandbox, attachments)
+        attachments = _merge_attachments(task_attachments, current_attachments)
+        if not attachments:
+            return
+
+        # Import and initialize E2B only after finding attachments to synchronize.
+        sandbox, error = await _create_task_sandbox(request)
+        if error or sandbox is None:
+            _mark_all_failed(request, attachments, error or "Sandbox is unavailable")
+            return
+
+        synced = await _sync_attachments(request, sandbox, attachments, client)
     request.attachments = synced
     failed = [item for item in synced if item.get("status") == "failed"]
     request.prompt = _failed_attachment_prompt(request.prompt, failed)

@@ -129,6 +129,8 @@ When a task is running and the composer is empty, the right-side control shows a
 
 The composer accepts pasted multiline text and preserves clipboard line breaks. Windows-style line endings are normalized automatically. Even when the clipboard contains both plain text and rich text, each paste inserts the content only once.
 
+In the desktop composer, press `Shift+Enter` to insert a new line without sending the message. The composer grows with its content; after reaching its maximum height, it scrolls automatically and keeps the caret visible.
+
 ### Message Area
 
 The message area displays conversation history:

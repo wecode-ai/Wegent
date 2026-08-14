@@ -8,6 +8,7 @@ import {
   Code2,
   Copy,
   FolderGit2,
+  GitPullRequest,
   Globe2,
   Info,
   Keyboard,
@@ -79,6 +80,7 @@ import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import { HarnessSettingsPage } from './HarnessSettingsPage'
+import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
@@ -195,6 +197,13 @@ const settingsNavItems: SettingsNavItem[] = [
     label: 'settings_nav_browser',
     fallback: '浏览器',
     category: 'integrations',
+  },
+  {
+    key: 'git-hosting',
+    icon: GitPullRequest,
+    label: 'settings_nav_git_hosting',
+    fallback: '代码托管',
+    category: 'coding',
   },
   {
     key: 'harnesses',
@@ -1522,6 +1531,8 @@ export function ConnectionsSettingsPage({
           <PluginSettingsPage />
         ) : effectiveActiveNav === 'browser' ? (
           <BrowserSettingsPage />
+        ) : effectiveActiveNav === 'git-hosting' ? (
+          <GitHostingSettingsPage />
         ) : effectiveActiveNav === 'harnesses' ? (
           <HarnessSettingsPage />
         ) : effectiveActiveNav === 'worktrees' ? (
