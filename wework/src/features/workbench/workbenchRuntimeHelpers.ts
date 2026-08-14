@@ -156,6 +156,23 @@ function runtimeTaskAddressFromWorkspace(
   }
 }
 
+export function hydrateRuntimeTaskAddress(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeTaskAddress | null {
+  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
+  const task = workspace?.tasks.find(candidate => candidate.taskId === address?.taskId)
+  if (!address || !workspace || !task) return null
+
+  const hydrated = runtimeTaskAddressFromWorkspace(workspace, task)
+  const runtimeHandle = mergeRuntimeTaskHandles(address.runtimeHandle, hydrated.runtimeHandle)
+  return {
+    ...address,
+    ...hydrated,
+    ...(runtimeHandle ? { runtimeHandle } : {}),
+  }
+}
+
 export function projectTaskAddresses(
   runtimeWork: RuntimeWorkListResponse | null,
   runtimeProjectKeys: string[]

@@ -67,6 +67,7 @@ import {
   createRuntimeTaskIdFromSeed,
   findProjectDeviceWorkspace,
   getCommandStdoutObject,
+  hydrateRuntimeTaskAddress,
   isRecord,
   isSameRuntimeTaskIdentity,
   mergeRuntimeTaskHandles,
@@ -1482,13 +1483,15 @@ export function useWorkbenchRuntimeMessaging({
       input: string,
       options?: CreateTemporaryRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
-      if (!options?.source || !runtimeThreadId(options.source)) {
+      const source =
+        hydrateRuntimeTaskAddress(state.runtimeWork, options?.source) ?? options?.source ?? null
+      if (!source || !runtimeThreadId(source)) {
         reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
         return false
       }
-      return createEphemeralRuntimeTask(input, options)
+      return createEphemeralRuntimeTask(input, { ...options, source })
     },
-    [createEphemeralRuntimeTask, reportSendBlocked]
+    [createEphemeralRuntimeTask, reportSendBlocked, state.runtimeWork]
   )
 
   const createProjectRuntimeTask = useCallback(
