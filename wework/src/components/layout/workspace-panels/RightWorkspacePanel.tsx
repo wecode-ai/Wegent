@@ -174,6 +174,8 @@ interface RightWorkspacePanelProps {
   onRefreshReview?: () => void
   onRestoreConversation?: () => void
   getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
+  getChatInitialAddress?: (tab: RightWorkspaceChatTab) => RuntimeTaskAddress | null | undefined
+  onChatAddressChange?: (tab: RightWorkspaceChatTab, address: RuntimeTaskAddress | null) => void
 }
 
 interface RightWorkspaceBrowserPanelSlotProps {
@@ -295,6 +297,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onRefreshReview,
   onRestoreConversation,
   getChatInitialInput,
+  getChatInitialAddress,
+  onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const availableTabs = allowTemporaryChat
@@ -563,6 +567,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               source={currentRuntimeTask}
               instanceId={tab}
               initialInput={getChatInitialInput?.(tab)}
+              initialAddress={getChatInitialAddress?.(tab)}
+              onAddressChange={address => onChatAddressChange?.(tab, address)}
               expanded={expanded && activeView === tab}
               onRestoreConversation={onRestoreConversation}
               testId={

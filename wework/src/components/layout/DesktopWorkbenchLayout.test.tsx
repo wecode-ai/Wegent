@@ -6103,6 +6103,52 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }, 15_000)
 
+  test('temporary chat renders a direct follow-up before its thinking indicator', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-follow-up-order',
+      workspacePath: '/workspace/project',
+    }
+    const followUpSend = createDeferred<boolean>()
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    sendRuntimePaneMessageMock.mockReturnValue(followUpSend.promise)
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await userEvent.type(sideChatInput, 'direct follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    const userMessages = await within(sideChat).findAllByTestId('user-message-content')
+    const latestUserMessage = userMessages.at(-1)
+    const thinkingIndicator = within(sideChat).getByTestId('thinking-indicator')
+    expect(latestUserMessage).toHaveTextContent('direct follow-up')
+    expect(
+      latestUserMessage?.compareDocumentPosition(thinkingIndicator) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await act(async () => {
+      followUpSend.resolve(true)
+      await followUpSend.promise
+    })
+  }, 15_000)
+
   test('temporary chat sends a busy follow-up as guidance when selected', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
@@ -9704,6 +9750,42 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
   })
+
+  test('restores an ephemeral temporary chat when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const temporaryAddress: RuntimeTaskAddress = {
+      deviceId: 'local-device',
+      taskId: 'runtime-ephemeral-side-chat',
+      workspacePath: '/Users/me/Wegent/.worktrees/a',
+      runtimeHandle: {
+        thread_id: 'thread-ephemeral-side-chat',
+        ephemeral: true,
+      },
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(temporaryAddress)
+      return temporaryAddress
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-chat-option'))
+    const sideChat = activePane().getByTestId('right-workspace-chat-panel')
+    const composer = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(composer, 'keep this temporary chat')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    const restoredSideChat = await activePane().findByTestId('right-workspace-chat-panel')
+    expect(within(restoredSideChat).getByTestId('user-message-content')).toHaveTextContent(
+      'keep this temporary chat'
+    )
+    expect(within(restoredSideChat).queryByText('加载临时聊天失败')).not.toBeInTheDocument()
+  }, 15_000)
 
   test('resets cached conversation horizontal scroll when the task becomes active', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
