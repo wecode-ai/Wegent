@@ -115,13 +115,18 @@ describe('executor access layer', () => {
       entries: [],
     })
     await expect(
-      client.files.readWorkspaceTextFile('device-1', '/Users/me/project/README.md')
+      client.files.readWorkspaceTextFile(
+        'device-1',
+        '/Users/me/project/README.md',
+        '/Users/me/project'
+      )
     ).resolves.toMatchObject({ content: 'hello' })
 
     expect(deviceApi.listWorkspaceEntries).toHaveBeenCalledWith('device-1', '/Users/me/project')
     expect(deviceApi.readWorkspaceTextFile).toHaveBeenCalledWith(
       'device-1',
-      '/Users/me/project/README.md'
+      '/Users/me/project/README.md',
+      '/Users/me/project'
     )
   })
 

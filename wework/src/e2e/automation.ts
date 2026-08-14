@@ -365,7 +365,17 @@ export async function installWeworkAutomationBridge(
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(selector))
+  const elements: HTMLElement[] = []
+  const visit = (root: Document | ShadowRoot) => {
+    elements.push(...root.querySelectorAll<HTMLElement>(selector))
+    root.querySelectorAll<HTMLElement>('*').forEach(element => {
+      if (element.shadowRoot) {
+        visit(element.shadowRoot)
+      }
+    })
+  }
+  visit(document)
+  return elements
 }
 
 function desktopControlElementText(selector: string, visible = false): string {
@@ -1406,7 +1416,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         }
         await waitForDesktopControlTick()
       }
-      throw new Error(`Unable to find selector "${command.selector}" containing "${text}"`)
+      const candidates = findDesktopControlElements(command.selector)
+        .slice(0, 20)
+        .map(candidate => ({
+          ariaLabel: candidate.getAttribute('aria-label'),
+          text: candidate.textContent?.trim() ?? '',
+        }))
+      throw new Error(
+        `Unable to find selector "${command.selector}" containing "${text}"; candidates=${JSON.stringify(candidates)}`
+      )
     }
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]

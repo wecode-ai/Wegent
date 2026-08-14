@@ -22,6 +22,7 @@ import { useEffect, useRef } from 'react'
 interface WorkspaceTextFileEditorProps {
   path: string
   value: string
+  themeType: 'light' | 'dark'
   onChange: (value: string) => void
   onSave: () => void
 }
@@ -43,6 +44,7 @@ function languageForPath(path: string) {
 export function WorkspaceTextFileEditor({
   path,
   value,
+  themeType,
   onChange,
   onSave,
 }: WorkspaceTextFileEditorProps) {
@@ -92,30 +94,49 @@ export function WorkspaceTextFileEditor({
           EditorView.updateListener.of(update => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())
           }),
-          EditorView.theme({
-            '&': {
-              height: '100%',
-              fontSize: 'var(--text-code)',
-              backgroundColor: 'rgb(255 255 255)',
+          EditorView.theme(
+            {
+              '&': {
+                height: '100%',
+                fontSize: 'var(--text-code)',
+                color: 'rgb(var(--color-text-primary))',
+                backgroundColor: 'rgb(var(--color-bg-base))',
+              },
+              '.cm-scroller': {
+                overflow: 'auto',
+                fontFamily: 'var(--font-code)',
+              },
+              '.cm-content, .cm-line': {
+                caretColor: 'rgb(var(--color-text-primary))',
+              },
+              '.cm-gutters': {
+                backgroundColor: 'rgb(var(--color-bg-surface))',
+                borderRight: '1px solid rgb(var(--color-border))',
+                color: 'rgb(var(--color-text-muted))',
+              },
+              '.cm-activeLine, .cm-activeLineGutter': {
+                backgroundColor: 'rgb(var(--color-muted))',
+              },
+              '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+                backgroundColor: 'rgb(var(--color-primary) / 0.24) !important',
+              },
+              '&.cm-focused': { outline: 'none' },
             },
-            '.cm-scroller': {
-              overflow: 'auto',
-              fontFamily: 'var(--font-code)',
-            },
-            '.cm-gutters': {
-              backgroundColor: 'rgb(247 247 248)',
-              borderRight: '1px solid rgb(224 224 224)',
-              color: 'rgb(140 140 140)',
-            },
-            '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgb(247 247 248)' },
-            '&.cm-focused': { outline: 'none' },
-          }),
+            { dark: themeType === 'dark' }
+          ),
         ],
       }),
     })
     view.focus()
     return () => view.destroy()
-  }, [path])
+  }, [path, themeType])
 
-  return <div ref={hostRef} data-testid="workspace-file-editor" className="min-h-0 flex-1" />
+  return (
+    <div
+      ref={hostRef}
+      data-testid="workspace-file-editor"
+      data-theme={themeType}
+      className="min-h-0 flex-1 bg-background"
+    />
+  )
 }
