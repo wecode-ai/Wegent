@@ -355,8 +355,10 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
             await job_service.cleanup_stale_executors(mock_db)
 
         assert archive_mock.await_count == 2
-        archived_tasks = [call.kwargs["task"] for call in archive_mock.await_args_list]
-        assert archived_tasks == [mock_task_a, mock_task_b]
+        archived_tasks = {
+            id(call.kwargs["task"]) for call in archive_mock.await_args_list
+        }
+        assert archived_tasks == {id(mock_task_a), id(mock_task_b)}
         mock_executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-1", "default"
         )

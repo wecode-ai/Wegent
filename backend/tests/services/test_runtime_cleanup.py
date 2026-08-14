@@ -551,8 +551,10 @@ async def test_cleanup_archives_every_task_sharing_one_executor() -> None:
         )
 
     assert archive_workspace.await_count == 2
-    archived_tasks = [call.kwargs["task"] for call in archive_workspace.await_args_list]
-    assert archived_tasks == [task_a, task_b]
+    archived_tasks = {
+        id(call.kwargs["task"]) for call in archive_workspace.await_args_list
+    }
+    assert archived_tasks == {id(task_a), id(task_b)}
     executor_service.delete_executor_task_async.assert_awaited_once_with(
         "executor-shared", "default"
     )
