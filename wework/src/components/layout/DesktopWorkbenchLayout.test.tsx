@@ -6084,24 +6084,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
   })
 
-  test('temporary chat keeps the source conversation selected when its tab opened', async () => {
-    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
-    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
-
-    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
-    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
-
-    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
-    expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledWith(
-      'side chat',
-      expect.objectContaining({ source: taskA })
-    )
-  })
-
   test('temporary chat subscribes before its runtime create request settles', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
     const optimisticAddress: RuntimeTaskAddress = {

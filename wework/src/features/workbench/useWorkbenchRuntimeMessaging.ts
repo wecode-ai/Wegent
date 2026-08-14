@@ -39,6 +39,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
   RuntimeTaskFriendlyTitleConfig,
+  RuntimeWorkListResponse,
   SkillRef,
   TurnFileChangesSummary,
   UnifiedModel,
@@ -224,6 +225,16 @@ export function resolveTemporaryChatSource(
     ...(task.threadId ? { threadId: task.threadId } : {}),
     ...(runtimeHandle ? { runtimeHandle } : {}),
   }
+}
+
+export async function loadTemporaryChatSource(
+  source: RuntimeTaskAddress | null | undefined,
+  runtimeWork: WorkbenchState['runtimeWork'],
+  listRuntimeWork: () => Promise<RuntimeWorkListResponse>
+): Promise<RuntimeTaskAddress | null> {
+  const cachedSource = resolveTemporaryChatSource(source, runtimeWork)
+  if (!cachedSource || runtimeThreadId(cachedSource)) return cachedSource
+  return resolveTemporaryChatSource(cachedSource, await listRuntimeWork())
 }
 
 export function friendlyTitleForTask(
@@ -1495,14 +1506,18 @@ export function useWorkbenchRuntimeMessaging({
       input: string,
       options?: CreateTemporaryRuntimeTaskOptions
     ): Promise<RuntimeTaskAddress | false> => {
-      const source = resolveTemporaryChatSource(options?.source, state.runtimeWork)
+      const source = await loadTemporaryChatSource(
+        options?.source,
+        state.runtimeWork,
+        executorClient.runtime.listRuntimeWork
+      ).catch(() => resolveTemporaryChatSource(options?.source, state.runtimeWork))
       if (!source || !runtimeThreadId(source)) {
         reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
         return false
       }
       return createEphemeralRuntimeTask(input, { ...options, source })
     },
-    [createEphemeralRuntimeTask, reportSendBlocked, state.runtimeWork]
+    [createEphemeralRuntimeTask, executorClient, reportSendBlocked, state.runtimeWork]
   )
 
   const createProjectRuntimeTask = useCallback(

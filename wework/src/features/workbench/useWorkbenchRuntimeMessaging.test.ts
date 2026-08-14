@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import {
   friendlyTitleForTask,
+  loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
   resolveTemporaryChatSource,
   runtimeThreadId,
@@ -98,6 +99,48 @@ describe('resolveTemporaryChatSource', () => {
         threadId: 'thread-1',
       },
     })
+  })
+
+  test('loads fresh runtime work when the cached source has no thread id', async () => {
+    const listRuntimeWork = vi.fn().mockResolvedValue({
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          workspacePath: '/workspace',
+          available: true,
+          mapped: true,
+          tasks: [
+            {
+              taskId: 'task-1',
+              threadId: 'thread-1',
+              workspacePath: '/workspace',
+              title: 'Task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+
+    await expect(
+      loadTemporaryChatSource(
+        {
+          deviceId: 'local-device',
+          taskId: 'task-1',
+          runtimeHandle: { modelSelection: { modelName: 'gpt-5' } },
+        },
+        null,
+        listRuntimeWork
+      )
+    ).resolves.toMatchObject({
+      deviceId: 'local-device',
+      taskId: 'task-1',
+      threadId: 'thread-1',
+      workspacePath: '/workspace',
+    })
+    expect(listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 })
 

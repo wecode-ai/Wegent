@@ -246,7 +246,6 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
   temporaryChatAddresses?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
-  temporaryChatSources?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
@@ -1292,9 +1291,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [temporaryChatAddresses, setTemporaryChatAddresses] = useState<
     Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   >(() => initialWorkspaceState?.temporaryChatAddresses ?? {})
-  const [temporaryChatSources, setTemporaryChatSources] = useState<
-    Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
-  >(() => initialWorkspaceState?.temporaryChatSources ?? {})
   const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
     string | null
   >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
@@ -1392,7 +1388,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelTabs,
       rightPanelView,
       temporaryChatAddresses,
-      temporaryChatSources,
       browserStates,
       reviewState,
       selectedFileWorkspaceTargetKey,
@@ -1406,7 +1401,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelTabs,
     rightPanelView,
     temporaryChatAddresses,
-    temporaryChatSources,
     browserStates,
     reviewState,
     selectedFileWorkspaceTargetKey,
@@ -2680,12 +2674,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       temporaryChatTabSequence.current += 1
       const tab: RightWorkspaceChatTab = `chat:${Date.now()}-${temporaryChatTabSequence.current}`
       if (initialInput) temporaryChatInitialInputsRef.current.set(tab, initialInput)
-      if (currentRuntimeTask) {
-        setTemporaryChatSources(current => ({ ...current, [tab]: currentRuntimeTask }))
-      }
       openRightPanelTab(tab)
     },
-    [currentRuntimeTask, openRightPanelTab]
+    [openRightPanelTab]
   )
 
   const addSelectionToConversation = useCallback(
@@ -2837,12 +2828,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (tab.startsWith('chat:')) {
       temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
       setTemporaryChatAddresses(current => {
-        if (!current[tab as RightWorkspaceChatTab]) return current
-        const next = { ...current }
-        delete next[tab as RightWorkspaceChatTab]
-        return next
-      })
-      setTemporaryChatSources(current => {
         if (!current[tab as RightWorkspaceChatTab]) return current
         const next = { ...current }
         delete next[tab as RightWorkspaceChatTab]
@@ -4290,7 +4275,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
               getChatInitialAddress={tab => temporaryChatAddresses[tab]}
-              getChatSource={tab => temporaryChatSources[tab]}
               onChatAddressChange={(tab, address) => {
                 setTemporaryChatAddresses(current => {
                   if (!address) {
