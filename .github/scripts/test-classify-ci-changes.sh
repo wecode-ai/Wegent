@@ -6,6 +6,33 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 classifier="$script_dir/classify-ci-changes.sh"
 desktop_classifier="$script_dir/classify-wework-desktop-e2e.sh"
 
+assert_invalid_desktop_shards_rejected() {
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  local broken_classifier="$temp_dir/classify-wework-desktop-e2e.sh"
+  sed \
+    's/rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,permission-modes,local-file-preview/rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,permission-modes/' \
+    "$desktop_classifier" > "$broken_classifier"
+  chmod +x "$broken_classifier"
+
+  if GITHUB_OUTPUT="$temp_dir/output" "$broken_classifier" --all \
+    >"$temp_dir/stdout" 2>"$temp_dir/stderr"; then
+    printf 'Desktop classifier accepted a core shard mapping with a missing segment\n' >&2
+    rm -rf "$temp_dir"
+    exit 1
+  fi
+  if ! grep -Fq 'Core segment missing from core_shards: local-file-preview' \
+    "$temp_dir/stderr"; then
+    printf 'Desktop classifier did not explain the missing core segment\n' >&2
+    cat "$temp_dir/stderr" >&2
+    rm -rf "$temp_dir"
+    exit 1
+  fi
+  rm -rf "$temp_dir"
+}
+
+assert_invalid_desktop_shards_rejected
+
 workflow_has_top_level_trigger() {
   local workflow_path="$1"
   local trigger="$2"

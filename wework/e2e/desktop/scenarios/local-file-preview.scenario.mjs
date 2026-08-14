@@ -37,6 +37,16 @@ async function findTreeItem(control, name, timeoutMs) {
   return selector
 }
 
+async function waitForMissing(control, selector, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const count = Number(await control.command('getElementCount', selector))
+    if (count === 0) return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`Timed out waiting for "${selector}" to disappear`)
+}
+
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   return {
     async verify(control) {
@@ -66,12 +76,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
 
       const authSelector = await findTreeItem(control, 'auth.ts', uiTimeoutMs)
       await control.command('click', authSelector)
+      await control.command('waitFor', '[data-testid="workspace-file-preview-loading-indicator"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       const switchingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-      )
-      assert.ok(
-        switchingSnapshot.testIds.includes('workspace-file-preview-loading-indicator'),
-        'Switching local files did not expose the compact toolbar loading indicator'
       )
       assert.ok(
         !switchingSnapshot.testIds.includes('workspace-file-preview-progress'),
@@ -98,7 +107,32 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'local-file-preview-01-dark-editor.png', 'body')
-      await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = false\n')
+      await control.command('fill', '[data-testid="workspace-file-editor"] .cm-content', {
+        value: 'export const authenticated = false\n',
+      })
+      await writeFile(
+        join(workspacePath, 'auth.ts'),
+        'export const authenticated = false\n// changed outside Wework\n'
+      )
+      await control.command('clickWhenEnabled', '[data-testid="workspace-file-save-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-save-error"]', {
+        text: 'changed on disk',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="workspace-file-conflict-reload-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-file-conflict-reload-button"]')
+      await control.command('waitFor', '[data-testid="workspace-file-preview-loading-indicator"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForMissing(
+        control,
+        '[data-testid="workspace-file-preview-loading-indicator"]',
+        uiTimeoutMs
+      )
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
       await control.command('clickWhenEnabled', '[data-testid="right-workspace-review-option"]', {
         timeoutMs: uiTimeoutMs,

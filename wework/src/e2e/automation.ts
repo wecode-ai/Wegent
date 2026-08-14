@@ -13,6 +13,7 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { EditorView } from '@codemirror/view'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
@@ -750,6 +751,18 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
+  const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
+  const codeMirrorView = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null
+  if (codeMirrorView) {
+    codeMirrorView.dispatch({
+      changes: { from: 0, to: codeMirrorView.state.doc.length, insert: value },
+      selection: { anchor: value.length },
+      scrollIntoView: true,
+    })
+    codeMirrorView.focus()
+    return
+  }
+
   if (element instanceof HTMLSelectElement) {
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
     setter?.call(element, value)
@@ -1419,11 +1432,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const candidates = findDesktopControlElements(command.selector)
         .slice(0, 20)
         .map(candidate => ({
-          ariaLabel: candidate.getAttribute('aria-label'),
-          text: candidate.textContent?.trim() ?? '',
+          tagName: candidate.tagName.toLowerCase(),
+          testId: candidate.dataset.testid ?? null,
         }))
       throw new Error(
-        `Unable to find selector "${command.selector}" containing "${text}"; candidates=${JSON.stringify(candidates)}`
+        `Unable to find selector "${command.selector}" containing the requested text; candidateCount=${findDesktopControlElements(command.selector).length}; candidates=${JSON.stringify(candidates)}`
       )
     }
     case 'fill': {

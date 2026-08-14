@@ -595,7 +595,7 @@ async function main() {
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
-        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '400' }
+        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,

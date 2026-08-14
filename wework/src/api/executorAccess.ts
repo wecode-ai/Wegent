@@ -341,6 +341,7 @@ export function createExecutorClientFromApis({
       return deviceApi.readWorkspaceTextFile(deviceId, filePath, workspaceRoot)
     },
     async readWorkspaceFileChunk(deviceId, filePath, offset, workspaceRoot) {
+      await resolve(deviceId)
       return deviceApi.readWorkspaceFileChunk(deviceId, filePath, offset, workspaceRoot)
     },
     ...(writeWorkspaceTextFile

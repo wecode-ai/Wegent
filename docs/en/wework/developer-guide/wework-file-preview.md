@@ -32,7 +32,7 @@ For local workspaces, directory listing, text reads, and binary chunk reads acce
 
 Workspaces opened through remote devices continue to use the device-side workspace API. The frontend still validates response paths, file names, and chunk offsets, and must not use the local native command as a fallback for a failed remote read.
 
-`workspace_read_text_file` returns `editable` and `revision`. Only untruncated files that decode as UTF-8 can enter edit mode; binary files, text larger than 256 KiB, and decode failures remain preview-only.
+The local native command `read_local_workspace_text_file` returns `editable` and `revision`; remote devices use the executor IPC command `workspace_read_text_file`. Only untruncated files that decode as UTF-8 can enter edit mode; binary files, text larger than 256 KiB, and decode failures remain preview-only.
 
 Saving still uses the Rust executor's `workspace_write_text_file` capability because writes retain the task-workspace concurrency check and atomic replacement semantics. The IPC payload carries the file content, file name, and the `revision` returned by the read command. Before writing, the executor rereads the file on disk and compares the SHA-256 revision. If another process changed the file, saving fails and the frontend must block the overwrite and offer reload. Writes must stay inside the same workspace root and replace the target through a same-directory temporary file. Files opened through remote devices remain preview-only.
 
