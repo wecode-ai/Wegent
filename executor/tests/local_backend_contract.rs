@@ -518,7 +518,7 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
 
     timeout(Duration::from_secs(3), async {
         loop {
-            if !transport.calls().is_empty() {
+            if !transport.emits().is_empty() {
                 return;
             }
             tokio::task::yield_now().await;
@@ -527,10 +527,10 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     .await
     .unwrap();
 
-    let calls = transport.calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].event, "runtime:event");
-    assert_eq!(calls[0].payload["event"], "runtime.task.completed");
+    let emits = transport.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].event, "runtime:event");
+    assert_eq!(emits[0].payload["event"], "runtime.task.completed");
 }
 
 #[test]

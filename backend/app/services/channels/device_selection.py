@@ -120,8 +120,8 @@ class DeviceSelectionManager:
                 )
                 return DeviceSelection(device_type=DeviceType.CLOUD)
 
-            # Otherwise it's a device_id for local device
-            # We need to get the device name from device service
+            # Otherwise it is an exact local device target. Availability affects
+            # whether dispatch can start, never which target is selected.
             from app.services.device_service import device_service
 
             device_info = await device_service.get_device_online_info(
@@ -140,15 +140,17 @@ class DeviceSelectionManager:
                     device_id=default_target,
                     device_name=device_info.get("name"),
                 )
-            else:
-                # Device is offline or not found, fall back to default
-                logger.info(
-                    "[DeviceSelection] User preference device %s is offline/not found "
-                    "for user %d, falling back to default",
-                    default_target,
-                    user_id,
-                )
-                return None
+
+            logger.info(
+                "[DeviceSelection] Preserving unavailable preference device %s "
+                "for user %d",
+                default_target,
+                user_id,
+            )
+            return DeviceSelection(
+                device_type=DeviceType.LOCAL,
+                device_id=default_target,
+            )
         except Exception as e:
             logger.warning(
                 "[DeviceSelection] Failed to get user preference for user %d: %s",

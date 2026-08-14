@@ -54,7 +54,6 @@ interface UseWorkbenchProjectActionsOptions {
   ) => void
   invalidateRemoteProjectSync: (workspacePath: string) => void
   clearRemoteProjectSyncRemoval: (workspacePath: string) => void
-  rememberExecutionDevice: (deviceId: string) => void
   enqueueRemoteProjectStateMutation: <T>(mutation: () => Promise<T>) => Promise<T>
 }
 
@@ -68,16 +67,11 @@ export function useWorkbenchProjectActions({
   markRuntimeProjectRemoved,
   invalidateRemoteProjectSync,
   clearRemoteProjectSyncRemoval,
-  rememberExecutionDevice,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await services.projectApi.createProject(data)
-      const projectDeviceId = data.config?.execution?.deviceId ?? data.config?.device_id
-      if (projectDeviceId) {
-        rememberExecutionDevice(projectDeviceId)
-      }
       if (options.refreshWorkLists === false) {
         dispatch({ type: 'project_created', project })
       } else {
@@ -88,7 +82,7 @@ export function useWorkbenchProjectActions({
       track('project_created', { kind: 'standard' })
       return project
     },
-    [dispatch, refreshWorkLists, rememberExecutionDevice, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, user.id]
   )
 
   const createGitWorkspaceProject = useCallback(
@@ -101,20 +95,18 @@ export function useWorkbenchProjectActions({
         ...response.project,
         tasks: response.project.tasks ?? [],
       }
-      rememberExecutionDevice(data.device_id)
       await refreshWorkLists()
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
       track('project_created', { kind: 'git' })
       return project
     },
-    [dispatch, refreshWorkLists, rememberExecutionDevice, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, user.id]
   )
 
   const prepareDeviceWorkspace = useCallback(
     async (data: DeviceWorkspacePrepareRequest, options: ProjectMutationOptions = {}) => {
       const response = await executorClient.runtime.prepareDeviceWorkspace(data)
-      rememberExecutionDevice(data.deviceId)
       if (options.refreshWorkLists === false) {
         dispatch({ type: 'device_workspace_prepared', mapping: response.mapping })
       } else {
@@ -122,7 +114,7 @@ export function useWorkbenchProjectActions({
       }
       return response
     },
-    [dispatch, executorClient, refreshWorkLists, rememberExecutionDevice]
+    [dispatch, executorClient, refreshWorkLists]
   )
 
   const deleteDeviceWorkspace = useCallback(

@@ -4,9 +4,11 @@
 
 import type { DeviceInfo } from '@/apis/devices'
 import {
+  getAccountDefaultDeviceId,
   getPreferredExecutionDevice,
   getSelectableDevices,
   isDeviceAtCapacity,
+  resolveTaskExecutionDeviceId,
 } from '@/features/devices/utils/execution-target'
 
 function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
@@ -29,6 +31,29 @@ function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
 }
 
 describe('execution target utils', () => {
+  it('keeps the account default target exact without availability fallback', () => {
+    expect(getAccountDefaultDeviceId('configured-offline-device')).toBe('configured-offline-device')
+    expect(getAccountDefaultDeviceId('cloud')).toBeNull()
+    expect(getAccountDefaultDeviceId(null)).toBeNull()
+  })
+
+  it('keeps an existing task on its persisted target', () => {
+    expect(
+      resolveTaskExecutionDeviceId({
+        taskId: 42,
+        persistedTaskDeviceId: 'task-device',
+        newTaskDeviceId: 'stale-draft-device',
+      })
+    ).toBe('task-device')
+    expect(
+      resolveTaskExecutionDeviceId({
+        taskId: 43,
+        persistedTaskDeviceId: null,
+        newTaskDeviceId: 'stale-draft-device',
+      })
+    ).toBeUndefined()
+  })
+
   it('sorts selectable devices by local first, then cloud, while keeping offline devices out', () => {
     const devices = [
       createDevice({

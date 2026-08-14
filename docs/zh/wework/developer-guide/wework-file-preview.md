@@ -8,9 +8,17 @@ Wework 文件面板使用 Markdown 渲染器预览 Markdown 文档，将其他�
 
 ## 支持范围
 
-首批预览器启用 office 和 lite 能力：PDF、Word、Excel、PowerPoint、图片、HTML、Markdown、代码、音频和视频。未知格式或渲染失败时，macOS Tauri 应用可使用系统默认应用打开文件。
+预览器启用 office、lite 和 engineering 能力：PDF、Word、Excel、PowerPoint、图片、HTML、Markdown、代码、音频、视频，以及 Mermaid 和 PlantUML 图表。未知格式或渲染失败时，macOS Tauri 应用可使用系统默认应用打开文件。
 
 HTML 必须继续使用沙箱预览，不得允许预览内容访问 Wework 主页面的同源状态。
+
+## 图表预览和导出
+
+`.mermaid`、`.mmd`、`.plantuml` 和 `.puml` 文件使用与对话内代码块相同的图表渲染器。预览必须跟随 Wework 当前明暗主题，并在面板尺寸变化时等比例适配，不能裁掉 SVG 边缘。
+
+图表预览提供复制和保存操作。复制会生成 PNG 并通过桌面原生命令写入系统剪贴板；保存会打开系统保存窗口并将 PNG 写入用户选择的位置。Mermaid 的 HTML 标签在导出阶段转换为纯 SVG 文本，避免 macOS WebView 因 `foreignObject` 将 Canvas 标记为不可导出。
+
+PlantUML 默认从 `https://www.plantuml.com/plantuml/svg` 请求 SVG。部署方可以通过运行时配置 `plantumlServerUrl` 或构建环境变量 `VITE_WEWORK_PLANTUML_SERVER_URL` 指向自托管服务；地址应包含 PlantUML 的 SVG 路径。
 
 ## Markdown 预览
 
@@ -32,8 +40,8 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 ## 构建资源
 
-`@file-viewer/vite-plugin` 负责在开发和生产构建中复制选中渲染器的 Worker、WASM、字体和其他离线资源。只安装 `preset-office` 和 `preset-lite`；不要使用 `preset-all`，除非产品明确需要 CAD、3D、归档或其他重型格式。
+`@file-viewer/vite-plugin` 负责在开发和生产构建中复制选中渲染器的 Worker、WASM、字体和其他离线资源。安装 `preset-office`、`preset-lite` 和 `preset-engineering`，但不要使用 `preset-all`，除非产品明确需要全部重型格式。Vite 必须预构建 Mermaid 和 PlantUML 编码依赖，确保 drawing renderer 的动态导入在 WebKit 开发环境中稳定解析。
 
 ## 验证
 
-修改预览器时至少验证 Markdown 的默认预览、源码切换、长文档滚动和单一标题栏，以及 PDF、DOCX、XLSX、CSV、PPTX、PNG/JPEG/WebP、HTML、切换文件、取消加载、目录树展开、符号链接工作区和工作区边界拒绝行为。还应在任务流式更新期间持续观察已打开的文本预览，确认等价工作区目标重新渲染时不会重复读取或闪烁。
+修改预览器时至少验证 Markdown 的默认预览、源码切换、长文档滚动和单一标题栏，以及 PDF、DOCX、XLSX、CSV、PPTX、PNG/JPEG/WebP、HTML、Mermaid、PlantUML、切换文件、取消加载、目录树展开、符号链接工作区和工作区边界拒绝行为。图表还必须覆盖明暗主题、完整 SVG 自适应、复制 PNG 和系统保存窗口。还应在任务流式更新期间持续观察已打开的文本预览，确认等价工作区目标重新渲染时不会重复读取或闪烁。

@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { TaskFeedbackDialog } from './TaskFeedbackDialog'
+import {
+  recordComposerDiagnostic,
+  resetComposerDiagnosticsForTest,
+} from '@/components/chat/composer/composerDiagnostics'
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -71,6 +75,7 @@ const previewResult = {
 
 describe('TaskFeedbackDialog', () => {
   beforeEach(() => {
+    resetComposerDiagnosticsForTest()
     invokeMock.mockReset()
     trackMock.mockReset()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
@@ -122,6 +127,45 @@ describe('TaskFeedbackDialog', () => {
         request: expect.objectContaining({
           note: 'The toolbar disappears after reconnecting',
           attachments: [],
+        }),
+      })
+    )
+  })
+
+  test('includes recent composer diagnostics with standard runtime logs', async () => {
+    invokeMock.mockResolvedValue(previewResult)
+    recordComposerDiagnostic('composition-start', {
+      composerId: 1,
+      valueLength: 4,
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Pinyin remained in the composer' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          composerDiagnostics: expect.objectContaining({
+            schemaVersion: 1,
+            events: [
+              expect.objectContaining({
+                name: 'composition-start',
+                details: { composerId: 1, valueLength: 4 },
+              }),
+            ],
+          }),
         }),
       })
     )

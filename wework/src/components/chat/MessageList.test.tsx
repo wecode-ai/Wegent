@@ -1835,6 +1835,8 @@ describe('MessageList', () => {
     expect(preview).toHaveTextContent('正在思考')
     expect(preview).toHaveTextContent('·')
     expect(preview).toHaveTextContent('检查运行日志并定位事件边界')
+    expect(preview).toHaveClass('text-chat')
+    expect(preview).not.toHaveClass('text-sm')
     expect(screen.queryByTestId('thinking-live-preview')).not.toBeInTheDocument()
   })
 
@@ -1993,6 +1995,97 @@ describe('MessageList', () => {
     expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByText('搜索代码')).toBeInTheDocument()
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
+  })
+
+  test('renders a later process update below assistant text with the same body font size', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-interleaved-process',
+            role: 'assistant',
+            content: '最终文本先到。',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'process-after-answer',
+                subtaskId: 11,
+                type: 'text',
+                content: '最新的过程文本后到。',
+                status: 'streaming',
+                createdAt: 1770000001000,
+              },
+            ],
+            runtimeDisplayItems: [
+              {
+                id: 'assistant-text',
+                type: 'assistant_text',
+                content: '最终文本先到。',
+              },
+              {
+                id: 'process-after-answer',
+                type: 'block',
+              },
+            ],
+            createdAt: '2026-08-14T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const assistantContent = screen.getByText('最终文本先到。')
+    const processContent = screen.getByTestId('process-text-block')
+
+    expect(
+      assistantContent.compareDocumentPosition(processContent) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(processContent).toHaveClass('text-chat')
+    expect(processContent).not.toHaveClass('text-sm')
+  })
+
+  test('does not restore hidden failed content from runtime display order', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-failed-interleaved-process',
+            role: 'assistant',
+            content: 'Error: raw provider failure',
+            error: 'The request failed',
+            status: 'failed',
+            blocks: [
+              {
+                id: 'process-after-error',
+                subtaskId: 11,
+                type: 'text',
+                content: '最后一次诊断信息。',
+                status: 'done',
+                createdAt: 1770000001000,
+              },
+            ],
+            runtimeDisplayItems: [
+              {
+                id: 'assistant-error',
+                type: 'assistant_text',
+                content: 'Error: raw provider failure',
+              },
+              {
+                id: 'process-after-error',
+                type: 'block',
+              },
+            ],
+            createdAt: '2026-08-14T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('assistant-message-content')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(
+      'Error: raw provider failure'
+    )
+    expect(screen.getByText('最后一次诊断信息。')).toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
   })
 
   test('keeps a running tool visible when streamed answer text appears', () => {
@@ -4663,6 +4756,35 @@ describe('MessageList', () => {
 
     expect(screen.getByText('Let me inspect the repository first.')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
+  test('shows thinking after process text completes while waiting for the next item', () => {
+    const processBlock: ProcessingBlock = {
+      id: 'text-1',
+      subtaskId: 1,
+      type: 'text',
+      content: 'Let me inspect the repository first.',
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [processBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Let me inspect the repository first.')).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('collapses tool rows and shows trailing thinking once final text is visible', () => {

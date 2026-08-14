@@ -72,7 +72,7 @@ Backend 只向当前用户在线或 busy 的设备 fan-out `runtime.tasks.search
 
 ## 云设备附件传输
 
-Wework 不能把桌面端的本地文件路径直接交给云设备。创建任务、继续对话、指导、打断发送或回滚编辑时，如果目标是 cloud/remote 设备，Wework 会先通过 Backend 附件接口上传本地文件，再把正数附件 ID 和不含本地路径的附件元数据放入设备 RPC。local/app 设备仍直接使用本机路径，不经过这次云端提升。
+Wework 不能把桌面端的本地文件路径直接交给云设备。创建任务、继续对话、指导、打断发送或编辑消息时，如果目标是 cloud/remote 设备，Wework 会先通过 Backend 附件接口上传本地文件，再把正数附件 ID 和不含本地路径的附件元数据放入设备 RPC。local/app 设备仍直接使用本机路径，不经过这次云端提升。
 
 云 executor 收到运行请求后，会在启动 Codex turn 前通过已认证的 Backend executor-download 接口下载缺少 `local_path` 的附件，并把设备侧路径合并回 execution request。已经有设备侧路径的附件不会重复下载；下载失败会沿用现有失败附件处理，不允许退回桌面端路径。
 
@@ -116,6 +116,8 @@ POST /api/runtime-work/send
 ```
 
 Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件携带当前 LocalTask 的 `local_task_id`、本轮 `task_id` 和 `subtask_id`；Wework 入口层把本地任务映射成统一的 task 身份，把 `subtask_id` 当作本轮 turn 身份，后续消息 reducer 不再使用单独的 `message_id`。这些事件不携带 `workspacePath`。
+
+编辑最后一条已完成的用户消息沿用 replacement turn 语义。Wework 必须生成新的 `clientUserMessageId`，并把原消息的 provider turn ID 作为 `retrySourceTurnId` 发送。executor 不调用已废弃的 `thread/rollback`，因为分页 thread 不支持该操作；它先通过 `thread/resume` 恢复事件订阅，再通过 `turn/start` 发送编辑后的内容，并把旧 turn 记录到 `runtimeHandle.supersededTranscriptTurnIds`。实时 UI 会立即替换旧轮次，后续分页 transcript 也会过滤旧 turn，因此刷新或重开任务不会恢复旧问题和旧回复。
 
 executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex 卡在 MCP 初始化等启动阶段时让 Wework 永久显示“正在思考”。默认超时为 180 秒，可以通过 `WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS` 调整。用户输入回显、声明仍会重试的错误和子 agent 事件不算有效进展；首个 assistant、reasoning 或 tool item 到达后立即关闭这个启动看门狗，因此已经开始执行的长工具调用不会被误杀。启动超时后，executor 会结束卡住的共享 app-server、让当前 turn 以明确错误结束，并在用户重试或发送下一条消息时启动新进程。Wework 必须保留原用户消息和失败卡片，重试时发送与失败 turn 绑定的同一条用户输入，不能留下空白 assistant 消息或误发更早的消息。
 
