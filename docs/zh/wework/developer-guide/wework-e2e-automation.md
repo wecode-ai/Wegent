@@ -120,8 +120,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `split-workbench`、`window-lifecycle`、`goal-lifecycle`、
 `supervisor-lifecycle`、`resilience`、
 `conversation-state`、`temporary-chat`、`workspace-attachments`、`rendering-extensions`、
-`change-request-status`、`claude-runtime`、`local-harness`、`browser-multi-tabs`
-和 `embedded-browser`。
+`change-request-status`、`claude-runtime`、`local-file-preview`、`local-harness`、
+`browser-multi-tabs` 和 `embedded-browser`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有

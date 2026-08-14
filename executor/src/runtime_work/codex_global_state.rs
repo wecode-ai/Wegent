@@ -1742,7 +1742,14 @@ fn assign_thread_to_project_payload(
         .entry(THREAD_PROJECT_ASSIGNMENTS_KEY.to_owned())
         .or_insert_with(|| Value::Object(Map::new()));
     if let Some(assignments) = assignments.as_object_mut() {
-        assignments.insert(thread_id.to_owned(), json!({"projectId": project_key}));
+        let assignment = assignments
+            .entry(thread_id.to_owned())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(assignment) = assignment.as_object_mut() {
+            assignment.insert("projectId".to_owned(), json!(project_key));
+        } else {
+            *assignment = json!({"projectId": project_key});
+        }
     }
     remove_text_list_item(payload, PROJECTLESS_THREAD_IDS_KEY, thread_id);
 }
@@ -2135,6 +2142,10 @@ mod tests {
     #[test]
     fn reordering_thread_creates_manual_order_used_by_project_index() {
         let mut payload = payload(json!({
+            "thread-project-assignments": {
+                "moved": {"projectId": "old-project", "projectKind": "local"},
+                "target": {"projectId": "old-project", "futureField": {"keep": true}}
+            },
             "unknown-codex-setting": {"keep": true}
         }));
 
@@ -2155,11 +2166,11 @@ mod tests {
         );
         assert_eq!(
             payload["thread-project-assignments"]["moved"],
-            json!({"projectId": "project"})
+            json!({"projectId": "project", "projectKind": "local"})
         );
         assert_eq!(
             payload["thread-project-assignments"]["target"],
-            json!({"projectId": "project"})
+            json!({"projectId": "project", "futureField": {"keep": true}})
         );
         assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
 

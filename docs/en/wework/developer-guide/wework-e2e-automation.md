@@ -120,7 +120,8 @@ The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
 `split-workbench`, `window-lifecycle`, `goal-lifecycle`,
 `supervisor-lifecycle`, `resilience`, `conversation-state`, `temporary-chat`,
 `workspace-attachments`, `rendering-extensions`, `change-request-status`,
-`claude-runtime`, `local-harness`, `browser-multi-tabs`, and `embedded-browser`.
+`claude-runtime`, `local-file-preview`, `local-harness`, `browser-multi-tabs`,
+and `embedded-browser`.
 `--segment <checkpoint>` performs common startup and project
 initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
