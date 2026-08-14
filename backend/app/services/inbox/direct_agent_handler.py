@@ -116,6 +116,7 @@ class InboxDirectAgentHandler:
         )
         (
             override_model_id,
+            override_model_namespace,
             force_override_bot_model,
             force_override_bot_model_type,
         ) = self._resolve_model_override(
@@ -130,6 +131,7 @@ class InboxDirectAgentHandler:
         params = TaskCreationParams(
             message=user_message,
             model_id=override_model_id,
+            model_namespace=override_model_namespace,
             force_override_bot_model=force_override_bot_model,
             force_override_bot_model_type=force_override_bot_model_type,
             task_type="chat" if not workspace_params else None,
@@ -293,10 +295,10 @@ class InboxDirectAgentHandler:
         db: Session,
         owner: User,
         auto_process: AutoProcessConfig,
-    ) -> tuple[Optional[str], bool, Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], bool, Optional[str]]:
         """Resolve queue-configured model override for direct agent execution."""
         if not auto_process.modelRef:
-            return None, False, None
+            return None, None, False, None
 
         model_kind = kindReader.get_by_name_and_namespace(
             db,
@@ -317,6 +319,7 @@ class InboxDirectAgentHandler:
 
         return (
             auto_process.modelRef.name,
+            auto_process.modelRef.namespace,
             auto_process.forceOverrideBotModel,
             model_type,
         )

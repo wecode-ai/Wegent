@@ -294,8 +294,14 @@ export function useModelSelection({
     }
     // Apply allowed_models whitelist filter if configured
     if (allowedModels.length > 0) {
-      const allowedNames = new Set(allowedModels.map(m => m.name))
-      result = result.filter(m => allowedNames.has(m.name))
+      result = result.filter(model =>
+        allowedModels.some(
+          allowed =>
+            allowed.name === model.name &&
+            (!allowed.type || allowed.type === model.type) &&
+            (!allowed.namespace || allowed.namespace === (model.namespace || 'default'))
+        )
+      )
     }
     return result.slice().sort((a, b) => {
       const displayA = getModelDisplayTextHelper(a).toLowerCase()
@@ -439,7 +445,12 @@ export function useModelSelection({
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
           const foundModel = selectableModels.find(m => {
             if (preference.modelType) {
-              return m.name === preference.modelName && m.type === preference.modelType
+              return (
+                m.name === preference.modelName &&
+                m.type === preference.modelType &&
+                (!preference.modelNamespace ||
+                  (m.namespace || 'default') === preference.modelNamespace)
+              )
             }
             return m.name === preference.modelName
           })
@@ -546,6 +557,7 @@ export function useModelSelection({
     const preference: ModelPreference = {
       modelName: selectedModel.name,
       modelType: selectedModel.type,
+      modelNamespace: selectedModel.namespace || 'default',
       forceOverride,
       updatedAt: Date.now(),
       modelCategoryType,

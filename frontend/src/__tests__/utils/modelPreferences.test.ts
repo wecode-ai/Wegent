@@ -83,6 +83,18 @@ describe('modelPreferences', () => {
       expect(saved.modelType).toBe('public')
     })
 
+    it('should preserve the selected model namespace', () => {
+      const teamId = 123
+      const preference: ModelPreference = {
+        ...createPreference('shared-model', 'group'),
+        modelNamespace: 'platform',
+      }
+
+      saveGlobalModelPreference(teamId, preference)
+
+      expect(getGlobalModelPreference(teamId)?.modelNamespace).toBe('platform')
+    })
+
     it('should not save with invalid team ID (0)', () => {
       const preference = createPreference('gpt-4')
 

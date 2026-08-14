@@ -228,8 +228,8 @@ export default function MobileModelSelector({
 
   const renderModelRow = (model: Model, showPath: boolean, withBorder = true) => {
     const isSelected =
-      modelSelection.selectedModel?.name === model.name &&
-      modelSelection.selectedModel?.type === model.type
+      modelSelection.selectedModel !== null &&
+      getModelKey(modelSelection.selectedModel) === getModelKey(model)
     const path = `${getGroupName(model, groupLabels.ungrouped)} / ${getSubGroupName(
       model,
       groupLabels.uncategorized

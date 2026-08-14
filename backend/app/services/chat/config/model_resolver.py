@@ -512,14 +512,33 @@ def _resolve_model_for_bot(
     # This is the single validation point covering all call paths (chat, task creation,
     # subscription, retry, etc.).
     allowed_models = raw_agent_config.get("allowed_models")
-    if allowed_models and model_override:
+    if allowed_models and uses_task_override and model_override:
         if isinstance(allowed_models, list) and len(allowed_models) > 0:
-            allowed_names = {
-                m.get("name")
-                for m in allowed_models
-                if isinstance(m, dict) and m.get("name")
-            }
-            if model_name not in allowed_names:
+            has_exact_override = (
+                model_override.namespace is not None
+                and model_override.model_type is not None
+            )
+            if has_exact_override:
+                allowed = any(
+                    isinstance(model, dict)
+                    and model.get("name") == model_name
+                    and (
+                        not model.get("namespace")
+                        or not model.get("type")
+                        or (
+                            (model.get("namespace") or "default")
+                            == model_override.namespace
+                            and model.get("type") == model_override.model_type
+                        )
+                    )
+                    for model in allowed_models
+                )
+            else:
+                allowed = any(
+                    isinstance(model, dict) and model.get("name") == model_name
+                    for model in allowed_models
+                )
+            if not allowed:
                 raise ValueError(
                     f"Model '{model_name}' is not in the allowed models list for bot '{bot.name}'"
                 )
@@ -681,8 +700,8 @@ def _find_model_with_namespace(
     Find model by name and return both the Kind object and spec.
 
     A task that stores both ``namespace`` and ``model_type`` is resolved as an
-    exact Model reference. Older tasks have no namespace label and retain the
-    legacy visibility-based lookup order below.
+    exact Model reference. Older and partially migrated tasks retain the legacy
+    visibility-based lookup order below.
 
     Search order:
     1. User's private models (kinds table)
@@ -700,7 +719,7 @@ def _find_model_with_namespace(
     Returns:
         Tuple of (Kind object, Model spec dictionary) or (None, None) if not found
     """
-    if namespace is not None:
+    if namespace is not None and model_type is not None:
         return _find_model_by_exact_reference(
             db,
             model_name=model_name,
@@ -825,7 +844,7 @@ def _find_model_by_exact_reference(
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == normalized_namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -844,7 +863,7 @@ def _find_model_by_exact_reference(
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == normalized_namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -876,7 +895,7 @@ def _find_model_by_exact_reference(
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == normalized_namespace,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )

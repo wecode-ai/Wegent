@@ -327,7 +327,7 @@ class TestTelegramChannelHandler:
             patch.object(
                 handler,
                 "_get_user_model_override",
-                new=AsyncMock(return_value=(None, None)),
+                new=AsyncMock(return_value=(None, None, None)),
             ),
             patch.object(
                 handler,
@@ -388,7 +388,7 @@ class TestTelegramChannelHandler:
             patch.object(
                 handler,
                 "_get_user_model_override",
-                new=AsyncMock(return_value=(None, None)),
+                new=AsyncMock(return_value=(None, None, None)),
             ),
             patch.object(
                 handler,
@@ -445,7 +445,7 @@ class TestTelegramChannelHandler:
             patch.object(
                 handler,
                 "_get_device_mode_model_override",
-                new=AsyncMock(return_value=(None, None)),
+                new=AsyncMock(return_value=(None, None, None)),
             ),
             patch.object(
                 handler,
@@ -503,7 +503,7 @@ class TestTelegramChannelHandler:
             patch.object(
                 handler,
                 "_get_user_model_override",
-                new=AsyncMock(return_value=(None, None)),
+                new=AsyncMock(return_value=(None, None, None)),
             ),
             patch.object(
                 handler,

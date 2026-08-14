@@ -383,6 +383,7 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
             new_selection = ModelSelection(
                 model_name=selected.get("name", ""),
                 model_type=selected.get("type", "public"),
+                model_namespace=selected.get("namespace"),
                 display_name=selected.get("displayName"),
                 provider=selected.get("provider"),
             )

@@ -71,8 +71,12 @@ class TaskModelOverride:
         model_type = labels.get("forceOverrideBotModelType")
         return cls(
             name=name,
-            namespace=namespace.strip() if isinstance(namespace, str) else None,
-            model_type=model_type.strip() if isinstance(model_type, str) else None,
+            namespace=(
+                (namespace.strip() or None) if isinstance(namespace, str) else None
+            ),
+            model_type=(
+                (model_type.strip() or None) if isinstance(model_type, str) else None
+            ),
             force=labels.get("forceOverrideBotModel") == "true",
         )
 

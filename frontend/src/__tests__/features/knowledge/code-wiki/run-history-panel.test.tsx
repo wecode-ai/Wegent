@@ -80,6 +80,19 @@ describe('restoring a past version', () => {
       description: 'codeWiki.history.republishedDescription',
     })
   })
+
+  it('does not report success when the reader fails to reload restored pages', async () => {
+    const onRepublished = jest.fn().mockRejectedValue(new Error('Page reload failed'))
+    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+    fireEvent.click(await screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`))
+    fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
+
+    await waitFor(() => expect(onRepublished).toHaveBeenCalled())
+    const { toast } = jest.requireMock('sonner')
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith('Page reload failed')
+  })
 })
 
 describe('a failure reason of any length', () => {

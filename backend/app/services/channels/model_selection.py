@@ -31,6 +31,7 @@ class ModelSelection:
 
     model_name: str  # Model name
     model_type: str  # "public", "user", or "group"
+    model_namespace: Optional[str] = None
     display_name: Optional[str] = None  # Display name for the model
     provider: Optional[str] = None  # Model provider (e.g., "openai", "claude")
 
@@ -39,6 +40,7 @@ class ModelSelection:
         return {
             "model_name": self.model_name,
             "model_type": self.model_type,
+            "model_namespace": self.model_namespace,
             "display_name": self.display_name,
             "provider": self.provider,
         }
@@ -49,6 +51,7 @@ class ModelSelection:
         return cls(
             model_name=data.get("model_name", ""),
             model_type=data.get("model_type", "public"),
+            model_namespace=data.get("model_namespace"),
             display_name=data.get("display_name"),
             provider=data.get("provider"),
         )

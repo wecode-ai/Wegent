@@ -198,6 +198,25 @@ class TestAllowedModelsWithWhitelist:
 
         assert model_name == "my-model"
 
+    def test_exact_override_rejects_same_named_model_from_another_scope(self):
+        """A full Task reference must match the whitelist's full model reference."""
+        bot = _make_bot(self._make_agent_config_with_whitelist())
+
+        with pytest.raises(ValueError) as exc_info:
+            _resolve_model_for_bot(
+                db=MagicMock(),
+                bot=bot,
+                user_id=1,
+                model_override=TaskModelOverride(
+                    name="gpt-4o",
+                    namespace="other-group",
+                    model_type="group",
+                    force=True,
+                ),
+            )
+
+        assert "gpt-4o" in str(exc_info.value)
+
     def test_model_not_in_whitelist_raises_value_error(self):
         """When override model is NOT in the whitelist, ValueError should be raised."""
         bot = _make_bot(self._make_agent_config_with_whitelist())

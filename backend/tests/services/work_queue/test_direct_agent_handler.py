@@ -57,7 +57,7 @@ async def test_handle_passes_model_override_to_created_task():
         patch.object(
             handler,
             "_resolve_model_override",
-            return_value=("gpt-5", True, "public"),
+            return_value=("gpt-5", "default", True, "public"),
             create=True,
         ),
         patch.object(handler, "_register_task_completion_listener"),
@@ -79,6 +79,7 @@ async def test_handle_passes_model_override_to_created_task():
 
     params = mock_create_chat_task.await_args.kwargs["params"]
     assert params.model_id == "gpt-5"
+    assert params.model_namespace == "default"
     assert params.force_override_bot_model is True
     assert params.force_override_bot_model_type == "public"
 
@@ -101,13 +102,16 @@ def test_resolve_model_override_uses_public_model_type_for_public_model():
         return_value=SimpleNamespace(user_id=0, namespace="default"),
         create=True,
     ):
-        model_name, force_override, model_type = handler._resolve_model_override(
-            db=db,
-            owner=owner,
-            auto_process=auto_process,
+        model_name, model_namespace, force_override, model_type = (
+            handler._resolve_model_override(
+                db=db,
+                owner=owner,
+                auto_process=auto_process,
+            )
         )
 
     assert model_name == "gpt-5"
+    assert model_namespace == "default"
     assert force_override is True
     assert model_type == "public"
 

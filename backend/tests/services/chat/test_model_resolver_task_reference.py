@@ -71,10 +71,10 @@ def test_exact_task_reference_does_not_select_same_named_private_model(
     assert model_spec["modelConfig"]["env"]["model_id"] == "public-provider-model"
 
 
-def test_incomplete_new_task_reference_does_not_fall_back_to_another_scope(
+def test_incomplete_task_reference_uses_legacy_lookup(
     test_db: Session, test_user: User
 ) -> None:
-    """Persisted namespace without scope is rejected instead of silently guessing."""
+    """A partially migrated Task keeps the legacy name-based lookup behavior."""
     private_model = _model_kind(
         user_id=test_user.id,
         name="same-name-model",
@@ -92,8 +92,9 @@ def test_incomplete_new_task_reference_does_not_fall_back_to_another_scope(
         model_type=None,
     )
 
-    assert model_kind is None
-    assert model_spec is None
+    assert model_kind is not None
+    assert model_kind.id == private_model.id
+    assert model_spec["modelConfig"]["env"]["model_id"] == "private-provider-model"
 
 
 def test_exact_group_task_reference_uses_its_persisted_namespace(

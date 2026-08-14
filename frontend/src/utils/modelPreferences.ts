@@ -36,6 +36,7 @@ const MAX_GLOBAL_PREFS = 50 // Maximum number of global preferences to keep
 export interface ModelPreference {
   modelName: string
   modelType?: string
+  modelNamespace?: string
   forceOverride: boolean
   updatedAt: number
   modelCategoryType?: import('@/apis/models').ModelCategoryType
@@ -118,6 +119,9 @@ function parsePreference(json: string | null): ModelPreference | null {
     }
     if (typeof parsed.modelCategoryType === 'string') {
       preference.modelCategoryType = parsed.modelCategoryType
+    }
+    if (typeof parsed.modelNamespace === 'string' && parsed.modelNamespace.trim()) {
+      preference.modelNamespace = parsed.modelNamespace.trim()
     }
     return preference
   } catch {

@@ -777,6 +777,7 @@ export function useChatStreamHandlers({
       attachments,
       additionalSkills,
       selectedModel?.name,
+      selectedModel?.namespace,
       selectedModel?.type,
       externalApiParams,
       taskType,

@@ -42,15 +42,14 @@ sidebar_position: 4
 ## 5. 验证
 
 ```bash
-cd backend
-uv run pytest \
+(cd backend && uv run pytest \
   tests/services/knowledge/code_wiki/test_code_wiki_ghost.py \
   tests/services/knowledge/code_wiki/test_code_wiki_skills.py \
   tests/services/knowledge/code_wiki/test_prompts.py \
   tests/services/knowledge/code_wiki/test_run_mode.py \
   tests/services/knowledge/code_wiki/test_generation.py \
   tests/services/knowledge/code_wiki/test_runner.py \
-  tests/api/test_knowledge_code_wiki.py
+  tests/api/test_knowledge_code_wiki.py)
 
 pnpm --dir frontend test -- --runInBand \
   src/__tests__/apis/code-wiki.test.ts \

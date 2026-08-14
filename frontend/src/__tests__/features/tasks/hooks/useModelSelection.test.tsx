@@ -436,6 +436,47 @@ describe('useModelSelection', () => {
     )
   })
 
+  it('restores a namespaced global preference without selecting a same-named model', async () => {
+    const publicModel: Model = {
+      name: 'shared-model',
+      displayName: 'Public shared model',
+      provider: 'openai',
+      modelId: 'public-model',
+      type: 'public',
+      namespace: 'default',
+    }
+    const groupModel: Model = {
+      name: 'shared-model',
+      displayName: 'Platform shared model',
+      provider: 'openai',
+      modelId: 'platform-model',
+      type: 'group',
+      namespace: 'platform',
+    }
+    ;(getGlobalModelPreference as jest.Mock).mockReturnValue({
+      modelName: groupModel.name,
+      modelType: groupModel.type,
+      modelNamespace: groupModel.namespace,
+      forceOverride: true,
+      updatedAt: Date.now(),
+    })
+    const modelLoad = mockDeferredModelsLoad([publicModel, groupModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(groupModel))
+    })
+  })
+
   it('keeps advanced task model selection and opens advanced model mode', async () => {
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
     const modelLoad = mockDeferredModelsLoad([mockModel, mockAdvancedModel])

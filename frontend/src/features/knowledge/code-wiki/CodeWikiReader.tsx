@@ -205,29 +205,33 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
 
-  const reloadPages = useCallback(async () => {
-    const request = pagesRequest.current + 1
-    pagesRequest.current = request
-    setLoading(true)
+  const reloadPages = useCallback(
+    async (showError = true) => {
+      const request = pagesRequest.current + 1
+      pagesRequest.current = request
+      setLoading(true)
 
-    try {
-      const response = await codeWikiApi.pages(wiki.id)
-      if (pagesRequest.current !== request) return
+      try {
+        const response = await codeWikiApi.pages(wiki.id)
+        if (pagesRequest.current !== request) return
 
-      setPages(response.pages)
-      const first = firstReadable(response.pages)
-      if (first) setActivePath(first.path)
-    } catch (error) {
-      if (pagesRequest.current === request) {
-        toast.error(error instanceof Error ? error.message : String(error))
+        setPages(response.pages)
+        const first = firstReadable(response.pages)
+        if (first) setActivePath(first.path)
+      } catch (error) {
+        if (showError && pagesRequest.current === request) {
+          toast.error(error instanceof Error ? error.message : String(error))
+        }
+        throw error
+      } finally {
+        if (pagesRequest.current === request) setLoading(false)
       }
-    } finally {
-      if (pagesRequest.current === request) setLoading(false)
-    }
-  }, [wiki.id])
+    },
+    [wiki.id]
+  )
 
   useEffect(() => {
-    void reloadPages()
+    void reloadPages().catch(() => undefined)
     return () => {
       pagesRequest.current += 1
     }
@@ -236,7 +240,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const handleRepublished = useCallback(async () => {
     // A restore replaces the whole published version. Re-fetch its tree so both
     // navigation and the currently rendered page refer to the newly live version.
-    await reloadPages()
+    await reloadPages(false)
     runStatus.refresh()
   }, [reloadPages, runStatus])
 

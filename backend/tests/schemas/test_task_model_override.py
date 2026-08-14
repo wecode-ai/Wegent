@@ -48,3 +48,15 @@ def test_task_model_override_preserves_legacy_name_only_labels():
         TaskModelOverride(name="legacy-model")
     )
     assert TaskModelOverride.from_task_labels({"modelId": "  "}) is None
+
+
+def test_task_model_override_treats_blank_reference_labels_as_legacy():
+    override = TaskModelOverride.from_task_labels(
+        {
+            "modelId": "legacy-model",
+            "modelNamespace": "  ",
+            "forceOverrideBotModelType": "\t",
+        }
+    )
+
+    assert override == TaskModelOverride(name="legacy-model")

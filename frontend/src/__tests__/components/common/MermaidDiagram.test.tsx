@@ -203,10 +203,10 @@ describe('MermaidDiagram', () => {
     expect(screen.getByText('50%')).toBeInTheDocument()
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('mermaid-zoom-in-button'))
+      fireEvent.wheel(fitContainer, { ctrlKey: true, deltaY: -100 })
       resizeObserverCallback?.([], {} as ResizeObserver)
     })
-    expect(screen.getByText('75%')).toBeInTheDocument()
+    expect(screen.getByText('60%')).toBeInTheDocument()
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('mermaid-reset-zoom-button'))
