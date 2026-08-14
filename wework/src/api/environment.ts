@@ -186,13 +186,36 @@ function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
 function githubCheckStatuses(record: Record<string, unknown>): string[] {
   const rollup = record.statusCheckRollup
   if (!Array.isArray(rollup)) return []
-  return rollup.flatMap(item => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+  const latestChecks = new Map<
+    string,
+    { check: Record<string, unknown>; startedAt: number; index: number }
+  >()
+
+  rollup.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return
     const check = item as Record<string, unknown>
-    return [stringValue(check, 'conclusion') || stringValue(check, 'state', 'status')].filter(
-      Boolean
-    )
+    const name = stringValue(check, 'name', 'context')
+    const workflowName = stringValue(check, 'workflowName')
+    const startedAtValue = stringValue(check, 'startedAt', 'completedAt')
+    const startedAt = Date.parse(startedAtValue)
+    const canIdentifyRun = name && Number.isFinite(startedAt)
+    const identity = canIdentifyRun ? `${workflowName}\0${name}` : `unidentified\0${index}`
+    const previous = latestChecks.get(identity)
+
+    if (!previous || startedAt >= previous.startedAt) {
+      latestChecks.set(identity, {
+        check,
+        startedAt: canIdentifyRun ? startedAt : 0,
+        index,
+      })
+    }
   })
+
+  return Array.from(latestChecks.values())
+    .sort((left, right) => left.index - right.index)
+    .flatMap(({ check }) =>
+      [stringValue(check, 'conclusion') || stringValue(check, 'state', 'status')].filter(Boolean)
+    )
 }
 
 function gitlabCheckStatuses(record: Record<string, unknown>): string[] {
