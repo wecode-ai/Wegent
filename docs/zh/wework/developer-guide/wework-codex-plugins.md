@@ -96,6 +96,12 @@ Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/
 
 Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模型目录，并将返回的 provider 和模型数组顺序原样用于模型选择器。前端不会重排官方模型、默认模型或自定义 provider，也不会补充未由 Codex 返回的模型。请求使用 `includeHidden: false`，因此 Codex 标记为隐藏的模型不会显示。
 
+### 监督模型
+
+任务监督与会话共用同一个模型选择组件和同一份模型目录，但分别保存最近一次选择。监督设置不能维护第二套模型过滤或排序逻辑；会话中可选的官方 Codex 模型、自定义 provider 和本地模型也必须在监督中可选。
+
+云端 `public`、`user` 和 `group` 模型继续通过 Backend 的 `/api/model-runtime/responses` 执行。`runtime` 模型由 Wework 在保存监督设置时按会话模型的同一规则构造 `modelConfig`，通过本地 IPC 交给 Executor；Executor 只在进程内保存该配置，并为每次巡检启动独立、临时且不复用任务线程的 Codex app-server turn。这样巡检不会污染主会话记录，也不会把本地模型凭据写入任务持久化数据或日志。
+
 ### 图片附件预处理
 
 Wework 会把当前模型类别写入本地运行时请求。Codex 官方模型直接接收原始图片；Codex provider、本地模型接口和云端模型属于非官方模型，executor 在发送图片前会生成临时的模型输入文件，并把图片短边等比缩小到最多 `720px`。长边不设上限，因此超长截图会保留完整长边比例，而不会被强制塞入固定的 `1280×720` 边界。短边本来不超过 `720px` 的图片保持原样；原始附件、聊天记录和预览地址都不会被改写。临时输入文件只在当前 turn 使用，并在 turn 结束后清理。

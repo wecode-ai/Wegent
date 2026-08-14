@@ -1029,14 +1029,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services?.runtimeWorkApi &&
     (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
-  const supervisorModels = projectChat.models.filter(
-    model =>
-      model.isActive !== false &&
-      ['public', 'user', 'group'].includes(model.type) &&
-      Boolean(model.namespace) &&
-      model.resourceUserId !== undefined
-  )
-
   const runtimeWorkApi = services?.runtimeWorkApi
   const setSupervisorForAddress = useCallback(
     async (address: RuntimeTaskAddress, config: TaskSupervisorConfig) => {
@@ -4392,7 +4384,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
           defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
-          models={supervisorModels}
+          models={projectChat.models}
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}

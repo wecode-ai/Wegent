@@ -795,6 +795,7 @@ export interface RuntimeSupervisorSetRequest {
   mode: RuntimeSupervisorMode
   instructions?: string
   modelSelection?: ModelSelectionConfig | null
+  modelConfig?: Record<string, unknown> | null
   intervalSeconds: number
 }
 
