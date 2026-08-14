@@ -771,21 +771,24 @@ class JobService(BaseService[Kind, None, None]):
 
         for (namespace, name), group in executor_groups.items():
             try:
+                group_task_ids = sorted(group["tasks"])
                 if self._is_device_executor_name(name):
                     logger.info(
                         "[executor_job] Skipping device executor cleanup "
-                        f"ns={namespace} name={name}"
+                        f"task_ids={group_task_ids} ns={namespace} name={name}"
                     )
                     continue
 
                 archive_failed = False
-                for task in group["tasks"].values():
+                archive_failed_task_id: int | None = None
+                for task_id, task in group["tasks"].items():
                     if not await self._archive_workspace(
                         task=task,
                         executor_name=name,
                         executor_namespace=namespace,
                     ):
                         archive_failed = True
+                        archive_failed_task_id = task_id
                         break
 
                 last_active_at = group["updated_at"]
@@ -800,19 +803,23 @@ class JobService(BaseService[Kind, None, None]):
                 if archive_failed and not force_delete:
                     logger.warning(
                         f"[executor_job] Skipping executor deletion after archive "
-                        f"failure ns={namespace} name={name}"
+                        f"failure task_ids={group_task_ids} "
+                        f"failed_task_id={archive_failed_task_id} "
+                        f"ns={namespace} name={name}"
                     )
                     continue
                 if archive_failed:
                     logger.warning(
                         f"[executor_job] Archive failed but executor idle over "
                         f"{max_inactive_hours}h, force deleting "
+                        f"task_ids={group_task_ids} "
+                        f"failed_task_id={archive_failed_task_id} "
                         f"ns={namespace} name={name}"
                     )
 
                 logger.info(
                     f"[executor_job] Scheduled deleting executor "
-                    f"ns={namespace} name={name}"
+                    f"task_ids={group_task_ids} ns={namespace} name={name}"
                 )
                 try:
                     await executor_kinds_service.delete_executor_task_async(
@@ -824,7 +831,8 @@ class JobService(BaseService[Kind, None, None]):
 
                     logger.info(
                         "[executor_job] Executor already missing, marking deleted "
-                        f"ns={namespace} name={name} detail={delete_error.detail}"
+                        f"task_ids={group_task_ids} ns={namespace} name={name} "
+                        f"detail={delete_error.detail}"
                     )
                 await self._mark_executor_deleted(group["subtask_ids"])
                 await db.commit()
@@ -832,7 +840,7 @@ class JobService(BaseService[Kind, None, None]):
             except Exception as e:
                 logger.warning(
                     f"[executor_job] Failed to scheduled delete executor "
-                    f"ns={namespace} name={name}: {e}"
+                    f"task_ids={group_task_ids} ns={namespace} name={name}: {e}"
                 )
 
         return deleted_count
