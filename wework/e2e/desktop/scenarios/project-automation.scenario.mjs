@@ -308,7 +308,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', `[data-testid="cloud-sidebar-project-${PROJECT_ID}"]`)
+      const projectSelector = `[data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
+      await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
+      await control.command('click', projectSelector)
       await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
         timeoutMs: uiTimeoutMs,
       })
