@@ -30,7 +30,27 @@ describe('TaskPlanProgress', () => {
     })
     expect(screen.queryByTestId('runtime-plan-progress-button')).not.toBeInTheDocument()
 
+    rerender(
+      <TaskPlanProgress
+        plan={{
+          ...completedPlan,
+          plan: completedPlan.plan.map(step => ({ ...step })),
+        }}
+      />
+    )
+    expect(screen.queryByTestId('runtime-plan-progress-button')).not.toBeInTheDocument()
+
     rerender(<TaskPlanProgress plan={activePlan} />)
+    expect(screen.getByTestId('runtime-plan-progress-button')).toBeInTheDocument()
+
+    rerender(
+      <TaskPlanProgress
+        plan={{
+          ...completedPlan,
+          plan: completedPlan.plan.map(step => ({ ...step })),
+        }}
+      />
+    )
     expect(screen.getByTestId('runtime-plan-progress-button')).toBeInTheDocument()
   })
 
