@@ -35,9 +35,13 @@ class LoopItemExecution(Base):
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
     loop_item_id = Column(String(64), nullable=False, default="", server_default="")
     cloud_project_id = Column(String(64), nullable=False, default="", server_default="")
-    executor_owner_user_id = Column(Integer, nullable=False)
-    agent_id = Column(String(64), nullable=True)
-    automation_run_id = Column(String(64), nullable=True)
+    executor_owner_user_id = Column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    agent_id = Column(String(64), nullable=False, default="", server_default="")
+    automation_run_id = Column(
+        String(64), nullable=False, default="", server_default=""
+    )
     # Where the robot actually executes. "local" runs on the creator's App,
     # "cloud" runs on the creator's bound cloud device; the backend never
     # claims local rows and the App never claims cloud rows.

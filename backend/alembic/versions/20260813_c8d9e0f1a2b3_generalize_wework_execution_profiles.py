@@ -54,13 +54,6 @@ WHERE resource_type = 'automation_rule'
 
 
 def upgrade() -> None:
-    op.alter_column(
-        "loop_item_executions",
-        "agent_id",
-        existing_type=sa.String(64),
-        nullable=True,
-        server_default=None,
-    )
     op.add_column(
         "loop_item_executions",
         sa.Column(
@@ -76,7 +69,8 @@ def upgrade() -> None:
         sa.Column(
             "automation_run_id",
             sa.String(64),
-            nullable=True,
+            nullable=False,
+            server_default="",
             comment="Owning project automation run id",
         ),
     )
@@ -85,12 +79,6 @@ def upgrade() -> None:
         "LEFT JOIN loop_items AS agent ON agent.id = execution.agent_id "
         "SET execution.executor_owner_user_id = "
         "COALESCE(agent.created_by_user_id, execution.assigner_user_id, 0)"
-    )
-    op.alter_column(
-        "loop_item_executions",
-        "executor_owner_user_id",
-        existing_type=sa.Integer(),
-        server_default=None,
     )
     op.execute(MIGRATE_ASSIGNMENT_RULES_SQL)
     op.execute(DISABLE_UNMAPPABLE_RULES_SQL)
@@ -104,13 +92,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("idx_exec_automation_run_id", table_name="loop_item_executions")
-    op.execute("UPDATE loop_item_executions SET agent_id = '' WHERE agent_id IS NULL")
     op.drop_column("loop_item_executions", "automation_run_id")
     op.drop_column("loop_item_executions", "executor_owner_user_id")
-    op.alter_column(
-        "loop_item_executions",
-        "agent_id",
-        existing_type=sa.String(64),
-        nullable=False,
-        server_default="",
-    )

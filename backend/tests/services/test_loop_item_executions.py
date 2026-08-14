@@ -1687,6 +1687,13 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
         )
     test_db.commit()
 
+    if executor_type == "project_robot":
+        assert execution.agent_id == bot.id
+        assert execution.automation_run_id == ""
+    else:
+        assert execution.agent_id == ""
+        assert execution.automation_run_id == str(run.id)
+
     claimed = loop_item_execution_service.claim_next_for_device(
         test_db,
         execution_device_id="local-device",

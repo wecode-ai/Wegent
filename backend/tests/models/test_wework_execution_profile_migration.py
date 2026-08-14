@@ -40,12 +40,13 @@ def test_upgrade_only_adds_minimal_execution_identity() -> None:
         "executor_owner_user_id",
         "automation_run_id",
     ]
-    removed_defaults = {
-        call.args[1]
-        for call in operation.alter_column.call_args_list
-        if len(call.args) > 1 and call.kwargs.get("server_default") is None
+    columns_by_name = {
+        call.args[1].name: call.args[1] for call in operation.add_column.call_args_list
     }
-    assert {"executor_owner_user_id"} <= removed_defaults
+    assert all(column.nullable is False for column in columns_by_name.values())
+    assert columns_by_name["executor_owner_user_id"].server_default.arg == "0"
+    assert columns_by_name["automation_run_id"].server_default.arg == ""
+    operation.alter_column.assert_not_called()
     statements = [call.args[0] for call in operation.execute.call_args_list]
     assert len(statements) == 3
     assert "created_by_user_id" in statements[0]
@@ -78,14 +79,11 @@ def test_downgrade_restores_required_agent_without_changing_run_state() -> None:
 
     migration.downgrade()
 
-    statements = [call.args[0] for call in operation.execute.call_args_list]
-    assert statements == [
-        "UPDATE loop_item_executions SET agent_id = '' WHERE agent_id IS NULL"
-    ]
-    assert all("status" not in statement for statement in statements)
+    operation.execute.assert_not_called()
     dropped_columns = [call.args[1] for call in operation.drop_column.call_args_list]
     assert dropped_columns == [
         "automation_run_id",
         "executor_owner_user_id",
     ]
     operation.add_column.assert_not_called()
+    operation.alter_column.assert_not_called()

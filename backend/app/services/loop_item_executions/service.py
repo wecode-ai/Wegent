@@ -201,7 +201,7 @@ class LoopItemExecutionService:
             cloud_project_id=cloud_project_id,
             executor_type="automation_manager",
             owner_user_id=owner_user_id,
-            agent_id=None,
+            agent_id="",
             assigner_user_id=assigner_user_id,
             environment=environment,
             execution_device_id=execution_device_id,
@@ -218,7 +218,7 @@ class LoopItemExecutionService:
         cloud_project_id: str,
         executor_type: str,
         owner_user_id: int,
-        agent_id: str | None,
+        agent_id: str,
         assigner_user_id: int,
         environment: str,
         execution_device_id: str | None,
@@ -254,7 +254,7 @@ class LoopItemExecutionService:
         context = dict(automation_context or {})
         run_id_value = context.get("run_id")
         automation_run_id = (
-            str(run_id_value) if isinstance(run_id_value, (str, int)) else None
+            str(run_id_value) if isinstance(run_id_value, (str, int)) else ""
         )
         now = utcnow()
         row = LoopItemExecution(
@@ -512,7 +512,7 @@ class LoopItemExecutionService:
             LoopItemExecution.execution_device_id == execution_device_id,
             LoopItemExecution.execution_environment == environment,
             LoopItemExecution.status == STATUS_RUNNING,
-            LoopItemExecution.agent_id.is_not(None),
+            LoopItemExecution.agent_id != "",
         )
         if owner_user_id is not None:
             running_agents_query = running_agents_query.filter(
@@ -613,7 +613,7 @@ class LoopItemExecutionService:
             LoopItemExecution.execution_device_id == execution_device_id,
             LoopItemExecution.execution_environment == environment,
             LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
-            LoopItemExecution.agent_id.is_not(None),
+            LoopItemExecution.agent_id != "",
         )
         if owner_user_id is not None:
             occupied_agents_query = occupied_agents_query.filter(
@@ -721,7 +721,7 @@ class LoopItemExecutionService:
             .filter(
                 LoopItemExecution.executor_owner_user_id == owner_user_id,
                 LoopItemExecution.status == STATUS_RUNNING,
-                LoopItemExecution.agent_id.is_not(None),
+                LoopItemExecution.agent_id != "",
             )
             .all()
         }

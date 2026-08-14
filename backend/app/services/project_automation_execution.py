@@ -818,7 +818,7 @@ class ProjectAutomationExecution:
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.automation_run_id == run_id,
-                LoopItemExecution.agent_id.is_not(None),
+                LoopItemExecution.agent_id != "",
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
