@@ -305,8 +305,11 @@ export function updateWorkbenchDebugSnapshot({
 export function updateRuntimePaneDebugSnapshot(
   snapshot: Omit<RuntimePaneDebugSnapshot, 'updatedAt' | 'currentRuntimeTask'> & {
     currentRuntimeTask: RuntimeTaskAddress | null
-  }
+  },
+  options?: { enabled?: boolean }
 ) {
+  if (options?.enabled === false) return
+
   paneSnapshot = {
     ...snapshot,
     currentRuntimeTask: sanitizeRuntimeTaskAddress(snapshot.currentRuntimeTask),

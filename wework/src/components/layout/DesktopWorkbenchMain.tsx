@@ -887,7 +887,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const paneSession = useWorkbenchPaneSession({
+    currentRuntimeTask,
+    debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
+  })
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
