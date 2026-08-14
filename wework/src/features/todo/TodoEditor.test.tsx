@@ -291,6 +291,216 @@ describe('TodoEditor assignment chain', () => {
   })
 })
 
+describe('TodoEditor status history', () => {
+  it('shows status history in a popover triggered next to the status', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: 'inbox',
+          from_status_name: '收集箱',
+          to_status: 'in_progress',
+          to_status_name: '进行中',
+          trigger: 'user_update',
+          by_user_id: 1,
+          at: '2026-08-01T10:00:00',
+        },
+        {
+          from_status: 'in_progress',
+          from_status_name: '进行中',
+          to_status: 'in_review',
+          to_status_name: '待确认',
+          trigger: 'ai_completed',
+          by_user_id: null,
+          at: '2026-08-02T11:30:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    const trigger = screen.getByTestId('cloud-todo-status-history-trigger')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(trigger)
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('状态历史')
+    expect(popover).toHaveTextContent('收集箱')
+    expect(popover).toHaveTextContent('进行中')
+    expect(popover).toHaveTextContent('待确认')
+    expect(popover).toHaveTextContent('用户更新')
+    expect(popover).toHaveTextContent('AI 完成')
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByTestId('cloud-todo-status-history-popover')).not.toBeInTheDocument()
+  })
+
+  it('does not render the trigger when the item has no status history', () => {
+    render(editorElement(baseItem))
+    expect(screen.queryByTestId('cloud-todo-status-history-trigger')).not.toBeInTheDocument()
+  })
+
+  it('renders fallbacks for empty status names and null actors', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: '',
+          from_status_name: null,
+          to_status: 'in_progress',
+          to_status_name: '进行中',
+          trigger: 'ai_started',
+          by_user_id: null,
+          at: '2026-08-01T10:00:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    await user.click(screen.getByTestId('cloud-todo-status-history-trigger'))
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('未设置')
+    expect(popover).toHaveTextContent('系统/机器人')
+  })
+
+  it('renders the initial create entry without an unset from-status', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: '',
+          from_status_name: null,
+          to_status: 'inbox',
+          to_status_name: '收集箱',
+          trigger: 'create',
+          by_user_id: 1,
+          at: '2026-08-01T10:00:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    await user.click(screen.getByTestId('cloud-todo-status-history-trigger'))
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('初始状态')
+    expect(popover).toHaveTextContent('收集箱')
+    expect(popover).not.toHaveTextContent('未设置')
+  })
+
+  it('labels an in-review to completed user update as accept', async () => {
+    const user = userEvent.setup()
+    const historyItem = {
+      ...baseItem,
+      status_history: [
+        {
+          from_status: 'in_review',
+          from_status_name: '待确认',
+          to_status: 'completed',
+          to_status_name: '已完成',
+          trigger: 'user_update',
+          by_user_id: 1,
+          at: '2026-08-01T10:00:00',
+        },
+      ],
+    } as unknown as CloudLoopItem
+    render(editorElement(historyItem))
+
+    await user.click(screen.getByTestId('cloud-todo-status-history-trigger'))
+
+    const popover = screen.getByTestId('cloud-todo-status-history-popover')
+    expect(popover).toHaveTextContent('验收')
+    expect(popover).not.toHaveTextContent('用户更新')
+  })
+})
+
+describe('TodoEditor create parent resolution', () => {
+  it('drops a parent that no longer exists and creates a top-level task', async () => {
+    const user = userEvent.setup()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem: vi.fn(async () => ({ ...baseItem, version: 1 })),
+    } as never
+    const staleParent = { ...baseItem, id: 'STALE-1' } as unknown as CloudLoopItem
+    const liveParent = { ...baseItem, id: 'LIVE-1' } as unknown as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={staleParent}
+        initialStatus="inbox"
+        allItems={[liveParent]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.type(screen.getByTestId('cloud-todo-title'), '新的顶层任务')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createApi.createLoopItem).toHaveBeenCalledWith('11', {
+        title: '新的顶层任务',
+        description: '',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+      })
+    })
+  })
+
+  it('keeps a live parent in the create payload', async () => {
+    const user = userEvent.setup()
+    const createApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      createLoopItem: vi.fn(async () => ({ ...baseItem, version: 1 })),
+    } as never
+    const liveParent = { ...baseItem, id: 'LIVE-1' } as unknown as CloudLoopItem
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={liveParent}
+        initialStatus="inbox"
+        allItems={[liveParent]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        currentUserId={1}
+      />
+    )
+
+    await user.type(screen.getByTestId('cloud-todo-title'), '子任务')
+    await user.click(screen.getByTestId('cloud-todo-create-confirm'))
+
+    await vi.waitFor(() => {
+      expect(createApi.createLoopItem).toHaveBeenCalledWith('11', {
+        title: '子任务',
+        description: '',
+        priority: 'none',
+        status: 'inbox',
+        tags: [],
+        parent_id: 'LIVE-1',
+      })
+    })
+  })
+})
+
 describe('TodoEditor comments by provider', () => {
   it('closes task comments for DingTalk AI Table tasks', () => {
     const aitableProject = {
