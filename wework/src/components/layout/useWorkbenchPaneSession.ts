@@ -2370,8 +2370,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     if (shouldPauseQueue) {
       setQueuedMessagesPaused(true)
     }
+    const interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) {
+      if (interruptedTurn) {
+        restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+      }
       if (shouldPauseQueue) {
         setQueuedMessagesPaused(false)
       }
@@ -2379,19 +2383,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     void refreshWorkLists()
-
-    if (!activeAssistantMessage) return
-    if (!activeAssistantMessage.turnId) return
-
-    dispatchMessages({
-      type: 'assistant_cancelled',
-      subtaskId: activeAssistantMessage.turnId,
-    })
   }, [
-    activeAssistantMessage,
     cancelRuntimePaneTask,
     currentRuntimeTask,
-    dispatchMessages,
     goal?.status,
     queuedMessages,
     refreshWorkLists,

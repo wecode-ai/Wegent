@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
-import type { TeamBot, Team, PaginationParams, TaskType } from '@/types/api'
+import type { TeamBot, Team, PaginationParams, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
 import type { TeamDisplayConfig } from '@wegent/chat-core'
 
@@ -19,6 +19,7 @@ export interface CreateTeamRequest {
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library
   display_config?: TeamDisplayConfig
+  inputPlaceholder?: TeamInputPlaceholder | null
   quick_phrases?: string[]
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
 }

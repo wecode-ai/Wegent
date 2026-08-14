@@ -480,12 +480,11 @@ export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: strin
  */
 export async function uploadAttachment(
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  storagePurpose: 'default' | 'video_reference' = 'default'
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
-  // Validate file size before upload (generic 100 MB cap; KB video uploads
-  // go through the separate VideoUploadProvider contract, not this path).
   if (!isValidFileSize(file.size)) {
     throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
   }
@@ -539,7 +538,8 @@ export async function uploadAttachment(
       reject(new Error('Upload cancelled'))
     })
 
-    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload`)
+    const query = new URLSearchParams({ storage_purpose: storagePurpose })
+    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload?${query.toString()}`)
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     }
@@ -636,6 +636,27 @@ export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: stri
   return baseUrl
 }
 
+export async function createAttachmentDownloadUrl(attachmentId: number): Promise<string> {
+  const token = getToken()
+  if (!token) {
+    throw new Error('Authentication required')
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download-token`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to create attachment download token (${response.status})`)
+  }
+
+  const data = await response.json()
+  if (!data.download_token || typeof data.download_token !== 'string') {
+    throw new Error('Invalid attachment download token response')
+  }
+  return `${getAttachmentDownloadUrl(attachmentId)}?download_token=${encodeURIComponent(data.download_token)}`
+}
+
 interface FetchAttachmentFileOptions {
   filename?: string
   shareToken?: string
@@ -711,24 +732,7 @@ export async function downloadAttachment(
   let downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
 
   if (!shareToken) {
-    const token = getToken()
-    if (!token) {
-      throw new Error('Authentication required')
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download-token`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!response.ok) {
-      throw new Error(`Failed to create attachment download token (${response.status})`)
-    }
-
-    const data = await response.json()
-    if (!data.download_token || typeof data.download_token !== 'string') {
-      throw new Error('Invalid attachment download token response')
-    }
-    downloadUrl = `${getAttachmentDownloadUrl(attachmentId)}?download_token=${encodeURIComponent(data.download_token)}`
+    downloadUrl = await createAttachmentDownloadUrl(attachmentId)
   }
 
   const link = document.createElement('a')
@@ -1348,16 +1352,10 @@ export async function saveVideoMetadata(
 export async function uploadFile(
   file: File,
   onProgress?: (progress: number) => void,
-  abortSignal?: AbortSignal
+  _abortSignal?: AbortSignal,
+  storagePurpose: 'default' | 'video_reference' = 'default'
 ): Promise<AttachmentResponse> {
-  const extension = getFileExtension(file.name)
-  const isVideo = isVideoExtension(extension)
-
-  if (isVideo) {
-    return uploadVideo(file, onProgress, abortSignal)
-  } else {
-    return uploadAttachment(file, onProgress)
-  }
+  return uploadAttachment(file, onProgress, storagePurpose)
 }
 
 /**
@@ -1412,6 +1410,7 @@ export const attachmentApis = {
   getAttachment,
   getAttachmentPreview,
   getAttachmentDownloadUrl,
+  createAttachmentDownloadUrl,
   downloadAttachment,
   deleteAttachment,
   getAttachmentBySubtask,

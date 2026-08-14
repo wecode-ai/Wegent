@@ -368,6 +368,29 @@ export async function openLocalWorkspace({
   })
 }
 
+export interface LocalWorkspaceOpenerAvailability {
+  id: LocalWorkspaceOpenerId
+  category: string
+  available: boolean
+  label?: string
+}
+
+export async function listLocalWorkspaceOpeners(): Promise<LocalWorkspaceOpenerAvailability[]> {
+  if (!isLocalTerminalAvailable()) {
+    return []
+  }
+
+  return invoke<LocalWorkspaceOpenerAvailability[]>('list_local_workspace_openers')
+}
+
+export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
+  if (!isLocalTerminalAvailable()) {
+    return null
+  }
+
+  return invoke<string | null>('pick_local_workspace_opener_exe')
+}
+
 export async function openLocalFile(path?: string): Promise<void> {
   if (!isLocalTerminalAvailable()) {
     throw new Error(i18n.t('localRuntime:local_file_opening_unavailable'))

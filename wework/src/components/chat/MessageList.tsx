@@ -226,6 +226,7 @@ export const MessageList = memo(function MessageList({
   const { t } = useTranslation('common')
   const listRef = useRef<HTMLDivElement>(null)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previousVisibleMessageIdsRef = useRef<string[]>([])
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
   const [textSelection, setTextSelection] = useState<MessageTextSelection | null>(null)
   const [layoutWidth, setLayoutWidth] = useState(0)
@@ -337,6 +338,33 @@ export const MessageList = memo(function MessageList({
     if (!virtualMessages) return
     onVirtualLayoutChange?.()
   }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
+
+  useLayoutEffect(() => {
+    const previousIds = previousVisibleMessageIdsRef.current
+    const nextIds = visibleMessages.map(message => message.id)
+    previousVisibleMessageIdsRef.current = nextIds
+    if (!virtualMessages || previousIds.length === 0) return
+
+    const firstDifferentIndex = nextIds.findIndex((id, index) => previousIds[index] !== id)
+    if (firstDifferentIndex < 0 && previousIds.length === nextIds.length) return
+    const changedIndex =
+      firstDifferentIndex >= 0 ? firstDifferentIndex : Math.min(previousIds.length, nextIds.length)
+
+    const virtualItemsByIndex = new Map(
+      messageVirtualizer.getVirtualItems().map(item => [item.index, item])
+    )
+    listRef.current?.querySelectorAll<HTMLElement>('[data-index]').forEach(row => {
+      const index = Number(row.dataset.index)
+      if (!Number.isInteger(index) || index < changedIndex) return
+
+      const virtualItem = virtualItemsByIndex.get(index)
+      if (!virtualItem) return
+      const measuredSize = Math.ceil(row.getBoundingClientRect().height)
+      if (virtualItem.size !== measuredSize) {
+        messageVirtualizer.resizeItem(index, measuredSize)
+      }
+    })
+  }, [messageVirtualizer, virtualMessages, visibleMessages])
 
   useLayoutEffect(() => {
     if (

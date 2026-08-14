@@ -157,6 +157,16 @@ export interface SkillList {
 
 export type TeamAccessSource = 'native' | 'user_share' | 'namespace_authorization'
 
+export interface LocalizedInputPlaceholder {
+  en?: string | null
+  zh?: string | null
+}
+
+export interface TeamInputPlaceholder extends LocalizedInputPlaceholder {
+  mobile?: LocalizedInputPlaceholder | null
+  desktop?: LocalizedInputPlaceholder | null
+}
+
 // Shell Types
 export interface Shell {
   id: number
@@ -190,6 +200,7 @@ export interface Team {
   icon?: string // Icon ID from preset icon library
   display_config?: TeamDisplayConfig
   quick_phrases?: string[] // Launcher phrases that prefill the chat input
+  inputPlaceholder?: TeamInputPlaceholder | null
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   publication_status?: 'published' | 'archived'
   /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
@@ -665,6 +676,7 @@ export interface Attachment {
   site?: string | null
   source_url?: string | null
   cover_url?: string | null
+  local_preview_url?: string
 }
 
 export interface AttachmentUploadState {

@@ -351,7 +351,8 @@ describe('ChatInput', () => {
         'existing prompt\n总结目前完成的工作和下一步建议'
       )
     })
-    const trailingText = editor.querySelector('p')?.lastChild
+    const paragraphs = editor.querySelectorAll('p')
+    const trailingText = paragraphs.item(paragraphs.length - 1).lastChild
     expect(window.getSelection()?.anchorNode).toBe(trailingText)
     expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })

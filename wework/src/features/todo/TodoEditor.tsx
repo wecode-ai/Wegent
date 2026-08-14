@@ -20,6 +20,7 @@ import {
   FileText,
   Flag,
   Folder,
+  History,
   Link2,
   ListTodo,
   Maximize2,
@@ -50,6 +51,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
+import { StatusHistoryPopover } from './StatusHistoryPopover'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
@@ -582,6 +584,15 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!sameTask || tagsMatch(tags, previous?.tags ?? [])) setTags(item.tags ?? [])
     syncedItemRef.current = item
   }, [item, title, description, status, priority, parentId, dueDate, assigneeTarget, tags])
+  // A create draft or initial parent can reference a task that was archived
+  // since; a deleted parent is not in the live item list, so fall back to a
+  // top-level task instead of sending a parent id the backend rejects.
+  useEffect(() => {
+    if (item || !parentId || allItems.length === 0) return
+    if (allItems.some(candidate => candidate.id === parentId)) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- stale parent fallback
+    setParentId('')
+  }, [allItems, item, parentId])
   // Tag autocomplete candidates: the project registry plus tags already used
   // by any item in the project.
   const tagSuggestions = Array.from(
@@ -616,6 +627,8 @@ export function TodoEditor(props: TodoEditorProps) {
   const [fullScreen, setFullScreen] = useState(false)
   const [assignmentChainOpen, setAssignmentChainOpen] = useState(false)
   const assignmentChainTriggerRef = useRef<HTMLButtonElement>(null)
+  const [statusHistoryOpen, setStatusHistoryOpen] = useState(false)
+  const statusHistoryTriggerRef = useRef<HTMLButtonElement>(null)
   const detailScrollRef = useRef<HTMLDivElement>(null)
 
   const editItemId = item?.id ?? null
@@ -1227,6 +1240,20 @@ export function TodoEditor(props: TodoEditorProps) {
       {statusSelect}
     </span>
   )
+  const statusHistoryTrigger = item?.status_history?.length ? (
+    <button
+      ref={statusHistoryTriggerRef}
+      type="button"
+      data-testid="cloud-todo-status-history-trigger"
+      aria-label={t('todo.status_history_trigger', '查看状态历史')}
+      aria-expanded={statusHistoryOpen}
+      title={t('todo.status_history_trigger', '查看状态历史')}
+      onClick={() => setStatusHistoryOpen(current => !current)}
+      className="relative z-10 ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-text-muted transition hover:bg-muted hover:text-text-primary"
+    >
+      <History className="h-3.5 w-3.5" />
+    </button>
+  ) : null
   const priorityChip = (
     <span className={propChipClass}>
       <Flag className="h-3.5 w-3.5 text-text-muted" />
@@ -1240,6 +1267,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const propChips = (
     <>
       {statusChip}
+      {statusHistoryTrigger}
       {priorityChip}
       <span className={cn(propChipClass, !assignee && !assigneeAgent && 'text-text-muted')}>
         {assigneeAgent ? (
@@ -1553,6 +1581,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 {twoColumn ? (
                   <>
                     {statusChip}
+                    {statusHistoryTrigger}
                     {priorityChip}
                     <span className="task-detail-pill">
                       <Plus className="h-3.5 w-3.5" />
@@ -2160,6 +2189,14 @@ export function TodoEditor(props: TodoEditorProps) {
           entries={item.assignment_history}
           projectMembers={projectMembers}
           onClose={() => setAssignmentChainOpen(false)}
+        />
+      ) : null}
+      {statusHistoryOpen && item?.status_history?.length ? (
+        <StatusHistoryPopover
+          anchor={statusHistoryTriggerRef.current}
+          entries={item.status_history}
+          projectMembers={projectMembers}
+          onClose={() => setStatusHistoryOpen(false)}
         />
       ) : null}
     </div>

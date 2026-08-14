@@ -659,6 +659,49 @@ fn approval_registration_adds_payload_and_consumes_approved_risk_once() {
 }
 
 #[test]
+fn approved_risk_wakes_a_retry_waiting_for_the_ipc_resolution() {
+    let state = EmbeddedBrowserState::default();
+    let mut result = json!({
+        "ok": false,
+        "approval": {
+            "risk": "high",
+            "actionKind": "click",
+            "reason": "AI wants to click submit."
+        },
+        "error": {
+            "code": "approval_required",
+            "message": "AI wants to click submit."
+        }
+    });
+    let payload = register_agent_approval(
+        &state,
+        "workspace-browser",
+        "click",
+        "click:ref:wk-mvp:1",
+        &mut result,
+    )
+    .unwrap()
+    .unwrap();
+    let retry_state = state.clone();
+    let retry = thread::spawn(move || {
+        consume_approved_agent_risk(&retry_state, "workspace-browser", "click:ref:wk-mvp:1")
+            .unwrap()
+    });
+
+    thread::sleep(Duration::from_millis(20));
+    {
+        let mut approvals = state.agent_approvals.lock().unwrap();
+        approvals
+            .get_mut(&payload.approval_id)
+            .expect("approval state")
+            .approved = true;
+    }
+    state.agent_approval_changed.notify_all();
+
+    assert!(retry.join().unwrap());
+}
+
+#[test]
 fn merge_request_option_preserves_existing_object_options() {
     let mut request = EmbeddedBrowserBridgeRequest {
         action: "click".to_string(),

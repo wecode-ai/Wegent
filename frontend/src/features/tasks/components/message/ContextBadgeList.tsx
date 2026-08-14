@@ -27,7 +27,7 @@ import {
   formatCompactKnowledgeScope,
   formatKnowledgeScopeSummary,
 } from '@/features/knowledge/knowledgeContextPresentation'
-import { isImageExtension } from '@/apis/attachments'
+import { isAudioExtension, isImageExtension, isVideoExtension } from '@/apis/attachments'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 
 /**
@@ -270,7 +270,11 @@ function AttachmentContextBadge({
   return (
     <AttachmentPreview
       attachment={attachment}
-      compact={isImageExtension(attachment.file_extension)}
+      compact={
+        isImageExtension(attachment.file_extension) ||
+        isVideoExtension(attachment.file_extension) ||
+        isAudioExtension(attachment.file_extension)
+      }
       showDownload={true}
       shareToken={shareToken}
     />

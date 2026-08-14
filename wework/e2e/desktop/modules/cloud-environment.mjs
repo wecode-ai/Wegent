@@ -28,6 +28,7 @@ import {
   spawn,
   stopProcess,
   stopProcessGroup,
+  waitForLogPattern,
   waitForUrl,
   weworkDir,
   writeFile,
@@ -150,10 +151,6 @@ class RealCloudEnvironment {
   }
 
   async startBackend() {
-    this.redisPort = await reservePort()
-    this.backendPort = await reservePort()
-    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
-    this.socketUrl = `http://localhost:${this.backendPort}`
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
@@ -161,6 +158,7 @@ class RealCloudEnvironment {
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
 
+    this.redisPort = await reservePort()
     this.redis = spawn(
       'redis-server',
       ['--port', String(this.redisPort), '--save', '', '--appendonly', 'no'],
@@ -170,6 +168,11 @@ class RealCloudEnvironment {
       appendProcessOutput(this.redis.stdout, this.redisLogPath),
       appendProcessOutput(this.redis.stderr, this.redisLogPath),
     ])
+    await waitForLogPattern(this.redisLogPath, /Ready to accept connections/)
+
+    this.backendPort = await reservePort()
+    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.socketUrl = `http://localhost:${this.backendPort}`
 
     const backendEnv = {
       ...process.env,

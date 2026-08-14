@@ -173,6 +173,10 @@ function supportsExternalKnowledgeBaseSelection(source: ExternalKnowledgeSource)
   return source.capabilities?.supportsKnowledgeBaseSelection === true
 }
 
+function supportsExternalDocumentTree(source: ExternalKnowledgeSource) {
+  return source.capabilities?.supportsDocumentTree === true && Boolean(source.listNodes)
+}
+
 export function countSelectedExternalKnowledgeBaseIds(
   contexts: ContextItem[],
   providerId: string,
@@ -1839,7 +1843,7 @@ function ExternalKnowledgeBaseRows({
             <button
               type="button"
               className="group flex min-w-0 flex-1 items-center gap-2 text-left"
-              onClick={() => onOpen(item)}
+              onClick={() => (supportsExternalDocumentTree(source) ? onOpen(item) : onToggle(item))}
               data-testid={`knowledge-picker-external-kb-${item.knowledge_base_id}`}
             >
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
