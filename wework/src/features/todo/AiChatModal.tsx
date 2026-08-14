@@ -6,7 +6,13 @@ import { TemporaryChatPanel } from '@/components/layout/workspace-panels/Tempora
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelOptions,
+  ModelType,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
 
 interface AiChatModalProps {
@@ -74,6 +80,11 @@ export function AiChatModal({ project, localProjects, task, open, onClose }: AiC
       message: string,
       options: {
         attachments: Attachment[]
+        executionModel: {
+          modelId?: string
+          modelType?: ModelType | null
+          modelOptions?: ModelOptions
+        }
         onError: (message: string) => void
         onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
       }
@@ -82,6 +93,7 @@ export function AiChatModal({ project, localProjects, task, open, onClose }: AiC
         project: selectedLocalProject,
         runtime: 'codex',
         attachments: options.attachments,
+        executionModel: options.executionModel,
         collaborationMode: 'default',
         cloudProjectId: String(project.id),
         additionalContext: {

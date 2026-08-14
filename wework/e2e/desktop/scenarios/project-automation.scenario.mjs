@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict'
 
+import {
+  CHECKPOINT_TASK_COMPLETION_TEXT,
+  CHECKPOINT_TASK_PROMPT,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
+  selectE2EModel,
+  withTimeout,
+} from '../modules/shared.mjs'
+import { createSse, streamingTextEvents } from '../modules/response-protocol.mjs'
+
 const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
 const RULE_ID = 'automation-rule-1'
 const MODEL_NAME = 'gpt-5-codex'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
+const PROJECT_CHAT_REMOTE_MODEL_NAME = 'desktop-e2e-project-chat-remote'
+const PROJECT_CHAT_REMOTE_MODEL_LABEL = 'Project Chat Remote Codex'
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -53,6 +65,40 @@ const MODEL = {
   config: {
     protocol: 'openai-responses',
     apiFormat: 'responses',
+  },
+  runtime: { family: 'openai.openai-responses' },
+  isActive: true,
+}
+
+const LOCAL_CODEX_MODEL = {
+  name: `codex-${DEFAULT_MODEL_ID}`,
+  type: 'runtime',
+  displayName: `${DEFAULT_MODEL_LABEL} (Codex)`,
+  provider: 'openai',
+  modelId: DEFAULT_MODEL_ID,
+  namespace: 'default',
+  config: {
+    protocol: 'openai-responses',
+    apiFormat: 'responses',
+    weworkModelKind: 'codex-official',
+    ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
+  },
+  runtime: { family: 'openai.openai-responses' },
+  isActive: true,
+}
+
+const PROJECT_CHAT_REMOTE_MODEL = {
+  name: PROJECT_CHAT_REMOTE_MODEL_NAME,
+  type: 'public',
+  displayName: PROJECT_CHAT_REMOTE_MODEL_LABEL,
+  provider: 'openai',
+  modelId: 'desktop-e2e-project-chat-remote-upstream',
+  namespace: 'default',
+  resourceUserId: 0,
+  config: {
+    protocol: 'openai-responses',
+    apiFormat: 'responses',
+    ui: { family: 'gpt', modelLabel: PROJECT_CHAT_REMOTE_MODEL_LABEL },
   },
   runtime: { family: 'openai.openai-responses' },
   isActive: true,
@@ -173,6 +219,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let cancelRequested = false
   let retryRequested = false
   let modelRequests = 0
+  const remoteProjectChatRequests = []
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
@@ -390,7 +437,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
       if (request.method === 'GET' && url.pathname === '/api/models/unified') {
         modelRequests += 1
-        json(response, 200, { data: [MODEL] })
+        json(response, 200, { data: [LOCAL_CODEX_MODEL, PROJECT_CHAT_REMOTE_MODEL, MODEL] })
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
+      ) {
+        const payload = await readJson(request)
+        remoteProjectChatRequests.push(payload)
+        assert.equal(request.headers['x-wegent-model-type'], 'public')
+        assert.equal(request.headers['x-wegent-model-namespace'], 'default')
+        assert.equal(request.headers['x-wegent-model-user-id'], '0')
+        assert.equal(payload.model, PROJECT_CHAT_REMOTE_MODEL_NAME)
+        assert.ok(
+          JSON.stringify(payload).includes(CHECKPOINT_TASK_PROMPT),
+          'The remote project-chat request lost the user prompt'
+        )
+        response.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+        })
+        const stream = streamingTextEvents('project-chat-remote', CHECKPOINT_TASK_COMPLETION_TEXT)
+        response.end(createSse([...stream.start, ...stream.finish]))
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/teams') {
@@ -533,6 +603,59 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const projectSelector = `[data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
       await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
       await control.command('click', projectSelector)
+      await control.command('waitFor', '[data-testid="cloud-project-ask-ai"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="cloud-project-ask-ai"]')
+      await control.command('waitFor', '[data-testid="project-space-chat-panel"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+
+      const projectChatInput =
+        '[data-testid="project-space-chat-panel"] [data-testid="chat-message-input"]'
+      const projectChatPanel = '[data-testid="project-space-chat-panel"]'
+      await selectE2EModel(
+        control,
+        PROJECT_CHAT_REMOTE_MODEL_NAME,
+        PROJECT_CHAT_REMOTE_MODEL_LABEL,
+        projectChatPanel
+      )
+      const remoteRequestCount = remoteProjectChatRequests.length
+      await control.command('fill', projectChatInput, { value: CHECKPOINT_TASK_PROMPT })
+      await control.command('press', projectChatInput, { key: 'Enter' })
+      await waitForValue(
+        () => Promise.resolve(remoteProjectChatRequests.length),
+        count => count === remoteRequestCount + 1,
+        'The Backend remote model did not receive the project-chat request',
+        uiTimeoutMs
+      )
+      await control.command('waitFor', '[data-testid="project-space-chat-panel"]', {
+        text: CHECKPOINT_TASK_COMPLETION_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await control.command('click', '[data-testid="project-space-chat-new"]')
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, projectChatPanel)
+      control.setScenario('checkpoint_task')
+      const localRequest = control.awaitScenarioRequest('checkpoint_task')
+      await control.command('fill', projectChatInput, { value: CHECKPOINT_TASK_PROMPT })
+      await control.command('press', projectChatInput, { key: 'Enter' })
+      const localModelRequest = await withTimeout(
+        localRequest,
+        uiTimeoutMs,
+        'The local Codex model did not receive the project-chat request'
+      )
+      assert.ok(
+        typeof localModelRequest.body.model === 'string' && localModelRequest.body.model.length > 0,
+        'Project chat did not execute through the local Codex model server'
+      )
+      await control.command('waitFor', '[data-testid="project-space-chat-panel"]', {
+        text: CHECKPOINT_TASK_COMPLETION_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'project-chat-model-routing.png')
+      await control.command('click', '[data-testid="project-space-chat-close"]')
+
       await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
         timeoutMs: uiTimeoutMs,
       })

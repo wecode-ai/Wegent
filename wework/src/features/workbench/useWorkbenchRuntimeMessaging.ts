@@ -1602,6 +1602,13 @@ export function useWorkbenchRuntimeMessaging({
         : options.modelId
           ? { ...prepared.payload, force_override_bot_model: options.modelId }
           : prepared.payload
+      const explicitModelSelection = options.executionModel?.modelId
+        ? {
+            modelName: options.executionModel.modelId,
+            modelType: (options.executionModel.modelType as ModelType | null | undefined) ?? null,
+            options: options.executionModel.modelOptions ?? {},
+          }
+        : options.modelSelection
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         ...(options.runtime ? { runtime: options.runtime } : {}),
         initialGoal: options.initialGoal,
@@ -1610,7 +1617,7 @@ export function useWorkbenchRuntimeMessaging({
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
         origin: options.origin,
-        modelSelection: options.modelSelection,
+        modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,

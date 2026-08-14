@@ -6,7 +6,7 @@ import { useRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CloudProject } from '@/api/deliveries'
-import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { ModelOptions, ModelType, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { AiChatModal } from './AiChatModal'
 
 const mocks = vi.hoisted(() => ({
@@ -33,6 +33,11 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       message: string,
       options: {
         attachments: []
+        executionModel: {
+          modelId?: string
+          modelType?: ModelType | null
+          modelOptions?: ModelOptions
+        }
         onError: (message: string) => void
         onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
       }
@@ -50,6 +55,11 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           onClick={() =>
             void createTask?.('给出任务列表', {
               attachments: [],
+              executionModel: {
+                modelId: 'backend-codex',
+                modelType: 'user',
+                modelOptions: { reasoningEffort: 'high' },
+              },
               onError: vi.fn(),
               onRuntimeTaskOptimisticOpen: vi.fn(),
             })
@@ -127,6 +137,11 @@ describe('AiChatModal', () => {
       '给出任务列表',
       expect.objectContaining({
         runtime: 'codex',
+        executionModel: {
+          modelId: 'backend-codex',
+          modelType: 'user',
+          modelOptions: { reasoningEffort: 'high' },
+        },
         cloudProjectId: '11',
       })
     )
