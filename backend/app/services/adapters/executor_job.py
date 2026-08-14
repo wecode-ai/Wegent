@@ -725,38 +725,114 @@ class JobService(BaseService[Kind, None, None]):
         *,
         valid_candidates: List[Subtask],
         task_map: Dict[int, TaskResource],
+        max_inactive_hours: int = 24 * 7,
     ) -> int:
-        """Delete executor groups for valid task candidates and return deleted count."""
+        """Delete executor groups for valid task candidates and return deleted count.
+
+        Groups are keyed by (namespace, name) across tasks because one executor
+        can be shared by multiple tasks; every associated workspace must be
+        archived before the shared executor is deleted.
+        """
         if not valid_candidates:
             return 0
 
-        task_ids = {subtask.task_id for subtask in valid_candidates}
-        deleted_count = 0
-
-        for task in task_map.values():
+        task_updated_at: Dict[int, datetime | None] = {}
+        for task_id, task in task_map.items():
+            task_updated_at[task_id] = task.updated_at
             self._detach_loaded_instance(db, task)
 
-        for task_id in task_ids:
+        executor_groups: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for task_id in {subtask.task_id for subtask in valid_candidates}:
             task = task_map.get(task_id)
             if not task:
                 continue
 
             subtasks = await self._get_cleanup_subtasks_for_task(db, task_id)
-            if not subtasks:
-                continue
-
-            try:
-                result = await self._cleanup_executor_entries(
-                    db=db,
-                    task_id=task_id,
-                    task=task,
-                    subtasks=subtasks,
+            for subtask in subtasks:
+                if not subtask.executor_name:
+                    continue
+                key = (subtask.executor_namespace, subtask.executor_name)
+                group = executor_groups.setdefault(
+                    key, {"tasks": {}, "subtask_ids": [], "updated_at": None}
                 )
-                deleted_count += len(result.get("executors", []))
+                group["tasks"][task_id] = task
+                group["subtask_ids"].append(subtask.id)
+                group["updated_at"] = self._latest_datetime(
+                    group["updated_at"], subtask.updated_at
+                )
+
+        await self._release_cleanup_read_transaction(db)
+
+        # Groups idle past max_inactive_hours are force-deleted even when
+        # archiving fails, so a persistently broken archive cannot pin the pods
+        # forever; all associated tasks are still archived first.
+        force_cutoff = datetime.now() - timedelta(hours=max_inactive_hours)
+        deleted_count = 0
+
+        for (namespace, name), group in executor_groups.items():
+            try:
+                if self._is_device_executor_name(name):
+                    logger.info(
+                        "[executor_job] Skipping device executor cleanup "
+                        f"ns={namespace} name={name}"
+                    )
+                    continue
+
+                archive_failed = False
+                for task in group["tasks"].values():
+                    if not await self._archive_workspace(
+                        task=task,
+                        executor_name=name,
+                        executor_namespace=namespace,
+                    ):
+                        archive_failed = True
+                        break
+
+                last_active_at = group["updated_at"]
+                for task_id in group["tasks"]:
+                    last_active_at = self._latest_datetime(
+                        last_active_at, task_updated_at.get(task_id)
+                    )
+                force_delete = (
+                    last_active_at is not None and last_active_at <= force_cutoff
+                )
+
+                if archive_failed and not force_delete:
+                    logger.warning(
+                        f"[executor_job] Skipping executor deletion after archive "
+                        f"failure ns={namespace} name={name}"
+                    )
+                    continue
+                if archive_failed:
+                    logger.warning(
+                        f"[executor_job] Archive failed but executor idle over "
+                        f"{max_inactive_hours}h, force deleting "
+                        f"ns={namespace} name={name}"
+                    )
+
+                logger.info(
+                    f"[executor_job] Scheduled deleting executor "
+                    f"ns={namespace} name={name}"
+                )
+                try:
+                    await executor_kinds_service.delete_executor_task_async(
+                        name, namespace
+                    )
+                except HTTPException as delete_error:
+                    if not self._is_missing_executor_error(delete_error):
+                        raise
+
+                    logger.info(
+                        "[executor_job] Executor already missing, marking deleted "
+                        f"ns={namespace} name={name} detail={delete_error.detail}"
+                    )
+                await self._mark_executor_deleted(group["subtask_ids"])
+                await db.commit()
+                deleted_count += 1
             except Exception as e:
                 logger.warning(
-                    f"[executor_job] Failed to scheduled delete executor task "
-                    f"task_id={task_id}: {e}"
+                    f"[executor_job] Failed to scheduled delete executor "
+                    f"ns={namespace} name={name}: {e}"
                 )
 
         return deleted_count
