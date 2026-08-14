@@ -875,6 +875,31 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      try {
+        const prepared = await executorClient.runtime.prepareRuntimeModel({
+          deviceId: optimisticDeviceId,
+          modelId: executionModel.modelId,
+        })
+        if (!prepared) {
+          reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
+          return false
+        }
+        const supervisorModelId = options?.initialSupervisor?.modelSelection?.modelName
+        if (supervisorModelId) {
+          const supervisorPrepared = await executorClient.runtime.prepareRuntimeModel({
+            deviceId: optimisticDeviceId,
+            modelId: supervisorModelId,
+          })
+          if (!supervisorPrepared) {
+            reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
+            return false
+          }
+        }
+      } catch (error) {
+        reportError(runtimeSendError(error, '发送失败'), options)
+        return false
+      }
+
       let preparedAttachments: RuntimeAttachmentTransport
       try {
         preparedAttachments = await prepareRuntimeAttachmentsForDevice(

@@ -548,6 +548,13 @@ function emitResponseBlockUpdated(
   base: ReturnType<typeof eventBase>,
   data: Record<string, unknown>
 ): void {
+  const block = data.block
+  if (typeof block === 'object' && block !== null && !Array.isArray(block)) {
+    handlers.onBlockCreated?.({
+      ...base,
+      block: block as ChatBlock,
+    })
+  }
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
   const renderPayload = updates.renderPayload ?? updates.render_payload

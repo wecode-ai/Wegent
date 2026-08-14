@@ -24,6 +24,8 @@ from .base import VideoJobResult, VideoJobStatus, VideoProvider
 logger = logging.getLogger(__name__)
 
 _CREDENTIAL_QUERY_KEYS = {
+    "access-token",
+    "api-key",
     "ossaccesskeyid",
     "signature",
     "security-token",
@@ -31,6 +33,22 @@ _CREDENTIAL_QUERY_KEYS = {
     "x-oss-credential",
     "x-oss-security-token",
 }
+_CREDENTIAL_QUERY_KEY_SUFFIXES = (
+    "credential",
+    "securitytoken",
+    "signature",
+)
+
+
+def _is_credential_query_key(key: str) -> bool:
+    """Return whether a query parameter name represents URL credentials."""
+    normalized = key.strip().lower().replace("_", "-")
+    compact = normalized.replace("-", "")
+    return (
+        normalized in _CREDENTIAL_QUERY_KEYS
+        or compact.endswith(_CREDENTIAL_QUERY_KEY_SUFFIXES)
+        or ("access" in compact and "key" in compact)
+    )
 
 
 def _resolve_capability_value(
@@ -86,9 +104,7 @@ def _media_url_diagnostics(item: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(url, str):
         return {}
     query_keys = [key for key, _ in parse_qsl(urlsplit(url).query)]
-    credential_keys = [
-        key for key in query_keys if key.lower() in _CREDENTIAL_QUERY_KEYS
-    ]
+    credential_keys = [key for key in query_keys if _is_credential_query_key(key)]
     return {
         "has_query": bool(query_keys),
         "query_keys": query_keys,
@@ -130,13 +146,26 @@ def _content_item_for_log(item: dict[str, Any]) -> dict[str, Any]:
         logged["role"] = item["role"]
     if item_type == "text":
         logged["text"] = item.get("text")
-    elif item_type in {"video_media_id", "audio_media_id"}:
-        logged[item_type] = item.get(item_type)
     elif media_url := _media_url_for_log(item):
         media_key = str(item_type)
         logged[media_key] = {"url": media_url}
         logged.update(_media_url_diagnostics(item))
+    elif isinstance(item_type, str) and item_type in item:
+        logged[item_type] = item[item_type]
     return logged
+
+
+def _response_value_for_log(value: Any) -> Any:
+    """Redact query strings from URLs in provider responses."""
+    if isinstance(value, dict):
+        return {key: _response_value_for_log(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_response_value_for_log(item) for item in value]
+    if isinstance(value, str):
+        parsed = urlsplit(value)
+        if parsed.scheme and parsed.netloc and parsed.query:
+            return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?<redacted>"
+    return value
 
 
 class SeedanceProvider(VideoProvider):
@@ -345,7 +374,7 @@ class SeedanceProvider(VideoProvider):
 
             logger.info(
                 f"[Seedance] Task response: job_id={job_id}, "
-                f"status={data.get('status')}, data={data}"
+                f"status={data.get('status')}, data={_response_value_for_log(data)}"
             )
             return data
 

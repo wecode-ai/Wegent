@@ -456,6 +456,57 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('restores a missing block from a block update snapshot before applying updates', () => {
+    const calls: string[] = []
+    const onBlockCreated = vi.fn(() => calls.push('created'))
+    const onBlockUpdated = vi.fn(() => calls.push('updated'))
+
+    emitResponseApiEvent(
+      { onBlockCreated, onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'call-1',
+          block: {
+            id: 'call-1',
+            type: 'tool',
+            tool_name: 'generic_mcp',
+            tool_input: { query: 'verification' },
+            tool_output: { title: 'Tool detail verification' },
+            status: 'done',
+          },
+          updates: {
+            status: 'done',
+            tool_output: { title: 'Tool detail verification' },
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockCreated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      block: expect.objectContaining({
+        id: 'call-1',
+        status: 'done',
+        tool_output: { title: 'Tool detail verification' },
+      }),
+    })
+    expect(onBlockUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blockId: 'call-1',
+        status: 'done',
+        toolOutput: { title: 'Tool detail verification' },
+      })
+    )
+    expect(calls).toEqual(['created', 'updated'])
+  })
+
   test('emits tool output delta block updates', () => {
     const onBlockUpdated = vi.fn()
 

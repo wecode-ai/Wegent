@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AudioLines,
@@ -26,6 +26,8 @@ import {
   formatFileSize,
   getFileIcon,
   downloadAttachment,
+  createAttachmentDownloadUrl,
+  getAttachmentDownloadUrl,
   isImageExtension,
   isAudioExtension,
   isHtmlExtension,
@@ -207,6 +209,9 @@ export default function AttachmentPreview({
   const [showPreviewDialog, setShowPreviewDialog] = useState(false)
   const [showVideoDialog, setShowVideoDialog] = useState(false)
   const [isAudioPlaying, setIsAudioPlaying] = useState(false)
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
+  const [mediaLoading, setMediaLoading] = useState(false)
+  const [mediaError, setMediaError] = useState(false)
   const videoPreviewRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
 
@@ -240,12 +245,40 @@ export default function AttachmentPreview({
   const isVideo = isVideoExtension(attachment.file_extension)
   const isAudio = isAudioExtension(attachment.file_extension)
 
-  // Use authenticated image fetching
+  // Images use a Blob URL; video and audio use a tokenized URL so browsers can
+  // request byte ranges without downloading the complete file first.
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAttachmentImage(attachment.id, isImage || isVideo || isAudio, shareToken)
+  } = useAttachmentImage(attachment.id, isImage, shareToken)
+
+  useEffect(() => {
+    if (!isVideo && !isAudio) return
+
+    let active = true
+    setMediaLoading(true)
+    setMediaError(false)
+
+    const resolveUrl = async () => {
+      try {
+        const url = shareToken
+          ? getAttachmentDownloadUrl(attachment.id, shareToken)
+          : await createAttachmentDownloadUrl(attachment.id)
+        if (active) setMediaUrl(url)
+      } catch (error) {
+        console.error('Failed to resolve attachment media URL:', error)
+        if (active) setMediaError(true)
+      } finally {
+        if (active) setMediaLoading(false)
+      }
+    }
+
+    void resolveUrl()
+    return () => {
+      active = false
+    }
+  }, [attachment.id, isAudio, isVideo, shareToken])
 
   const lightbox =
     showLightbox && typeof document !== 'undefined'
@@ -343,9 +376,9 @@ export default function AttachmentPreview({
     }
   }
 
-  // Video files are stored by media ID. Playback URLs must be resolved separately.
+  // Protected media is loaded through an authenticated attachment URL.
   if (isVideo) {
-    if (imageLoading) {
+    if (mediaLoading) {
       return (
         <div className="flex h-16 w-16 items-center justify-center rounded-md border border-border bg-black">
           <Loader2 className="h-4 w-4 animate-spin text-white/70" />
@@ -358,7 +391,7 @@ export default function AttachmentPreview({
         <button
           type="button"
           data-testid={`sent-video-attachment-${attachment.id}`}
-          onClick={() => imageUrl && setShowVideoDialog(true)}
+          onClick={() => mediaUrl && setShowVideoDialog(true)}
           onMouseEnter={() => {
             void videoPreviewRef.current?.play().catch(() => undefined)
           }}
@@ -368,10 +401,10 @@ export default function AttachmentPreview({
           className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-black text-white transition-transform hover:z-10 hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           title={attachment.filename}
         >
-          {imageUrl && !imageError ? (
+          {mediaUrl && !mediaError ? (
             <video
               ref={videoPreviewRef}
-              src={imageUrl}
+              src={mediaUrl}
               muted
               playsInline
               preload="metadata"
@@ -397,10 +430,10 @@ export default function AttachmentPreview({
           <DialogContent className="w-[calc(100vw-32px)] max-w-4xl overflow-hidden border-0 bg-black p-0">
             <DialogTitle className="sr-only">{attachment.filename}</DialogTitle>
             <DialogDescription className="sr-only">{attachment.filename}</DialogDescription>
-            {imageUrl && (
+            {mediaUrl && (
               <video
                 data-testid={`sent-video-dialog-${attachment.id}`}
-                src={imageUrl}
+                src={mediaUrl}
                 controls
                 autoPlay
                 playsInline
@@ -435,7 +468,7 @@ export default function AttachmentPreview({
       >
         <audio
           ref={audioRef}
-          src={imageUrl ?? undefined}
+          src={mediaUrl ?? undefined}
           preload="metadata"
           onEnded={() => setIsAudioPlaying(false)}
         />
@@ -444,11 +477,11 @@ export default function AttachmentPreview({
           variant="ghost"
           size="icon"
           onClick={toggleAudio}
-          disabled={!imageUrl || imageLoading || imageError}
+          disabled={!mediaUrl || mediaLoading || mediaError}
           className="h-8 w-8 shrink-0 text-primary"
           title={isAudioPlaying ? t('actions.pause') : t('actions.play')}
         >
-          {imageLoading ? (
+          {mediaLoading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : isAudioPlaying ? (
             <Pause className="h-4 w-4 fill-current" />

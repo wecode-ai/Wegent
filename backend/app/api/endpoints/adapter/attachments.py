@@ -1311,6 +1311,7 @@ async def create_public_share_link(
 @router.get("/download/shared")
 async def public_download_attachment(
     token: str = Query(..., description="Public share token"),
+    range_header: Optional[str] = Header(None, alias="Range"),
     db: Session = Depends(get_db),
 ):
     """
@@ -1338,7 +1339,10 @@ async def public_download_attachment(
     if context is None or context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    external_response = await _stream_external_attachment(context)
+    external_response = await _stream_external_attachment(
+        context,
+        range_header=range_header,
+    )
     if external_response is not None:
         return external_response
 
