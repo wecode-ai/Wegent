@@ -2301,6 +2301,15 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       phase = 'edit-last-user-message'
       await verifyLastUserMessageEdit({ composerSelector, control })
+      await ensureTaskRowVisible(control, secondTaskRowTestId)
+      await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await waitForWorkbenchTask(
+        control,
+        secondTaskRowTestId.replace('runtime-local-task-row-', ''),
+        'The edit-message scenario did not restore the previous conversation'
+      )
 
       phase = 'task-draft-isolation'
       await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
