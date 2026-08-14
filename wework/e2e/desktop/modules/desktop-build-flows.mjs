@@ -509,7 +509,14 @@ async function verifyCloudVisionFlows(control, composerSelector) {
 }
 
 async function verifyFailedCloudConnectionCanDisconnect(control) {
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '云端工作',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="settings-button"]')
+  await control.command('waitFor', '[data-testid="logout-menu-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="logout-menu-button"]')
   await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
     text: '连接云端',
