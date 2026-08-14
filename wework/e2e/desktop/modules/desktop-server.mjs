@@ -130,6 +130,10 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+  MESSAGE_EDIT_ORIGINAL_PROMPT,
+  MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+  MESSAGE_EDIT_UPDATED_PROMPT,
   MODEL_API_KEY,
   NODE_REPL_TOOL_BLOCK_ID,
   NODE_REPL_TOOL_SEARCH_ID,
@@ -589,6 +593,7 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
+        'message_edit',
         'file_panel_anchor',
         'fresh_chat',
         'attachment_only',
@@ -2750,6 +2755,41 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'message_edit') {
+      this.recordScenarioRequest('message_edit', modelRequest)
+      const latestInput = latestModelInputText(body)
+      const requestNumber = this.scenarioRequests.get('message_edit').length
+      if (requestNumber === 1) {
+        assert.ok(
+          latestInput.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+          'The message-edit setup request lost its original prompt'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 2, `Unexpected message-edit request ${requestNumber}`)
+      assert.ok(
+        latestInput.includes(MESSAGE_EDIT_UPDATED_PROMPT),
+        'Editing the last user message resent stale content instead of the updated prompt'
+      )
+      assert.equal(
+        latestInput.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+        false,
+        'The edited turn retained the original prompt in the latest model input'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MESSAGE_EDIT_UPDATED_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

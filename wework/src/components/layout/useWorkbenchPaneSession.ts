@@ -1263,6 +1263,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         address: currentRuntimeTask,
         message: submittedContent,
         messageId: message.id,
+        clientUserMessageId: editedMessage.id,
+        retrySourceTurnId: message.turnId ?? message.subtaskId,
         ...getRuntimeModelFields(),
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),

@@ -26,6 +26,7 @@ import {
   verifyBackgroundTaskPlanRestoration,
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
+  verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
   verifyStandaloneViewImageTask,
@@ -155,6 +156,7 @@ import {
   LOCAL_VISION_SIDECAR_CASE,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
+  MESSAGE_EDIT_ONLY,
   MESSAGE_RESTORATION_ONLY,
   MIXED_TOOL_TURNS_ONLY,
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
@@ -1043,6 +1045,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
       console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (MESSAGE_EDIT_ONLY) {
+      phase = 'edit-last-user-message'
+      await verifyLastUserMessageEdit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop message-edit E2E passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -2286,6 +2298,9 @@ last_updated = "2026-07-30T00:00:00Z"`
         composerSelector,
         control,
       })
+
+      phase = 'edit-last-user-message'
+      await verifyLastUserMessageEdit({ composerSelector, control })
 
       phase = 'task-draft-isolation'
       await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
