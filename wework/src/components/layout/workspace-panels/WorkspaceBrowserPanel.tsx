@@ -1795,7 +1795,7 @@ export function WorkspaceBrowserTabPanel({
       )}
     >
       {annotationMode && !internalDesktopPage ? (
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-sm text-text-primary">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-browser-annotation-border)] bg-[var(--color-browser-annotation-surface)] px-2 text-sm text-text-primary">
           <BrowserToolbarButton
             testId="workspace-browser-annotation-close-button"
             label={t('workbench.browser_annotation_close')}
@@ -1856,7 +1856,7 @@ export function WorkspaceBrowserTabPanel({
           {annotations.length > 0 ? (
             <span
               data-testid="workspace-browser-annotation-count"
-              className="rounded-md bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700"
+              className="rounded-md bg-[var(--color-browser-annotation-chip)] px-2 py-1 text-xs font-medium text-[rgb(var(--color-focus))]"
             >
               {t('workbench.browser_annotation_count', { count: annotations.length })}
             </span>

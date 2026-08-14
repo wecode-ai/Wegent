@@ -1739,6 +1739,14 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => {
       expect(button).toBeEnabled()
     })
+    expect(
+      document.querySelector(
+        '[data-testid="workspace-browser-panel"] [class*="browser-annotation-surface"]'
+      )
+    ).not.toBeNull()
+    expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveClass(
+      'bg-[var(--color-browser-annotation-chip)]'
+    )
     expect(screen.getByText('正在批注 · example.com')).toBeInTheDocument()
 
     fireEvent.pointerDown(button)
