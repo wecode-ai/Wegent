@@ -30,12 +30,12 @@ async def test_device_service_lists_remote_devices(test_db, test_user):
             "isDefault": False,
             "remoteConfig": {
                 "provider": "docker",
-                "image": "registry.api.weibo.com/ci/wegent-device:1.8.5",
+                "image": "ghcr.io/wecode-ai/wegent-device:latest",
                 "deviceId": "remote-device-1",
                 "deviceName": "Docker Remote Device",
                 "createdAt": datetime.now().isoformat(),
             },
-            "runtimeTransferHost": "10.20.30.40",
+            "runtimeTransferHost": "192.0.2.40",
         },
         "status": {"state": "Available"},
     }
@@ -57,4 +57,4 @@ async def test_device_service_lists_remote_devices(test_db, test_user):
     assert [device["device_id"] for device in devices] == ["remote-device-1"]
     assert devices[0]["device_type"] == DeviceType.REMOTE.value
     assert devices[0]["remote_config"]["provider"] == "docker"
-    assert devices[0]["runtime_transfer_host"] == "10.20.30.40"
+    assert devices[0]["runtime_transfer_host"] == "192.0.2.40"
