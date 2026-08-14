@@ -183,6 +183,7 @@ function mockCodexAppServerInvoke(
       pluginDisplayNames?: string[]
     }>
     deviceId?: string
+    backendConnected?: boolean | (() => boolean)
     cloudLinks?: Array<{
       localPluginName: string
       cloudPluginId: number
@@ -236,6 +237,13 @@ function mockCodexAppServerInvoke(
     const request = args as {
       method?: string
       params?: { method?: string; params?: Record<string, unknown> }
+    }
+    if (request.method === 'executor.backend.status') {
+      const connected =
+        typeof options.backendConnected === 'function'
+          ? options.backendConnected()
+          : options.backendConnected !== false
+      return Promise.resolve({ configured: true, connected })
     }
     if (request.method !== 'codex.app_server_request') return Promise.resolve(undefined)
 
@@ -1078,7 +1086,7 @@ describe('PluginsWorkspace', () => {
     })
     vi.mocked(isTauri).mockReturnValue(true)
     setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
-    mockCodexAppServerInvoke()
+    mockCodexAppServerInvoke({ backendConnected: false })
 
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
@@ -1103,6 +1111,37 @@ describe('PluginsWorkspace', () => {
 
     expect(window.location.pathname).toBe('/settings/connections')
     expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+  })
+
+  test('rechecks the device connection before confirming a cloud install', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let backendConnected = true
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      backendConnected: () => backendConnected,
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    expect(await screen.findByTestId('install-plugin-dialog')).toBeInTheDocument()
+
+    backendConnected = false
+    await userEvent.click(screen.getByTestId('install-plugin-dialog-confirm'))
+
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+      '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
+    )
+    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+    ).toBe(false)
   })
 
   test('renders a Codex-style plugin marketplace page', async () => {

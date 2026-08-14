@@ -271,6 +271,7 @@ pub trait RuntimeWorkHandler: Send + Sync {
 
 pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,6 +440,16 @@ impl AppIpcServer {
                 ));
             };
             return handler.configure_backend(params).await;
+        }
+
+        if method == "executor.backend.status" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.backend_status().await;
         }
 
         if method == "device.execute_command" {

@@ -10,7 +10,10 @@ import {
   type LocalExecutorCloudConnection,
 } from './localExecutorCloudConnection'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
-import { setLocalExecutorCloudConnectionStatus } from './localExecutorCloudConnectionStatus'
+import {
+  refreshLocalExecutorCloudConnectionStatus,
+  setLocalExecutorCloudConnectionStatus,
+} from './localExecutorCloudConnectionStatus'
 
 const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
 
@@ -57,6 +60,7 @@ export function LocalExecutorCloudBridge({
     const connected = Boolean(backendUrl && socketBaseUrl && authToken)
     let cancelled = false
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    let statusTimer: ReturnType<typeof setTimeout> | null = null
     const isCurrentConnectionAttempt = () =>
       !cancelled && connectionGenerationRef.current === generation
 
@@ -73,6 +77,13 @@ export function LocalExecutorCloudBridge({
       if (!isCurrentConnectionAttempt() || !connected) return
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => void applyConnection(), 30_000)
+    }
+
+    const refreshConnectionStatus = async () => {
+      if (!isCurrentConnectionAttempt() || !connected || !apiBaseUrl) return
+      await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
+      if (!isCurrentConnectionAttempt()) return
+      statusTimer = setTimeout(() => void refreshConnectionStatus(), 1_000)
     }
 
     const applyConnection = async () => {
@@ -95,10 +106,12 @@ export function LocalExecutorCloudBridge({
         ) {
           scheduleRefresh(result.runtimeAuthTokenExpiresIn)
         }
-        setLocalExecutorCloudConnectionStatus({
-          apiBaseUrl: result.connected ? apiBaseUrl || '' : '',
-          connected: result.connected,
-        })
+        if (result.connected && apiBaseUrl) {
+          if (statusTimer) clearTimeout(statusTimer)
+          void refreshConnectionStatus()
+        } else {
+          setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
+        }
       } catch (error) {
         if (!isCurrentConnectionAttempt()) return
         setLocalExecutorCloudConnectionStatus({
@@ -126,6 +139,8 @@ export function LocalExecutorCloudBridge({
       cancelled = true
       connectionGenerationRef.current += 1
       if (refreshTimer) clearTimeout(refreshTimer)
+      if (statusTimer) clearTimeout(statusTimer)
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
     }
   }, [apiBaseUrl, configuredBackendUrl, isConnected, socketBaseUrl, token])
 

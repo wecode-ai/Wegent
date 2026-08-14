@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 
 export interface LocalExecutorCloudConnectionStatus {
   apiBaseUrl: string
@@ -33,6 +34,23 @@ function getSnapshot(): LocalExecutorCloudConnectionStatus {
 
 export function useLocalExecutorCloudConnectionStatus(): LocalExecutorCloudConnectionStatus {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+export async function refreshLocalExecutorCloudConnectionStatus(
+  apiBaseUrl: string
+): Promise<boolean> {
+  try {
+    const response = await requestLocalExecutor<{
+      configured?: boolean
+      connected?: boolean
+    }>('executor.backend.status')
+    const connected = response.configured === true && response.connected === true
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected })
+    return connected
+  } catch {
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected: false })
+    return false
+  }
 }
 
 export function resetLocalExecutorCloudConnectionStatus(): void {
