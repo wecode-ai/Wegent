@@ -96,12 +96,7 @@ import type {
   AutomationRunListResponse,
   AutomationSource,
 } from '@/types/automation'
-import type {
-  WorkspaceFileEntry,
-  WorkspaceFileChunkResponse,
-  WorkspaceTextFileResponse,
-  WorkspaceTreeResponse,
-} from '@/types/workspace-files'
+import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
   ensureLocalExecutorStarted,
   requestLocalExecutor,
@@ -109,6 +104,11 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
+import {
+  listLocalWorkspaceEntries,
+  readLocalWorkspaceFileChunk,
+  readLocalWorkspaceTextFile,
+} from '@/tauri/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import {
@@ -380,6 +380,9 @@ interface LocalAppServicesDeps {
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
   user?: User
+  readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
+  readWorkspaceFileChunk?: typeof readLocalWorkspaceFileChunk
+  listWorkspaceEntries?: typeof listLocalWorkspaceEntries
 }
 
 interface CatalogReconciliationTracker {
@@ -1241,67 +1244,10 @@ function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): str
   return `/${normalizedSegments.join('/')}`
 }
 
-function isWorkspacePathWithin(path: string, rootPath: string): boolean {
-  return path === rootPath || path.startsWith(`${rootPath.replace(/\/+$/, '')}/`)
-}
-
-function requireWorkspacePathWithin(path: string, rootPath: string, errorMessage: string) {
-  if (!isWorkspacePathWithin(path, rootPath)) {
-    throw new Error(errorMessage)
-  }
-}
-
 function normalizeModifiedAt(value: unknown, errorMessage: string): string | null {
   if (value === undefined || value === null) return null
   if (typeof value === 'string') return value
   throw new Error(errorMessage)
-}
-
-function normalizeWorkspaceEntry(
-  value: unknown,
-  responseRootPath: string,
-  requestedRootPath: string
-): WorkspaceFileEntry {
-  const record = recordValue(value)
-  if (
-    typeof record.name !== 'string' ||
-    typeof record.path !== 'string' ||
-    typeof record.is_directory !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace tree response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  requireWorkspacePathWithin(path, responseRootPath, 'Invalid workspace tree response')
-  const requestedPath = `${requestedRootPath}${path.slice(responseRootPath.length)}`
-  return {
-    name: record.name,
-    path: requestedPath,
-    isDirectory: record.is_directory,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
-  }
-}
-
-function normalizeWorkspaceTree(output: unknown, requestedPath: string): WorkspaceTreeResponse {
-  const normalizedRequestedPath = normalizeAbsoluteWorkspacePath(
-    requestedPath,
-    'Workspace path must be absolute'
-  )
-  const record = recordValue(output)
-  if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
-    throw new Error('Invalid workspace tree response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  if (path.split('/').pop() !== normalizedRequestedPath.split('/').pop()) {
-    throw new Error('Invalid workspace tree response')
-  }
-  return {
-    path: normalizedRequestedPath,
-    entries: record.entries.map(entry =>
-      normalizeWorkspaceEntry(entry, path, normalizedRequestedPath)
-    ),
-  }
 }
 
 function normalizeWorkspaceTextFile(
@@ -1339,49 +1285,6 @@ function normalizeWorkspaceTextFile(
     truncated: record.truncated,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
-  }
-}
-
-function normalizeWorkspaceFileChunk(
-  output: unknown,
-  requestedFilePath: string,
-  requestedOffset: number
-): WorkspaceFileChunkResponse {
-  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
-    requestedFilePath,
-    'Workspace file path must be absolute'
-  )
-  const record = recordValue(output)
-  if (
-    typeof record.path !== 'string' ||
-    typeof record.name !== 'string' ||
-    typeof record.content_base64 !== 'string' ||
-    typeof record.offset !== 'number' ||
-    typeof record.eof !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace file chunk response')
-  }
-  const responsePath = normalizeAbsoluteWorkspacePath(
-    record.path,
-    'Invalid workspace file chunk response'
-  )
-  const requestedName = normalizedRequestedFilePath.split('/').pop()
-  if (
-    record.name !== requestedName ||
-    responsePath.split('/').pop() !== requestedName ||
-    record.offset !== requestedOffset
-  ) {
-    throw new Error('Invalid workspace file chunk response')
-  }
-  return {
-    path: normalizedRequestedFilePath,
-    name: record.name,
-    contentBase64: record.content_base64,
-    offset: record.offset,
-    eof: record.eof,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace file chunk response'),
   }
 }
 
@@ -3090,6 +2993,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
+  const readWorkspaceTextFile = deps.readWorkspaceTextFile ?? readLocalWorkspaceTextFile
+  const readWorkspaceFileChunk = deps.readWorkspaceFileChunk ?? readLocalWorkspaceFileChunk
+  const listWorkspaceEntries = deps.listWorkspaceEntries ?? listLocalWorkspaceEntries
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
 
@@ -3189,43 +3095,27 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to list skills')
       return commandSkills(response)
     },
-    async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
-      const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_tree',
-        path: normalizedPath,
-        timeout_seconds: 15,
-        max_output_bytes: 1024 * 512,
-      })
-      assertCommandSuccess(response, 'Failed to list workspace files')
-      return normalizeWorkspaceTree(response.stdout, normalizedPath)
+    async listWorkspaceEntries(
+      _deviceId: string,
+      path: string,
+      workspaceRoot = path
+    ): Promise<WorkspaceTreeResponse> {
+      return listWorkspaceEntries(workspaceRoot, path)
     },
     async readWorkspaceTextFile(
-      deviceId: string,
-      filePath: string
+      _deviceId: string,
+      filePath: string,
+      workspaceRoot: string
     ): Promise<WorkspaceTextFileResponse> {
-      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_read_text_file',
-        path: parentPath,
-        args: [fileName],
-        timeout_seconds: 15,
-        max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
-      })
-      assertCommandSuccess(response, 'Failed to read workspace file')
-      return normalizeWorkspaceTextFile(response.stdout, filePath)
+      return readWorkspaceTextFile(workspaceRoot, filePath)
     },
-    async readWorkspaceFileChunk(deviceId: string, filePath: string, offset: number) {
-      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_read_file_chunk',
-        path: parentPath,
-        args: [fileName, String(offset)],
-        timeout_seconds: 30,
-        max_output_bytes: 1024 * 1024 * 2,
-      })
-      assertCommandSuccess(response, 'Failed to read workspace file')
-      return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
+    async readWorkspaceFileChunk(
+      _deviceId: string,
+      filePath: string,
+      offset: number,
+      workspaceRoot: string
+    ) {
+      return readWorkspaceFileChunk(workspaceRoot, filePath, offset)
     },
     async writeWorkspaceTextFile(
       deviceId: string,

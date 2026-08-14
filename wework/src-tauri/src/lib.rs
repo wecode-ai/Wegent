@@ -11,6 +11,7 @@ mod embedded_browser_tls;
 mod feedback;
 mod local_executor;
 mod local_terminal;
+mod local_workspace_files;
 mod local_workspace_openers;
 #[cfg(target_os = "windows")]
 mod opener_store;
@@ -5094,6 +5095,9 @@ pub fn run() {
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
             local_terminal::delete_archived_local_harness_session,
+            local_workspace_files::read_local_workspace_file_chunk,
+            local_workspace_files::read_local_workspace_text_file,
+            local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,

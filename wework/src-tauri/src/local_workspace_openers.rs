@@ -605,8 +605,8 @@ fn launch_windows(app: &tauri::AppHandle, def: &OpenerDef, path: &str) -> Result
             Ok(())
         }
         _ => {
-            let program = detect_windows(def, app)
-                .ok_or_else(|| format!("{} is not installed", def.id))?;
+            let program =
+                detect_windows(def, app).ok_or_else(|| format!("{} is not installed", def.id))?;
             launch_executable(&program, path)
         }
     }
@@ -627,14 +627,7 @@ fn launch_detached_console(path: &str, shell: &str) -> Result<(), String> {
             &format!("Set-Location -LiteralPath '{escaped}'"),
         ]);
     } else {
-        command.args([
-            "/C",
-            "start",
-            "",
-            "cmd",
-            "/K",
-            &format!("cd /d \"{path}\""),
-        ]);
+        command.args(["/C", "start", "", "cmd", "/K", &format!("cd /d \"{path}\"")]);
     }
     crate::process::hide_windows_console(&mut command);
     let _ = command
@@ -649,19 +642,19 @@ fn launch_executable(program: &std::path::Path, path: &str) -> Result<(), String
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    let mut command = if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
-    {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args([
-            "/C",
-            &format!("\"{}\" \"{}\"", program.to_string_lossy(), path),
-        ]);
-        cmd
-    } else {
-        let mut cmd = std::process::Command::new(program);
-        cmd.arg(path);
-        cmd
-    };
+    let mut command =
+        if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
+            let mut cmd = std::process::Command::new("cmd");
+            cmd.args([
+                "/C",
+                &format!("\"{}\" \"{}\"", program.to_string_lossy(), path),
+            ]);
+            cmd
+        } else {
+            let mut cmd = std::process::Command::new(program);
+            cmd.arg(path);
+            cmd
+        };
     crate::process::hide_windows_console(&mut command);
     let _ = command
         .spawn()
@@ -673,12 +666,7 @@ fn launch_executable(program: &std::path::Path, path: &str) -> Result<(), String
 fn launch_linux(def: &OpenerDef, path: &str) -> Result<(), String> {
     if def.id == "terminal" {
         let mut command = std::process::Command::new("x-terminal-emulator");
-        command.args([
-            "-e",
-            "bash",
-            "-c",
-            &format!("cd \"{path}\" && exec $SHELL"),
-        ]);
+        command.args(["-e", "bash", "-c", &format!("cd \"{path}\" && exec $SHELL")]);
         let _ = command
             .spawn()
             .map_err(|error| format!("Failed to launch terminal: {error}"))?;

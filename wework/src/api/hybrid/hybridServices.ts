@@ -684,14 +684,14 @@ export function createHybridWorkbenchServices(
     listSkills(deviceId) {
       return deviceApi(deviceId).listSkills(deviceId)
     },
-    listWorkspaceEntries(deviceId, path) {
-      return deviceApi(deviceId).listWorkspaceEntries(deviceId, path)
+    listWorkspaceEntries(deviceId, path, workspaceRoot) {
+      return deviceApi(deviceId).listWorkspaceEntries(deviceId, path, workspaceRoot)
     },
-    readWorkspaceTextFile(deviceId, filePath) {
-      return deviceApi(deviceId).readWorkspaceTextFile(deviceId, filePath)
+    readWorkspaceTextFile(deviceId, filePath, workspaceRoot) {
+      return deviceApi(deviceId).readWorkspaceTextFile(deviceId, filePath, workspaceRoot)
     },
-    readWorkspaceFileChunk(deviceId, filePath, offset) {
-      return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset)
+    readWorkspaceFileChunk(deviceId, filePath, offset, workspaceRoot) {
+      return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset, workspaceRoot)
     },
     writeWorkspaceTextFile(deviceId, filePath, content, expectedRevision) {
       if (!isLocalDeviceId(deviceId) || !localServices.deviceApi.writeWorkspaceTextFile) {
