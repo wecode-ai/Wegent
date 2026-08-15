@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime
@@ -416,18 +417,29 @@ class ProjectAutomationService:
             .filter(
                 LoopItemExecution.automation_run_id == str(run.id),
                 LoopItemExecution.status.in_(
-                    ["pending_approval", "queued", "claimed", "running"]
+                    [
+                        "pending_approval",
+                        "queued",
+                        "claimed",
+                        "running",
+                        "cancel_requested",
+                    ]
                 ),
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
         if execution is not None:
-            loop_item_execution_service.cancel(
+            execution = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,
                 note="Automation run cancelled by user",
             )
+            if execution.status == "cancel_requested":
+                from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+                await asyncio.to_thread(emit_runtime_cancels, [execution])
+                db.rollback()
             db.refresh(run)
             return self._run_view(run, timezone_name)
 

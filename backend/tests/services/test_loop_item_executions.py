@@ -31,6 +31,7 @@ from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
     TaskContext,
     WeworkRuntimeConfigurationError,
+    execution_display_state,
     loop_item_execution_service,
 )
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -240,7 +241,16 @@ def _make_running_automation_execution(
     activity.runtime_device_id = claimed.runtime_device_id
     activity.runtime_task_id = claimed.runtime_task_id
     db.commit()
-    return claimed, run, activity
+    running = loop_item_execution_service.handle_runtime_event(
+        db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert running is not None and running.status == "running"
+    db.refresh(activity)
+    return running, run, activity
 
 
 def test_stop_execution_rejects_an_execution_from_another_project(
@@ -296,7 +306,7 @@ def test_claim_is_atomic_and_serial_per_robot(
     )
     assert claimed is not None
     assert claimed.id == first.id
-    assert claimed.status == "running"
+    assert claimed.status == "claimed"
     assert claimed.lease_expires_at is not None
 
     # A robot only runs one task at a time, so the second stays queued.
@@ -418,10 +428,10 @@ def test_heartbeat_and_complete_release_slot(test_db: Session, test_user: User) 
         test_db,
         execution_id=claimed.id,
         runtime_device_id="cloud-device-1",
-        runtime_task_id="codex-robot-1",
+        runtime_task_id=claimed.runtime_task_id,
     )
     assert refreshed is not None
-    assert refreshed.runtime_task_id == "codex-robot-1"
+    assert refreshed.runtime_task_id == claimed.runtime_task_id
     assert refreshed.heartbeat_at is not None
 
     done = loop_item_execution_service.complete(test_db, execution_id=claimed.id)
@@ -463,16 +473,16 @@ def test_runtime_events_renew_the_lease(test_db: Session, test_user: User) -> No
         test_db,
         execution_id=claimed.id,
         runtime_device_id="cloud-device-1",
-        runtime_task_id="codex-robot-1",
+        runtime_task_id=claimed.runtime_task_id,
     )
     original_lease = claimed.lease_expires_at
 
     refreshed = loop_item_execution_service.handle_runtime_event(
         test_db,
         device_id="cloud-device-1",
-        runtime_task_id="codex-robot-1",
+        runtime_task_id=claimed.runtime_task_id,
         event_name="response.output_text.delta",
-        payload={"data": {"delta": "tick"}},
+        payload={"eventSeq": 1, "data": {"delta": "tick"}},
     )
     assert refreshed is not None
     assert refreshed.lease_expires_at > original_lease
@@ -513,15 +523,15 @@ def test_runtime_completion_finishes_project_automation(
         test_db,
         execution_id=execution.id,
         runtime_device_id="cloud-device-1",
-        runtime_task_id="codex-robot-completed",
+        runtime_task_id=claimed.runtime_task_id,
     )
 
     completed = loop_item_execution_service.handle_runtime_event(
         test_db,
         device_id="cloud-device-1",
-        runtime_task_id="codex-robot-completed",
+        runtime_task_id=claimed.runtime_task_id,
         event_name="response.completed",
-        payload={"data": {}},
+        payload={"eventSeq": 1, "data": {}},
     )
 
     assert completed is not None
@@ -628,15 +638,21 @@ def test_cancel_wins_concurrent_fail_across_independent_sessions(
                 execution_id=execution_id,
                 note="Stopped by a project developer",
             )
+            assert cancelled.status == "cancel_requested"
+            cancelled = loop_item_execution_service.confirm_runtime_cancelled(
+                cancel_session,
+                execution_id=execution_id,
+                note="Stopped by a project developer",
+            )
             cancel_session.rollback()
             failed = loop_item_execution_service.fail(
                 fail_session,
                 execution_id=execution_id,
                 error="Late runtime failure",
             )
-        assert cancelled.status == "cancelled"
+        assert cancelled is not None and cancelled.status == "cancelled"
         assert failed is not None and failed.status == "cancelled"
-        push_message.assert_called_once()
+        assert push_message.call_count == 2
     finally:
         fail_session.close()
         cancel_session.close()
@@ -669,7 +685,7 @@ def test_runtime_cancelled_is_terminal_and_never_requeued(
             device_id=execution.runtime_device_id,
             runtime_task_id=execution.runtime_task_id,
             event_name="response.incomplete",
-            payload={"data": {"status": "CANCELLED"}},
+            payload={"eventSeq": 2, "data": {"status": "CANCELLED"}},
         )
 
     assert cancelled is not None
@@ -681,6 +697,145 @@ def test_runtime_cancelled_is_terminal_and_never_requeued(
     assert activity.status == "cancelled"
     assert activity.metadata_json["run_status"] == "cancelled"
     push_message.assert_called_once()
+
+
+def test_delivered_cancel_waits_for_runtime_stop_confirmation(
+    test_db: Session, test_user: User
+) -> None:
+    execution, _, _ = _make_running_automation_execution(test_db, test_user)
+
+    requested = loop_item_execution_service.cancel(
+        test_db,
+        execution_id=execution.id,
+        note="User requested stop",
+    )
+    assert requested.status == "cancel_requested"
+    assert loop_datetime_value_is_unset(requested.completed_at)
+
+    confirmed = loop_item_execution_service.confirm_runtime_cancelled(
+        test_db,
+        execution_id=execution.id,
+        note="Runtime confirmed stop",
+    )
+    assert confirmed is not None
+    assert confirmed.status == "cancelled"
+    assert confirmed.observed_state == "cancelled"
+    assert confirmed.termination_reason == "runtime_cancel_acknowledged"
+
+
+def test_runtime_retry_uses_a_new_execution_attempt(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    original = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    running = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert running is not None and running.status == "running"
+
+    retry = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.failed",
+        payload={"eventSeq": 2, "error": "model crashed", "data": {}},
+    )
+
+    assert retry is not None
+    assert retry.id != original.id
+    assert retry.status == "queued"
+    assert retry.attempt_no == 2
+    assert retry.previous_execution_id == original.id
+    assert retry.runtime_task_id != claimed.runtime_task_id
+    test_db.refresh(original)
+    assert original.status == "failed"
+    assert original.last_event_seq == 2
+
+
+def test_reordered_runtime_event_cannot_overwrite_newer_truth(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    _make_execution(test_db, _make_item(test_db, project, test_user), bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    newest = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.output_text.delta",
+        payload={"eventSeq": 2, "data": {"delta": "new"}},
+    )
+    assert newest is not None and newest.status == "running"
+
+    stale = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.completed",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert stale is None
+    test_db.refresh(claimed)
+    assert claimed.status == "running"
+    assert claimed.last_event_seq == 2
+
+
+def test_later_runtime_event_cannot_overwrite_terminal_truth(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    _make_execution(test_db, _make_item(test_db, project, test_user), bot, test_user)
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )
+    assert claimed is not None
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.completed",
+        payload={"eventSeq": 1, "data": {"value": "durable winner"}},
+    )
+    assert completed is not None and completed.status == "completed"
+
+    conflicting = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.failed",
+        payload={"eventSeq": 2, "error": "late failure", "data": {}},
+    )
+
+    assert conflicting is None
+    test_db.refresh(claimed)
+    assert claimed.status == "completed"
+    assert claimed.observed_state == "succeeded"
+    assert claimed.last_event_seq == 1
 
 
 def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
@@ -729,15 +884,15 @@ def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
         test_db,
         execution_id=child_execution.id,
         runtime_device_id="cloud-device-1",
-        runtime_task_id="codex-robot-child",
+        runtime_task_id=claimed.runtime_task_id,
     )
 
     completed = loop_item_execution_service.handle_runtime_event(
         test_db,
         device_id="cloud-device-1",
-        runtime_task_id="codex-robot-child",
+        runtime_task_id=claimed.runtime_task_id,
         event_name="response.completed",
-        payload={"data": {}},
+        payload={"eventSeq": 1, "data": {}},
     )
 
     assert completed is not None
@@ -766,7 +921,7 @@ def test_complete_truncates_long_execution_note(
     assert completed.execution_note == "验" * 500
 
 
-def test_claimed_lease_expiry_recovery_requeues_then_fails(
+def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -787,17 +942,18 @@ def test_claimed_lease_expiry_recovery_requeues_then_fails(
     claimed.lease_expires_at = expired
     test_db.commit()
 
-    requeued, failed = loop_item_execution_service.recovery_scan(
+    requeued, unknown = loop_item_execution_service.recovery_scan(
         test_db,
         now=claimed.lease_expires_at + timedelta(seconds=120),
         lease_seconds=60,
     )
-    assert (requeued, failed) == (1, 0)
+    assert (requeued, unknown) == (1, 0)
     test_db.refresh(claimed)
     assert claimed.status == "queued"
-    assert claimed.retry_attempt == 1
+    assert claimed.retry_attempt == 0
 
-    # Second claim, expire again: retry budget is exhausted -> failed.
+    # A second abandoned claim is equally safe to release because Start was
+    # never delivered; infrastructure availability does not consume run retry.
     re_claimed_rows = loop_item_execution_service.claim_batch_for_device(
         test_db,
         execution_device_id="cloud-device-1",
@@ -808,15 +964,15 @@ def test_claimed_lease_expiry_recovery_requeues_then_fails(
     re_claimed = re_claimed_rows[0]
     re_claimed.lease_expires_at = re_claimed.lease_expires_at - timedelta(seconds=120)
     test_db.commit()
-    requeued, failed = loop_item_execution_service.recovery_scan(
+    requeued, unknown = loop_item_execution_service.recovery_scan(
         test_db,
         now=re_claimed.lease_expires_at + timedelta(seconds=120),
         lease_seconds=60,
     )
-    assert (requeued, failed) == (0, 1)
+    assert (requeued, unknown) == (1, 0)
     test_db.refresh(re_claimed)
-    assert re_claimed.status == "failed"
-    assert "lease" in re_claimed.error_message
+    assert re_claimed.status == "queued"
+    assert re_claimed.retry_attempt == 0
 
 
 def test_recovery_scan_repairs_terminal_automation_projection(
@@ -1119,7 +1275,7 @@ async def test_retry_processor_uses_only_executions_from_the_current_attempt(
     )
 
 
-def test_stall_scan_fails_runs_without_ai_output(
+def test_stall_scan_requests_cancel_without_faking_terminal_state(
     test_db: Session, test_user: User
 ) -> None:
     """A run that streams events but never produces assistant text for a long
@@ -1146,13 +1302,15 @@ def test_stall_scan_fails_runs_without_ai_output(
         environment="cloud",
     )
     assert claimed is not None
-    loop_item_execution_service.heartbeat(
+    running = loop_item_execution_service.handle_runtime_event(
         test_db,
-        execution_id=claimed.id,
-        runtime_device_id="cloud-device-1",
-        runtime_task_id="codex-robot-stall",
+        device_id="cloud-device-1",
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
     )
-    claimed.started_at = claimed.started_at - timedelta(minutes=30)
+    assert running is not None
+    running.started_at = running.started_at - timedelta(minutes=30)
     test_db.commit()
     test_db.add(
         ProjectChatMessage(
@@ -1167,7 +1325,7 @@ def test_stall_scan_fails_runs_without_ai_output(
             content="",
             agent_id=bot.id,
             runtime_device_id="cloud-device-1",
-            runtime_task_id="codex-robot-stall",
+            runtime_task_id=claimed.runtime_task_id,
             status="streaming",
         )
     )
@@ -1178,8 +1336,8 @@ def test_stall_scan_fails_runs_without_ai_output(
     )
     assert [run.id for run in stalled] == [claimed.id]
     test_db.refresh(claimed)
-    assert claimed.status == "failed"
-    assert "未产生任何输出" in claimed.error_message
+    assert claimed.status == "cancel_requested"
+    assert "未产生任何输出" in claimed.execution_note
 
 
 def test_stall_scan_keeps_runs_with_text_output(
@@ -1204,13 +1362,15 @@ def test_stall_scan_keeps_runs_with_text_output(
         environment="cloud",
     )
     assert claimed is not None
-    loop_item_execution_service.heartbeat(
+    running = loop_item_execution_service.handle_runtime_event(
         test_db,
-        execution_id=claimed.id,
-        runtime_device_id="cloud-device-1",
-        runtime_task_id="codex-robot-text",
+        device_id="cloud-device-1",
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
     )
-    claimed.started_at = claimed.started_at - timedelta(minutes=30)
+    assert running is not None
+    running.started_at = running.started_at - timedelta(minutes=30)
     test_db.commit()
     test_db.add(
         ProjectChatMessage(
@@ -1225,7 +1385,7 @@ def test_stall_scan_keeps_runs_with_text_output(
             content="real progress text",
             agent_id=bot.id,
             runtime_device_id="cloud-device-1",
-            runtime_task_id="codex-robot-text",
+            runtime_task_id=claimed.runtime_task_id,
             status="streaming",
         )
     )
@@ -1442,7 +1602,8 @@ def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
         .all()
     )
     assert len(messages) == 1
-    assert messages[0].status == "streaming"
+    assert messages[0].status == "pending"
+    assert messages[0].metadata_json["run_status"] == "starting"
     assert messages[0].runtime_task_id == f"codex-queue-{claimed.id}"
 
 
@@ -1516,7 +1677,7 @@ def test_runtime_event_opens_activity_when_start_report_races_ahead(
         device_id="cloud-device-1",
         runtime_task_id=claimed.runtime_task_id,
         event_name="response.output_text.delta",
-        payload={"data": {"delta": "hello from the executor"}},
+        payload={"eventSeq": 1, "data": {"delta": "hello from the executor"}},
     )
     assert result is not None
     message, mode = result
@@ -1782,7 +1943,9 @@ def test_claim_batch_respects_serial_per_robot(
     assert second.status == "queued"
 
 
-def test_mark_running_advances_claimed_only(test_db: Session, test_user: User) -> None:
+def test_mark_start_requested_preserves_claimed_state(
+    test_db: Session, test_user: User
+) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
     first = _make_execution(
@@ -1799,16 +1962,216 @@ def test_mark_running_advances_claimed_only(test_db: Session, test_user: User) -
         batch_size=2,
     )
     assert len(claimed) == 1
-    # second is still queued; mark_running must not touch it.
-    advanced = loop_item_execution_service.mark_running(
+    # second is still queued; recording Start delivery must not touch it or
+    # claim the Runtime has begun executing.
+    advanced = loop_item_execution_service.mark_start_requested(
         test_db,
         execution_ids=[claimed[0].id, second.id],
     )
     assert advanced == 1
     test_db.refresh(claimed[0])
     test_db.refresh(second)
-    assert claimed[0].status == "running"
+    assert claimed[0].status == "claimed"
+    assert not loop_datetime_value_is_unset(claimed[0].start_requested_at)
     assert second.status == "queued"
+
+
+def test_runtime_start_fence_requires_exact_claim_identity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )[0]
+
+    assert (
+        loop_item_execution_service.request_runtime_start(
+            test_db,
+            execution_id=claimed.id,
+            runtime_device_id="foreign-device",
+            runtime_task_id=claimed.runtime_task_id,
+        )
+        is None
+    )
+    assert (
+        loop_item_execution_service.request_runtime_start(
+            test_db,
+            execution_id=claimed.id,
+            runtime_device_id=claimed.runtime_device_id,
+            runtime_task_id="codex-queue-foreign",
+        )
+        is None
+    )
+    test_db.refresh(execution)
+    assert loop_datetime_value_is_unset(execution.start_requested_at)
+
+    fenced = loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    assert fenced is not None
+    assert fenced.status == "claimed"
+    assert fenced.observed_state == "unconfirmed"
+    assert not loop_datetime_value_is_unset(fenced.start_requested_at)
+
+
+def test_unknown_runtime_dispatch_is_not_failed_or_requeued(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+
+    unknown = loop_item_execution_service.report_runtime_dispatch_unknown(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        error="Runtime acceptance response was lost",
+    )
+    assert unknown is not None
+    assert unknown.status == "claimed"
+    assert unknown.sync_state == "stale"
+    assert execution_display_state(unknown) == "unknown"
+    assert unknown.completed_at is None or loop_datetime_value_is_unset(
+        unknown.completed_at
+    )
+
+    # A delivered attempt cannot be converted into a preflight failure.
+    unchanged = loop_item_execution_service.fail_runtime_preflight(
+        test_db,
+        execution_id=claimed.id,
+        error="late local error",
+    )
+    assert unchanged is not None
+    assert unchanged.status == "claimed"
+    assert unchanged.sync_state == "stale"
+
+
+def test_preflight_failure_is_terminal_only_before_start_delivery(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )[0]
+
+    failed = loop_item_execution_service.fail_runtime_preflight(
+        test_db,
+        execution_id=claimed.id,
+        error="Runtime configuration is invalid",
+    )
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.termination_reason == "runtime_failed"
+    assert failed.observed_state == "failed"
+
+
+def test_runtime_reconciliation_uses_terminal_turn_status(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    loop_item_execution_service.mark_dispatch_unknown(
+        test_db,
+        execution_id=claimed.id,
+        error="Runtime event was lost",
+    )
+
+    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db,
+        execution_id=claimed.id,
+        runtime_status="active",
+        running=False,
+        turn_status="completed",
+    )
+
+    assert reconciled is not None
+    assert reconciled.status == "completed"
+    assert reconciled.observed_state == "succeeded"
+    assert reconciled.sync_state == "in_sync"
+    assert execution_display_state(reconciled) == "succeeded"
+
+
+def test_runtime_queued_snapshot_is_accepted_not_running(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+    loop_item_execution_service.mark_dispatch_unknown(
+        test_db,
+        execution_id=claimed.id,
+        error="Runtime acceptance response was lost",
+    )
+
+    reconciled = loop_item_execution_service.reconcile_runtime_snapshot(
+        test_db,
+        execution_id=claimed.id,
+        runtime_status="queued",
+        running=False,
+    )
+
+    assert reconciled is not None
+    assert reconciled.status == "claimed"
+    assert reconciled.observed_state == "accepted"
+    assert reconciled.sync_state == "in_sync"
+    assert execution_display_state(reconciled) == "waiting_runtime"
+    assert loop_datetime_value_is_unset(reconciled.started_at)
 
 
 def test_claimed_lease_expiry_requeues_run(test_db: Session, test_user: User) -> None:
@@ -2316,7 +2679,7 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
         test_db, robot_activity_row
     )
     test_db.refresh(item)
-    assert item.status == "in_progress"
+    assert item.status == "inbox"
 
     completed = loop_item_execution_service.complete(
         test_db,
@@ -2328,6 +2691,9 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     test_db.refresh(run)
     assert item.status == "in_review"
     assert run.status == "succeeded"
+    status_history = item.metadata_json.get("status_history", [])
+    assert status_history[-1]["to_status"] == "in_review"
+    assert status_history[-1]["trigger"] == "ai_completed"
 
 
 def test_manager_assigns_project_member_without_parsing_final_output(

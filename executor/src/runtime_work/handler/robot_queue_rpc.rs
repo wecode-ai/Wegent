@@ -7,6 +7,13 @@ use crate::runtime_work::automations::AutomationRunStatus;
 use crate::task_runtime::LocalTaskStore;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn start_queue_run(&self, local_task_id: &str) {
+        let Ok(store) = LocalTaskStore::from_env() else {
+            return;
+        };
+        let _ = store.mark_runtime_running(local_task_id);
+    }
+
     /// Report a finished local-project robot run back to the store.
     ///
     /// Local-project executions are claimed and dispatched by the App, which
@@ -30,17 +37,14 @@ impl RuntimeWorkRpcHandler {
         let error_text = error.unwrap_or_else(|| "Local runtime run failed".to_owned());
         match status {
             AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
-                let _ = store.complete_execution(execution_id, None);
-                let _ = store.update_agent_comment_for_execution(
-                    execution_id,
-                    "completed",
-                    &result_content.unwrap_or_default(),
-                );
+                let content = result_content.unwrap_or_default();
+                let _ = store.complete_execution(execution_id, Some(&content));
             }
-            AutomationRunStatus::Failed | AutomationRunStatus::Cancelled => {
+            AutomationRunStatus::Failed => {
                 let _ = store.fail_execution(execution_id, &error_text, true);
-                let _ =
-                    store.update_agent_comment_for_execution(execution_id, "failed", &error_text);
+            }
+            AutomationRunStatus::Cancelled => {
+                let _ = store.cancel_execution_observed(execution_id, Some(&error_text));
             }
             _ => {}
         }

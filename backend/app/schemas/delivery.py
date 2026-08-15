@@ -76,6 +76,11 @@ class LoopItemResponse(BaseModel):
     assignee_agent_name: str | None = None
     ai_state: dict[str, Any] | None = None
     execution_state: str | None = None
+    execution_control_state: str | None = None
+    execution_observed_state: str | None = None
+    execution_sync_state: str | None = None
+    execution_attempt_no: int | None = None
+    execution_last_event_seq: int | None = None
     can_approve: bool = False
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)

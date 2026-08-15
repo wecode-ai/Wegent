@@ -56,6 +56,11 @@ export interface CloudLoopItem {
   assignee_agent_name?: string | null
   execution_id?: number | null
   execution_state?: string | null
+  execution_control_state?: string | null
+  execution_observed_state?: string | null
+  execution_sync_state?: string | null
+  execution_attempt_no?: number | null
+  execution_last_event_seq?: number | null
   can_approve?: boolean
   assignment_history?: Array<{
     by_user_id: number
@@ -147,12 +152,24 @@ export interface CloudLoopItemExecution {
   execution_environment: string
   execution_device_id?: string | null
   status: string
+  display_state: string
+  observed_state: string
+  sync_state: string
   priority_weight: number
   queued_at?: string | null
   started_at?: string | null
   completed_at?: string | null
   lease_expires_at?: string | null
   heartbeat_at?: string | null
+  claimed_at?: string | null
+  start_requested_at?: string | null
+  observed_at?: string | null
+  cancel_requested_at?: string | null
+  attempt_no: number
+  previous_execution_id?: number | null
+  execution_scope: string
+  last_event_seq: number
+  termination_reason: string
   retry_attempt: number
   error_message?: string | null
   execution_note?: string | null
@@ -462,12 +479,26 @@ export function createDeliveryApi(client: HttpClient) {
             execution_device_id:
               row.executionDeviceId == null ? null : String(row.executionDeviceId),
             status: String(row.status ?? ''),
+            display_state: String(row.displayState ?? 'unknown'),
+            observed_state: String(row.observedState ?? 'unconfirmed'),
+            sync_state: String(row.syncState ?? 'pending'),
             priority_weight: Number(row.priorityWeight ?? 0),
             queued_at: row.queuedAt == null ? null : String(row.queuedAt),
             started_at: row.startedAt == null ? null : String(row.startedAt),
             completed_at: row.completedAt == null ? null : String(row.completedAt),
             lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
             heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
+            claimed_at: row.claimedAt == null ? null : String(row.claimedAt),
+            start_requested_at: row.startRequestedAt == null ? null : String(row.startRequestedAt),
+            observed_at: row.observedAt == null ? null : String(row.observedAt),
+            cancel_requested_at:
+              row.cancelRequestedAt == null ? null : String(row.cancelRequestedAt),
+            attempt_no: Number(row.attemptNo ?? 1),
+            previous_execution_id:
+              row.previousExecutionId == null ? null : Number(row.previousExecutionId),
+            execution_scope: String(row.executionScope ?? ''),
+            last_event_seq: Number(row.lastEventSeq ?? 0),
+            termination_reason: String(row.terminationReason ?? ''),
             retry_attempt: Number(row.retryAttempt ?? 0),
             error_message: row.errorMessage == null ? null : String(row.errorMessage),
             execution_note: row.executionNote == null ? null : String(row.executionNote),

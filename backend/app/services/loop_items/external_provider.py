@@ -34,6 +34,8 @@ from app.services.cloud_projects.access import (
 )
 from app.services.delivery.storage import delivery_storage
 from app.services.loop_item_executions.service import (
+    execution_ai_state,
+    execution_display_state,
     loop_item_execution_service,
 )
 
@@ -543,20 +545,23 @@ class ExternalLoopItemProvider:
         callers can ask the executor to stop them after the change commits.
         """
 
-        from app.services.loop_item_executions.service import utcnow
-
         cancelled_runs = []
         active = (
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.loop_item_id == item_id,
                 LoopItemExecution.status.in_(
-                    {"pending_approval", "queued", "claimed", "running"}
+                    {
+                        "pending_approval",
+                        "queued",
+                        "claimed",
+                        "running",
+                        "cancel_requested",
+                    }
                 ),
             )
             .all()
         )
-        now = utcnow()
         for execution in active:
             if (
                 preserve_automation_run_id
@@ -564,13 +569,18 @@ class ExternalLoopItemProvider:
                 and str(execution.automation_run_id or "") == preserve_automation_run_id
             ):
                 continue
-            execution.status = "cancelled"
-            execution.completed_at = now
-            execution.execution_note = (
-                execution.execution_note or "Assignee changed before the run finished"
+            cancelled = loop_item_execution_service.cancel(
+                db,
+                execution_id=execution.id,
+                note="Assignee changed before the run finished",
+                commit=False,
             )
-            if execution.runtime_device_id and execution.runtime_task_id:
-                cancelled_runs.append(execution)
+            if (
+                cancelled.status == "cancel_requested"
+                and cancelled.runtime_device_id
+                and cancelled.runtime_task_id
+            ):
+                cancelled_runs.append(cancelled)
         return cancelled_runs
 
     def _apply_assignee_executions(
@@ -1118,14 +1128,19 @@ class ExternalLoopItemProvider:
             return values
         merged = {**values}
         merged["execution_id"] = execution.id
-        merged["execution_state"] = execution.status
+        merged["execution_state"] = execution_display_state(execution)
+        merged["execution_control_state"] = execution.status
+        merged["execution_observed_state"] = execution.observed_state
+        merged["execution_sync_state"] = execution.sync_state
+        merged["execution_attempt_no"] = execution.attempt_no
+        merged["execution_last_event_seq"] = execution.last_event_seq
         merged["queued_at"] = self._optional_dt(execution.queued_at)
         merged["execution_note"] = execution.execution_note or None
         merged["can_approve"] = self._execution_can_approve(
             db, execution=execution, user_id=user_id
         )
         merged["approval"] = self._execution_approval_view(execution)
-        merged["ai_state"] = self._execution_ai_state(db, execution)
+        merged["ai_state"] = execution_ai_state(db, execution)
         merged["version"] = int(merged["version"]) + int(execution.id)
         return merged
 
@@ -1170,53 +1185,6 @@ class ExternalLoopItemProvider:
         if status == "rejected":
             view["rejected_reason"] = getattr(execution, "rejected_reason", None)
         return view
-
-    @staticmethod
-    def _execution_ai_state(db: Session, execution: object) -> dict | None:
-        """Synthesize the task AI state projection from the active run row."""
-
-        ai_status = {
-            "queued": "running",
-            "claimed": "running",
-            "running": "running",
-            "completed": "completed",
-            "failed": "failed",
-            "cancelled": "cancelled",
-        }.get(getattr(execution, "status", None))
-        if ai_status is None:
-            return None
-        agent = db.get(ProjectChatAgent, getattr(execution, "agent_id", None))
-        executor_type = getattr(execution, "executor_type", "project_robot")
-        return {
-            "run_id": f"exec-{getattr(execution, 'id', '')}",
-            "status": ai_status,
-            "agent_id": getattr(execution, "agent_id", None),
-            "agent_name": (
-                "AI 托管"
-                if executor_type == "automation_manager"
-                else (agent.title or agent.name if agent is not None else None)
-            ),
-            "runtime_device_id": (
-                getattr(execution, "runtime_device_id", None) or None
-            ),
-            "runtime_task_id": getattr(execution, "runtime_task_id", None) or None,
-            "started_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "started_at", None)
-            ),
-            "heartbeat_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "heartbeat_at", None)
-            ),
-            "lease_expires_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "lease_expires_at", None)
-            ),
-            "completed_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "completed_at", None)
-            ),
-            "updated_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "updated_at", None)
-            ),
-            "last_error": getattr(execution, "error_message", None) or None,
-        }
 
     @staticmethod
     def _permissions(

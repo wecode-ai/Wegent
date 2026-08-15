@@ -61,6 +61,7 @@ import type {
 } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
+import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
 import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
@@ -965,7 +966,12 @@ export function CloudTodoWorkspace({
       : undefined
     if (selectedProject?.location === 'local') {
       const local = services.localLoopItemExecutionApi
-      return local ? { ...local, stop } : undefined
+      if (!local) return undefined
+      return {
+        ...local,
+        stop: (_projectId: string, executionId: number) =>
+          stopLocalRobotQueueExecution(local, services.runtimeWorkApi, executionId),
+      }
     }
     if (!selectedProjectApi) return undefined
     return {
@@ -983,6 +989,7 @@ export function CloudTodoWorkspace({
     selectedProjectApi,
     services.deliveryApi,
     services.localLoopItemExecutionApi,
+    services.runtimeWorkApi,
   ])
   const selectedProjectAgents = useMemo(
     () => (selectedProjectId ? (projectAgents[selectedProjectId] ?? []) : []),

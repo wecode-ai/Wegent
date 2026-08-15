@@ -232,7 +232,8 @@ def test_external_response_merges_execution_state(
 
     view = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
     assert view["assignee_agent_id"] == bot.id
-    assert view["execution_state"] == "pending_approval"
+    assert view["execution_state"] == "waiting_approval"
+    assert view["execution_control_state"] == "pending_approval"
     assert isinstance(view["queued_at"], str)
     assert view["can_approve"] is True
     assert view["approval"]["status"] == "pending"
@@ -326,8 +327,9 @@ def test_external_response_keeps_ai_state_after_run_completes(
 
     view = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
 
-    assert view["execution_state"] == "completed"
-    assert view["ai_state"]["status"] == "completed"
+    assert view["execution_state"] == "succeeded"
+    assert view["execution_control_state"] == "completed"
+    assert view["ai_state"]["status"] == "succeeded"
     assert view["ai_state"]["agent_id"] == bot.id
 
 

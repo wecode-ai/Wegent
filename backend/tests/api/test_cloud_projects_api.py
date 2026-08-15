@@ -1690,7 +1690,7 @@ def test_cloud_project_automation_supports_managed_executor_sources(
     assert removed_contract.status_code == 422, removed_contract.text
 
 
-def test_cloud_project_manual_automation_starts_when_local_device_claims(
+def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_claim(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -1760,7 +1760,9 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
     assert claimed.status_code == 200, claimed.text
     execution = claimed.json()
     assert execution["executionDeviceId"] == "automation-local-device"
-    assert execution["status"] == "running"
+    assert execution["status"] == "claimed"
+    assert execution["displayState"] == "starting"
+    assert execution["observedState"] == "unconfirmed"
     assert "executionPayload" not in execution
     assert execution["runtimePayload"]["message"]
     assert "executionRequest" not in execution["runtimePayload"]
@@ -1777,6 +1779,10 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
         },
     )
     assert started_runtime.status_code == 200, started_runtime.text
+    accepted = started_runtime.json()
+    assert accepted["status"] == "claimed"
+    assert accepted["displayState"] == "waiting_runtime"
+    assert accepted["observedState"] == "accepted"
 
     runs = test_client.get(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/runs",
@@ -1784,7 +1790,7 @@ def test_cloud_project_manual_automation_starts_when_local_device_claims(
     )
     assert runs.status_code == 200, runs.text
     activated = runs.json()[0]
-    assert activated["status"] == "running"
+    assert activated["status"] == "queued"
     assert activated["taskId"]
 
 

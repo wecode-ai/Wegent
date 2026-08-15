@@ -116,13 +116,26 @@ export interface LocalLoopItemExecution {
   execution_environment: string
   execution_device_id?: string | null
   status: string
+  display_state: string
+  observed_state: string
+  sync_state: string
   priority_weight: number
   queued_at?: string | null
   started_at?: string | null
   completed_at?: string | null
   lease_expires_at?: string | null
   heartbeat_at?: string | null
+  claimed_at?: string | null
+  start_requested_at?: string | null
+  observed_at?: string | null
+  cancel_requested_at?: string | null
+  attempt_no: number
+  previous_execution_id?: number | null
+  execution_scope: string
+  last_event_seq: number
+  termination_reason: string
   retry_attempt: number
+  max_retries?: number
   error_message: string
   execution_note: string
   approval_status?: string | null
@@ -429,6 +442,12 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
         reason: reason ?? null,
       })
     },
+    async cancel(executionId: number, note?: string) {
+      return request<LocalLoopItemExecution>('executions.cancel', {
+        execution_id: executionId,
+        note: note ?? null,
+      })
+    },
     async claimNext(claim: {
       execution_device_id?: string | null
       device_capacity?: number
@@ -449,21 +468,65 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
         lease_seconds: leaseSeconds,
       })
     },
-    async complete(executionId: number, note?: string | null) {
-      return request<LocalLoopItemExecution>('executions.complete', {
+    async startRequested(
+      executionId: number,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      leaseSeconds = 300
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.start_requested', {
         execution_id: executionId,
-        note: note ?? null,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        lease_seconds: leaseSeconds,
       })
     },
-    async fail(executionId: number, error: string, requeue = true) {
-      return request<LocalLoopItemExecution>('executions.fail', {
+    async runtimeStart(
+      executionId: number,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      leaseSeconds = 300
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.runtime_start', {
+        execution_id: executionId,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        lease_seconds: leaseSeconds,
+      })
+    },
+    async dispatchUnknown(
+      executionId: number,
+      runtimeDeviceId: string,
+      runtimeTaskId: string,
+      error: string
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.dispatch_unknown', {
+        execution_id: executionId,
+        runtime_device_id: runtimeDeviceId,
+        runtime_task_id: runtimeTaskId,
+        error,
+      })
+    },
+    async dispatchFailed(executionId: number, error: string) {
+      return request<LocalLoopItemExecution>('executions.dispatch_failed', {
         execution_id: executionId,
         error,
-        requeue,
       })
     },
-    async recoverStale(): Promise<{ requeued: number; failed: number }> {
-      return request<{ requeued: number; failed: number }>('executions.recover_stale', {})
+    async recoverStale(): Promise<{ requeued: number; unknown: number }> {
+      return request<{ requeued: number; unknown: number }>('executions.recover_stale', {})
+    },
+    async listStale(): Promise<LocalLoopItemExecution[]> {
+      return request<LocalLoopItemExecution[]>('executions.list_stale', {})
+    },
+    async reconcile(
+      executionId: number,
+      snapshot: { runtime_status: string; running: boolean; turn_status?: string | null }
+    ) {
+      return request<LocalLoopItemExecution | null>('executions.reconcile', {
+        execution_id: executionId,
+        ...snapshot,
+      })
     },
   }
 }

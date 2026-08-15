@@ -630,6 +630,14 @@ def _project_chat_runtime_event_sync(
         # concurrent complete/fail/cancel cannot leave the run and activity
         # disagreeing with the execution. Streaming events remain ordinary
         # chat projections after the lease write-back.
+        has_execution = (
+            loop_item_execution_service.execution_for_runtime(
+                db,
+                runtime_device_id=device_id,
+                runtime_task_id=runtime_task_id,
+            )
+            is not None
+        )
         matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
             device_id=device_id,
@@ -637,6 +645,15 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
         )
+        if has_execution and matched_execution is None:
+            logger.info(
+                "[ProjectChat] Runtime event projection rejected by execution truth: "
+                "device_id=%s task_id=%s event=%s",
+                device_id,
+                runtime_task_id,
+                event_name,
+            )
+            return None
         projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,

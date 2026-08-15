@@ -1011,7 +1011,7 @@ describe('TaskActivityView', () => {
       expect(parentComment).toHaveTextContent(name)
       expect(
         screen.getByTestId(`cloud-task-activity-execution-badge-${automationMessage.messageId}`)
-      ).toHaveAttribute('data-status', 'waiting')
+      ).toHaveAttribute('data-status', 'queued')
       expect(
         screen.queryByTestId(`cloud-task-activity-open-execution-${automationMessage.messageId}`)
       ).not.toBeInTheDocument()
@@ -1019,9 +1019,9 @@ describe('TaskActivityView', () => {
   )
 
   it.each([
-    ['queued', 'pending', 'waiting', '等待执行', false],
-    ['running', 'streaming', 'running', '正在处理', true],
-    ['completed', 'completed', 'success', '已完成', false],
+    ['queued', 'pending', 'queued', '排队中', false],
+    ['running', 'streaming', 'running', '执行中', true],
+    ['completed', 'completed', 'succeeded', '已完成', false],
     ['failed', 'failed', 'failed', '执行失败', false],
     ['cancelled', 'cancelled', 'cancelled', '已取消', false],
   ] as const)(
@@ -2218,7 +2218,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 3,
             assignee_agent_id: '12',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
           } as never
         }
       />
@@ -2255,7 +2255,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 3,
             assignee_agent_id: '12',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
           } as never
         }
       />
@@ -2266,7 +2266,7 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('cloud-task-activity-approve-WEG-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-task-activity-reject-WEG-1')).not.toBeInTheDocument()
     const status = screen.getByTestId('cloud-task-activity-execution-status-WEG-1')
-    expect(status).toHaveAttribute('data-status', 'waiting')
+    expect(status).toHaveAttribute('data-status', 'waiting_approval')
     expect(status).toHaveAccessibleName('待 Alice 批准')
   })
 
@@ -2295,7 +2295,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 3,
             assignee_agent_id: '12',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
             can_approve: true,
           } as never
         }

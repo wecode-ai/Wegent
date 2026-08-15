@@ -1280,6 +1280,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?
             })
         }
+        "executions.cancel" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let note = params.get("note").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .cancel_execution(execution_id, note)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "executions.claim_next" => {
             let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
             serialize_task_value(
@@ -1307,39 +1316,89 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
-        "executions.complete" => {
+        "executions.start_requested"
+        | "executions.runtime_start"
+        | "executions.dispatch_unknown" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
-            let note = params.get("note").and_then(Value::as_str);
-            serialize_task_value(
-                runtime
-                    .complete_execution(execution_id, note)
-                    .map_err(task_runtime_error)?,
-            )
+            let runtime_device_id = required_task_string(&params, "runtime_device_id")?;
+            let runtime_task_id = required_task_string(&params, "runtime_task_id")?;
+            let lease_seconds = params
+                .get("lease_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(300);
+            let execution = match method {
+                "executions.start_requested" => runtime.request_runtime_start(
+                    execution_id,
+                    &runtime_device_id,
+                    &runtime_task_id,
+                    lease_seconds,
+                ),
+                "executions.runtime_start" => runtime.confirm_runtime_accepted(
+                    execution_id,
+                    &runtime_device_id,
+                    &runtime_task_id,
+                    lease_seconds,
+                ),
+                _ => runtime.mark_runtime_dispatch_unknown(
+                    execution_id,
+                    &runtime_device_id,
+                    &runtime_task_id,
+                    params
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Runtime dispatch outcome is unknown"),
+                ),
+            }
+            .map_err(task_runtime_error)?;
+            serialize_task_value(execution)
         }
-        "executions.fail" => {
+        "executions.dispatch_failed" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
             let error = params
                 .get("error")
                 .and_then(Value::as_str)
-                .unwrap_or("Local runtime run failed");
-            let requeue = params
-                .get("requeue")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
+                .unwrap_or("Local runtime preflight failed");
             serialize_task_value(
                 runtime
-                    .fail_execution(execution_id, error, requeue)
+                    .fail_runtime_preflight(execution_id, error)
                     .map_err(task_runtime_error)?,
             )
         }
         "executions.recover_stale" => {
-            let (requeued, failed) = runtime
+            let (requeued, unknown) = runtime
                 .recover_stale_local_executions()
                 .map_err(task_runtime_error)?;
             Ok(json!({
                 "requeued": requeued,
-                "failed": failed,
+                "unknown": unknown,
             }))
+        }
+        "executions.list_stale" => serialize_task_value(
+            runtime
+                .stale_local_executions()
+                .map_err(task_runtime_error)?,
+        ),
+        "executions.reconcile" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let runtime_status = params
+                .get("runtime_status")
+                .and_then(Value::as_str)
+                .unwrap_or("missing");
+            let running = params
+                .get("running")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let turn_status = params.get("turn_status").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .reconcile_execution_snapshot(
+                        execution_id,
+                        runtime_status,
+                        running,
+                        turn_status,
+                    )
+                    .map_err(task_runtime_error)?,
+            )
         }
         "files.list" => {
             let project_id = required_task_string(&params, "project_id")?;

@@ -146,12 +146,14 @@ def _assert_host_is_addressable(host: str) -> None:
         # A name rather than a literal; nothing more to check without resolving it.
         return
 
+    # Python versions differ in whether IPv4-mapped IPv6 delegates these
+    # classifications. Normalize explicitly before applying the policy.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+
     # ``is_unspecified`` is checked alongside the other two because 0.0.0.0 and ::
     # are neither loopback nor link-local, and connecting to them reaches the local
-    # host anyway. Python already folds IPv4-mapped forms into these properties, so
-    # ::ffff:127.0.0.1 and ::ffff:169.254.169.254 are covered without special casing;
-    # the tests pin that, since it is a property of the standard library rather than
-    # of anything written here.
+    # host anyway.
     if address.is_loopback or address.is_link_local or address.is_unspecified:
         raise SourceAccessDenied(f"'{host}' is not a reachable repository host")
 

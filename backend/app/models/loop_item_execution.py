@@ -12,6 +12,7 @@ run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     DateTime,
     Index,
@@ -53,7 +54,9 @@ class LoopItemExecution(Base):
         String(100), nullable=False, default="", server_default=""
     )
     assigner_user_id = Column(Integer, nullable=False, default=0, server_default="0")
-    # pending_approval / queued / running / completed / failed / cancelled
+    # pending_approval / queued / claimed / running / cancel_requested /
+    # completed / failed / cancelled. `running` is accepted only after Runtime
+    # confirms the process; control-plane liveness is stored separately below.
     status = Column(
         String(24), nullable=False, default="queued", server_default="queued"
     )
@@ -89,6 +92,45 @@ class LoopItemExecution(Base):
         nullable=False,
         default=EPOCH_TIME,
         server_default="1970-01-01 00:00:00",
+    )
+    attempt_no = Column(Integer, nullable=False, default=1, server_default="1")
+    previous_execution_id = Column(
+        big_integer_id_type(), nullable=False, default=0, server_default="0"
+    )
+    execution_scope = Column(String(160), nullable=False, default="", server_default="")
+    observed_state = Column(
+        String(24), nullable=False, default="unconfirmed", server_default="unconfirmed"
+    )
+    sync_state = Column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    claimed_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    start_requested_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    observed_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    cancel_requested_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    last_event_seq = Column(BigInteger, nullable=False, default=0, server_default="0")
+    termination_reason = Column(
+        String(64), nullable=False, default="", server_default=""
     )
     retry_attempt = Column(Integer, nullable=False, default=0, server_default="0")
     max_retries = Column(Integer, nullable=False, default=1, server_default="1")
@@ -132,6 +174,7 @@ class LoopItemExecution(Base):
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
+        Index("idx_exec_scope_status", "execution_scope", "status"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 

@@ -630,6 +630,7 @@ impl RuntimeWorkRpcHandler {
             let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    active_turn_handler.start_queue_run(&active_turn_local_task_id);
                     *callback_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned") =

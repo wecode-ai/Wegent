@@ -29,6 +29,7 @@ type QueueExecution = Pick<
   | 'task_status'
   | 'task_priority'
   | 'status'
+  | 'display_state'
   | 'queued_at'
   | 'started_at'
   | 'completed_at'
@@ -48,27 +49,42 @@ export interface ExecutionListApi {
 
 const QUEUE_STATES = new Set([
   'assigned',
-  'pending_approval',
+  'waiting_approval',
   'queued',
-  'claimed',
+  'starting',
+  'waiting_runtime',
   'running',
+  'cancelling',
+  'unknown',
   'failed',
 ])
 const MY_APPROVAL_FILTER = 'my_approval'
-const STOPPABLE_STATES = new Set(['pending_approval', 'queued', 'claimed', 'running'])
+const STOPPABLE_STATES = new Set([
+  'waiting_approval',
+  'queued',
+  'starting',
+  'waiting_runtime',
+  'running',
+])
 
 function queueStateLabel(state: string, t: TFunction): string {
   switch (state) {
-    case 'pending_approval':
+    case 'waiting_approval':
       return t('workbench.queue_state_pending_approval')
     case 'queued':
       return t('workbench.queue_state_queued')
-    case 'claimed':
-      return t('workbench.queue_state_claimed', '已领取')
+    case 'starting':
+      return t('workbench.queue_state_starting')
+    case 'waiting_runtime':
+      return t('workbench.queue_state_waiting_runtime')
     case 'running':
       return t('workbench.queue_state_running')
     case 'failed':
       return t('workbench.queue_state_failed')
+    case 'cancelling':
+      return t('workbench.queue_state_cancelling')
+    case 'unknown':
+      return t('workbench.queue_state_unknown')
     case 'assigned':
       return t('workbench.queue_state_assigned')
     default:
@@ -85,7 +101,7 @@ function isInQueue(item: CloudLoopItem): boolean {
 function executionInQueue(execution: QueueExecution): boolean {
   // Keep terminal failed runs visible with their error state, matching the
   // cloud queue (which keeps 'failed' execution_state items in the columns).
-  return ['pending_approval', 'queued', 'claimed', 'running', 'failed'].includes(execution.status)
+  return QUEUE_STATES.has(execution.display_state)
 }
 
 function executionToItem(execution: QueueExecution): CloudLoopItem {
@@ -111,7 +127,8 @@ function executionToItem(execution: QueueExecution): CloudLoopItem {
     updated_at: execution.updated_at,
     completed_at: execution.completed_at ?? null,
     execution_id: execution.id,
-    execution_state: execution.status,
+    execution_state: execution.display_state,
+    execution_control_state: execution.status,
     can_approve: execution.status === 'pending_approval',
     execution_note: execution.execution_note || null,
     assignment_history: [],
@@ -121,7 +138,7 @@ function executionToItem(execution: QueueExecution): CloudLoopItem {
 function QueueStateChip({ state }: { state?: string | null }) {
   const { t } = useTranslation('common')
   const config = {
-    pending_approval: {
+    waiting_approval: {
       className: 'bg-amber-500/10 text-amber-700',
       Icon: Clock3,
     },
@@ -129,9 +146,13 @@ function QueueStateChip({ state }: { state?: string | null }) {
       className: 'bg-sky-500/10 text-sky-700',
       Icon: Inbox,
     },
-    claimed: {
+    starting: {
       className: 'bg-indigo-500/10 text-indigo-700',
       Icon: Inbox,
+    },
+    waiting_runtime: {
+      className: 'bg-indigo-500/10 text-indigo-700',
+      Icon: Clock3,
     },
     running: {
       className: 'bg-violet-500/10 text-violet-700',
@@ -141,8 +162,16 @@ function QueueStateChip({ state }: { state?: string | null }) {
       className: 'bg-red-500/10 text-red-700',
       Icon: RefreshCw,
     },
+    cancelling: {
+      className: 'bg-amber-500/10 text-amber-700',
+      Icon: LoaderCircle,
+    },
+    unknown: {
+      className: 'bg-red-500/10 text-red-700',
+      Icon: RefreshCw,
+    },
     assigned: {
-      className: 'bg-emerald-500/10 text-emerald-700',
+      className: 'bg-muted text-text-secondary',
       Icon: CheckCircle2,
     },
   } as const
@@ -156,7 +185,9 @@ function QueueStateChip({ state }: { state?: string | null }) {
         current.className
       )}
     >
-      <Icon className={cn('h-3 w-3', state === 'running' && 'animate-spin')} />
+      <Icon
+        className={cn('h-3 w-3', (state === 'running' || state === 'cancelling') && 'animate-spin')}
+      />
       {state ? queueStateLabel(state, t) : ''}
     </span>
   )
@@ -342,7 +373,7 @@ export function ProjectQueueView({
         counts.all += 1
         const state = item.execution_state ?? ''
         if (counts[state] !== undefined) counts[state] += 1
-        if (state === 'pending_approval' && item.can_approve === true) {
+        if (state === 'waiting_approval' && item.can_approve === true) {
           counts.my_approval += 1
         }
       }
@@ -353,7 +384,7 @@ export function ProjectQueueView({
   const trimmedQuery = query.trim().toLowerCase()
   const isVisible = (item: CloudLoopItem) =>
     (stateFilter === MY_APPROVAL_FILTER
-      ? item.execution_state === 'pending_approval' && item.can_approve === true
+      ? item.execution_state === 'waiting_approval' && item.can_approve === true
       : stateFilter === 'all' || item.execution_state === stateFilter) &&
     (!trimmedQuery || item.title.toLowerCase().includes(trimmedQuery))
 

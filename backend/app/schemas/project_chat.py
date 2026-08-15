@@ -121,18 +121,24 @@ class LoopItemExecutionRuntimeStart(ProjectChatSchema):
     model: str | None = Field(default=None, max_length=255)
 
 
-class LoopItemExecutionComplete(ProjectChatSchema):
-    """Report a successful robot run."""
+class LoopItemExecutionDispatchIntent(ProjectChatSchema):
+    """Fence a Runtime create request before it can leave the App."""
 
-    note: str | None = Field(default=None, max_length=2_000)
+    runtime_device_id: str = Field(min_length=1, max_length=255)
+    runtime_task_id: str = Field(min_length=1, max_length=255)
 
 
-class LoopItemExecutionFail(ProjectChatSchema):
-    """Report a failed robot run (optionally requeue when retries remain)."""
+class LoopItemExecutionDispatchUnknown(LoopItemExecutionDispatchIntent):
+    """Report an ambiguous result after a fenced Runtime create request."""
+
+    error: str = Field(min_length=1, max_length=2_000)
+
+
+class LoopItemExecutionDispatchFailed(ProjectChatSchema):
+    """Report a local preflight failure before Runtime delivery was fenced."""
 
     error: str = Field(min_length=1, max_length=2_000)
     note: str | None = Field(default=None, max_length=2_000)
-    requeue: bool = False
 
 
 class LoopItemExecutionCancel(ProjectChatSchema):
@@ -154,12 +160,24 @@ class LoopItemExecutionView(ProjectChatSchema):
     execution_environment: str
     execution_device_id: str | None
     status: str
+    display_state: str
+    observed_state: str = "unconfirmed"
+    sync_state: str = "pending"
     priority_weight: int
     queued_at: Any | None = None
     started_at: Any | None = None
     completed_at: Any | None = None
     lease_expires_at: Any | None = None
     heartbeat_at: Any | None = None
+    claimed_at: Any | None = None
+    start_requested_at: Any | None = None
+    observed_at: Any | None = None
+    cancel_requested_at: Any | None = None
+    attempt_no: int = 1
+    previous_execution_id: int | None = None
+    execution_scope: str = ""
+    last_event_seq: int = 0
+    termination_reason: str = ""
     retry_attempt: int = 0
     error_message: str = ""
     execution_note: str = ""

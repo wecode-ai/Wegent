@@ -193,6 +193,44 @@ async function waitForValue(read, predicate, message, timeoutMs) {
   assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
 }
 
+function assertExecutionTruthContract(execution) {
+  assert.equal(execution.runtimeTaskId, `codex-queue-${execution.id}`)
+  assert.ok(execution.attemptNo >= 1)
+  assert.ok(execution.lastEventSeq >= 0)
+  if (
+    !['completed', 'failed', 'cancelled'].includes(execution.status) &&
+    ['stale', 'diverged'].includes(execution.syncState)
+  ) {
+    assert.equal(execution.displayState, 'unknown')
+    return
+  }
+  if (execution.status === 'claimed') {
+    assert.equal(
+      execution.displayState,
+      execution.observedState === 'unconfirmed' ? 'starting' : 'waiting_runtime'
+    )
+    return
+  }
+  const expectedDisplayState = {
+    pending_approval: 'waiting_approval',
+    queued: 'queued',
+    running: 'running',
+    cancel_requested: 'cancelling',
+    completed: 'succeeded',
+    failed: 'failed',
+    cancelled: 'cancelled',
+  }[execution.status]
+  assert.equal(execution.displayState, expectedDisplayState)
+  if (execution.status === 'running') {
+    assert.equal(execution.observedState, 'running')
+    assert.ok(execution.lastEventSeq > 0)
+  }
+  if (execution.status === 'completed') {
+    assert.equal(execution.observedState, 'succeeded')
+    assert.ok(execution.lastEventSeq > 0)
+  }
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   const rules = [RULE]
   const runs = [
@@ -358,6 +396,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       ['queued', 'waiting_device', 'running', 'succeeded'].includes(runs[0].status),
       `Manual automation entered an unexpected state: ${runs[0].status}`
     )
+    const execution = await waitForValue(
+      async () => {
+        const responses = await Promise.all(
+          [null, 'completed', 'failed', 'cancelled'].map(status =>
+            cloudRequest(
+              `/api/v1/cloud-projects/${projectId}/executions${status ? `?status=${status}` : ''}`
+            )
+          )
+        )
+        return responses
+          .flatMap(response => response.items ?? [])
+          .filter(item => item.loopItemId === runs[0].taskId)
+          .sort((left, right) => right.id - left.id)[0]
+      },
+      value => Boolean(value),
+      'Manual automation did not expose authoritative execution truth',
+      uiTimeoutMs
+    )
+    assertExecutionTruthContract(execution)
     await control.command('waitFor', `[data-testid="project-automation-run-task-${runs[0].id}"]`, {
       timeoutMs: uiTimeoutMs,
     })
