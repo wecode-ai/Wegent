@@ -112,7 +112,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let active = false
   let compactionRequests = 0
   let followUpSawCompactedContext = false
+  let resolveCompactionStarted
   let releaseCompaction
+  const compactionStarted = new Promise(resolve => {
+    resolveCompactionStarted = resolve
+  })
   const compactionRelease = new Promise(resolve => {
     releaseCompaction = resolve
   })
@@ -140,6 +144,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       if (kind === 'compaction') {
         compactionRequests += 1
+        resolveCompactionStarted()
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
@@ -209,6 +214,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         text: '正在自动压缩上下文',
         timeoutMs: uiTimeoutMs,
       })
+      await compactionStarted
       assert.equal(compactionRequests, 1, 'The first compact click did not start one model request')
       assert.equal(
         Number(

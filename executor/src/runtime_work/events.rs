@@ -1293,7 +1293,10 @@ fn emit_context_compaction_event(
 }
 
 fn is_context_compaction_notification(params: &Value) -> bool {
-    let item = params.get("item").unwrap_or(params);
+    let item = params
+        .get("item")
+        .or_else(|| params.get("turn"))
+        .unwrap_or(params);
     is_codex_context_compaction_item_type(&item_type(item))
 }
 
@@ -2801,6 +2804,45 @@ mod tests {
             second_completed["payload"]["data"]["block"]["status"],
             "done"
         );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn maps_completed_context_compaction_nested_under_turn() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "turn": {
+                        "id": "ctx-turn-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+
+        let completed = event_rx
+            .try_recv()
+            .expect("nested turn compaction should be emitted");
+        assert_eq!(completed["event"], "response.block.created");
+        assert_eq!(completed["payload"]["data"]["block"]["id"], "ctx-turn-1");
+        assert_eq!(
+            completed["payload"]["data"]["block"]["tool_name"],
+            "context_compaction"
+        );
+        assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
     }
 
