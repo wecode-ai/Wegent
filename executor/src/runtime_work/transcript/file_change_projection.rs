@@ -371,35 +371,82 @@ pub(super) fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
 
 fn looks_like_unified_diff(diff: &str) -> bool {
     let lines = diff.lines().collect::<Vec<_>>();
-    lines.iter().any(|line| is_unified_hunk_header(line))
-        || lines.windows(2).any(|lines| {
-            is_unified_file_marker(lines[0], "--- ", "a/")
-                && is_unified_file_marker(lines[1], "+++ ", "b/")
-        })
+    if lines.iter().any(|line| line.starts_with("@@ ")) {
+        return has_valid_unified_hunks(&lines);
+    }
+
+    lines.windows(2).any(|lines| {
+        is_unified_file_marker(lines[0], "--- ", "a/")
+            && is_unified_file_marker(lines[1], "+++ ", "b/")
+    })
 }
 
-fn is_unified_hunk_header(line: &str) -> bool {
-    let Some(rest) = line.strip_prefix("@@ -") else {
-        return false;
-    };
-    let Some((ranges, _)) = rest.split_once(" @@") else {
-        return false;
-    };
-    let Some((old_range, new_range)) = ranges.split_once(" +") else {
-        return false;
-    };
-    is_unified_range(old_range) && is_unified_range(new_range)
+fn has_valid_unified_hunks(lines: &[&str]) -> bool {
+    let mut index = 0;
+    let mut found_hunk = false;
+    while index < lines.len() {
+        if !lines[index].starts_with("@@ ") {
+            index += 1;
+            continue;
+        }
+
+        let Some((expected_old, expected_new)) = unified_hunk_counts(lines[index]) else {
+            return false;
+        };
+        found_hunk = true;
+        index += 1;
+
+        let mut old_lines = 0;
+        let mut new_lines = 0;
+        while index < lines.len()
+            && !lines[index].starts_with("@@ ")
+            && !lines[index].starts_with("diff --git ")
+        {
+            let line = lines[index];
+            if line.starts_with("\\ ") {
+                index += 1;
+                continue;
+            }
+            match line.as_bytes().first() {
+                Some(b' ') => {
+                    old_lines += 1;
+                    new_lines += 1;
+                }
+                Some(b'-') => old_lines += 1,
+                Some(b'+') => new_lines += 1,
+                _ => return false,
+            }
+            if old_lines > expected_old || new_lines > expected_new {
+                return false;
+            }
+            index += 1;
+        }
+        if old_lines != expected_old || new_lines != expected_new {
+            return false;
+        }
+    }
+
+    found_hunk
 }
 
-fn is_unified_range(range: &str) -> bool {
+fn unified_hunk_counts(line: &str) -> Option<(usize, usize)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, _) = rest.split_once(" @@")?;
+    let (old_range, new_range) = ranges.split_once(" +")?;
+    Some((
+        unified_range_count(old_range)?,
+        unified_range_count(new_range)?,
+    ))
+}
+
+fn unified_range_count(range: &str) -> Option<usize> {
     let mut values = range.split(',');
-    values
+    values.next()?.parse::<usize>().ok()?;
+    let count = values
         .next()
-        .is_some_and(|value| !value.is_empty() && value.chars().all(|char| char.is_ascii_digit()))
-        && values.next().map_or(true, |value| {
-            !value.is_empty() && value.chars().all(|char| char.is_ascii_digit())
-        })
-        && values.next().is_none()
+        .map(|value| value.parse::<usize>().ok())
+        .unwrap_or(Some(1))?;
+    values.next().is_none().then_some(count)
 }
 
 fn is_unified_file_marker(line: &str, marker: &str, path_prefix: &str) -> bool {
@@ -610,6 +657,16 @@ mod tests {
 
     #[test]
     fn normalizes_marker_like_whole_file_content() {
+        let incomplete_hunk = diff_with_file_header(
+            "/workspace/repo/incomplete.md",
+            None,
+            Some("add"),
+            "@@ -1 +1 @@\nplain text\n",
+            "/workspace/repo",
+        );
+        assert!(incomplete_hunk.contains("+@@ -1 +1 @@\n+plain text\n"));
+        assert_eq!(diff_stats(&incomplete_hunk, "created"), (2, 0));
+
         let created = diff_with_file_header(
             "/workspace/repo/created.md",
             None,
