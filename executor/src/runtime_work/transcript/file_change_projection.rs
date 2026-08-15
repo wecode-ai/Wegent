@@ -489,6 +489,11 @@ fn diff_with_file_header(
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| relative_path.clone());
     let kind = kind.unwrap_or("update").to_ascii_lowercase();
+    let change_type = match kind.as_str() {
+        "add" | "create" | "created" => "created",
+        "delete" | "deleted" => "deleted",
+        _ => "modified",
+    };
     let old_file = if matches!(kind.as_str(), "add" | "create" | "created") {
         "/dev/null".to_owned()
     } else {
@@ -499,21 +504,58 @@ fn diff_with_file_header(
     } else {
         diff_git_path("b", &relative_path)
     };
-    let file_markers = if diff
-        .lines()
-        .any(|line| line.starts_with("--- ") || line.starts_with("+++ "))
+    let unified_diff = looks_like_unified_diff(diff, change_type);
+    let file_markers = if unified_diff
+        && diff
+            .lines()
+            .any(|line| line.starts_with("--- ") || line.starts_with("+++ "))
     {
         String::new()
     } else {
         format!("--- {old_file}\n+++ {new_file}\n")
+    };
+    let diff = if unified_diff {
+        diff.trim_end().to_owned()
+    } else if matches!(change_type, "created" | "deleted") {
+        whole_file_unified_hunk(diff, change_type)
+    } else {
+        diff.trim_end().to_owned()
     };
     format!(
         "diff --git {} {}\n{}{}\n",
         diff_git_path("a", &relative_old_path),
         diff_git_path("b", &relative_path),
         file_markers,
-        diff.trim_end()
+        diff
     )
+}
+
+fn whole_file_unified_hunk(content: &str, change_type: &str) -> String {
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let line_count = lines.len();
+    let (hunk_header, prefix) = if change_type == "created" {
+        (format!("@@ -0,0 +1,{line_count} @@"), '+')
+    } else {
+        (format!("@@ -1,{line_count} +0,0 @@"), '-')
+    };
+    let mut hunk = String::with_capacity(content.len() + line_count + hunk_header.len() + 32);
+    hunk.push_str(&hunk_header);
+    hunk.push('\n');
+    for line in lines {
+        hunk.push(prefix);
+        hunk.push_str(line);
+        hunk.push('\n');
+    }
+    if !content.ends_with('\n') {
+        hunk.push_str("\\ No newline at end of file");
+    } else {
+        hunk.pop();
+    }
+    hunk
 }
 
 fn diff_git_path(prefix: &str, path: &str) -> String {
