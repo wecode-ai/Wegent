@@ -351,11 +351,16 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
-        lifecycleStore.sendRequested(outboundRequest.address)
-        sendRequested = true
+        if (!options?.silentBusyRetry) {
+          lifecycleStore.sendRequested(outboundRequest.address)
+          sendRequested = true
+        }
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
+        }
+        if (options?.silentBusyRetry) {
+          lifecycleStore.sendRequested(outboundRequest.address)
         }
         lifecycleStore.sendAccepted(outboundRequest.address)
         try {
@@ -377,7 +382,7 @@ export function useWorkbenchRuntimeMessaging({
             lifecycleStore.sendRejected(request.address)
           }
         }
-        if (blockedByActiveTurn) {
+        if (blockedByActiveTurn && !options?.silentBusyRetry) {
           try {
             await refreshWorkLists()
           } catch (refreshError) {
@@ -387,13 +392,15 @@ export function useWorkbenchRuntimeMessaging({
             })
           }
         }
-        console.warn('[Wework] Runtime send failed', {
-          taskId: request.address.taskId,
-          deviceId: request.address.deviceId,
-          workspacePath: request.address.workspacePath ?? null,
-          addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
-          error: errorMessage,
-        })
+        if (!options?.silentBusyRetry) {
+          console.warn('[Wework] Runtime send failed', {
+            taskId: request.address.taskId,
+            deviceId: request.address.deviceId,
+            workspacePath: request.address.workspacePath ?? null,
+            addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
+            error: errorMessage,
+          })
+        }
         reportError(runtimeSendError(error, '发送失败'), options)
         return false
       }

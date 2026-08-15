@@ -11226,7 +11226,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
   })
 
-  test('retries a queued runtime message while the executor is still finishing the previous turn', async () => {
+  test('silently retries a busy queued image message while the executor finishes the turn', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -11281,6 +11281,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
     await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('add image attachment'))
     await userEvent.click(screen.getByText('send follow-up'))
 
     await act(async () => {
@@ -11296,6 +11297,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage.mock.calls[1][0].clientUserMessageId).toBe(
       sendRuntimeMessage.mock.calls[0][0].clientUserMessageId
     )
+    expect(sendRuntimeMessage.mock.calls[0][0].attachmentIds).toEqual([45])
+    expect(sendRuntimeMessage.mock.calls[1][0].attachmentIds).toEqual([45])
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
     await act(async () => {
       streamHandlers.onChatStart?.({
