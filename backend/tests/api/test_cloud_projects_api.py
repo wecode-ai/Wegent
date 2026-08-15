@@ -1695,6 +1695,7 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     test_db: Session,
     test_user: User,
     test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_db.add(
         Kind(
@@ -1704,7 +1705,10 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
             user_id=test_user.id,
             is_active=True,
             json={
-                "spec": {"deviceType": "local"},
+                "spec": {
+                    "deviceType": "local",
+                    "runtimeInstanceId": "runtime-automation-local",
+                },
                 "metadata": {"name": "automation-local-device"},
             },
         )
@@ -1748,12 +1752,23 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert run["taskId"]
     assert run["expiresAt"] is None
 
+    monkeypatch.setattr(
+        "app.services.device.capacity.cache_manager.get_sync",
+        lambda _key: {
+            "runtime_instance_id": "runtime-automation-local",
+            "runtime_capacity": {
+                "limit": 1,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0,
+            },
+        },
+    )
     claimed = test_client.post(
         "/api/v1/loop-item-executions/claim-my-next",
         headers=_auth(test_token),
         json={
             "executionDeviceId": "automation-local-device",
-            "deviceCapacity": 1,
             "leaseSeconds": 300,
         },
     )

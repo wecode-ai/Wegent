@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -23,7 +23,7 @@ use super::model::{
     TaskUpdate,
 };
 
-const LOCAL_SCHEMA_VERSION: i64 = 6;
+const LOCAL_SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug, Error)]
 pub enum TaskRuntimeError {
@@ -615,6 +615,11 @@ impl LocalTaskStore {
         input: ChatAgentCreate,
     ) -> Result<ChatAgent, TaskRuntimeError> {
         validate_name(&input.name, "robot name")?;
+        if !(1..=20).contains(&input.max_concurrent_executions) {
+            return Err(TaskRuntimeError::Invalid(
+                "Robot max concurrent executions must be between 1 and 20".to_owned(),
+            ));
+        }
         let connection = self.connection()?;
         let id = format!("LA-{}", Uuid::new_v4().simple());
         let now = now();
@@ -625,6 +630,7 @@ impl LocalTaskStore {
             "visibility": input.visibility.unwrap_or_else(|| "creator_admin".to_owned()),
             "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
             "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
+            "max_concurrent_executions": input.max_concurrent_executions,
         });
         metadata["execution_device_id"] = json!(input.execution_device_id);
         metadata["local_project_id"] = json!(input.local_project_id);
@@ -686,6 +692,14 @@ impl LocalTaskStore {
         }
         if let Some(device) = input.execution_device_id.as_ref() {
             metadata["execution_device_id"] = json!(device);
+        }
+        if let Some(max_concurrent_executions) = input.max_concurrent_executions {
+            if !(1..=20).contains(&max_concurrent_executions) {
+                return Err(TaskRuntimeError::Invalid(
+                    "Robot max concurrent executions must be between 1 and 20".to_owned(),
+                ));
+            }
+            metadata["max_concurrent_executions"] = json!(max_concurrent_executions);
         }
         if let Some(local_project_id) = input.local_project_id {
             metadata["local_project_id"] = json!(local_project_id);
@@ -890,7 +904,7 @@ impl LocalTaskStore {
                     e.claimed_at, e.start_requested_at, e.observed_at,
                     e.cancel_requested_at, e.last_event_seq, e.termination_reason,
                     t.title, t.status, t.priority,
-                    a.name, a.title, a.metadata
+                    a.name, a.title, a.metadata, e.runtime_instance_id
              FROM loop_item_executions e
              LEFT JOIN loop_items t ON t.id = e.loop_item_id
              LEFT JOIN loop_items a ON a.id = e.agent_id
@@ -1092,59 +1106,166 @@ impl LocalTaskStore {
         &self,
         claim: &LocalExecutionClaim,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        let runtime_active_task_ids = claim
+            .runtime_active_task_ids
+            .iter()
+            .map(|task_id| task_id.trim())
+            .collect::<HashSet<_>>();
+        if claim.runtime_instance_id.trim().is_empty()
+            || !(1..=20).contains(&claim.device_capacity)
+            || runtime_active_task_ids.len() != claim.runtime_active_task_ids.len()
+            || runtime_active_task_ids.len() != claim.runtime_active as usize
+            || runtime_active_task_ids.contains("")
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Runtime capacity identity or limit is invalid".to_owned(),
+            ));
+        }
         let connection = self.connection()?;
-        let running: i64 = connection.query_row(
+        let ambiguous: i64 = connection.query_row(
             "SELECT COUNT(*) FROM loop_item_executions
-             WHERE execution_environment = 'local'
-               AND status IN ('claimed', 'running', 'cancel_requested')
-               AND (?1 IS NULL OR execution_device_id = ?1)",
-            params![claim.execution_device_id],
+             WHERE status IN ('claimed', 'running', 'cancel_requested')
+               AND runtime_instance_id = ''",
+            [],
             |row| row.get(0),
         )?;
-        if running >= claim.device_capacity as i64 {
+        if ambiguous > 0 {
             return Ok(None);
         }
-        let running_agents: Vec<String> = {
+        let durable_task_ids = {
             let mut statement = connection.prepare(
-                "SELECT DISTINCT agent_id FROM loop_item_executions
-                 WHERE execution_environment = 'local'
-                   AND status IN ('claimed', 'running', 'cancel_requested')",
+                "SELECT runtime_task_id FROM loop_item_executions
+             WHERE status IN ('claimed', 'running', 'cancel_requested')
+               AND runtime_instance_id = ?1",
             )?;
-            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            let rows = statement.query_map(params![&claim.runtime_instance_id], |row| {
+                row.get::<_, Option<String>>(0)
+            })?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
-        let mut sql = String::from(
-            "SELECT id FROM loop_item_executions
-             WHERE execution_environment = 'local' AND status = 'queued'",
-        );
-        if !running_agents.is_empty() {
-            let placeholders = vec!["?"; running_agents.len()].join(",");
-            sql.push_str(&format!(" AND agent_id NOT IN ({placeholders})"));
+        let pending_reservations = durable_task_ids
+            .iter()
+            .filter(|task_id| {
+                task_id
+                    .as_deref()
+                    .map_or(true, |task_id| !runtime_active_task_ids.contains(task_id))
+            })
+            .count() as u64;
+        let occupied = claim.runtime_active + pending_reservations;
+        if occupied >= claim.device_capacity {
+            return Ok(None);
         }
+        let running_agents: HashMap<String, i64> = {
+            let mut statement = connection.prepare(
+                "SELECT agent_id, COUNT(*) FROM loop_item_executions
+                 WHERE status IN ('claimed', 'running', 'cancel_requested')
+                   AND agent_id != ''
+                 GROUP BY agent_id",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            rows.collect::<Result<HashMap<_, _>, _>>()?
+        };
+        let mut sql = String::from(
+            "SELECT e.id, e.agent_id, e.execution_scope, e.priority_weight,
+                    COALESCE(json_extract(a.metadata, '$.max_concurrent_executions'), 1)
+             FROM loop_item_executions e
+             LEFT JOIN loop_items a ON a.id = e.agent_id
+             WHERE e.execution_environment = 'local' AND e.status = 'queued'",
+        );
         if claim.execution_device_id.is_some() {
             // Robots created before device binding have no bound device; the
             // claiming device adopts those runs the same way the cloud
             // dispatcher binds unbound local runs.
             sql.push_str(
-                " AND (execution_device_id = ?
-                     OR execution_device_id IS NULL
-                     OR execution_device_id = '')",
+                " AND (e.execution_device_id = ?1
+                     OR e.execution_device_id IS NULL
+                     OR e.execution_device_id = '')",
             );
         }
-        sql.push_str(" ORDER BY priority_weight DESC, queued_at ASC, id ASC LIMIT 1");
+        sql.push_str(" ORDER BY e.priority_weight DESC, e.queued_at ASC, e.id ASC");
         let mut statement = connection.prepare(&sql)?;
-        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::new();
-        let device_ref;
-        for agent in &running_agents {
-            params_vec.push(agent);
+        let candidates = if let Some(device_id) = claim.execution_device_id.as_ref() {
+            statement
+                .query_map(params![device_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let occupied_scopes = {
+            let mut statement = connection.prepare(
+                "SELECT execution_scope FROM loop_item_executions
+                 WHERE status IN ('claimed', 'running', 'cancel_requested')
+                   AND execution_scope != ''",
+            )?;
+            let scopes = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()?;
+            scopes
+        };
+        let mut candidate = None;
+        let mut priorities = candidates
+            .iter()
+            .map(|row| row.3)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        priorities.sort_unstable_by(|left, right| right.cmp(left));
+        for priority in priorities {
+            let mut seen_agents = HashSet::new();
+            let mut fair_candidates = Vec::new();
+            for (position, (id, agent_id, execution_scope, row_priority, configured_limit)) in
+                candidates.iter().enumerate()
+            {
+                if *row_priority != priority {
+                    continue;
+                }
+                let limit = if (1..=20).contains(configured_limit) {
+                    *configured_limit
+                } else {
+                    1
+                };
+                let agent_available = agent_id.is_empty()
+                    || running_agents.get(agent_id).copied().unwrap_or(0) < limit;
+                let scope_available =
+                    execution_scope.is_empty() || !occupied_scopes.contains(execution_scope);
+                let fairness_key = if agent_id.is_empty() {
+                    format!("automation:{id}")
+                } else {
+                    agent_id.clone()
+                };
+                if agent_available && scope_available && seen_agents.insert(fairness_key) {
+                    fair_candidates.push((
+                        running_agents.get(agent_id).copied().unwrap_or(0),
+                        position,
+                        *id,
+                    ));
+                }
+            }
+            if let Some((_, _, id)) = fair_candidates.into_iter().min() {
+                candidate = Some(id);
+                break;
+            }
         }
-        if let Some(device_id) = claim.execution_device_id.as_ref() {
-            device_ref = device_id;
-            params_vec.push(&device_ref);
-        }
-        let candidate: Option<i64> = statement
-            .query_row(params_vec.as_slice(), |row| row.get(0))
-            .optional()?;
         let Some(candidate_id) = candidate else {
             return Ok(None);
         };
@@ -1159,6 +1280,7 @@ impl LocalTaskStore {
             "UPDATE loop_item_executions
              SET status = 'claimed', claimed_at = ?1, heartbeat_at = ?1,
                  execution_device_id = COALESCE(NULLIF(execution_device_id, ''), ?4),
+                 runtime_instance_id = ?6,
                  runtime_device_id = ?4, runtime_task_id = ?5,
                  lease_expires_at = ?2, version = version + 1, updated_at = ?1
              WHERE id = ?3 AND status = 'queued'",
@@ -1168,6 +1290,7 @@ impl LocalTaskStore {
                 candidate_id,
                 runtime_device_id,
                 runtime_task_id,
+                &claim.runtime_instance_id,
             ],
         )?;
         if changed != 1 {
@@ -2143,6 +2266,7 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             agent_id TEXT NOT NULL,
             execution_environment TEXT NOT NULL DEFAULT 'local',
             execution_device_id TEXT,
+            runtime_instance_id TEXT NOT NULL DEFAULT '',
             assigner_user_id INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'queued',
             priority_weight INTEGER NOT NULL DEFAULT 0,
@@ -2251,6 +2375,7 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
         ("cancel_requested_at", "TEXT"),
         ("last_event_seq", "INTEGER NOT NULL DEFAULT 0"),
         ("termination_reason", "TEXT NOT NULL DEFAULT ''"),
+        ("runtime_instance_id", "TEXT NOT NULL DEFAULT ''"),
     ] {
         if !execution_columns.iter().any(|existing| existing == column) {
             connection.execute(
@@ -2276,7 +2401,9 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
                                        ELSE termination_reason END
          WHERE status = 'running' AND observed_state = 'unconfirmed';
          CREATE INDEX IF NOT EXISTS ix_exec_scope_status
-             ON loop_item_executions(execution_scope, status);",
+             ON loop_item_executions(execution_scope, status);
+         CREATE INDEX IF NOT EXISTS ix_exec_runtime_capacity
+             ON loop_item_executions(runtime_instance_id, status);",
     )?;
     // The index must be created after the column exists (old databases need
     // the ALTER first; a missing column here would abort the whole migration
@@ -2703,6 +2830,11 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .get("execution_device_id")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned),
+        max_concurrent_executions: metadata
+            .get("max_concurrent_executions")
+            .and_then(Value::as_u64)
+            .filter(|value| (1..=20).contains(value))
+            .unwrap_or(1),
         local_project_id: metadata.get("local_project_id").and_then(Value::as_i64),
         created_by_user_id: row.created_by_user_id,
         version: row.version,
@@ -2815,6 +2947,10 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
     let status: String = row.get(7)?;
     let observed_state: String = row.get(30)?;
     let sync_state: String = row.get(31)?;
+    let agent_metadata = row
+        .get::<_, Option<String>>(43)?
+        .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+        .unwrap_or(Value::Null);
     Ok(LocalExecution {
         id: row.get(0)?,
         loop_item_id: row.get(1)?,
@@ -2823,6 +2959,7 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
         assigner_user_id: row.get(4)?,
         execution_environment: row.get(5)?,
         execution_device_id: row.get(6)?,
+        runtime_instance_id: row.get(44)?,
         display_state: local_execution_display_state(&status, &observed_state, &sync_state),
         status,
         observed_state,
@@ -2869,20 +3006,20 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .and_then(|value| serde_json::from_str::<Value>(&value).ok())
             .and_then(|metadata| {
                 metadata
-                    .get("system_prompt")
-                    .and_then(Value::as_str)
+                    .get("system_prompt")?
+                    .as_str()
                     .map(ToOwned::to_owned)
             })
             .unwrap_or_default(),
-        agent_model: row
-            .get::<_, Option<String>>(43)?
-            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
-            .and_then(|metadata| {
-                metadata
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned)
-            }),
+        agent_model: agent_metadata
+            .get("model")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        agent_max_concurrent_executions: agent_metadata
+            .get("max_concurrent_executions")
+            .and_then(Value::as_u64)
+            .filter(|value| (1..=20).contains(value))
+            .unwrap_or(1),
     })
 }
 
@@ -2920,7 +3057,7 @@ fn execution_row(
                 e.claimed_at, e.start_requested_at, e.observed_at,
                 e.cancel_requested_at, e.last_event_seq, e.termination_reason,
                 t.title, t.status, t.priority,
-                a.name, a.title, a.metadata
+                a.name, a.title, a.metadata, e.runtime_instance_id
          FROM loop_item_executions e
          LEFT JOIN loop_items t ON t.id = e.loop_item_id
          LEFT JOIN loop_items a ON a.id = e.agent_id
@@ -3124,6 +3261,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some(mode.to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: Some(7),
                 },
@@ -3341,7 +3479,10 @@ mod tests {
             .remove(0);
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let claimed = store
@@ -3441,7 +3582,10 @@ mod tests {
             .unwrap();
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let claimed = store
@@ -3505,7 +3649,10 @@ mod tests {
             .unwrap();
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let claimed = store
@@ -3601,7 +3748,10 @@ mod tests {
         // Not approved -> not claimable.
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 1,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
@@ -3689,6 +3839,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: Some(42),
                 },
@@ -3714,6 +3865,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: Some(7),
                     created_by_user_id: Some(7),
                 },
@@ -3737,6 +3889,7 @@ mod tests {
                     execution_environment: None,
                     execution_mode: None,
                     execution_device_id: None,
+                    max_concurrent_executions: None,
                     local_project_id: Some(Some(9)),
                 },
             )
@@ -3757,6 +3910,7 @@ mod tests {
                     execution_environment: None,
                     execution_mode: None,
                     execution_device_id: None,
+                    max_concurrent_executions: None,
                     local_project_id: Some(None),
                 },
             )
@@ -3768,7 +3922,23 @@ mod tests {
     fn local_claim_respects_device_capacity() {
         let (directory, store, project) = chat_agent_store();
         let _ = directory;
-        let agent_a = make_local_agent(&store, &project.id, "auto");
+        let agent_a = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Bot A".to_owned(),
+                    model: None,
+                    system_prompt: None,
+                    visibility: None,
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 20,
+                    local_project_id: None,
+                    created_by_user_id: None,
+                },
+            )
+            .unwrap();
         let agent_b = store
             .create_chat_agent(
                 &project.id,
@@ -3780,12 +3950,13 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: None,
                 },
             )
             .unwrap();
-        for (agent, title) in [(agent_a, "A"), (agent_b, "B")] {
+        for (agent, title) in [(agent_a.clone(), "A1"), (agent_a, "A2"), (agent_b, "B")] {
             let task = store
                 .create_task(
                     &project.id,
@@ -3819,11 +3990,106 @@ mod tests {
         }
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 1,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
-        assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
+        let first = store
+            .claim_next_local_execution(&claim)
+            .unwrap()
+            .expect("first robot should claim");
         // Capacity 1 -> the second robot's run stays queued.
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
+
+        let manual_process = LocalExecutionClaim {
+            device_capacity: 2,
+            runtime_active: 1,
+            runtime_active_task_ids: vec!["manual-task".to_owned()],
+            ..claim.clone()
+        };
+        assert!(store
+            .claim_next_local_execution(&manual_process)
+            .unwrap()
+            .is_none());
+
+        let observed_first = LocalExecutionClaim {
+            device_capacity: 2,
+            runtime_active: 1,
+            runtime_active_task_ids: vec![first.runtime_task_id.unwrap()],
+            ..claim
+        };
+        assert!(store
+            .claim_next_local_execution(&observed_first)
+            .unwrap()
+            .is_some_and(|execution| execution.agent_name == "Bot B"));
+    }
+
+    #[test]
+    fn local_claim_allows_configured_robot_parallelism() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = store
+            .create_chat_agent(
+                &project.id,
+                ChatAgentCreate {
+                    name: "Parallel Bot".to_owned(),
+                    model: None,
+                    system_prompt: None,
+                    visibility: None,
+                    execution_environment: Some("local".to_owned()),
+                    execution_mode: Some("auto".to_owned()),
+                    execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 2,
+                    local_project_id: None,
+                    created_by_user_id: Some(7),
+                },
+            )
+            .unwrap();
+        for index in 0..3 {
+            let task = store
+                .create_task(
+                    &project.id,
+                    TaskCreate {
+                        title: format!("Parallel {index}"),
+                        description: String::new(),
+                        status: "inbox".to_owned(),
+                        priority: "none".to_owned(),
+                        parent_id: None,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+            store
+                .update_task(
+                    &project.id,
+                    &task.id,
+                    TaskUpdate {
+                        version: task.version,
+                        title: None,
+                        description: None,
+                        status: None,
+                        priority: None,
+                        parent_id: None,
+                        tags: None,
+                        assignee_agent_id: Some(Some(agent.id.clone())),
+                        execution_payload: Some(json!({"message": "run"})),
+                    },
+                )
+                .unwrap();
+        }
+        let claim = LocalExecutionClaim {
+            execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
+            device_capacity: 4,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
+            lease_seconds: 300,
+        };
+
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
+        assert!(store.claim_next_local_execution(&claim).unwrap().is_some());
         assert!(store.claim_next_local_execution(&claim).unwrap().is_none());
     }
 
@@ -3843,6 +4109,7 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     // Robots created before device binding have no device.
                     execution_device_id: None,
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: Some(7),
                 },
@@ -3885,7 +4152,10 @@ mod tests {
 
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 1,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let claimed = store
@@ -3927,7 +4197,10 @@ mod tests {
             .unwrap();
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let claimed = store
@@ -3959,6 +4232,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: Some(7),
                 },
@@ -4016,6 +4290,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: Some(7),
                 },
@@ -4091,7 +4366,10 @@ mod tests {
             .unwrap();
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let claimed = store
@@ -4151,7 +4429,10 @@ mod tests {
         let claimed = store
             .claim_next_local_execution(&LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
                 device_capacity: 5,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
                 lease_seconds: 300,
             })
             .unwrap()
@@ -4244,7 +4525,10 @@ mod tests {
         let claimed = store
             .claim_next_local_execution(&LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
                 device_capacity: 5,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
                 lease_seconds: 300,
             })
             .unwrap()
@@ -4306,7 +4590,10 @@ mod tests {
         let claimed = store
             .claim_next_local_execution(&LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
                 device_capacity: 5,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
                 lease_seconds: 300,
             })
             .unwrap()
@@ -4336,7 +4623,10 @@ mod tests {
         assert!(store
             .claim_next_local_execution(&LocalExecutionClaim {
                 execution_device_id: Some("local-device".to_owned()),
+                runtime_instance_id: "runtime-1".to_owned(),
                 device_capacity: 5,
+                runtime_active: 0,
+                runtime_active_task_ids: vec![],
                 lease_seconds: 300,
             })
             .unwrap()
@@ -4371,7 +4661,10 @@ mod tests {
             .unwrap();
         let claim = LocalExecutionClaim {
             execution_device_id: Some("local-device".to_owned()),
+            runtime_instance_id: "runtime-1".to_owned(),
             device_capacity: 5,
+            runtime_active: 0,
+            runtime_active_task_ids: vec![],
             lease_seconds: 300,
         };
         let first = store.claim_next_local_execution(&claim).unwrap().unwrap();
@@ -4543,6 +4836,7 @@ mod tests {
                     execution_environment: Some("local".to_owned()),
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
+                    max_concurrent_executions: 1,
                     local_project_id: None,
                     created_by_user_id: None,
                 },

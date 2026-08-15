@@ -35,6 +35,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.capacity import get_runtime_capacity_sync
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     _optional_datetime,
@@ -101,6 +102,13 @@ def _execution_view(
     db: Session, row: object, *, include_runtime_payload: bool = False
 ) -> LoopItemExecutionView:
     item = db.get(LoopItem, row.loop_item_id)
+    agent = db.get(ProjectChatAgent, row.agent_id) if row.agent_id else None
+    if agent is not None:
+        from app.services.project_chat.service import bot_max_concurrent_executions
+
+        agent_max_concurrent_executions = bot_max_concurrent_executions(agent)
+    else:
+        agent_max_concurrent_executions = 1
     return LoopItemExecutionView.model_validate(
         {
             "id": row.id,
@@ -114,6 +122,7 @@ def _execution_view(
             "assigner_user_id": row.assigner_user_id,
             "execution_environment": row.execution_environment,
             "execution_device_id": _optional_text(row.execution_device_id),
+            "runtime_instance_id": _optional_text(row.runtime_instance_id),
             "status": row.status,
             "display_state": execution_display_state(row),
             "observed_state": row.observed_state,
@@ -141,6 +150,7 @@ def _execution_view(
             "rejected_reason": _optional_text(row.rejected_reason),
             "runtime_device_id": _optional_text(row.runtime_device_id),
             "runtime_task_id": _optional_text(row.runtime_task_id),
+            "agent_max_concurrent_executions": agent_max_concurrent_executions,
             "runtime_payload": (
                 loop_item_execution_service.build_runtime_payload(
                     db,
@@ -222,9 +232,9 @@ def claim_execution(
     """Claim the next queued run for a robot on the caller's device.
 
     Local App pullers are the only API callers; the atomic CAS plus the
-    caller-supplied device capacity prevents two of the creator's computers
-    from claiming the same run. Cloud runs are claimed by the Celery worker
-    directly, never through this endpoint.
+    Runtime heartbeat capacity prevents two transport routes for the same
+    installation from over-claiming. Cloud runs are claimed by the Celery
+    worker directly, never through this endpoint.
     """
 
     if values.execution_environment != "local":
@@ -238,7 +248,14 @@ def claim_execution(
         agent_id=values.agent_id,
         user_id=current_user.id,
     )
-    lock_key = f"robot_exec:{current_user.id}:local:{values.execution_device_id}"
+    capacity = get_runtime_capacity_sync(
+        db,
+        owner_user_id=current_user.id,
+        device_id=values.execution_device_id,
+    )
+    if capacity is None:
+        return None
+    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
     with distributed_lock.acquire_context(
         f"robot_exec_owner:{current_user.id}", expire_seconds=30
     ) as owner_acquired:
@@ -254,8 +271,12 @@ def claim_execution(
                 agent_id=values.agent_id,
                 execution_device_id=values.execution_device_id,
                 environment=values.execution_environment,
+                owner_user_id=current_user.id,
+                runtime_instance_id=capacity.runtime_instance_id,
+                device_capacity=capacity.limit,
+                runtime_active=capacity.active,
+                runtime_active_task_ids=capacity.active_task_ids,
                 lease_seconds=values.lease_seconds,
-                device_capacity=values.device_capacity,
                 assigner_filter=values.assigner_user_id,
             )
     return _claimed_execution_view(db, row) if row else None
@@ -273,12 +294,18 @@ def claim_my_next_execution(
     """Device-scoped claim used by the creator's local App puller.
 
     Finds the next queued local run for any robot bound to the caller's device
-    and returns it with a just-in-time runtime request. The atomic CAS plus the
-    caller-supplied device capacity keeps multiple computers from double-
-    claiming the same run.
+    and returns it with a just-in-time runtime request. Runtime heartbeat
+    capacity and the atomic CAS keep multiple routes from over-claiming.
     """
 
-    lock_key = f"robot_exec:{current_user.id}:local:{values.execution_device_id}"
+    capacity = get_runtime_capacity_sync(
+        db,
+        owner_user_id=current_user.id,
+        device_id=values.execution_device_id,
+    )
+    if capacity is None:
+        return None
+    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
     with distributed_lock.acquire_context(
         f"robot_exec_owner:{current_user.id}", expire_seconds=30
     ) as owner_acquired:
@@ -293,8 +320,11 @@ def claim_my_next_execution(
                 db,
                 execution_device_id=values.execution_device_id,
                 environment="local",
+                runtime_instance_id=capacity.runtime_instance_id,
+                device_capacity=capacity.limit,
+                runtime_active=capacity.active,
+                runtime_active_task_ids=capacity.active_task_ids,
                 lease_seconds=values.lease_seconds,
-                device_capacity=values.device_capacity,
                 owner_user_id=current_user.id,
             )
             if row is None:
@@ -302,8 +332,11 @@ def claim_my_next_execution(
                     db,
                     owner_user_id=current_user.id,
                     execution_device_id=values.execution_device_id,
+                    runtime_instance_id=capacity.runtime_instance_id,
+                    device_capacity=capacity.limit,
+                    runtime_active=capacity.active,
+                    runtime_active_task_ids=capacity.active_task_ids,
                     lease_seconds=values.lease_seconds,
-                    device_capacity=values.device_capacity,
                 )
     if row is None:
         return None

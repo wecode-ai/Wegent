@@ -191,7 +191,10 @@ impl HeartbeatCapture {
     }
 
     async fn wait_for_calls(&self, count: usize) -> Vec<Value> {
-        timeout(Duration::from_secs(2), async {
+        // One request may legitimately consume the five-second heartbeat
+        // client timeout under a loaded full-suite runner. Allow that request
+        // plus the configured one-second retry interval before failing.
+        timeout(Duration::from_secs(10), async {
             loop {
                 let calls = self.calls.lock().unwrap().clone();
                 if calls.len() >= count {

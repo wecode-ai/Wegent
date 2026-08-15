@@ -240,6 +240,125 @@ def _occupied_execution_scopes(db: Session) -> set[str]:
     }
 
 
+def _runtime_capacity_used(
+    db: Session,
+    *,
+    owner_user_id: int,
+    runtime_instance_id: str,
+    runtime_active: int,
+    runtime_active_task_ids: set[str] | frozenset[str],
+) -> int | None:
+    """Combine Runtime truth with durable reservations without double-counting."""
+
+    ambiguous = (
+        db.query(LoopItemExecution.id)
+        .filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.runtime_instance_id == "",
+        )
+        .first()
+    )
+    if ambiguous is not None:
+        return None
+    durable_task_ids = [
+        str(runtime_task_id or "")
+        for (runtime_task_id,) in db.query(LoopItemExecution.runtime_task_id)
+        .filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.runtime_instance_id == runtime_instance_id,
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        )
+        .all()
+    ]
+    pending_reservations = sum(
+        1
+        for runtime_task_id in durable_task_ids
+        if not runtime_task_id or runtime_task_id not in runtime_active_task_ids
+    )
+    return runtime_active + pending_reservations
+
+
+def _active_agent_counts(db: Session) -> dict[str, int]:
+    return {
+        str(agent_id): int(count)
+        for agent_id, count in db.query(
+            LoopItemExecution.agent_id,
+            func.count(LoopItemExecution.id),
+        )
+        .filter(
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.agent_id != "",
+        )
+        .group_by(LoopItemExecution.agent_id)
+        .all()
+    }
+
+
+def _agent_limits(db: Session, agent_ids: set[str]) -> dict[str, int]:
+    if not agent_ids:
+        return {}
+    from app.services.project_chat.service import bot_max_concurrent_executions
+
+    return {
+        row.id: bot_max_concurrent_executions(row)
+        for row in db.query(ProjectChatAgent)
+        .filter(ProjectChatAgent.id.in_(agent_ids))
+        .all()
+    }
+
+
+def _agent_has_capacity(
+    agent_id: str,
+    *,
+    active_counts: dict[str, int],
+    claimed_counts: dict[str, int],
+    limits: dict[str, int],
+) -> bool:
+    if not agent_id:
+        return True
+    return active_counts.get(agent_id, 0) + claimed_counts.get(
+        agent_id, 0
+    ) < limits.get(agent_id, 1)
+
+
+def _fair_single_candidate(
+    rows: list[LoopItemExecution],
+    *,
+    occupied_scopes: set[str],
+    active_counts: dict[str, int],
+    limits: dict[str, int],
+) -> LoopItemExecution | None:
+    """Pick FIFO per agent and least-active agent within the top priority."""
+
+    for priority in sorted({row.priority_weight for row in rows}, reverse=True):
+        first_by_agent: dict[str, LoopItemExecution] = {}
+        for row in rows:
+            if row.priority_weight != priority:
+                continue
+            if not _agent_has_capacity(
+                row.agent_id,
+                active_counts=active_counts,
+                claimed_counts={},
+                limits=limits,
+            ):
+                continue
+            if row.execution_scope and row.execution_scope in occupied_scopes:
+                continue
+            key = row.agent_id or f"automation:{row.id}"
+            first_by_agent.setdefault(key, row)
+        if first_by_agent:
+            candidates = list(first_by_agent.values())
+            return min(
+                enumerate(candidates),
+                key=lambda item: (
+                    active_counts.get(item[1].agent_id, 0),
+                    item[0],
+                ),
+            )[1]
+    return None
+
+
 def utcnow() -> datetime:
     """Naive UTC timestamp matching the loop_items convention."""
 
@@ -632,8 +751,12 @@ class LoopItemExecutionService:
         agent_id: str,
         execution_device_id: str,
         environment: str,
+        owner_user_id: int,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
         assigner_filter: Optional[int] = None,
     ) -> Optional[LoopItemExecution]:
         """Atomically claim the next queued run for one robot on one device.
@@ -644,32 +767,29 @@ class LoopItemExecutionService:
         below keeps a single claim atomic even without it.
         """
 
-        running_count = (
-            db.query(func.count(LoopItemExecution.id))
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            )
-            .scalar()
-            or 0
+        running_count = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if running_count >= device_capacity:
+        if running_count is None or running_count >= device_capacity:
             return None
-        already_running = (
-            db.query(LoopItemExecution.id)
-            .filter(
-                LoopItemExecution.agent_id == agent_id,
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            )
-            .first()
-        )
-        if already_running is not None:
+        active_counts = _active_agent_counts(db)
+        limits = _agent_limits(db, {agent_id})
+        if not _agent_has_capacity(
+            agent_id,
+            active_counts=active_counts,
+            claimed_counts={},
+            limits=limits,
+        ):
             return None
 
         query = (
             db.query(LoopItemExecution)
             .filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id,
                 LoopItemExecution.agent_id == agent_id,
                 LoopItemExecution.execution_device_id == execution_device_id,
                 LoopItemExecution.execution_environment == environment,
@@ -680,7 +800,6 @@ class LoopItemExecutionService:
                 LoopItemExecution.queued_at.asc(),
                 LoopItemExecution.id.asc(),
             )
-            .limit(1)
         )
         if assigner_filter is not None:
             query = query.filter(LoopItemExecution.assigner_user_id == assigner_filter)
@@ -704,6 +823,7 @@ class LoopItemExecutionService:
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
                     "runtime_device_id": execution_device_id,
+                    "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
                 }
@@ -721,9 +841,12 @@ class LoopItemExecutionService:
         *,
         execution_device_id: str,
         environment: str,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
+        owner_user_id: int,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
-        owner_user_id: int | None = None,
     ) -> Optional[LoopItemExecution]:
         """Claim one queued run for any robot bound to a device.
 
@@ -732,27 +855,15 @@ class LoopItemExecutionService:
         capacity (each robot still runs one task at a time).
         """
 
-        running_count_query = db.query(func.count(LoopItemExecution.id)).filter(
-            LoopItemExecution.execution_device_id == execution_device_id,
-            LoopItemExecution.execution_environment == environment,
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        running_count = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if owner_user_id is not None:
-            running_count_query = running_count_query.filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id
-            )
-        running_count = running_count_query.scalar() or 0
-        if running_count >= device_capacity:
+        if running_count is None or running_count >= device_capacity:
             return None
-        running_agents_query = db.query(LoopItemExecution.agent_id).filter(
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            LoopItemExecution.agent_id != "",
-        )
-        if owner_user_id is not None:
-            running_agents_query = running_agents_query.filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id
-            )
-        running_agent_ids = {agent_id for (agent_id,) in running_agents_query.all()}
         query = (
             db.query(LoopItemExecution)
             .filter(
@@ -766,20 +877,16 @@ class LoopItemExecutionService:
                 LoopItemExecution.id.asc(),
             )
         )
-        if owner_user_id is not None:
-            query = query.filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id
-            )
-        query = query.limit(32)
+        query = query.filter(LoopItemExecution.executor_owner_user_id == owner_user_id)
         occupied_scopes = _occupied_execution_scopes(db)
-        candidate = next(
-            (
-                row
-                for row in query.all()
-                if not row.agent_id or row.agent_id not in running_agent_ids
-                if not row.execution_scope or row.execution_scope not in occupied_scopes
-            ),
-            None,
+        active_counts = _active_agent_counts(db)
+        rows = query.all()
+        limits = _agent_limits(db, {row.agent_id for row in rows if row.agent_id})
+        candidate = _fair_single_candidate(
+            rows,
+            occupied_scopes=occupied_scopes,
+            active_counts=active_counts,
+            limits=limits,
         )
         if candidate is None:
             return None
@@ -797,6 +904,7 @@ class LoopItemExecutionService:
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
                     "runtime_device_id": execution_device_id,
+                    "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
                 }
@@ -814,10 +922,13 @@ class LoopItemExecutionService:
         *,
         execution_device_id: str,
         environment: str,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
+        owner_user_id: int,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
         batch_size: int = 16,
-        owner_user_id: int | None = None,
     ) -> list[LoopItemExecution]:
         """Atomically claim a batch of queued runs for one device.
 
@@ -829,72 +940,89 @@ class LoopItemExecutionService:
         across consumers.
         """
 
-        occupied_query = db.query(func.count(LoopItemExecution.id)).filter(
-            LoopItemExecution.execution_device_id == execution_device_id,
-            LoopItemExecution.execution_environment == environment,
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        occupied = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if owner_user_id is not None:
-            occupied_query = occupied_query.filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id
-            )
-        occupied = occupied_query.scalar() or 0
-        if occupied >= device_capacity:
+        if occupied is None or occupied >= device_capacity:
             return []
-        occupied_agents_query = db.query(LoopItemExecution.agent_id).filter(
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            LoopItemExecution.agent_id != "",
-        )
-        if owner_user_id is not None:
-            occupied_agents_query = occupied_agents_query.filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id
-            )
-        occupied_agent_ids = {agent_id for (agent_id,) in occupied_agents_query.all()}
         candidates = db.query(LoopItemExecution).filter(
             LoopItemExecution.execution_device_id == execution_device_id,
             LoopItemExecution.execution_environment == environment,
             LoopItemExecution.status == STATUS_QUEUED,
         )
-        if owner_user_id is not None:
-            candidates = candidates.filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id
-            )
-        candidates = (
-            candidates.order_by(
-                LoopItemExecution.priority_weight.desc(),
-                LoopItemExecution.queued_at.asc(),
-                LoopItemExecution.id.asc(),
-            )
-            .limit(batch_size)
-            .all()
+        candidates = candidates.filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id
         )
+        candidates = candidates.order_by(
+            LoopItemExecution.priority_weight.desc(),
+            LoopItemExecution.queued_at.asc(),
+            LoopItemExecution.id.asc(),
+        ).all()
         if not candidates:
             return []
-        slots = max(0, device_capacity - occupied)
+        slots = min(batch_size, max(0, device_capacity - occupied))
         claimable: list[int] = []
-        seen_agent_ids: set[str] = set()
+        claimed_agent_counts: dict[str, int] = {}
         seen_scopes: set[str] = set()
         occupied_scopes = _occupied_execution_scopes(db)
-        for candidate in candidates:
+        active_counts = _active_agent_counts(db)
+        limits = _agent_limits(
+            db, {candidate.agent_id for candidate in candidates if candidate.agent_id}
+        )
+        priorities = sorted(
+            {candidate.priority_weight for candidate in candidates}, reverse=True
+        )
+        for priority in priorities:
+            queues: dict[str, list[LoopItemExecution]] = {}
+            for candidate in candidates:
+                if candidate.priority_weight != priority:
+                    continue
+                key = candidate.agent_id or f"automation:{candidate.id}"
+                queues.setdefault(key, []).append(candidate)
+            while queues and len(claimable) < slots:
+                progressed = False
+                for key in list(queues):
+                    queue = queues[key]
+                    selected = None
+                    while queue:
+                        candidate = queue.pop(0)
+                        if not _agent_has_capacity(
+                            candidate.agent_id,
+                            active_counts=active_counts,
+                            claimed_counts=claimed_agent_counts,
+                            limits=limits,
+                        ):
+                            queue.clear()
+                            break
+                        if candidate.execution_scope and (
+                            candidate.execution_scope in occupied_scopes
+                            or candidate.execution_scope in seen_scopes
+                        ):
+                            continue
+                        selected = candidate
+                        break
+                    if not queue:
+                        queues.pop(key, None)
+                    if selected is None:
+                        continue
+                    claimable.append(selected.id)
+                    if selected.agent_id:
+                        claimed_agent_counts[selected.agent_id] = (
+                            claimed_agent_counts.get(selected.agent_id, 0) + 1
+                        )
+                    if selected.execution_scope:
+                        seen_scopes.add(selected.execution_scope)
+                    progressed = True
+                    if len(claimable) >= slots:
+                        break
+                if not progressed:
+                    break
             if len(claimable) >= slots:
                 break
-            if candidate.agent_id:
-                if not candidate.agent_id:
-                    continue
-                if (
-                    candidate.agent_id in occupied_agent_ids
-                    or candidate.agent_id in seen_agent_ids
-                ):
-                    continue
-                seen_agent_ids.add(candidate.agent_id)
-            if candidate.execution_scope and (
-                candidate.execution_scope in occupied_scopes
-                or candidate.execution_scope in seen_scopes
-            ):
-                continue
-            if candidate.execution_scope:
-                seen_scopes.add(candidate.execution_scope)
-            claimable.append(candidate.id)
         if not claimable:
             return []
         now = utcnow()
@@ -910,13 +1038,14 @@ class LoopItemExecutionService:
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "runtime_instance_id": runtime_instance_id,
                     "version": LoopItemExecution.version + 1,
                 },
                 synchronize_session=False,
             )
         )
         db.flush()
-        if updated == 0:
+        if updated != len(claimable):
             db.rollback()
             return []
         db.expire_all()
@@ -942,35 +1071,23 @@ class LoopItemExecutionService:
         *,
         owner_user_id: int,
         execution_device_id: str,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
     ) -> Optional[LoopItemExecution]:
         """Claim a legacy project-robot run without a persisted device binding."""
 
-        occupied = (
-            db.query(func.count(LoopItemExecution.id))
-            .filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == "local",
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            )
-            .scalar()
-            or 0
+        occupied = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if occupied >= device_capacity:
+        if occupied is None or occupied >= device_capacity:
             return None
-
-        running_agent_ids = {
-            agent_id
-            for (agent_id,) in db.query(LoopItemExecution.agent_id)
-            .filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-                LoopItemExecution.agent_id != "",
-            )
-            .all()
-        }
         candidates = (
             db.query(LoopItemExecution)
             .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
@@ -990,21 +1107,16 @@ class LoopItemExecutionService:
                 LoopItemExecution.queued_at.asc(),
                 LoopItemExecution.id.asc(),
             )
-            .limit(32)
             .all()
         )
         occupied_scopes = _occupied_execution_scopes(db)
-        candidate = next(
-            (
-                row
-                for row in candidates
-                if row.agent_id not in running_agent_ids
-                and (
-                    not row.execution_scope
-                    or row.execution_scope not in occupied_scopes
-                )
-            ),
-            None,
+        active_counts = _active_agent_counts(db)
+        limits = _agent_limits(db, {row.agent_id for row in candidates if row.agent_id})
+        candidate = _fair_single_candidate(
+            candidates,
+            occupied_scopes=occupied_scopes,
+            active_counts=active_counts,
+            limits=limits,
         )
         if candidate is None:
             return None
@@ -1024,6 +1136,7 @@ class LoopItemExecutionService:
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
                     "runtime_device_id": execution_device_id,
+                    "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
                 }
@@ -2782,6 +2895,9 @@ class LoopItemExecutionService:
             .limit(limit)
             .all()
         )
+        limits = _agent_limits(
+            db, {execution.agent_id for execution in rows if execution.agent_id}
+        )
         return [
             {
                 "id": execution.id,
@@ -2797,6 +2913,7 @@ class LoopItemExecutionService:
                 "assigner_user_id": execution.assigner_user_id,
                 "execution_environment": execution.execution_environment,
                 "execution_device_id": _optional_text(execution.execution_device_id),
+                "runtime_instance_id": _optional_text(execution.runtime_instance_id),
                 "status": execution.status,
                 "display_state": execution_display_state(execution),
                 "observed_state": execution.observed_state,
@@ -2828,6 +2945,7 @@ class LoopItemExecutionService:
                 "rejected_reason": _optional_text(execution.rejected_reason),
                 "runtime_device_id": _optional_text(execution.runtime_device_id),
                 "runtime_task_id": _optional_text(execution.runtime_task_id),
+                "agent_max_concurrent_executions": limits.get(execution.agent_id, 1),
                 "version": execution.version,
                 "created_at": execution.created_at,
                 "updated_at": execution.updated_at,

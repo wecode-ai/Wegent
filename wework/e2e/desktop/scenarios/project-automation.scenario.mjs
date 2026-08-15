@@ -445,6 +445,23 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       ),
       'selected'
     )
+    const concurrencySelector = '[data-testid="cloud-project-chat-agent-max-concurrent-executions"]'
+    assert.equal(
+      await control.command('getValue', concurrencySelector, { visible: true }),
+      '1',
+      'Robot concurrency did not default to one'
+    )
+    await control.command('fill', concurrencySelector, { value: '2', visible: true })
+    await control.command('click', '[data-testid="cloud-project-chat-agent-save"]', {
+      visible: true,
+    })
+    const updatedAgents = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`),
+      items => items.some(item => item.id === cloudAgent.id && item.maxConcurrentExecutions === 2),
+      'Robot concurrency was not persisted by the real backend',
+      uiTimeoutMs
+    )
+    cloudAgent = updatedAgents.find(item => item.id === cloudAgent.id)
     await captureScreenshot(control, 'project-automation-04-real-robot-binding.png')
   }
 

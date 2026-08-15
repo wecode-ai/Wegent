@@ -236,6 +236,11 @@ def _make_running_automation_execution(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     activity.runtime_device_id = claimed.runtime_device_id
@@ -303,6 +308,11 @@ def test_claim_is_atomic_and_serial_per_robot(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     assert claimed.id == first.id
@@ -315,6 +325,11 @@ def test_claim_is_atomic_and_serial_per_robot(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert blocked is None
     test_db.refresh(second)
@@ -356,6 +371,11 @@ def test_device_capacity_is_shared_across_robots(
         agent_id=bot_a.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert first is not None
     # Device capacity is 1: the second robot cannot start on the same device.
@@ -364,6 +384,10 @@ def test_device_capacity_is_shared_across_robots(
         agent_id=bot_b.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=1,
     )
     assert blocked is None
@@ -376,6 +400,10 @@ def test_device_capacity_is_shared_across_robots(
         agent_id=bot_b.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=1,
     )
     assert second is not None
@@ -406,6 +434,11 @@ def test_claim_next_for_device_orders_by_priority(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     assert claimed.id == urgent.id
@@ -422,6 +455,11 @@ def test_heartbeat_and_complete_release_slot(test_db: Session, test_user: User) 
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     refreshed = loop_item_execution_service.heartbeat(
@@ -444,6 +482,11 @@ def test_heartbeat_and_complete_release_slot(test_db: Session, test_user: User) 
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert next_claim is None  # only one queued run existed
 
@@ -467,6 +510,11 @@ def test_runtime_events_renew_the_lease(test_db: Session, test_user: User) -> No
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     loop_item_execution_service.heartbeat(
@@ -517,6 +565,11 @@ def test_runtime_completion_finishes_project_automation(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     loop_item_execution_service.heartbeat(
@@ -736,6 +789,11 @@ def test_runtime_retry_uses_a_new_execution_attempt(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     running = loop_item_execution_service.handle_runtime_event(
@@ -777,6 +835,11 @@ def test_reordered_runtime_event_cannot_overwrite_newer_truth(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     newest = loop_item_execution_service.handle_runtime_event(
@@ -812,6 +875,11 @@ def test_later_runtime_event_cannot_overwrite_terminal_truth(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     completed = loop_item_execution_service.handle_runtime_event(
@@ -878,6 +946,11 @@ def test_automation_execution_finishes_its_exact_run_without_child_aggregation(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     loop_item_execution_service.heartbeat(
@@ -933,6 +1006,11 @@ def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         lease_seconds=60,
     )
     assert len(claimed_rows) == 1
@@ -958,6 +1036,11 @@ def test_unstarted_claim_lease_expiry_releases_without_consuming_retry(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         lease_seconds=60,
     )
     assert len(re_claimed_rows) == 1
@@ -1300,6 +1383,11 @@ def test_stall_scan_requests_cancel_without_faking_terminal_state(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     running = loop_item_execution_service.handle_runtime_event(
@@ -1360,6 +1448,11 @@ def test_stall_scan_keeps_runs_with_text_output(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     running = loop_item_execution_service.handle_runtime_event(
@@ -1455,6 +1548,11 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     assert claimed.execution_payload == ""
@@ -1551,6 +1649,11 @@ def test_claim_binds_canonical_runtime_identity(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     assert claimed.runtime_task_id == f"codex-queue-{claimed.id}"
@@ -1581,6 +1684,11 @@ def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
 
@@ -1669,6 +1777,11 @@ def test_runtime_event_opens_activity_when_start_report_races_ahead(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
 
@@ -1699,6 +1812,11 @@ def test_requeue_drops_empty_placeholder_activity(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     loop_item_execution_service.open_execution_activity(test_db, execution=claimed)
@@ -1736,6 +1854,11 @@ def test_placeholder_cleanup_allows_reopening_same_runtime(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
 
@@ -1776,6 +1899,11 @@ def test_terminal_report_closes_streaming_activity(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     loop_item_execution_service.open_execution_activity(test_db, execution=claimed)
@@ -1813,6 +1941,11 @@ def test_terminal_failure_closes_streaming_activity_with_error(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     loop_item_execution_service.open_execution_activity(test_db, execution=claimed)
@@ -1903,6 +2036,10 @@ def test_claim_batch_moves_queued_to_claimed_within_capacity(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=2,
         batch_size=4,
     )
@@ -1934,11 +2071,307 @@ def test_claim_batch_respects_serial_per_robot(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=4,
         batch_size=4,
     )
     assert len(claimed) == 1
     assert claimed[0].id == first.id
+    test_db.refresh(second)
+    assert second.status == "queued"
+
+
+def test_claim_batch_allows_configured_robot_parallelism(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    bot.metadata_json = {**bot.metadata_json, "max_concurrent_executions": 2}
+    test_db.commit()
+    executions = [
+        _make_execution(
+            test_db,
+            _make_item(test_db, project, test_user, title=f"Parallel {index}"),
+            bot,
+            test_user,
+        )
+        for index in range(3)
+    ]
+
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=4,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+        batch_size=4,
+    )
+
+    assert [row.id for row in claimed] == [executions[0].id, executions[1].id]
+    test_db.refresh(executions[2])
+    assert executions[2].status == "queued"
+
+
+def test_runtime_capacity_is_shared_across_device_routes(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_bot = _make_bot(test_db, project, test_user)
+    second_bot = _make_bot(test_db, project, test_user)
+    second_bot.device_id = "app-route"
+    test_db.commit()
+    first = _make_execution(
+        test_db, _make_item(test_db, project, test_user), first_bot, test_user
+    )
+    second = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user, title="Second route"),
+        second_bot,
+        test_user,
+    )
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=first_bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="shared-runtime",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    blocked = loop_item_execution_service.claim(
+        test_db,
+        agent_id=second_bot.id,
+        execution_device_id="app-route",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="shared-runtime",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert claimed is not None and claimed.id == first.id
+    assert blocked is None
+    test_db.refresh(second)
+    assert second.status == "queued"
+
+
+def test_runtime_active_tasks_reduce_claimable_capacity(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=2,
+        runtime_active=2,
+        runtime_active_task_ids={"manual-1", "manual-2"},
+    )
+
+    assert claimed is None
+    test_db.refresh(execution)
+    assert execution.status == "queued"
+
+
+def test_runtime_task_id_deduplicates_live_process_and_durable_claim(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_bot = _make_bot(test_db, project, test_user)
+    second_bot = _make_bot(test_db, project, test_user)
+    first = _make_execution(
+        test_db, _make_item(test_db, project, test_user), first_bot, test_user
+    )
+    second = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user, title="Second task"),
+        second_bot,
+        test_user,
+    )
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=first_bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=2,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None and claimed.id == first.id
+
+    blocked_by_manual_process = loop_item_execution_service.claim(
+        test_db,
+        agent_id=second_bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=2,
+        runtime_active=1,
+        runtime_active_task_ids={"manual-task"},
+    )
+    assert blocked_by_manual_process is None
+
+    claimed_after_runtime_observation = loop_item_execution_service.claim(
+        test_db,
+        agent_id=second_bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=2,
+        runtime_active=1,
+        runtime_active_task_ids={claimed.runtime_task_id},
+    )
+    assert claimed_after_runtime_observation is not None
+    assert claimed_after_runtime_observation.id == second.id
+
+
+def test_batch_round_robins_robots_within_the_same_priority(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_bot = _make_bot(test_db, project, test_user)
+    first_bot.metadata_json = {
+        **first_bot.metadata_json,
+        "max_concurrent_executions": 20,
+    }
+    second_bot = _make_bot(test_db, project, test_user)
+    test_db.commit()
+    first_rows = [
+        _make_execution(
+            test_db,
+            _make_item(test_db, project, test_user, title=f"First {index}"),
+            first_bot,
+            test_user,
+        )
+        for index in range(20)
+    ]
+    second = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user, title="Second robot"),
+        second_bot,
+        test_user,
+    )
+
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=2,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+        batch_size=2,
+    )
+
+    assert [row.id for row in claimed] == [first_rows[0].id, second.id]
+
+
+def test_single_claim_prefers_the_least_active_robot_within_priority(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_bot = _make_bot(test_db, project, test_user)
+    first_bot.metadata_json = {
+        **first_bot.metadata_json,
+        "max_concurrent_executions": 20,
+    }
+    second_bot = _make_bot(test_db, project, test_user)
+    test_db.commit()
+    for index in range(3):
+        _make_execution(
+            test_db,
+            _make_item(test_db, project, test_user, title=f"First {index}"),
+            first_bot,
+            test_user,
+        )
+    second = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user, title="Second robot"),
+        second_bot,
+        test_user,
+    )
+
+    first_claim = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        runtime_instance_id="runtime-1",
+        device_capacity=4,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+        owner_user_id=test_user.id,
+    )
+    second_claim = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        runtime_instance_id="runtime-1",
+        device_capacity=4,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+        owner_user_id=test_user.id,
+    )
+
+    assert first_claim is not None and first_claim.agent_id == first_bot.id
+    assert second_claim is not None and second_claim.id == second.id
+
+
+def test_ambiguous_active_capacity_identity_blocks_new_claims(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    first_bot = _make_bot(test_db, project, test_user)
+    second_bot = _make_bot(test_db, project, test_user)
+    first = _make_execution(
+        test_db, _make_item(test_db, project, test_user), first_bot, test_user
+    )
+    second = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user, title="Blocked"),
+        second_bot,
+        test_user,
+    )
+    first.status = "claimed"
+    first.runtime_instance_id = ""
+    test_db.commit()
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=second_bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=4,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+
+    assert claimed is None
     test_db.refresh(second)
     assert second.status == "queued"
 
@@ -1958,6 +2391,10 @@ def test_mark_start_requested_preserves_claimed_state(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=2,
         batch_size=2,
     )
@@ -1988,6 +2425,11 @@ def test_runtime_start_fence_requires_exact_claim_identity(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )[0]
 
     assert (
@@ -2035,6 +2477,11 @@ def test_unknown_runtime_dispatch_is_not_failed_or_requeued(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )[0]
     loop_item_execution_service.request_runtime_start(
         test_db,
@@ -2081,6 +2528,11 @@ def test_preflight_failure_is_terminal_only_before_start_delivery(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )[0]
 
     failed = loop_item_execution_service.fail_runtime_preflight(
@@ -2106,6 +2558,11 @@ def test_runtime_reconciliation_uses_terminal_turn_status(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )[0]
     loop_item_execution_service.request_runtime_start(
         test_db,
@@ -2146,6 +2603,11 @@ def test_runtime_queued_snapshot_is_accepted_not_running(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )[0]
     loop_item_execution_service.request_runtime_start(
         test_db,
@@ -2184,6 +2646,11 @@ def test_claimed_lease_expiry_requeues_run(test_db: Session, test_user: User) ->
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         lease_seconds=60,
     )
     assert len(claimed) == 1
@@ -2237,6 +2704,11 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     with (
@@ -2361,6 +2833,10 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
         test_db,
         execution_device_id="local-device",
         environment="local",
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         owner_user_id=test_user.id,
     )
     assert claimed is not None
@@ -2429,6 +2905,11 @@ def test_public_cloud_model_uses_backend_gateway_config(
         agent_id=bot.id,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
 
@@ -2488,6 +2969,10 @@ def test_legacy_unbound_project_robot_is_claimed_by_its_owners_local_app(
         test_db,
         owner_user_id=test_user.id,
         execution_device_id="local-device",
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
 
     assert claimed is not None
@@ -2661,6 +3146,10 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
         test_db,
         execution_device_id="cloud-device-1",
         environment="cloud",
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         owner_user_id=test_user.id,
     )
     assert claimed is not None and claimed.id == robot_execution.id

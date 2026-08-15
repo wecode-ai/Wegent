@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # Project Execution State-of-Truth Refactoring
 
-> Implementation status: code, automated regression, and isolated real-desktop verification are complete; code review and manual acceptance remain.
+> Implementation status: the state-of-truth path and concurrency extension are complete; full Backend, Wework, and Executor regression, MySQL migration rollback/upgrade, and real Tauri desktop acceptance have passed.
 >
 > Hard constraint: no new database tables. This change only extends the existing MySQL/SQLite `loop_item_executions` tables and continues using existing LoopItem, chat-message, and Automation Run storage.
 
@@ -34,15 +34,31 @@ flowchart LR
     AUTO["Automation trigger"]
     USER["Approve / cancel / retry"]
   end
-  subgraph Existing["Existing storage — no new table"]
-    EXEC["MySQL loop_item_executions<br/>one row = one attempt"]
-    LSQL["SQLite loop_item_executions<br/>same semantics"]
+  subgraph Config["Existing configuration — no new table"]
+    DEVICE["Runtime Settings<br/>D = maxConcurrentTasks<br/>single device-wide limit"]
+    OBS["Live Runtime observation<br/>limit / active / active_task_ids / queued<br/>Local IPC; Cloud Redis TTL"]
+    DOMAIN["Capacity domain<br/>owner_user_id + runtime_instance_id<br/>multiple routes share one domain"]
+    ROBOT["loop_items.metadata<br/>R = max_concurrent_executions<br/>global per robot, default 1"]
+  end
+  subgraph Existing["Execution truth and projections — no new table"]
+    EXEC["MySQL / SQLite loop_item_executions<br/>one row = one attempt<br/>persists runtime_instance_id at claim"]
     ITEM["loop_items<br/>workflow / Automation projection"]
     MSG["project_chat_messages<br/>text and activity projection"]
   end
-  subgraph Runtime["Actual Runtime"]
-    CLOUD["Cloud Executor"]
-    LOCAL["Local Executor"]
+  subgraph Claim["Canonical claim path"]
+    LOCK["owner lock → runtime_instance lock"]
+    DGATE{"Valid observation?<br/>O = Runtime active + durable reservations<br/>not present in active_task_ids<br/>O < D?"}
+    RGATE{"Project-robot occupancy < R?<br/>manager has no agent gate"}
+    SGATE{"execution_scope free?"}
+    CAS["CAS queued → claimed<br/>write runtime_instance_id"]
+    HOLD["Remain queued"]
+  end
+  subgraph Runtime["Physical Runtime concurrency"]
+    START["Persist start_requested_at<br/>Start fence"]
+    SCHED{"Runtime active tasks < D?"}
+    WAIT["Accepted but queued in Runtime<br/>waiting_runtime"]
+    RUN["Actually running"]
+    OTHER["Normal chat / other Runtime tasks"]
   end
   subgraph Read["Pure read projection"]
     MAP["execution_display_state<br/>execution_ai_state"]
@@ -58,15 +74,30 @@ flowchart LR
   ASSIGN --> EXEC
   AUTO --> EXEC
   USER --> EXEC
-  ASSIGN --> LSQL
-  EXEC --> CLOUD
-  LSQL --> LOCAL
-  CLOUD -->|"identity + eventSeq"| EXEC
-  LOCAL -->|"trusted in-process outcome"| LSQL
+  DEVICE --> OBS
+  OBS --> DOMAIN
+  DOMAIN --> LOCK
+  DEVICE --> SCHED
+  ROBOT --> RGATE
+  EXEC -->|"claimed / running / cancel_requested"| DGATE
+  LOCK --> DGATE
+  DGATE -->|"no"| HOLD
+  DGATE -->|"yes"| RGATE
+  RGATE -->|"no"| HOLD
+  RGATE -->|"yes"| SGATE
+  SGATE -->|"no"| HOLD
+  SGATE -->|"yes"| CAS
+  CAS --> EXEC
+  CAS --> START
+  START --> SCHED
+  OTHER --> SCHED
+  SCHED -->|"no physical slot"| WAIT
+  SCHED -->|"slot available"| RUN
+  WAIT -->|"observed=accepted"| EXEC
+  RUN -->|"identity + eventSeq / trusted callback"| EXEC
   EXEC -->|"same transaction"| ITEM
   EXEC -->|"same transaction"| MSG
   EXEC --> MAP
-  LSQL --> MAP
   MAP --> API
   API --> QUEUE
   API --> DETAIL
@@ -77,9 +108,15 @@ flowchart LR
 
 The direction is one-way: Execution → Message/Automation/Workflow projections. A message, `metadata.ai_state`, board lane, or UI cannot decide Execution state.
 
+`D` has one configuration source. Occupancy is neither the sum nor the maximum of two unrelated counters. It is merged by Runtime task identity: `O = Runtime active + durable capacity rows whose runtime_task_id is absent from active_task_ids`. A robot process visible to both layers is counted once, while manual Runtime work and claimed work not yet seen by Runtime are both retained. Runtime remains the hard physical limit for chat, robots, and automations together. “Run now” can only move a queued task to the front; it cannot start task D+1.
+
+Capacity is live Runtime state and is never persisted into Device Kind as fact. Local claim reads it through App IPC. Cloud Runtime reports `limit/active/active_task_ids/queued/runtimeInstanceId` into the existing Redis online record under its TTL. Every active count must have one unique non-empty task ID. Missing, expired, incomplete, or mismatched observations stop claim. Claim APIs reject caller-supplied `deviceCapacity` and have no fixed-constant fallback.
+
+`execution_device_id` is a transport route, not capacity identity. All local/app/socket routes for one installation share `owner_user_id + runtime_instance_id`; claim persists that identity in the existing execution row. Robot `R` is global by `agent_id` across routes and environments. `claimed`, `running`, `cancel_requested`, and `unknown` retain both device and robot capacity. Bound project runs with `R > 1` require a verified Git repository and a separate worktree per attempt; a non-isolatable workspace cannot enable parallel robot execution.
+
 ## 3. Zero-new-table model
 
-One existing `loop_item_executions` row is one attempt. The migration only adds columns and the non-unique `idx_exec_scope_status` index; it contains no `CREATE TABLE`. Local SQLite applies `ALTER TABLE` to its existing table and moves to schema version 6.
+One existing `loop_item_executions` row is one attempt. This concurrency migration adds only `runtime_instance_id` and the non-unique `idx_exec_runtime_capacity` index to the existing MySQL table; it contains no `CREATE TABLE`. Local SQLite alters the existing table, creates `ix_exec_runtime_capacity` after the column exists, and moves to schema version 7.
 
 | Dimension | Columns | Meaning |
 | --- | --- | --- |
@@ -90,6 +127,7 @@ One existing `loop_item_executions` row is one attempt. The migration only adds 
 | Concurrency domain | `execution_scope` | Project robot by task; manager by Automation Run |
 | Start fence | `claimed_at`, `start_requested_at` | Separates a releasable claim from a Start that may have arrived |
 | Runtime identity | `runtime_device_id`, `runtime_task_id` | Task ID is deterministically `codex-queue-{execution.id}` and validated at every write |
+| Capacity identity | `runtime_instance_id` | Merges all routes by `owner_user_id + runtime_instance_id` |
 | Event fence | `last_event_seq` | Only a greater Runtime sequence is accepted |
 | Cancellation/terminal | `cancel_requested_at`, `termination_reason` | Cancellation intent time and confirmed terminal reason |
 | Control lease | `heartbeat_at`, `lease_expires_at` | Dispatcher/claim liveness, never standalone process proof |
@@ -147,13 +185,16 @@ Updating `heartbeat_at` therefore cannot turn `starting/unknown` into `running`,
 ```mermaid
 sequenceDiagram
   participant C as Queue Consumer
+  participant H as Redis Runtime Capacity TTL
   participant DB as loop_item_executions
   participant W as Celery Dispatch
   participant G as Runtime RPC Gateway
   participant R as Cloud Executor
-  C->>C: owner lock → device lock
-  C->>DB: capacity, agent, and scope checks
-  C->>DB: CAS queued → claimed<br/>bind codex-queue-{id}
+  C->>H: read instance + limit/active/active_task_ids
+  H-->>C: fresh identity-matching observation
+  C->>C: owner lock → runtime_instance lock
+  C->>DB: merge exact O; check O < D, agent < R, scope free
+  C->>DB: CAS queued → claimed<br/>bind runtime_instance_id + codex-queue-{id}
   W->>DB: build just-in-time Runtime payload
   W->>DB: persist start_requested_at fence
   W->>G: runtime.tasks.create
@@ -178,10 +219,15 @@ An RPC transport failure is distinct from an explicit `emitted=false`. After the
 ```mermaid
 sequenceDiagram
   participant APP as Wework Dispatcher
+  participant IPC as App IPC
   participant SQL as Local SQLite
   participant API as Runtime Work API
   participant R as Local Executor
-  APP->>SQL: claimNext → claimed<br/>bind device/task identity
+  APP->>IPC: executions.claim_next without capacity
+  IPC->>R: runtime.capacity.get
+  R-->>IPC: limit/active/active_task_ids/queued
+  IPC->>SQL: inject trusted capacity + runtime_instance_id
+  SQL->>SQL: check O < D, agent < R, scope free<br/>CAS queued → claimed
   APP->>SQL: executions.start_requested
   APP->>API: createRuntimeTask(codex-queue-{id})
   alt Create response proves acceptance
@@ -319,24 +365,32 @@ Both Cloud Scan and Local App reconcile by the persisted device/task identity. L
 
 A long-running attempt with no text only triggers `cancel_requested` plus Runtime cancellation; it is not manufactured into `failed`.
 
-## 11. Concurrency and capacity
+## 11. Concurrency, capacity, and fairness
 
 ```mermaid
 flowchart TD
-  SCAN["Scan queued by owner/device"] --> OL["Acquire owner lock"]
-  OL --> DL["Acquire environment/device lock"]
-  DL --> CAP{"Capacity available?"}
+  SCAN["Scan all queued rows by owner/device<br/>no fixed 16/32 candidate window"] --> OBS["Read fresh Runtime capacity<br/>instance + active_task_ids"]
+  OBS --> OL["Acquire owner lock"]
+  OL --> DL["Acquire runtime_instance lock"]
+  DL --> MERGE["O = Runtime active<br/>+ durable task IDs absent from active_task_ids"]
+  MERGE --> CAP{"O < D?"}
   CAP -->|no| END["Do not claim"]
-  CAP -->|yes| AG{"Agent already has capacity row?"}
-  AG -->|yes| NEXT["Skip candidate"]
-  AG -->|no| SP{"execution_scope occupied?"}
+  CAP -->|yes| PRI["Partition by priority"]
+  PRI --> RR["Round-robin agents within priority<br/>FIFO within each agent"]
+  RR --> AG{"Global agent occupancy < R?"}
+  AG -->|no| NEXT["Skip this agent"]
+  AG -->|yes| SP{"execution_scope occupied?"}
   SP -->|yes| NEXT
-  SP -->|no| CAS["CAS queued → claimed"]
+  SP -->|no| ISO{"Bound project and R > 1?"}
+  ISO -->|yes| GIT["Verify Git at configuration and preflight<br/>one worktree per attempt"]
+  ISO -->|no| CAS["CAS queued → claimed"]
+  GIT -->|not isolatable| NEXT
+  GIT -->|isolatable| CAS
   CAS -->|lost| NEXT
-  CAS -->|won| SLOT["claimed/running/cancel_requested/unknown<br/>all occupy a slot"]
+  CAS -->|won| SLOT["write runtime_instance_id<br/>claimed/running/cancel_requested/unknown occupy O and R"]
 ```
 
-Lock order is owner → device → database CAS. Unknown retains its slot; releasing it could run a new attempt beside a still-running process.
+The fixed order is fresh observation → owner lock → Runtime-instance lock → database CAS. A batch CAS must update every selected row or roll back the whole batch; Runtime identity is never written onto a row that was not claimed. Unknown retains capacity. Higher priority runs first, while agents round-robin within a priority and remain FIFO internally, so a 20-item queue for one robot cannot starve another robot.
 
 ## 12. Pure reads and UI consistency
 
@@ -385,11 +439,17 @@ Direct App dispatcher `complete`/`fail` entry points were removed. Heartbeat req
 | Runtime failure and retry | Old row failed, new row queued | Old row changed back to queued |
 | GET/page refresh | State unchanged | Read-time mutation |
 | My Work/Queue/Detail/Automation | Same exact display state | Pending/claimed shown as running |
+| Missing/expired/mismatched capacity heartbeat | Stop claiming and retain existing state | Fixed or caller-supplied capacity fallback |
+| Runtime active and durable claim share a task ID | Count once | False-full double count |
+| Manual Runtime task and not-yet-delivered durable claim differ | Count both in O | `max()` undercount and over-claim |
+| One robot reaches R | Other robots remain claimable fairly | Hot-robot starvation or route-based R bypass |
+| Bound non-Git project requests R > 1 | Reject at configuration and verify again at preflight | Concurrent execution in one shared directory |
+| “Run now” while Runtime is full | Move to queue front and wait | Start task D+1 |
 | Migration | ALTER existing table and create index only | Any new table |
 
 ## 15. Automated and manual verification
 
-Automation must cover: no `create_table` migration, claim/identity/Start fence, event sequence, competing terminals, pre/post-Start cancellation, ambiguous dispatch, cloud/local recovery and reconciliation (including `running` plus `turnStatus`), new-attempt retry, same-transaction projections, pure GET, local IPC/store, UI mapping, and TypeScript/Rust compilation.
+Automation must cover: no-`create_table` migration, capacity identity and heartbeat TTL, exact `active_task_ids` deduplication, D shared across device routes, global robot R, same-priority round-robin, no fixed candidate window, all-or-nothing batch CAS, non-Git concurrency rejection, Runtime hard limit and force-start, claim/identity/Start fence, event sequence, competing terminals, pre/post-Start cancellation, ambiguous dispatch, cloud/local recovery and reconciliation (including `running` plus `turnStatus`), new-attempt retry, same-transaction projections, pure GET, local IPC/store, UI mapping, and TypeScript/Rust compilation.
 
 Manual acceptance sequence:
 
@@ -399,3 +459,6 @@ Manual acceptance sequence:
 4. Produce a Runtime failure and verify retry preserves the old attempt and uses a new task ID.
 5. Open Queue, Task Activity, My Work, Automation, and Overlay together and compare states.
 6. Refresh and repeat GET requests; verify reads do not change state.
+7. Set D to 2, mix normal chat and robot work, and verify physical active count never exceeds 2 while accepted work shows waiting_runtime.
+8. Set one robot to R=2 and pull through two routes; verify it remains globally capped at 2 and another same-priority robot is not starved.
+9. Verify R > 1 creates distinct worktrees for a Git project and is rejected at save time for a plain directory.

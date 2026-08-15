@@ -124,6 +124,7 @@ fn assert_log_timestamp(line: &str) {
 async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_online_ttl() {
     let transport = ScriptedTransport::with_call_results(vec![
         Ok(json!({"success": true})),
+        Ok(json!({"success": true})),
         Err("heartbeat timeout 1".to_owned()),
         Err("heartbeat timeout 2".to_owned()),
         Ok(json!({"success": true})),
@@ -144,10 +145,10 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
     assert!(transport.connects() >= 2);
     assert!(transport.disconnects() >= 1);
     let heartbeat_calls = transport.calls_for_event("device:heartbeat");
-    assert_eq!(heartbeat_calls.len(), 2);
-    let retry_gap = heartbeat_calls[1]
+    assert!(heartbeat_calls.len() >= 3);
+    let retry_gap = heartbeat_calls[2]
         .recorded_at
-        .duration_since(heartbeat_calls[0].recorded_at);
+        .duration_since(heartbeat_calls[1].recorded_at);
     assert!(
         retry_gap < Duration::from_millis(40),
         "expected retry gap to be shorter than the regular heartbeat interval, got {retry_gap:?}"

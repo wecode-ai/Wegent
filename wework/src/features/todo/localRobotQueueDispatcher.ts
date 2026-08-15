@@ -9,7 +9,6 @@ const LOCAL_QUEUE_POLL_MS = 3000
 const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
 const LOCAL_QUEUE_HEARTBEAT_INTERVAL_MS = 60_000
 const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 60_000
-const LOCAL_QUEUE_DEVICE_CAPACITY = 5
 const LOCAL_QUEUE_LEASE_SECONDS = 300
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -113,7 +112,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   const claimNext = async (deviceId: string) => {
     const claim = {
       execution_device_id: deviceId,
-      device_capacity: LOCAL_QUEUE_DEVICE_CAPACITY,
       lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
     }
     const cloudExecution = await cloudExecutionApi?.claimNext(claim)
@@ -224,6 +222,22 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           `Bound local project ${boundLocalProjectId} is unavailable on device ${deviceId}`
         )
       }
+      if (boundWorkspacePath && execution.agent_max_concurrent_executions > 1) {
+        const gitCheck = await deviceApi.executeCommand(deviceId, {
+          command_key: 'git_is_worktree',
+          args: [boundWorkspacePath],
+          timeout_seconds: 15,
+          max_output_bytes: 4096,
+        })
+        const gitCheckOutput = Array.isArray(gitCheck.stdout)
+          ? gitCheck.stdout.join('\n')
+          : typeof gitCheck.stdout === 'string'
+            ? gitCheck.stdout
+            : ''
+        if (!gitCheck.success || gitCheckOutput.trim() !== 'true') {
+          throw new Error('Robot concurrency above 1 requires an isolated Git worktree workspace')
+        }
+      }
 
       const title = typeof runtimePayload.title === 'string' ? runtimePayload.title : null
       const origin = recordValue(runtimePayload.origin)
@@ -288,6 +302,9 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         standaloneChatWorkspace,
         ...modelFields,
         ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
+        ...(boundLocalProjectId != null && execution.agent_max_concurrent_executions > 1
+          ? { execution: { workspace: { source: 'git_worktree' as const } } }
+          : {}),
       }
 
       console.log('[local-robot-queue] claimed transient runtime payload', {

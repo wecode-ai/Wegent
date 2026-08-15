@@ -73,6 +73,7 @@ class WeworkExecutionProfile:
     model: str = ""
     agent_id: str = ""
     local_project_id: int = 0
+    max_concurrent_executions: int = 1
     manager_mode: bool = False
 
     @classmethod
@@ -82,7 +83,10 @@ class WeworkExecutionProfile:
         *,
         instruction: str | None = None,
     ) -> "WeworkExecutionProfile":
-        from app.services.project_chat.service import bot_config
+        from app.services.project_chat.service import (
+            bot_config,
+            bot_max_concurrent_executions,
+        )
 
         config = bot_config(agent)
         return cls(
@@ -93,6 +97,7 @@ class WeworkExecutionProfile:
             model=str(config.get("model") or ""),
             agent_id=agent.id,
             local_project_id=int(agent.local_project_id or 0),
+            max_concurrent_executions=bot_max_concurrent_executions(agent),
         )
 
     @classmethod
@@ -255,6 +260,8 @@ class WeworkExecutionProfile:
             # context without manager authority.
             "origin": origin,
         }
+        if self.local_project_id > 0 and self.max_concurrent_executions > 1:
+            execution_request["workspace_source"] = "git_worktree"
         context_value = lambda value: {
             "kind": "application",
             "value": json.dumps(value, ensure_ascii=False, default=str),
@@ -302,6 +309,8 @@ class WeworkExecutionProfile:
             "standaloneChatWorkspace": self.local_project_id <= 0,
             "additionalContext": additional_context,
         }
+        if self.local_project_id > 0 and self.max_concurrent_executions > 1:
+            payload["execution"] = {"workspace": {"source": "git_worktree"}}
         if materialize_execution_request:
             payload["executionRequest"] = execution_request
         return payload

@@ -431,7 +431,9 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
         "WEGENT_EXECUTOR_HOME",
         &executor_home.path().display().to_string(),
     );
-    let server = AppIpcServer::new();
+    let server = AppIpcServer::new()
+        .with_runtime_instance_id("runtime-1")
+        .with_runtime_work_handler(CapacityRuntimeHandler);
 
     let project = server
         .dispatch(
@@ -503,7 +505,6 @@ async fn app_ipc_reclaims_expired_local_robot_runs() {
             json!({
                 "claim": {
                     "execution_device_id": "local-device",
-                    "device_capacity": 5,
                     "lease_seconds": 300
                 }
             }),
@@ -1556,6 +1557,31 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct CapacityRuntimeHandler;
+
+impl RuntimeWorkHandler for CapacityRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(
+                data,
+                json!({
+                    "method": "runtime.capacity.get",
+                    "payload": {}
+                })
+            );
+            Ok(json!({
+                "limit": 5,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0
+            }))
         })
     }
 }

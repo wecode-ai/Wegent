@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # 项目执行状态真实性重构
 
-> 实现状态：代码、自动化回归与隔离桌面实机验证已完成，等待代码评审和人工验收。
+> 实现状态：状态真实性主链与并发扩展已完成；Backend、Wework、Executor 全量回归、MySQL 迁移升降级及真实 Tauri 桌面验收均已通过。
 >
 > 硬约束：不新建数据库表。本次只扩展已有 MySQL/SQLite `loop_item_executions`，并继续使用已有 `loop_items`、`project_chat_messages` 和 Automation Run。
 
@@ -34,15 +34,31 @@ flowchart LR
     AUTO["自动化触发"]
     USER["批准 / 取消 / 重试"]
   end
-  subgraph Existing["已有存储（无新表）"]
-    EXEC["MySQL loop_item_executions<br/>一行 = 一次 Attempt"]
-    LSQL["SQLite loop_item_executions<br/>同一状态语义"]
+  subgraph Config["既有配置（无新表）"]
+    DEVICE["Runtime Settings<br/>D = maxConcurrentTasks<br/>设备总并发唯一配置"]
+    DEVICE_VIEW["Runtime 实时容量观察<br/>limit / active / active_task_ids / queued<br/>Local: IPC 直读；Cloud: Redis TTL 心跳"]
+    CAPACITY_ID["设备容量域<br/>owner_user_id + runtime_instance_id<br/>多个 device route 共享一个域"]
+    ROBOT["MySQL / SQLite loop_items.metadata<br/>R = max_concurrent_executions<br/>机器人全局并发，默认 1"]
+  end
+  subgraph Existing["Execution 真相与投影（无新表）"]
+    EXEC["MySQL / SQLite loop_item_executions<br/>一行 = 一次 Attempt<br/>持久化 runtime_instance_id 容量身份"]
     ITEM["loop_items<br/>业务工作流 / Automation Run 投影"]
     MSG["project_chat_messages<br/>文本与活动投影"]
   end
-  subgraph Runtime["真实运行环境"]
-    CLOUD["Cloud Executor"]
-    LOCAL["Local Executor"]
+  subgraph Claim["既有领取主链"]
+    LOCK["owner lock → runtime_instance lock"]
+    DEVICE_GATE{"容量观察身份有效?<br/>O = Runtime active + 未被 Runtime 看到的持久化预留<br/>O < D?"}
+    ROBOT_GATE{"project robot 占用 < R?<br/>manager 无 agent，跳过此门"}
+    SCOPE_GATE{"execution_scope 空闲?"}
+    CAS["CAS queued → claimed<br/>写入 runtime_instance_id"]
+    HOLD["保持 queued"]
+  end
+  subgraph Runtime["Runtime 物理并发主链"]
+    START["写 start_requested_at<br/>Start 围栏"]
+    SCHED{"Runtime active tasks < D?"}
+    WAIT["Runtime 已接受但排队<br/>waiting_runtime"]
+    RUN["Runtime 实际运行"]
+    OTHER["普通对话 / 其他 Runtime 任务"]
   end
   subgraph Read["纯读取投影"]
     MAP["execution_display_state<br/>execution_ai_state"]
@@ -58,15 +74,30 @@ flowchart LR
   ASSIGN --> EXEC
   AUTO --> EXEC
   USER --> EXEC
-  ASSIGN --> LSQL
-  EXEC --> CLOUD
-  LSQL --> LOCAL
-  CLOUD -->|"identity + eventSeq"| EXEC
-  LOCAL -->|"进程内可信回调"| LSQL
+  DEVICE --> DEVICE_VIEW
+  DEVICE_VIEW --> CAPACITY_ID
+  CAPACITY_ID --> LOCK
+  DEVICE --> SCHED
+  ROBOT --> ROBOT_GATE
+  EXEC -->|"同一 runtime_instance_id 的 capacity rows:<br/>claimed / running / cancel_requested"| DEVICE_GATE
+  LOCK --> DEVICE_GATE
+  DEVICE_GATE -->|"否"| HOLD
+  DEVICE_GATE -->|"是"| ROBOT_GATE
+  ROBOT_GATE -->|"否"| HOLD
+  ROBOT_GATE -->|"是"| SCOPE_GATE
+  SCOPE_GATE -->|"否"| HOLD
+  SCOPE_GATE -->|"是"| CAS
+  CAS --> EXEC
+  CAS --> START
+  START --> SCHED
+  OTHER --> SCHED
+  SCHED -->|"无物理槽位"| WAIT
+  SCHED -->|"有物理槽位"| RUN
+  WAIT -->|"observed=accepted"| EXEC
+  RUN -->|"identity + eventSeq / 进程内可信回调"| EXEC
   EXEC -->|"同事务"| ITEM
   EXEC -->|"同事务"| MSG
   EXEC --> MAP
-  LSQL --> MAP
   MAP --> API
   API --> QUEUE
   API --> DETAIL
@@ -75,11 +106,21 @@ flowchart LR
   API --> OVERLAY
 ```
 
-连接方向是单向的：Execution → Message/Automation/Workflow 投影。Message、`metadata.ai_state`、看板列和 UI 不能反向决定 Execution。
+连接方向仍然是单向的：Execution → Message/Automation/Workflow 投影。Message、`metadata.ai_state`、看板列和 UI 不能反向决定 Execution。
+
+设备并发 `D` 只有一个配置值。占用不是把两套计数相加，也不是取较大值，而是按 Runtime task identity 精确合并：`O = Runtime active + 持久化 capacity rows 中 runtime_task_id 不在 active_task_ids 的数量`。这样，已被 Runtime 看到的机器人任务不会重复计数，人工对话与尚未进入 Runtime 的 claim 也不会互相漏算。Runtime Scheduler 仍是所有普通对话、机器人和自动化共享的物理硬上限；没有物理槽位时，“立即运行”只能把任务移到队首，已接收的 Execution 显示 `waiting_runtime`，不能越过 `D` 或显示 `running`。
+
+设备容量是 Runtime 运行态，不写入 Device Kind/MySQL 冒充事实。Local 领取通过 IPC 直接读取 Runtime；Cloud 由 Runtime 心跳上报 `limit/active/active_task_ids/queued/runtimeInstanceId` 到已有 Redis 设备在线状态并受同一 TTL 约束。`active` 必须与唯一、非空的 `active_task_ids` 一一对应。容量观察缺失、过期、身份不完整或 Runtime 实例不匹配时停止 claim；Claim API 明确拒绝调用方自报 `deviceCapacity`，也不回退到固定常量。
+
+`execution_device_id` 只标识 Start 使用的传输路由，不是容量身份。一个 Runtime 安装可以同时暴露 local/app/socket 等多个 route，这些 route 必须按稳定的 `runtime_instance_id` 合并为同一个设备容量域；否则每条 route 都会独立拿到 `D` 个槽。Claim 时把 `runtime_instance_id` 写入已有 Execution 行，设备占用按 `owner_user_id + runtime_instance_id` 统计，锁也落在同一容量域上。
+
+机器人并发 `R` 按 `agent_id` 跨设备、跨环境全局统计。同一个 Execution 必须同时通过设备、机器人和 `execution_scope` 三个门才能 claim；Automation Manager 没有 `agent_id`，只受设备和 scope 约束。`unknown` 不释放 capacity row，只有已确认终态，或者 Start 围栏前可证明安全的回队，才释放设备与机器人额度。
+
+当 `R > 1` 时，每个 Execution 必须使用独立 worktree 或独立会话目录；无法隔离的共享工作区不能启用单机器人并发。这是执行安全前提，不增加新的持久化状态。
 
 ## 3. 零新表数据模型
 
-已有 `loop_item_executions` 的一行就是一个 Attempt。迁移只增加列和普通索引 `idx_exec_scope_status`，没有 `CREATE TABLE`；本地 SQLite 在已有同名表上做 `ALTER TABLE`，schema version 升为 6。
+已有 `loop_item_executions` 的一行就是一个 Attempt。本次并发迁移只在 MySQL 同名表增加 `runtime_instance_id` 和普通索引 `idx_exec_runtime_capacity`，没有 `CREATE TABLE`；本地 SQLite 在已有同名表上 `ALTER TABLE`，随后创建 `ix_exec_runtime_capacity`，schema version 升为 7。
 
 | 维度 | 字段 | 语义 |
 | --- | --- | --- |
@@ -90,6 +131,7 @@ flowchart LR
 | 并发域 | `execution_scope` | project robot 按任务，manager 按 Automation Run 隔离 |
 | Start 围栏 | `claimed_at`、`start_requested_at` | 区分“安全释放的领取”和“可能已送达 Runtime 的启动” |
 | Runtime 身份 | `runtime_device_id`、`runtime_task_id` | task id 固定为 `codex-queue-{execution.id}`；服务层严格校验 |
+| 容量身份 | `runtime_instance_id` | 按 `owner_user_id + runtime_instance_id` 合并同一 Runtime 的多个传输 route |
 | 事件围栏 | `last_event_seq` | 只接受更大的 Runtime 事件序号 |
 | 取消/终止 | `cancel_requested_at`、`termination_reason` | 取消意图时间与已确认终止原因 |
 | 控制租约 | `heartbeat_at`、`lease_expires_at` | dispatcher/claim 存活性，不等于 Runtime 进程证据 |
@@ -147,13 +189,16 @@ flowchart TD
 ```mermaid
 sequenceDiagram
   participant C as Queue Consumer
+  participant H as Redis Runtime Capacity TTL
   participant DB as loop_item_executions
   participant W as Celery Dispatch
   participant G as Runtime RPC Gateway
   participant R as Cloud Executor
-  C->>C: owner lock → device lock
-  C->>DB: 容量、agent、scope 检查
-  C->>DB: CAS queued → claimed<br/>绑定 codex-queue-{id}
+  C->>H: 读取 runtimeInstanceId + limit/active/active_task_ids
+  H-->>C: 新鲜且身份一致的容量观察
+  C->>C: owner lock → runtime_instance lock
+  C->>DB: 精确合并 O，检查 O < D、agent < R、scope 空闲
+  C->>DB: CAS queued → claimed<br/>绑定 runtime_instance_id + codex-queue-{id}
   W->>DB: 构建即时 Runtime payload
   W->>DB: 写 start_requested_at（Start 围栏）
   W->>G: runtime.tasks.create
@@ -178,10 +223,15 @@ RPC 传输异常与明确 `emitted=false` 被区分；前者在 Start 围栏之�
 ```mermaid
 sequenceDiagram
   participant APP as Wework Dispatcher
+  participant IPC as App IPC
   participant SQL as Local SQLite
   participant API as Runtime Work API
   participant R as Local Executor
-  APP->>SQL: claimNext → claimed<br/>绑定 device/task identity
+  APP->>IPC: executions.claim_next（不携带容量）
+  IPC->>R: runtime.capacity.get
+  R-->>IPC: limit/active/active_task_ids/queued
+  IPC->>SQL: 注入可信容量与 runtime_instance_id
+  SQL->>SQL: 检查 O < D、agent < R、scope 空闲<br/>CAS queued → claimed
   APP->>SQL: executions.start_requested
   APP->>API: createRuntimeTask(taskId=codex-queue-{id})
   alt 创建响应明确成功
@@ -319,24 +369,32 @@ Cloud Scan 与 Local App 都按持久化的 device/task identity 对账；Local 
 
 “运行超过阈值且无文本”只触发 `cancel_requested` 和 Runtime cancel，不直接制造 `failed`。
 
-## 11. 并发与容量连线
+## 11. 并发、容量与公平性连线
 
 ```mermaid
 flowchart TD
-  SCAN["按 owner/device 扫描 queued"] --> OL["获取 owner lock"]
-  OL --> DL["获取 environment/device lock"]
-  DL --> CAP{"capacity 有空位?"}
+  SCAN["按 owner/device 扫描全部 queued<br/>不使用固定 16/32 候选窗口"] --> OBS["读取新鲜 Runtime 容量<br/>instance + active_task_ids"]
+  OBS --> OL["获取 owner lock"]
+  OL --> DL["获取 runtime_instance lock"]
+  DL --> MERGE["O = Runtime active<br/>+ durable task_id 不在 active_task_ids 的预留"]
+  MERGE --> CAP{"O < D?"}
   CAP -->|否| END["本轮不 claim"]
-  CAP -->|是| AG{"agent 已有 capacity row?"}
-  AG -->|是| NEXT["跳过候选"]
-  AG -->|否| SP{"execution_scope 已占用?"}
+  CAP -->|是| PRI["按 priority 分带"]
+  PRI --> RR["同优先级按 agent 轮询<br/>agent 内 FIFO"]
+  RR --> AG{"全局 agent 占用 < R?"}
+  AG -->|否| NEXT["跳过该 agent"]
+  AG -->|是| SP{"execution_scope 已占用?"}
   SP -->|是| NEXT
-  SP -->|否| CAS["CAS queued → claimed"]
+  SP -->|否| ISO{"绑定项目且 R > 1?"}
+  ISO -->|是| GIT["配置时与启动前均验证 Git<br/>每个 Attempt 使用独立 worktree"]
+  ISO -->|否| CAS["CAS queued → claimed"]
+  GIT -->|不可隔离| NEXT
+  GIT -->|可隔离| CAS
   CAS -->|失败| NEXT
-  CAS -->|成功| SLOT["claimed/running/cancel_requested/unknown<br/>都占用 slot"]
+  CAS -->|成功| SLOT["写 runtime_instance_id<br/>claimed/running/cancel_requested/unknown 都占 O 与 R"]
 ```
 
-固定顺序是 owner lock → device lock → DB CAS。`unknown` 不释放 slot；否则同一真实进程可能与新 Attempt 并行。
+固定顺序是新鲜观察 → owner lock → runtime-instance lock → DB CAS。批量 CAS 必须全部命中，否则整批回滚，不允许把 Runtime identity 写到未 claim 的行。`unknown` 不释放容量；否则同一真实进程可能与新 Attempt 并行。最高优先级先执行，但同一优先级在机器人之间 round-robin、机器人内部 FIFO，因此一个机器人即使排了 20 个任务，也不能饿死另一个机器人。
 
 ## 12. 纯读取与 UI 一致性
 
@@ -385,11 +443,17 @@ Cloud/App 启动协议：
 | Runtime failed + retry | 旧行 failed、新行 queued | 修改旧行为 queued |
 | GET / 刷新页面 | 状态不改变 | 读取时写状态 |
 | My Work/Queue/Detail/Automation | 同一精确展示态 | pending/claimed 被显示 running |
+| 容量心跳缺失/过期/实例不匹配 | 停止 claim，已有状态保持 | 固定常量或调用方容量回退 |
+| Runtime active 与 durable claim 指向同一 task id | 只计一次 | 双计导致假满 |
+| Runtime 人工任务与尚未送达的 durable claim 不同 | 两者都计入 O | `max()` 漏计导致超领 |
+| 单机器人达到 R | 其他机器人仍可按公平顺序 claim | 热机器人饿死队列或跨设备绕过 R |
+| 绑定非 Git 项目设置 R > 1 | 配置时拒绝，启动前再次校验 | 在共享目录并发执行 |
+| “立即运行”且 Runtime 已满 | 移到 Runtime 队首，仍等待槽位 | 越过 D 启动第 D+1 个任务 |
 | Migration | 只 ALTER 现有表和建索引 | 任何新表 |
 
 ## 15. 自动化与人工验证
 
-自动化必须至少覆盖：迁移无 `create_table`、claim/identity/start fence、事件序号、竞争终态、取消前后边界、ambiguous dispatch、cloud/local recovery/reconcile（含 `running` 与 `turnStatus`）、retry 新 Attempt、投影同事务、纯 GET、local IPC/store、UI 状态映射和 TypeScript/Rust 编译。
+自动化必须至少覆盖：迁移无 `create_table`、容量身份与心跳 TTL、`active_task_ids` 精确去重、多个 device route 共享 D、机器人全局 R、同优先级 round-robin、公平扫描无固定候选窗口、批量 CAS 全有或全无、非 Git 并发拒绝、Runtime 硬上限与 force-start、claim/identity/start fence、事件序号、竞争终态、取消前后边界、ambiguous dispatch、cloud/local recovery/reconcile（含 `running` 与 `turnStatus`）、retry 新 Attempt、投影同事务、纯 GET、local IPC/store、UI 状态映射和 TypeScript/Rust 编译。
 
 人工验收按以下顺序：
 
@@ -399,3 +463,6 @@ Cloud/App 启动协议：
 4. 制造 Runtime failure，确认旧 Attempt 保留且 retry 使用新 task id。
 5. 同时打开 Queue、Task Activity、My Work、Automation 和 Overlay，确认状态一致。
 6. 刷新和重复 GET，确认没有任何状态被读取动作改变。
+7. 将设备 D 设为 2，混合启动普通对话和机器人任务，确认物理 active 永不超过 2，已接受任务显示 waiting_runtime。
+8. 将一个机器人 R 设为 2，并从两条 device route 同时领取，确认全局最多 2 个；再验证同优先级的第二个机器人不会被长队饿死。
+9. 在 Git 项目中验证 R > 1 产生不同 worktree；在普通目录中确认保存配置即被拒绝。

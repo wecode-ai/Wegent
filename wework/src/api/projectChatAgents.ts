@@ -15,6 +15,7 @@ export interface ProjectChatAgent {
   executionDeviceId: string | null
   /** The bound local code project (task feature) this robot runs in. */
   localProjectId: number | null
+  maxConcurrentExecutions: number
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
@@ -34,6 +35,7 @@ export type ProjectChatAgentInput = Pick<
   | 'executionMode'
   | 'executionDeviceId'
   | 'localProjectId'
+  | 'maxConcurrentExecutions'
 >
 
 export function createProjectChatAgentApi(client: HttpClient) {
@@ -60,6 +62,7 @@ export function createProjectChatAgentApi(client: HttpClient) {
           | 'executionMode'
           | 'executionDeviceId'
           | 'localProjectId'
+          | 'maxConcurrentExecutions'
         >
       > &
         Pick<ProjectChatAgent, 'version'>

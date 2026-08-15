@@ -96,10 +96,20 @@ _EXECUTION_STATE_FROM_AI_STATUS = {
 BOT_VISIBILITY_KEY = "visibility"
 BOT_EXECUTION_ENVIRONMENT_KEY = "execution_environment"
 BOT_EXECUTION_MODE_KEY = "execution_mode"
+BOT_MAX_CONCURRENT_EXECUTIONS_KEY = "max_concurrent_executions"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
+BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
+
+
+def bot_max_concurrent_executions(row: ProjectChatAgent) -> int:
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    value = metadata.get(BOT_MAX_CONCURRENT_EXECUTIONS_KEY)
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 20:
+        return value
+    return BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
 
 
 def bot_config(row: ProjectChatAgent) -> dict[str, object]:
@@ -117,6 +127,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         "execution_device_id": row.device_id,
         "model": metadata.get("model"),
         "system_prompt": metadata.get("system_prompt", ""),
+        "max_concurrent_executions": bot_max_concurrent_executions(row),
     }
 
 
@@ -187,6 +198,7 @@ class ProjectChatService:
                 BOT_VISIBILITY_KEY: request.visibility,
                 BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
                 BOT_EXECUTION_MODE_KEY: request.execution_mode,
+                BOT_MAX_CONCURRENT_EXECUTIONS_KEY: request.max_concurrent_executions,
             },
         )
         db.add(row)
@@ -249,6 +261,10 @@ class ProjectChatService:
             metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
         if request.execution_mode is not None:
             metadata[BOT_EXECUTION_MODE_KEY] = request.execution_mode
+        if request.max_concurrent_executions is not None:
+            metadata[BOT_MAX_CONCURRENT_EXECUTIONS_KEY] = (
+                request.max_concurrent_executions
+            )
         if "local_project_id" in request.model_fields_set:
             row.local_project_id = request.local_project_id
         row.metadata_json = metadata
@@ -1535,6 +1551,10 @@ class ProjectChatService:
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
             execution_device_id=row.device_id,
             local_project_id=row.local_project_id,
+            max_concurrent_executions=int(
+                config.get("max_concurrent_executions")
+                or BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
+            ),
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,
             version=row.version,

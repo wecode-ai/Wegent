@@ -282,12 +282,10 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.runOnlyPendingTimersAsync()
     expect(claimNext).toHaveBeenNthCalledWith(1, {
       execution_device_id: 'local-device',
-      device_capacity: 5,
       lease_seconds: 300,
     })
     expect(claimNext).toHaveBeenNthCalledWith(2, {
       execution_device_id: 'app-device',
-      device_capacity: 5,
       lease_seconds: 300,
     })
     expect(mocks.createRuntimeTask).toHaveBeenCalledOnce()

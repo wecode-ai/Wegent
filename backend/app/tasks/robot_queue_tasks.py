@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.services.device.capacity import get_runtime_capacity
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
@@ -612,8 +613,15 @@ async def _consumer_pass(db: Session) -> int:
         ) as owner_acquired:
             if not owner_acquired:
                 continue
+            capacity = await get_runtime_capacity(
+                db,
+                owner_user_id=owner_user_id,
+                device_id=device_id,
+            )
+            if capacity is None:
+                continue
             with distributed_lock.acquire_context(
-                f"robot_exec:{owner_user_id}:{environment}:{device_id}",
+                f"robot_exec:{owner_user_id}:runtime:{capacity.runtime_instance_id}",
                 expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
             ) as device_acquired:
                 if not device_acquired:
@@ -623,12 +631,14 @@ async def _consumer_pass(db: Session) -> int:
                 )
                 if routing_user_id is None:
                     continue
-                capacity = settings.ROBOT_CLOUD_DEVICE_SLOTS
                 executions = loop_item_execution_service.claim_batch_for_device(
                     db,
                     execution_device_id=device_id,
                     environment=environment,
-                    device_capacity=capacity,
+                    runtime_instance_id=capacity.runtime_instance_id,
+                    device_capacity=capacity.limit,
+                    runtime_active=capacity.active,
+                    runtime_active_task_ids=capacity.active_task_ids,
                     batch_size=ROBOT_CONSUMER_BATCH_SIZE,
                     owner_user_id=owner_user_id,
                 )
@@ -718,8 +728,10 @@ async def _dispatch_execution(
     if routing_user_id is None:
         raise RuntimeError(f"Execution {execution.id} has no routable device owner")
 
-    online = await device_service.get_device_online_info(
-        routing_user_id, execution.execution_device_id
+    capacity = await get_runtime_capacity(
+        db,
+        owner_user_id=routing_user_id,
+        device_id=execution.execution_device_id,
     )
     logger.info(
         "[RobotQueue] Dispatch online check execution=%s device=%s "
@@ -727,10 +739,12 @@ async def _dispatch_execution(
         execution.id,
         execution.execution_device_id,
         routing_user_id,
-        bool(online),
+        bool(capacity),
     )
-    if not online:
-        raise DeviceOfflineError("Device went offline before dispatch")
+    if capacity is None:
+        raise DeviceOfflineError("Device capacity observation expired before dispatch")
+    if capacity.runtime_instance_id != execution.runtime_instance_id:
+        raise DeviceOfflineError("Runtime capacity identity changed before dispatch")
 
     payload = loop_item_execution_service.build_runtime_payload(
         db,

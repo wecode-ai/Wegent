@@ -141,6 +141,7 @@ function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
     assigner_user_id: Number(row.assignerUserId ?? 0),
     execution_environment: String(row.executionEnvironment ?? ''),
     execution_device_id: row.executionDeviceId == null ? null : String(row.executionDeviceId),
+    runtime_instance_id: row.runtimeInstanceId == null ? null : String(row.runtimeInstanceId),
     status: String(row.status ?? ''),
     display_state: String(row.displayState ?? 'unknown'),
     observed_state: String(row.observedState ?? 'unconfirmed'),
@@ -171,17 +172,14 @@ function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
     agent_name: String(bot.name ?? 'AI'),
     agent_system_prompt: String(bot.system_prompt ?? bot.systemPrompt ?? ''),
     agent_model: payload?.modelId == null ? null : String(payload.modelId),
+    agent_max_concurrent_executions: Number(row.agentMaxConcurrentExecutions ?? 1),
     runtime_payload: payload,
   }
 }
 
 export function createProjectAutomationApi(client: HttpClient) {
   return {
-    claimNext(claim: {
-      execution_device_id: string
-      device_capacity: number
-      lease_seconds: number
-    }) {
+    claimNext(claim: { execution_device_id: string; lease_seconds: number }) {
       return client
         .post<Record<string, unknown> | null>('/v1/loop-item-executions/claim-my-next', claim)
         .then(row => (row ? cloudExecution(row) : null))

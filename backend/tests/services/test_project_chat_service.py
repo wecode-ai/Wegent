@@ -114,6 +114,7 @@ def test_project_supports_multiple_robots_with_execution_config(
             execution_mode="manual_approval",
             visibility="public",
             execution_device_id="local-dev-1",
+            max_concurrent_executions=3,
         ),
     )
     second = project_chat_service.create_agent(
@@ -139,10 +140,12 @@ def test_project_supports_multiple_robots_with_execution_config(
     assert by_id[first.id].execution_mode == "manual_approval"
     assert by_id[first.id].visibility == "public"
     assert by_id[first.id].execution_device_id == "local-dev-1"
+    assert by_id[first.id].max_concurrent_executions == 3
     assert by_id[second.id].execution_environment == "cloud"
     assert by_id[second.id].execution_mode == "auto"
     assert by_id[second.id].visibility == "private"
     assert by_id[second.id].execution_device_id == "cloud-dev-1"
+    assert by_id[second.id].max_concurrent_executions == 1
     assert by_id[second.id].created_by_user_id == test_user.id
 
 

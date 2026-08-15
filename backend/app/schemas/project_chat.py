@@ -33,6 +33,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     execution_mode: BotExecutionMode = "auto"
     execution_device_id: str | None = Field(default=None, max_length=100)
     local_project_id: int | None = Field(default=None)
+    max_concurrent_executions: int = Field(default=1, ge=1, le=20)
 
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
@@ -47,6 +48,7 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     execution_mode: BotExecutionMode | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     local_project_id: int | None = Field(default=None)
+    max_concurrent_executions: int | None = Field(default=None, ge=1, le=20)
 
 
 class ProjectChatAgentView(ProjectChatSchema):
@@ -63,6 +65,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     execution_mode: BotExecutionMode
     execution_device_id: str | None
     local_project_id: int | None
+    max_concurrent_executions: int
     created_by_user_id: int | None
     created_by_user_name: str | None = None
     version: int
@@ -88,10 +91,13 @@ class LoopItemApproval(ProjectChatSchema):
 class LoopItemExecutionClaim(ProjectChatSchema):
     """Claim the next queued run for one robot on one device."""
 
+    model_config = ConfigDict(
+        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
+    )
+
     agent_id: str = Field(min_length=1, max_length=128)
     execution_device_id: str = Field(min_length=1, max_length=100)
     execution_environment: Literal["local", "cloud"] = "local"
-    device_capacity: int = Field(default=1, ge=1, le=20)
     lease_seconds: int = Field(default=300, ge=60, le=3600)
     assigner_user_id: int | None = Field(default=None)
 
@@ -99,8 +105,11 @@ class LoopItemExecutionClaim(ProjectChatSchema):
 class LoopItemExecutionDeviceClaim(ProjectChatSchema):
     """Claim the next queued local run for any robot bound to a device."""
 
+    model_config = ConfigDict(
+        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
+    )
+
     execution_device_id: str = Field(min_length=1, max_length=100)
-    device_capacity: int = Field(default=1, ge=1, le=20)
     lease_seconds: int = Field(default=300, ge=60, le=3600)
 
 
@@ -159,6 +168,7 @@ class LoopItemExecutionView(ProjectChatSchema):
     assigner_user_id: int
     execution_environment: str
     execution_device_id: str | None
+    runtime_instance_id: str | None = None
     status: str
     display_state: str
     observed_state: str = "unconfirmed"
@@ -186,6 +196,7 @@ class LoopItemExecutionView(ProjectChatSchema):
     rejected_reason: str | None = None
     runtime_device_id: str | None = None
     runtime_task_id: str | None = None
+    agent_max_concurrent_executions: int = 1
     # Materialized only for an authenticated device claim. It is never stored
     # on the execution row because model credentials are resolved just in time.
     runtime_payload: Any | None = None

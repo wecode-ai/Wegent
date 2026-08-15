@@ -53,6 +53,10 @@ class LoopItemExecution(Base):
     execution_device_id = Column(
         String(100), nullable=False, default="", server_default=""
     )
+    # Capacity belongs to one Runtime installation, not to one transport route.
+    runtime_instance_id = Column(
+        String(100), nullable=False, default="", server_default=""
+    )
     assigner_user_id = Column(Integer, nullable=False, default=0, server_default="0")
     # pending_approval / queued / claimed / running / cancel_requested /
     # completed / failed / cancelled. `running` is accepted only after Runtime
@@ -175,6 +179,12 @@ class LoopItemExecution(Base):
         Index("idx_exec_item_status", "loop_item_id", "status"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
         Index("idx_exec_scope_status", "execution_scope", "status"),
+        Index(
+            "idx_exec_runtime_capacity",
+            "executor_owner_user_id",
+            "runtime_instance_id",
+            "status",
+        ),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 

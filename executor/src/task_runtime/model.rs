@@ -101,6 +101,8 @@ pub struct ChatAgentCreate {
     pub execution_environment: Option<String>,
     pub execution_mode: Option<String>,
     pub execution_device_id: Option<String>,
+    #[serde(default = "default_max_concurrent_executions")]
+    pub max_concurrent_executions: u64,
     #[serde(default)]
     pub local_project_id: Option<i64>,
     #[serde(default)]
@@ -118,6 +120,7 @@ pub struct ChatAgentUpdate {
     pub execution_environment: Option<String>,
     pub execution_mode: Option<String>,
     pub execution_device_id: Option<String>,
+    pub max_concurrent_executions: Option<u64>,
     /// Explicit `null` clears the binding; a missing key keeps it unchanged.
     #[serde(default)]
     pub local_project_id: Option<Option<i64>>,
@@ -136,6 +139,7 @@ pub struct ChatAgent {
     pub execution_environment: String,
     pub execution_mode: String,
     pub execution_device_id: Option<String>,
+    pub max_concurrent_executions: u64,
     pub local_project_id: Option<i64>,
     pub created_by_user_id: i64,
     pub version: i64,
@@ -146,7 +150,10 @@ pub struct ChatAgent {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LocalExecutionClaim {
     pub execution_device_id: Option<String>,
+    pub runtime_instance_id: String,
     pub device_capacity: u64,
+    pub runtime_active: u64,
+    pub runtime_active_task_ids: Vec<String>,
     pub lease_seconds: u64,
 }
 
@@ -162,6 +169,7 @@ pub struct LocalExecution {
     pub assigner_user_id: i64,
     pub execution_environment: String,
     pub execution_device_id: Option<String>,
+    pub runtime_instance_id: Option<String>,
     pub status: String,
     pub display_state: String,
     pub observed_state: String,
@@ -194,9 +202,14 @@ pub struct LocalExecution {
     pub agent_name: String,
     pub agent_system_prompt: String,
     pub agent_model: Option<String>,
+    pub agent_max_concurrent_executions: u64,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn default_max_concurrent_executions() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize)]

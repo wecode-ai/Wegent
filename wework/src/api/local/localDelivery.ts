@@ -97,6 +97,7 @@ export interface LocalProjectChatAgent {
   executionMode: 'auto' | 'manual_approval'
   executionDeviceId: string | null
   localProjectId: number | null
+  maxConcurrentExecutions: number
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
@@ -115,6 +116,7 @@ export interface LocalLoopItemExecution {
   assigner_user_id: number
   execution_environment: string
   execution_device_id?: string | null
+  runtime_instance_id?: string | null
   status: string
   display_state: string
   observed_state: string
@@ -149,6 +151,7 @@ export interface LocalLoopItemExecution {
   agent_name: string
   agent_system_prompt: string
   agent_model?: string | null
+  agent_max_concurrent_executions: number
   /** Available only on a successful claim and never persisted with the queue row. */
   runtime_payload?: Record<string, unknown> | null
 }
@@ -307,6 +310,7 @@ type LocalAgentRecord = Record<string, unknown> & {
   execution_mode?: string
   execution_device_id?: string | null
   local_project_id?: number | null
+  max_concurrent_executions?: number
   created_by_user_id?: number | null
   version?: number
   created_at?: string
@@ -314,6 +318,13 @@ type LocalAgentRecord = Record<string, unknown> & {
 }
 
 function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
+  const maxConcurrentExecutions =
+    typeof record.max_concurrent_executions === 'number' &&
+    Number.isInteger(record.max_concurrent_executions) &&
+    record.max_concurrent_executions >= 1 &&
+    record.max_concurrent_executions <= 20
+      ? record.max_concurrent_executions
+      : 1
   return {
     id: record.id,
     projectId: record.project_id ?? '',
@@ -328,6 +339,7 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     executionMode: (record.execution_mode as LocalProjectChatAgent['executionMode']) ?? 'auto',
     executionDeviceId: record.execution_device_id ?? null,
     localProjectId: record.local_project_id ?? null,
+    maxConcurrentExecutions,
     createdByUserId: record.created_by_user_id ?? null,
     version: record.version ?? 1,
     createdAt: record.created_at ?? '',
@@ -355,6 +367,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionMode?: LocalProjectChatAgent['executionMode']
         executionDeviceId?: string | null
         localProjectId?: number | null
+        maxConcurrentExecutions?: number
       }
     ): Promise<LocalProjectChatAgent> {
       const record = await request<LocalAgentRecord>('chat_agents.create', {
@@ -368,6 +381,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_mode: input.executionMode ?? 'auto',
           execution_device_id: input.executionDeviceId ?? null,
           local_project_id: input.localProjectId ?? null,
+          max_concurrent_executions: input.maxConcurrentExecutions ?? 1,
           created_by_user_id: currentUserId ?? null,
         },
       })
@@ -387,6 +401,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionMode?: LocalProjectChatAgent['executionMode']
         executionDeviceId?: string | null
         localProjectId?: number | null
+        maxConcurrentExecutions?: number
       }
     ): Promise<LocalProjectChatAgent> {
       const record = await request<LocalAgentRecord>('chat_agents.update', {
@@ -403,6 +418,7 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_mode: input.executionMode,
           execution_device_id: input.executionDeviceId,
           local_project_id: input.localProjectId,
+          max_concurrent_executions: input.maxConcurrentExecutions,
         },
       })
       return localAgent(record)
@@ -450,7 +466,6 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
     },
     async claimNext(claim: {
       execution_device_id?: string | null
-      device_capacity?: number
       lease_seconds?: number
     }): Promise<LocalLoopItemExecution | null> {
       return request<LocalLoopItemExecution | null>('executions.claim_next', { claim })

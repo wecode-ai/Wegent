@@ -57,6 +57,7 @@ export function ProjectChatAgentsSection({
     useState<ProjectChatAgent['executionEnvironment']>('local')
   const [agentExecutionMode, setAgentExecutionMode] =
     useState<ProjectChatAgent['executionMode']>('auto')
+  const [agentMaxConcurrentExecutions, setAgentMaxConcurrentExecutions] = useState(1)
   const [agentExecutionDeviceId, setAgentExecutionDeviceId] = useState<string>('')
   const [agentLocalProjectId, setAgentLocalProjectId] = useState<number | ''>('')
   const [availableDevices, setAvailableDevices] = useState<
@@ -174,6 +175,7 @@ export function ProjectChatAgentsSection({
     setAgentVisibility('creator_admin')
     setAgentExecutionEnvironment('local')
     setAgentExecutionMode('auto')
+    setAgentMaxConcurrentExecutions(1)
     setAgentExecutionDeviceId('')
     setAgentLocalProjectId('')
   }
@@ -206,6 +208,7 @@ export function ProjectChatAgentsSection({
     setAgentVisibility(agent.visibility)
     setAgentExecutionEnvironment(localProjectOnly ? 'local' : agent.executionEnvironment)
     setAgentExecutionMode(agent.executionMode)
+    setAgentMaxConcurrentExecutions(agent.maxConcurrentExecutions)
     setAgentLocalProjectId(agent.localProjectId ?? '')
     const boundDevice = agent.executionDeviceId ?? ''
     const deviceIsLocalCapable = availableDevices.some(
@@ -230,6 +233,39 @@ export function ProjectChatAgentsSection({
     if (!agentModel.trim() || !agentExecutionDeviceId) return
     setAgentBusy(true)
     try {
+      if (agentMaxConcurrentExecutions > 1 && agentLocalProjectId !== '') {
+        const runtimeProject = (runtimeWork?.projects ?? []).find(
+          item => item.project.id === agentLocalProjectId
+        )
+        const runtimeWorkspace = runtimeProject?.deviceWorkspaces.find(
+          workspace => workspace.deviceId === agentExecutionDeviceId && workspace.available
+        )
+        const localProject = localProjects.find(item => item.id === agentLocalProjectId)
+        const localProjectDeviceId = localProject?.config?.device_id?.trim()
+        const localProjectPath =
+          !localProjectDeviceId || localProjectDeviceId === agentExecutionDeviceId
+            ? (localProject?.config?.path?.trim() ??
+              localProject?.config?.workspace?.localPath?.trim())
+            : undefined
+        const workspacePath = runtimeWorkspace?.workspacePath.trim() || localProjectPath
+        if (!deviceApi || !workspacePath) {
+          throw new Error(t('workbench.project_chat_agent_concurrency_requires_git'))
+        }
+        const gitCheck = await deviceApi.executeCommand(agentExecutionDeviceId, {
+          command_key: 'git_is_worktree',
+          args: [workspacePath],
+          timeout_seconds: 15,
+          max_output_bytes: 4096,
+        })
+        const gitOutput = Array.isArray(gitCheck.stdout)
+          ? gitCheck.stdout.join('\n')
+          : typeof gitCheck.stdout === 'string'
+            ? gitCheck.stdout
+            : ''
+        if (!gitCheck.success || gitOutput.trim() !== 'true') {
+          throw new Error(t('workbench.project_chat_agent_concurrency_requires_git'))
+        }
+      }
       if (creatingChatAgent) {
         const agent = await projectChatAgentApi.create(project.id, {
           name: agentName.trim(),
@@ -240,6 +276,7 @@ export function ProjectChatAgentsSection({
           visibility: agentVisibility,
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
+          maxConcurrentExecutions: agentMaxConcurrentExecutions,
           executionDeviceId: agentExecutionDeviceId,
           localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
         })
@@ -255,6 +292,7 @@ export function ProjectChatAgentsSection({
           visibility: agentVisibility,
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
+          maxConcurrentExecutions: agentMaxConcurrentExecutions,
           executionDeviceId: agentExecutionDeviceId || null,
           localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
         })
@@ -688,6 +726,27 @@ export function ProjectChatAgentsSection({
                           label: t('workbench.project_chat_agent_mode_manual'),
                         },
                       ]}
+                    />
+                  </SettingsRow>
+                  <SettingsRow
+                    label={t('workbench.project_chat_agent_max_concurrent_executions')}
+                    description={t(
+                      'workbench.project_chat_agent_max_concurrent_executions_relation'
+                    )}
+                  >
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      step={1}
+                      data-testid="cloud-project-chat-agent-max-concurrent-executions"
+                      value={agentMaxConcurrentExecutions}
+                      onChange={event =>
+                        setAgentMaxConcurrentExecutions(
+                          Math.max(1, Math.min(20, Number(event.target.value) || 1))
+                        )
+                      }
+                      className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary outline-none focus:border-text-tertiary"
                     />
                   </SettingsRow>
                 </SettingsGroup>

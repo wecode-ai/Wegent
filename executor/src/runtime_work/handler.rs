@@ -152,6 +152,7 @@ fn default_turn_runtime() -> String {
 struct RuntimeTurnScheduler {
     max_concurrent_tasks: usize,
     active_tasks: usize,
+    active_task_ids: HashSet<String>,
     queued_turns: VecDeque<SpawnTurnRequest>,
 }
 
@@ -160,6 +161,7 @@ impl RuntimeTurnScheduler {
         Self {
             max_concurrent_tasks,
             active_tasks: 0,
+            active_task_ids: HashSet::new(),
             queued_turns,
         }
     }
@@ -170,6 +172,7 @@ impl RuntimeTurnScheduler {
             return None;
         }
         self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
         Some(turn)
     }
 
@@ -195,8 +198,9 @@ impl RuntimeTurnScheduler {
         Ok(reordered)
     }
 
-    fn finish(&mut self) -> Vec<SpawnTurnRequest> {
-        self.active_tasks = self.active_tasks.saturating_sub(1);
+    fn finish(&mut self, local_task_id: &str) -> Vec<SpawnTurnRequest> {
+        self.active_task_ids.remove(local_task_id);
+        self.active_tasks = self.active_task_ids.len();
         self.take_available()
     }
 
@@ -205,8 +209,14 @@ impl RuntimeTurnScheduler {
             .queued_turns
             .iter()
             .position(|turn| turn.local_task_id == local_task_id)?;
+        if self.active_tasks >= self.max_concurrent_tasks {
+            let turn = self.queued_turns.remove(position)?;
+            self.queued_turns.push_front(turn);
+            return None;
+        }
         let turn = self.queued_turns.remove(position)?;
         self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
         Some(turn)
     }
 
@@ -220,6 +230,8 @@ impl RuntimeTurnScheduler {
         let turns = (0..available)
             .filter_map(|_| self.queued_turns.pop_front())
             .collect::<Vec<_>>();
+        self.active_task_ids
+            .extend(turns.iter().map(|turn| turn.local_task_id.clone()));
         self.active_tasks += turns.len();
         turns
     }
@@ -482,20 +494,25 @@ struct RuntimeThreadEventRoute {
 
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
+    local_task_id: String,
 }
 
 impl ScheduledTurnGuard {
-    fn new(handler: RuntimeWorkRpcHandler) -> Self {
-        Self { handler }
+    fn new(handler: RuntimeWorkRpcHandler, local_task_id: String) -> Self {
+        Self {
+            handler,
+            local_task_id,
+        }
     }
 }
 
 impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
         let handler = self.handler.clone();
+        let local_task_id = self.local_task_id.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                handler.finish_scheduled_turn().await;
+                handler.finish_scheduled_turn(&local_task_id).await;
             });
         }
     }
@@ -680,6 +697,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.settings.get" => self.get_runtime_settings().await,
             "runtime.settings.update" => self.update_runtime_settings(payload).await,
+            "runtime.capacity.get" => self.get_runtime_capacity().await,
             "runtime.hooks.list" | "runtime.hooks.reload" => {
                 Ok(json!({"plugins": self.hook_service.list()}))
             }

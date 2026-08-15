@@ -1265,6 +1265,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["device_id"] = payload.device_id
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
+        session["runtime_instance_id"] = payload.runtime_instance_id
         session["registered"] = True
 
         device_room = f"device:{user_id}:{payload.device_id}"
@@ -1477,6 +1478,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
+        registered_runtime_instance_id = session.get("runtime_instance_id")
+        if (
+            registered_runtime_instance_id
+            and payload.runtime_instance_id != registered_runtime_instance_id
+        ):
+            return {"error": "Runtime instance ID mismatch"}
 
         runtime_transfer_host = _normalize_runtime_transfer_host(
             payload.runtime_transfer_host
@@ -1491,6 +1498,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             payload.running_task_ids,
             payload.executor_version,
             runtime_transfer_host=runtime_transfer_host,
+            runtime_instance_id=payload.runtime_instance_id,
+            runtime_capacity=(
+                payload.runtime_capacity.model_dump()
+                if payload.runtime_capacity is not None
+                else None
+            ),
         )
 
         if not success:
@@ -1508,6 +1521,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 executor_version=payload.executor_version,
                 client_ip=session.get("client_ip"),
                 runtime_transfer_host=runtime_transfer_host,
+            )
+            await device_service.refresh_device_heartbeat(
+                user_id,
+                payload.device_id,
+                payload.running_task_ids,
+                payload.executor_version,
+                runtime_transfer_host=runtime_transfer_host,
+                runtime_instance_id=payload.runtime_instance_id,
+                runtime_capacity=(
+                    payload.runtime_capacity.model_dump()
+                    if payload.runtime_capacity is not None
+                    else None
+                ),
             )
             # Re-broadcast device online event
             await self._broadcast_device_online(user_id, payload.device_id, device_name)
