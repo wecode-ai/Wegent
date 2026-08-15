@@ -136,5 +136,7 @@ describe('LocalConnectorAuthDialog browser oauth', () => {
 
     await screen.findByTestId('local-connector-auth-retry')
     expect(screen.getAllByText('internal_error: HOME is not set')).toHaveLength(1)
+    expect(screen.getByTestId('local-connector-auth-browser-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-connector-auth-browser-loading')).not.toBeInTheDocument()
   })
 })

@@ -1,4 +1,4 @@
-import { ExternalLink, Loader2, QrCode, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, ExternalLink, Loader2, QrCode, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -98,10 +98,24 @@ export function LocalConnectorAuthDialog({
               className="flex h-56 w-56 flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-background"
               data-testid="local-connector-auth-browser"
             >
-              {status?.status === 'waiting_browser' ? (
-                <ExternalLink className="h-8 w-8 text-muted-foreground" />
+              {error ? (
+                <AlertCircle
+                  className="h-8 w-8 text-destructive"
+                  aria-hidden="true"
+                  data-testid="local-connector-auth-browser-error"
+                />
+              ) : status?.status === 'waiting_browser' ? (
+                <ExternalLink
+                  className="h-8 w-8 text-muted-foreground"
+                  aria-hidden="true"
+                  data-testid="local-connector-auth-browser-waiting"
+                />
               ) : (
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <Loader2
+                  className="h-8 w-8 animate-spin text-muted-foreground"
+                  aria-hidden="true"
+                  data-testid="local-connector-auth-browser-loading"
+                />
               )}
               <span className="text-sm text-muted-foreground">
                 {t('workbench.plugins_local_browser_device_only', '凭据仅保存在此设备')}
