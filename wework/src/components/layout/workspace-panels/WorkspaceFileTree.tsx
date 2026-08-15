@@ -9,14 +9,14 @@ import type { WorkspaceFileEntry } from '@/types/workspace-files'
 const PIERRE_WORKSPACE_FILE_TREE_CSS = `
   :host {
     --trees-bg-override: transparent;
-    --trees-bg-muted-override: rgb(247 247 248);
-    --trees-fg-override: rgb(102 102 102);
-    --trees-fg-muted-override: rgb(140 140 140);
-    --trees-border-color-override: rgb(224 224 224);
-    --trees-selected-bg-override: rgb(247 247 248);
-    --trees-selected-fg-override: rgb(26 26 26);
-    --trees-selected-focused-border-color-override: rgb(20 184 166);
-    --trees-focus-ring-color-override: rgb(20 184 166 / 0.35);
+    --trees-bg-muted-override: rgb(var(--color-muted));
+    --trees-fg-override: rgb(var(--color-text-secondary));
+    --trees-fg-muted-override: rgb(var(--color-text-muted));
+    --trees-border-color-override: rgb(var(--color-border));
+    --trees-selected-bg-override: rgb(var(--color-bg-surface));
+    --trees-selected-fg-override: rgb(var(--color-text-primary));
+    --trees-selected-focused-border-color-override: rgb(var(--color-primary));
+    --trees-focus-ring-color-override: rgb(var(--color-primary) / 0.35);
     --trees-focus-ring-width-override: 1px;
     --trees-focus-ring-offset-override: 0px;
     --trees-gap-override: 2px;
@@ -24,46 +24,46 @@ const PIERRE_WORKSPACE_FILE_TREE_CSS = `
     --trees-item-padding-x-override: 4px;
     --trees-item-margin-x-override: 0px;
     --trees-padding-inline-override: 4px;
-    --trees-indent-guide-bg-override: rgb(224 224 224);
-    --trees-scrollbar-thumb-override: rgb(224 224 224 / 0.55);
-    --trees-file-icon-color: rgb(140 140 140);
-    --trees-file-icon-color-default: rgb(140 140 140);
-    --trees-icon-blue: rgb(140 140 140);
-    --trees-icon-cyan: rgb(140 140 140);
-    --trees-icon-green: rgb(140 140 140);
-    --trees-icon-indigo: rgb(140 140 140);
-    --trees-icon-mauve: rgb(140 140 140);
-    --trees-icon-orange: rgb(140 140 140);
-    --trees-icon-pink: rgb(140 140 140);
-    --trees-icon-purple: rgb(140 140 140);
-    --trees-icon-red: rgb(140 140 140);
-    --trees-icon-teal: rgb(140 140 140);
-    --trees-icon-vermilion: rgb(140 140 140);
-    --trees-icon-yellow: rgb(140 140 140);
+    --trees-indent-guide-bg-override: rgb(var(--color-border));
+    --trees-scrollbar-thumb-override: rgb(var(--color-text-muted) / 0.55);
+    --trees-file-icon-color: rgb(var(--color-text-muted));
+    --trees-file-icon-color-default: rgb(var(--color-text-muted));
+    --trees-icon-blue: rgb(var(--color-text-muted));
+    --trees-icon-cyan: rgb(var(--color-text-muted));
+    --trees-icon-green: rgb(var(--color-text-muted));
+    --trees-icon-indigo: rgb(var(--color-text-muted));
+    --trees-icon-mauve: rgb(var(--color-text-muted));
+    --trees-icon-orange: rgb(var(--color-text-muted));
+    --trees-icon-pink: rgb(var(--color-text-muted));
+    --trees-icon-purple: rgb(var(--color-text-muted));
+    --trees-icon-red: rgb(var(--color-text-muted));
+    --trees-icon-teal: rgb(var(--color-text-muted));
+    --trees-icon-vermilion: rgb(var(--color-text-muted));
+    --trees-icon-yellow: rgb(var(--color-text-muted));
     font-family: var(--font-ui);
     font-size: var(--text-sm);
-    color: rgb(102 102 102);
+    color: rgb(var(--color-text-secondary));
     background: transparent !important;
   }
   button[data-type='item'] {
     box-sizing: border-box;
     border-radius: 6px;
-    color: rgb(102 102 102);
+    color: rgb(var(--color-text-secondary));
     background: transparent;
     background-clip: padding-box;
   }
   button[data-type='item']:hover {
-    color: rgb(26 26 26);
-    background: rgb(247 247 248);
+    color: rgb(var(--color-text-primary));
+    background: rgb(var(--color-muted));
     box-shadow:
-      0 0 0 1px rgb(255 255 255),
+      0 0 0 1px rgb(var(--color-bg-base)),
       0 1px 2px rgb(0 0 0 / 0.04);
   }
   button[data-type='item'][data-item-selected] {
-    color: rgb(26 26 26);
-    background: rgb(247 247 248) !important;
+    color: rgb(var(--color-text-primary));
+    background: rgb(var(--color-muted)) !important;
     box-shadow:
-      0 0 0 1px rgb(255 255 255),
+      0 0 0 1px rgb(var(--color-bg-base)),
       0 1px 2px rgb(0 0 0 / 0.04);
   }
   button[data-type='item'][data-item-selected='true']:has(+ [data-item-selected='true']),

@@ -41,6 +41,7 @@ vi.mock('@/features/appearance', () => ({
 }))
 
 beforeEach(() => {
+  document.documentElement.dataset.theme = 'light'
   fileViewerMocks.render.mockClear()
   codeViewMocks.render.mockClear()
   appearanceMocks.resolvedMode = 'light'
@@ -94,6 +95,160 @@ test('shows Markdown source without a duplicate sticky file header', () => {
       }),
     })
   )
+})
+
+test('uses the application dark theme for code and binary previews', () => {
+  document.documentElement.dataset.theme = 'dark'
+  appearanceMocks.resolvedMode = 'dark'
+
+  const { rerender } = render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/index.ts',
+        name: 'index.ts',
+        content: 'export const dark = true',
+        editable: true,
+        revision: 'revision-dark',
+        truncated: false,
+        size: 24,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+    'data-theme',
+    'dark'
+  )
+  expect(codeViewMocks.render).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      options: expect.objectContaining({
+        themeType: 'dark',
+        unsafeCSS: expect.stringContaining('rgb(var(--color-bg-base))'),
+      }),
+    })
+  )
+
+  rerender(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={{
+        path: '/workspace/project/diagram.png',
+        name: 'diagram.png',
+        size: 5,
+        file: new File(['image'], 'diagram.png', { type: 'image/png' }),
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(fileViewerMocks.render).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      options: expect.objectContaining({ theme: 'dark' }),
+    })
+  )
+})
+
+test('uses the application dark theme while editing text files', () => {
+  document.documentElement.dataset.theme = 'dark'
+  appearanceMocks.resolvedMode = 'dark'
+
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/index.ts',
+        name: 'index.ts',
+        content: 'export const dark = true',
+        editable: true,
+        revision: 'revision-dark',
+        truncated: false,
+        size: 24,
+      }}
+      loading={false}
+      editing
+      editedContent="export const dark = true"
+      onEditedContentChange={vi.fn()}
+      onSave={vi.fn()}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('workspace-file-editor')).toHaveAttribute('data-theme', 'dark')
+})
+
+test('keeps the code view mounted while switching between text files', () => {
+  const { rerender } = render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/first.ts',
+        name: 'first.ts',
+        content: 'export const first = true',
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: 25,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  const codeView = screen.getByTestId('code-view')
+
+  rerender(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/second.ts',
+        name: 'second.ts',
+        content: 'export const second = true',
+        editable: true,
+        revision: 'revision-2',
+        truncated: false,
+        size: 26,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('code-view')).toBe(codeView)
+  expect(codeViewMocks.render).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      items: [
+        expect.objectContaining({
+          id: '/workspace/project/second.ts',
+        }),
+      ],
+    })
+  )
+})
+
+test('keeps the current text preview visible while the next file is loading', () => {
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/current.ts',
+        name: 'current.ts',
+        content: 'export const current = true',
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: 27,
+      }}
+      loading
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('code-view')).toBeInTheDocument()
+  expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
 })
 
 test('does not rebuild a binary image preview when its parent rerenders', () => {

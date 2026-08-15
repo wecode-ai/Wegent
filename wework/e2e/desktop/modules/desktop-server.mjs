@@ -45,11 +45,11 @@ import {
   selectShellToolCommand,
   selectTool,
   selectToolSearch,
+  toolSearchResponseEvents,
   selectViewImageTool,
   streamingMarkdownReport,
   streamingTextEvents,
   telemetryEvents,
-  toolSearchCall,
 } from './response-protocol.mjs'
 
 import {
@@ -1762,10 +1762,10 @@ class DesktopE2EServer {
           true,
           'The earlier command output did not return through the real Codex tool loop'
         )
-        const argumentsValue = selectToolSearch(body, 'node_repl js')
+        const search = selectToolSearch(body, 'node_repl js')
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(NODE_REPL_TOOL_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(NODE_REPL_TOOL_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -1800,10 +1800,10 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
-        const argumentsValue = selectToolSearch(body, 'github issue details')
+        const search = selectToolSearch(body, 'github issue details')
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(GENERIC_MCP_TOOL_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -2670,13 +2670,13 @@ class DesktopE2EServer {
       }
 
       if (requestNumber === 3) {
-        const argumentsValue = selectToolSearch(
+        const search = selectToolSearch(
           body,
           `${OFFICIAL_PLUGIN_DISPLAY_NAME} ${OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION}`
         )
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(OFFICIAL_PLUGIN_MCP_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(OFFICIAL_PLUGIN_MCP_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -3609,9 +3609,9 @@ class DesktopE2EServer {
         excludes: [followUpPrompt],
       })
       this.assertLocalApplyPatchTool(model, body)
-      const argumentsValue = selectToolSearch(body, 'Wework browser open')
+      const search = selectToolSearch(body, 'Wework browser open')
       state.stage = 'awaiting_browser_search_output'
-      this.writeLocalToolSearchCall(response, model, argumentsValue)
+      this.writeLocalToolSearchCall(response, model, search)
       return
     }
     if (state.stage === 'awaiting_browser_search_output') {
@@ -4097,22 +4097,22 @@ class DesktopE2EServer {
     this.writeAnthropicToolCall(response, patch)
   }
 
-  writeLocalToolSearchCall(response, model, argumentsValue) {
+  writeLocalToolSearchCall(response, model, search) {
     const callId = `${model.protocol}-local-browser-search`
     if (model.protocol === 'responses') {
       const id = `local-${model.protocol}-browser-search`
       this.writeSse(response, [
         responseCreated(id),
-        ...functionCall(callId, 'tool_search', argumentsValue),
+        ...toolSearchResponseEvents(callId, search),
         responseCompleted(id),
       ])
       return
     }
     if (model.protocol === 'chat') {
-      this.writeChatToolCall(response, argumentsValue, callId, 'tool_search')
+      this.writeChatToolCall(response, search.arguments, callId, search.name)
       return
     }
-    this.writeAnthropicToolCall(response, argumentsValue, callId, 'tool_search')
+    this.writeAnthropicToolCall(response, search.arguments, callId, search.name)
   }
 
   writeLocalNamespaceToolCall(response, model, tool) {

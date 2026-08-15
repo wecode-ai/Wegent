@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Execution record for a project robot queue run.
+"""Execution record for a Wework-managed project task run.
 
 The queue is a derived view over this table: any non-terminal row is part of
 the queue. The task row keeps the assignment chain; this table records each
@@ -28,14 +28,20 @@ EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
 
 
 class LoopItemExecution(Base):
-    """A single robot run of a project task."""
+    """A single Wework executor run of a project task."""
 
     __tablename__ = "loop_item_executions"
 
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
     loop_item_id = Column(String(64), nullable=False, default="", server_default="")
     cloud_project_id = Column(String(64), nullable=False, default="", server_default="")
+    executor_owner_user_id = Column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     agent_id = Column(String(64), nullable=False, default="", server_default="")
+    automation_run_id = Column(
+        String(64), nullable=False, default="", server_default=""
+    )
     # Where the robot actually executes. "local" runs on the creator's App,
     # "cloud" runs on the creator's bound cloud device; the backend never
     # claims local rows and the App never claims cloud rows.
@@ -101,9 +107,9 @@ class LoopItemExecution(Base):
         String(255), nullable=False, default="", server_default=""
     )
     runtime_task_id = Column(String(255), nullable=False, default="", server_default="")
-    # Prebuilt runtime.tasks.create payload, so cloud dispatchers and local
-    # pullers replay the exact task the App would have created (same pattern
-    # as automations storing their task_payload).
+    # Kept for schema compatibility with existing installations. New
+    # executions compile requests from live configuration and never write a
+    # request or model credentials to this column.
     execution_payload = Column(Text, nullable=False, default="")
     version = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -122,8 +128,15 @@ class LoopItemExecution(Base):
             "queued_at",
         ),
         Index("idx_exec_agent_status", "agent_id", "status"),
+        Index("idx_exec_automation_run_id", "automation_run_id"),
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
+
+    @property
+    def executor_type(self) -> str:
+        """Return the transport role without persisting redundant state."""
+
+        return "project_robot" if self.agent_id else "automation_manager"

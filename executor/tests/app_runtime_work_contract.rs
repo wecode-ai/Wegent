@@ -508,6 +508,8 @@ async fn app_runtime_persists_local_task_thread_mapping() {
     assert_eq!(created["accepted"], true);
     assert_eq!(created["taskId"], "local-task-1");
 
+    wait_for_persisted_mapping(&handler).await;
+
     let restored_handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
     let restored = wait_for_persisted_mapping(&restored_handler).await;
 

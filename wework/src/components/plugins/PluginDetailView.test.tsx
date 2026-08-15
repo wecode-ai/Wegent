@@ -215,4 +215,36 @@ describe('PluginDetailView owner actions', () => {
     fireEvent.click(screen.getByTestId('plugin-detail-menu-copy-local-1'))
     expect(onTertiaryAction).toHaveBeenCalledTimes(1)
   })
+
+  test('keeps the overflow menu left of the primary action for uninstalled plugins', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.installState = 'available'
+    plugin.enabled = false
+    const onDeleteAction = vi.fn()
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        showUninstall={false}
+        primaryActionLabel="安装插件"
+        primaryActionIcon="install"
+        onDeleteAction={onDeleteAction}
+      />
+    )
+
+    const actions = screen.getByTestId('plugin-detail-actions-bar')
+    const menu = screen.getByTestId('plugin-detail-actions-local-1')
+    const primary = screen.getByTestId('plugin-detail-toggle-local-1')
+    expect(Array.from(actions.children).indexOf(menu.parentElement!)).toBeLessThan(
+      Array.from(actions.children).indexOf(primary)
+    )
+
+    fireEvent.click(menu)
+    fireEvent.click(screen.getByTestId('plugin-detail-delete-local-1'))
+    expect(onDeleteAction).toHaveBeenCalledTimes(1)
+  })
 })

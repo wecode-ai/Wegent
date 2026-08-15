@@ -17,6 +17,11 @@ const packagingScripts = [
   'scripts/build-minio-windows-release.sh',
 ]
 
+const bundledPluginExampleManifests = [
+  'bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json',
+  'bundled-plugins/wework-plugin-example/.mcp.json',
+]
+
 const temporaryDirectories: string[] = []
 
 afterEach(() => {
@@ -31,6 +36,11 @@ describe('bundled plugin resources', () => {
 
     expect(existsSync(resolve(marketplaceRoot, '.agents/plugins/marketplace.json'))).toBe(true)
     expect(existsSync(resolve(marketplaceRoot, '.claude-plugin/marketplace.json'))).toBe(true)
+
+    const tauriDirectory = resolve(process.cwd(), 'src-tauri')
+    for (const manifest of bundledPluginExampleManifests) {
+      expect(existsSync(resolve(tauriDirectory, manifest))).toBe(true)
+    }
   })
 
   test('bundles the marketplace directory in the base Tauri config', () => {

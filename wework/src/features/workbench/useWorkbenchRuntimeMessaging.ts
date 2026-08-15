@@ -155,6 +155,26 @@ export async function prepareRuntimeAttachmentsForDevice(
   }
 }
 
+export function runtimeExecutablePathForTarget({
+  executablePath,
+  targetDevice,
+  workspaceSource,
+}: {
+  executablePath?: string
+  targetDevice: WorkbenchState['devices'][number] | null
+  workspaceSource?: RuntimeDeviceWorkspace['workspaceSource']
+}): string | undefined {
+  if (!executablePath) return undefined
+  if (
+    workspaceSource === 'remote' ||
+    targetDevice?.device_type === 'cloud' ||
+    targetDevice?.device_type === 'remote'
+  ) {
+    return undefined
+  }
+  return executablePath
+}
+
 interface RuntimeMessagingAttachmentSelection {
   attachments: Attachment[]
   resetAttachments: () => void
@@ -331,11 +351,16 @@ export function useWorkbenchRuntimeMessaging({
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
-        lifecycleStore.sendRequested(outboundRequest.address)
-        sendRequested = true
+        if (!options?.silentBusyRetry) {
+          lifecycleStore.sendRequested(outboundRequest.address)
+          sendRequested = true
+        }
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
+        }
+        if (options?.silentBusyRetry) {
+          lifecycleStore.sendRequested(outboundRequest.address)
         }
         lifecycleStore.sendAccepted(outboundRequest.address)
         try {
@@ -357,7 +382,7 @@ export function useWorkbenchRuntimeMessaging({
             lifecycleStore.sendRejected(request.address)
           }
         }
-        if (blockedByActiveTurn) {
+        if (blockedByActiveTurn && !options?.silentBusyRetry) {
           try {
             await refreshWorkLists()
           } catch (refreshError) {
@@ -367,13 +392,15 @@ export function useWorkbenchRuntimeMessaging({
             })
           }
         }
-        console.warn('[Wework] Runtime send failed', {
-          taskId: request.address.taskId,
-          deviceId: request.address.deviceId,
-          workspacePath: request.address.workspacePath ?? null,
-          addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
-          error: errorMessage,
-        })
+        if (!options?.silentBusyRetry) {
+          console.warn('[Wework] Runtime send failed', {
+            taskId: request.address.taskId,
+            deviceId: request.address.deviceId,
+            workspacePath: request.address.workspacePath ?? null,
+            addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
+            error: errorMessage,
+          })
+        }
         reportError(runtimeSendError(error, '发送失败'), options)
         return false
       }
@@ -920,14 +947,21 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
+      const targetDevice = findWorkbenchDevice(state.devices, optimisticDeviceId)
+      const runtimeExecutablePath = runtimeExecutablePathForTarget({
+        executablePath: options?.runtimeExecutablePath,
+        targetDevice,
+        workspaceSource:
+          selectedProjectWorkspace?.deviceId === optimisticDeviceId
+            ? selectedProjectWorkspace.workspaceSource
+            : undefined,
+      })
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
         taskId,
         teamId: payload.team_id,
         runtime,
-        ...(options?.runtimeExecutablePath
-          ? { runtimeExecutablePath: options.runtimeExecutablePath }
-          : {}),
+        ...(runtimeExecutablePath ? { runtimeExecutablePath } : {}),
         ...(options?.runtimePermissionMode
           ? { runtimePermissionMode: options.runtimePermissionMode }
           : {}),
@@ -1028,6 +1062,27 @@ export function useWorkbenchRuntimeMessaging({
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
       }
+      logRuntimeTaskLaunchTiming('runtime-create-started', launchStartedAt, {
+        taskId,
+        clientUserMessageId: options?.clientUserMessageId ?? null,
+        deviceId: optimisticAddress.deviceId,
+      })
+      // Start the primary request before optimistic navigation mounts task readers.
+      // Presentation work must never leave a visible pending task without a runtime request.
+      const createResponsePromise = (async () => {
+        const worktreeCreationDelayMs = Number(
+          import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ?? 0
+        )
+        if (
+          payload.execution?.workspace?.source === 'git_worktree' &&
+          Number.isFinite(worktreeCreationDelayMs) &&
+          worktreeCreationDelayMs > 0
+        ) {
+          await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
+        }
+        return executorClient.runtime.createRuntimeTask(createRequest)
+      })()
+      void createResponsePromise.catch(() => undefined)
       logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {
         taskId,
         clientUserMessageId: options?.clientUserMessageId ?? null,
@@ -1069,22 +1124,7 @@ export function useWorkbenchRuntimeMessaging({
       }
 
       try {
-        logRuntimeTaskLaunchTiming('runtime-create-started', launchStartedAt, {
-          taskId,
-          clientUserMessageId: options?.clientUserMessageId ?? null,
-          deviceId: optimisticAddress.deviceId,
-        })
-        const worktreeCreationDelayMs = Number(
-          import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ?? 0
-        )
-        if (
-          payload.execution?.workspace?.source === 'git_worktree' &&
-          Number.isFinite(worktreeCreationDelayMs) &&
-          worktreeCreationDelayMs > 0
-        ) {
-          await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
-        }
-        const response = await executorClient.runtime.createRuntimeTask(createRequest)
+        const response = await createResponsePromise
         logRuntimeTaskLaunchTiming('runtime-create-resolved', launchStartedAt, {
           taskId,
           clientUserMessageId: options?.clientUserMessageId ?? null,
@@ -1596,14 +1636,22 @@ export function useWorkbenchRuntimeMessaging({
         : options.modelId
           ? { ...prepared.payload, force_override_bot_model: options.modelId }
           : prepared.payload
+      const explicitModelSelection = options.executionModel?.modelId
+        ? {
+            modelName: options.executionModel.modelId,
+            modelType: (options.executionModel.modelType as ModelType | null | undefined) ?? null,
+            options: options.executionModel.modelOptions ?? {},
+          }
+        : options.modelSelection
       return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
+        ...(options.runtime ? { runtime: options.runtime } : {}),
         initialGoal: options.initialGoal,
         initialSupervisor: options.initialSupervisor,
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
         origin: options.origin,
-        modelSelection: options.modelSelection,
+        modelSelection: explicitModelSelection,
         additionalContext: options.additionalContext,
         onError: options.onError,
         onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,

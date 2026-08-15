@@ -3,6 +3,7 @@ import type { InstalledPlugin } from '@/types/api'
 import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
+  installedPluginMatchesImportedPersonalPlugin,
   peekLocalCodexPluginsReadState,
   warmLocalCodexPluginsReadState,
 } from './codexPlugins'
@@ -160,6 +161,215 @@ describe('local codex plugin readState cache', () => {
       cloudPluginId: 71,
       cloudReleaseId: 82,
     })
+  })
+
+  test('deletes a personal plugin through the managed marketplace command', async () => {
+    const api = createLocalCodexPluginApi()
+    await api.readState({ mergeAllMarketplaces: true })
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'local_executor_delete_personal_plugin') return null
+      if (command === 'local_executor_read_plugin_cloud_links') return []
+      throw new Error(`Unexpected invoke ${command}`)
+    })
+
+    await api.deletePersonalPlugin('dev-tools')
+
+    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_delete_personal_plugin', {
+      marketplacePath: '/tmp/wework-personal',
+      pluginName: 'dev-tools',
+    })
+  })
+
+  test('deletes a legacy personal plugin from its source marketplace', async () => {
+    const api = createLocalCodexPluginApi()
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'local_executor_delete_personal_plugin') return null
+      throw new Error(`Unexpected invoke ${command}`)
+    })
+
+    await api.deletePersonalPlugin('quality-gate', '/Users/test/.agents/plugins/marketplace.json')
+
+    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_delete_personal_plugin', {
+      marketplacePath: '/Users/test/.agents/plugins/marketplace.json',
+      pluginName: 'quality-gate',
+    })
+  })
+
+  test('previews plugin ZIPs against the managed personal marketplace', async () => {
+    const preview = {
+      valid: false,
+      archivePath: '/tmp/wrapped.zip',
+      sha256: 'a'.repeat(64),
+      name: '',
+      displayName: '',
+      version: '',
+      description: '',
+      skillCount: 0,
+      mcpServerCount: 0,
+      executableCapabilities: [],
+      existing: false,
+      existingVersion: null,
+      issues: [{ code: 'manifest_not_at_root', path: null, message: 'nested manifest' }],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'local_executor_read_plugin_cloud_links') return []
+      if (command === 'local_executor_preview_plugin_import') return preview
+      throw new Error(`Unexpected invoke ${command}`)
+    })
+    const api = createLocalCodexPluginApi()
+
+    await expect(api.previewPluginImport('/tmp/wrapped.zip')).resolves.toEqual(preview)
+    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_preview_plugin_import', {
+      archivePath: '/tmp/wrapped.zip',
+      marketplacePath: '/tmp/wework-personal',
+    })
+  })
+
+  test('rolls back imported files when App Server installation fails', async () => {
+    const preview = {
+      valid: true,
+      archivePath: '/tmp/example-plugin.zip',
+      sha256: 'b'.repeat(64),
+      name: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+      description: 'Example plugin',
+      skillCount: 1,
+      mcpServerCount: 0,
+      executableCapabilities: [],
+      existing: false,
+      existingVersion: null,
+      issues: [],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'local_executor_read_plugin_cloud_links') return []
+      if (command === 'local_executor_import_plugin_package') {
+        return {
+          pluginName: 'example-plugin',
+          displayName: 'Example Plugin',
+          version: '1.0.0',
+          marketplacePath: '/tmp/wework-personal',
+          pluginPath: '/tmp/wework-personal/plugins/example-plugin',
+          rollbackId: 'rollback-1',
+        }
+      }
+      if (command === 'local_executor_rollback_plugin_import') return null
+      throw new Error(`Unexpected invoke ${command}`)
+    })
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (params.method === 'plugin/install') throw new Error('install rejected')
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+
+    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+      'Plugin package installation failed: install rejected'
+    )
+    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_rollback_plugin_import', {
+      marketplacePath: '/tmp/wework-personal',
+      rollbackId: 'rollback-1',
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
+      method: 'plugin/install',
+      params: {
+        marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
+        remoteMarketplaceName: null,
+        pluginName: 'example-plugin',
+      },
+    })
+  })
+
+  test('keeps the rollback backup until personal-marketplace installation is verified', async () => {
+    const preview = {
+      valid: true,
+      archivePath: '/tmp/example-plugin.zip',
+      sha256: 'c'.repeat(64),
+      name: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+      description: 'Example plugin',
+      skillCount: 1,
+      mcpServerCount: 0,
+      executableCapabilities: [],
+      existing: false,
+      existingVersion: null,
+      issues: [],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'local_executor_read_plugin_cloud_links') return []
+      if (command === 'local_executor_import_plugin_package') {
+        return {
+          pluginName: 'example-plugin',
+          displayName: 'Example Plugin',
+          version: '1.0.0',
+          marketplacePath: '/tmp/wework-personal',
+          pluginPath: '/tmp/wework-personal/plugins/example-plugin',
+          rollbackId: 'rollback-verify',
+        }
+      }
+      if (command === 'local_executor_rollback_plugin_import') return null
+      if (command === 'local_executor_finalize_plugin_import') {
+        throw new Error('backup finalized before verification')
+      }
+      throw new Error(`Unexpected invoke ${command}`)
+    })
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (params.method === 'plugin/install') return {}
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+    const api = createLocalCodexPluginApi()
+
+    await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
+      'Plugin package installed but was not returned by App Server'
+    )
+    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_rollback_plugin_import', {
+      marketplacePath: '/tmp/wework-personal',
+      rollbackId: 'rollback-verify',
+    })
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      'local_executor_finalize_plugin_import',
+      expect.anything()
+    )
+  })
+
+  test('matches an imported plugin only in the Wework personal marketplace', () => {
+    expect(installedPluginMatchesImportedPersonalPlugin(createdPlugin, 'dev-tools')).toBe(true)
+    const otherMarketplacePlugin: InstalledPlugin = {
+      ...createdPlugin,
+      metadata: { ...createdPlugin.metadata, namespace: 'other-marketplace' },
+      spec: {
+        ...createdPlugin.spec,
+        source: {
+          ...createdPlugin.spec.source,
+          providerKey: 'other-marketplace',
+          marketplace: 'other-marketplace',
+        },
+        sourcePayload: {
+          ...createdPlugin.spec.sourcePayload,
+          marketplaceName: 'other-marketplace',
+        },
+      },
+    }
+
+    expect(installedPluginMatchesImportedPersonalPlugin(otherMarketplacePlugin, 'dev-tools')).toBe(
+      false
+    )
   })
 
   test('search query reuses the unfiltered readState TTL cache', async () => {

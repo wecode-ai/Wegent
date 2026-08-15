@@ -35,14 +35,22 @@ export interface WorkspaceFileChunkResponse {
 }
 
 export interface WorkspaceFileApi {
-  listWorkspaceEntries: (deviceId: string, path: string) => Promise<WorkspaceTreeResponse>
+  listWorkspaceEntries: (
+    deviceId: string,
+    path: string,
+    workspaceRoot?: string
+  ) => Promise<WorkspaceTreeResponse>
   searchWorkspaceEntries?: (
     deviceId: string,
     root: string,
     query: string,
     cancellationToken?: string
   ) => Promise<import('./api').RuntimeWorkspaceSearchResponse>
-  readWorkspaceTextFile: (deviceId: string, filePath: string) => Promise<WorkspaceTextFileResponse>
+  readWorkspaceTextFile: (
+    deviceId: string,
+    filePath: string,
+    workspaceRoot: string
+  ) => Promise<WorkspaceTextFileResponse>
   writeWorkspaceTextFile?: (
     deviceId: string,
     filePath: string,
@@ -52,7 +60,8 @@ export interface WorkspaceFileApi {
   readWorkspaceFileChunk?: (
     deviceId: string,
     filePath: string,
-    offset: number
+    offset: number,
+    workspaceRoot: string
   ) => Promise<WorkspaceFileChunkResponse>
 }
 

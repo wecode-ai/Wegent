@@ -176,6 +176,7 @@ function services(): WorkbenchServices {
           user_name: 'local',
           email: 'local@example.com',
           role: 'Owner',
+          capability_description: '',
         },
         {
           id: 2,
@@ -183,8 +184,17 @@ function services(): WorkbenchServices {
           user_name: 'alice',
           email: 'alice@example.com',
           role: 'Developer',
+          capability_description: '',
         },
       ]),
+      updateCloudProjectMember: vi.fn(async (_projectId, userId, values) => ({
+        id: userId === 1 ? 1 : 2,
+        user_id: userId,
+        user_name: userId === 1 ? 'local' : 'alice',
+        email: userId === 1 ? 'local@example.com' : 'alice@example.com',
+        role: userId === 1 ? 'Owner' : (values.role ?? 'Developer'),
+        capability_description: values.capability_description ?? '',
+      })),
       listLoopItemExecutions: vi.fn(async () => ({ items: [] })),
       searchCloudProjectUsers: vi.fn(async () => ({ users: [], total: 0 })),
       listCloudFiles: vi.fn(async () => ({ items: [] })),
@@ -1282,11 +1292,12 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('opens project member management and searches tasks without hiding the board', async () => {
+    const workbenchServices = services()
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[]}
-        services={services()}
+        services={workbenchServices}
       />
     )
 
@@ -1296,6 +1307,18 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByText('2 位成员')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-members-toggle'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
+    await userEvent.type(
+      screen.getByTestId('cloud-project-member-capability-2'),
+      '前端实现与交互验收'
+    )
+    await userEvent.tab()
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.updateCloudProjectMember).toHaveBeenCalledWith(
+        project.id,
+        2,
+        { capability_description: '前端实现与交互验收' }
+      )
+    )
     await userEvent.click(screen.getByTestId('cloud-project-board-view'))
 
     await userEvent.click(screen.getByTestId('cloud-project-task-search-toggle'))

@@ -510,7 +510,34 @@ def test_a_kb_maintainer_can_regenerate_without_repository_write_access(
 
     assert response.status_code == 202, response.text
     assert start.call_args.kwargs["user"].id == maintainer.id
+    assert start.call_args.kwargs["force_full"] is False
     assert test_user.id != maintainer.id
+
+
+def test_manual_regeneration_requests_a_full_rebuild(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    kind_services_use_test_db,
+):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+
+    with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
+        start.return_value = SimpleNamespace(
+            started=True,
+            mode="full",
+            reason="full rebuild explicitly requested",
+            generation=SimpleNamespace(id=7),
+            task_id=42,
+        )
+        response = test_client.post(
+            _run_url(kb_id),
+            json={"force_full": True},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 202, response.text
+    assert start.call_args.kwargs["force_full"] is True
 
 
 def test_a_kb_reporter_cannot_regenerate(

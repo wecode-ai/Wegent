@@ -4,7 +4,7 @@
 """Route loop-item creation through the configured project provider."""
 
 from dataclasses import dataclass
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from sqlalchemy.orm import Session
 
@@ -29,14 +29,37 @@ class LoopItemProviderRouter:
         project: CloudProject,
         user: User,
         values: LoopItemCreate,
+        *,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
+        assign_creator_if_unassigned: bool = True,
     ) -> RoutedLoopItem:
         if project.task_provider in {"github", "gitlab"}:
-            created = external_loop_item_provider.create(
-                db, project.id, user.id, user.user_name, values
-            )
+            if automation_context is None and instruction is None:
+                created = external_loop_item_provider.create(
+                    db, project.id, user.id, user.user_name, values
+                )
+            else:
+                created = external_loop_item_provider.create(
+                    db,
+                    project.id,
+                    user.id,
+                    user.user_name,
+                    values,
+                    automation_context=automation_context,
+                    instruction=instruction,
+                )
             return RoutedLoopItem(values=created, internal_item=None)
 
-        item = loop_item_service.create(db, project.id, user.id, values)
+        item = loop_item_service.create(
+            db,
+            project.id,
+            user.id,
+            values,
+            automation_context=automation_context,
+            instruction=instruction,
+            assign_creator_if_unassigned=assign_creator_if_unassigned,
+        )
         response = loop_item_service.response_values(db, item, user.id)
         return RoutedLoopItem(values=response, internal_item=item)
 

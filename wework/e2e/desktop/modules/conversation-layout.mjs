@@ -740,14 +740,18 @@ async function waitForNewTaskRow(
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
 }
 
-async function createCheckpointTaskFixture(control, composerSelector) {
+async function createCheckpointTaskFixture(
+  control,
+  composerSelector,
+  newTaskButtonSelector = '[data-testid="new-chat-button"]'
+) {
   const knownTaskRows = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
     )
   )
   control.setScenario('checkpoint_task')
-  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('click', newTaskButtonSelector)
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

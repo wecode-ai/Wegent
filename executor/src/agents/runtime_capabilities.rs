@@ -422,9 +422,41 @@ pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
 pub fn request_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     let mut overrides = Vec::new();
     let mcp_servers = collect_request_mcp_servers(request);
-    for (name, server) in mcp_servers {
-        overrides.extend(codex_mcp_server_overrides(&name, &server));
+    let server_names = mcp_servers.keys().cloned().collect::<Vec<_>>().join(",");
+    let stdio_count = mcp_servers
+        .values()
+        .filter(|server| {
+            server.get("type").and_then(Value::as_str) == Some("stdio")
+                || server.get("command").is_some()
+        })
+        .count();
+    for (name, server) in &mcp_servers {
+        overrides.extend(codex_mcp_server_overrides(name, server));
     }
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.extend([
+        ("server_count", mcp_servers.len().to_string()),
+        ("server_names", server_names),
+        ("stdio_count", stdio_count.to_string()),
+        ("override_count", overrides.len().to_string()),
+        (
+            "backend_url_present",
+            request
+                .backend_url
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+                .to_string(),
+        ),
+        (
+            "auth_token_present",
+            request
+                .auth_token
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+                .to_string(),
+        ),
+    ]);
+    log_executor_event("codex MCP request config compiled", &fields);
     overrides
 }
 

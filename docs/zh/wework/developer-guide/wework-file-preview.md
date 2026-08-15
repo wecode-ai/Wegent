@@ -28,11 +28,13 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 ## 数据传输
 
-二进制文件通过 `workspace_read_file_chunk` 命令以 1 MiB 分块读取。每个请求仍使用工作区根目录校验，并拒绝通过符号链接或相对路径逃逸工作区。工作区本身可以通过符号链接路径打开；executor 返回规范化后的真实路径时，前端会把目录项和文件响应映射回用户选择的工作区路径，并继续校验响应路径、文件名和分块偏移。前端按顺序组装为 `File` 后交给查看器；代码和文本继续使用 `workspace_read_text_file`，避免无意义的二进制传输。
+本机工作区的目录枚举、文本读取和二进制分块读取由 Wework Tauri 进程直接访问磁盘，不经过 executor IPC。文本最多读取 256 KiB，二进制通过 `read_local_workspace_file_chunk` 以 1 MiB 分块读取。每个请求都携带工作区根目录并在 Rust 侧执行规范化路径校验，拒绝通过符号链接或相对路径逃逸工作区。前端按顺序组装二进制分块为 `File` 后交给查看器。
 
-`workspace_read_text_file` 会返回 `editable` 和 `revision`。只有未截断且可按 UTF-8 解码的文本文件可以进入编辑模式；二进制、超出 256 KiB 的文本和解码失败的文件只能预览。
+通过远端设备打开工作区时仍使用设备侧 workspace API。前端继续校验响应路径、文件名和分块偏移，不能把本机原生命令作为远端读取失败时的回退路径。
 
-保存是由 Rust executor 通过 `workspace_write_text_file` 实现的 Wework 本地 IPC 能力，不注册为 Backend 命令。IPC 载荷携带文件内容、文件名和读取时得到的 `revision`。executor 在写入前重新读取磁盘文件并比对 SHA-256 revision；如果文件已被外部修改，保存会失败，前端必须阻止覆盖并提示用户重新加载。写入必须限制在同一工作区根目录内，并通过同目录临时文件原子替换目标文件。通过远端设备打开的文件仍然只能预览。
+本机原生命令 `read_local_workspace_text_file` 会返回 `editable` 和 `revision`；远端设备对应使用 executor IPC 的 `workspace_read_text_file`。只有未截断且可按 UTF-8 解码的文本文件可以进入编辑模式；二进制、超出 256 KiB 的文本和解码失败的文件只能预览。
+
+保存仍由 Rust executor 通过 `workspace_write_text_file` 实现，因为写入需要沿用任务工作区的并发修改检查和原子替换语义。IPC 载荷携带文件内容、文件名和读取时得到的 `revision`。executor 在写入前重新读取磁盘文件并比对 SHA-256 revision；如果文件已被外部修改，保存会失败，前端必须阻止覆盖并提示用户重新加载。写入必须限制在同一工作区根目录内，并通过同目录临时文件原子替换目标文件。通过远端设备打开的文件仍然只能预览。
 
 ## 预览状态生命周期
 

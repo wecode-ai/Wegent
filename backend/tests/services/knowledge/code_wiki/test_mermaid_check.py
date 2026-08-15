@@ -8,6 +8,7 @@ import pytest
 
 from app.services.knowledge.code_wiki.mermaid_check import (
     check_mermaid_blocks,
+    count_mermaid_blocks,
     describe_warnings,
 )
 
@@ -104,6 +105,18 @@ def test_a_mermaid_example_quoted_inside_another_fence_is_not_checked():
     markdown = "````markdown\n```mermaid\nflowchat TD\n```\n````"
 
     assert check_mermaid_blocks(markdown) == []
+
+
+def test_count_uses_the_same_fence_grammar_as_structural_checks():
+    markdown = "\n\n".join(
+        [
+            _fence("flowchart TD\n  A --> B", "MERMAID"),
+            "````markdown\n```mermaid\nflowchart TD\n```\n````",
+            "~~~mermaid\nflowchart TD\n  A --> B\n",
+        ]
+    )
+
+    assert count_mermaid_blocks(markdown) == 2
 
 
 def test_entity_relationship_cardinality_is_not_mistaken_for_a_bracket_error():

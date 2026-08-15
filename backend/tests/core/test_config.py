@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-from app.core.config import Settings, settings
+from app.core.config import Settings, load_git_token_crypto_environment, settings
 
 
 def build_settings(**kwargs) -> Settings:
@@ -85,6 +85,22 @@ class TestSettings:
         s = build_settings()
 
         assert s.WECODE_INTERNAL_EXTENSIONS_ENABLED is False
+
+    def test_git_token_crypto_environment_uses_dotenv_without_overriding_process_env(
+        self, monkeypatch, tmp_path
+    ):
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "GIT_TOKEN_AES_KEY=dotenv-key\nGIT_TOKEN_AES_IV=dotenv-iv\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("GIT_TOKEN_AES_KEY", raising=False)
+        monkeypatch.setenv("GIT_TOKEN_AES_IV", "process-iv")
+
+        load_git_token_crypto_environment(env_file)
+
+        assert os.environ["GIT_TOKEN_AES_KEY"] == "dotenv-key"
+        assert os.environ["GIT_TOKEN_AES_IV"] == "process-iv"
 
     def test_settings_database_url(self):
         """Test database URL configuration"""

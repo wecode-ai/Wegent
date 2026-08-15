@@ -4,6 +4,7 @@ import {
   friendlyTitleForTask,
   loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
+  runtimeExecutablePathForTarget,
   resolveTemporaryChatSource,
   runtimeThreadId,
 } from './useWorkbenchRuntimeMessaging'
@@ -269,5 +270,83 @@ describe('prepareRuntimeAttachmentsForDevice', () => {
         [attachment()]
       )
     ).rejects.toThrow('当前无法将本地附件上传到云设备')
+  })
+})
+
+describe('runtimeExecutablePathForTarget', () => {
+  test('keeps a configured executable for a local executor', () => {
+    expect(
+      runtimeExecutablePathForTarget({
+        executablePath: '/tmp/claude',
+        targetDevice: {
+          device_id: 'local-device',
+          device_type: 'local',
+          status: 'online',
+        },
+        workspaceSource: 'local',
+      })
+    ).toBe('/tmp/claude')
+  })
+
+  test('keeps a configured executable while local device discovery is pending', () => {
+    expect(
+      runtimeExecutablePathForTarget({
+        executablePath: '/tmp/claude',
+        targetDevice: null,
+      })
+    ).toBe('/tmp/claude')
+  })
+
+  test('removes a local executable path for a remote workspace', () => {
+    expect(
+      runtimeExecutablePathForTarget({
+        executablePath: '/tmp/claude',
+        targetDevice: null,
+        workspaceSource: 'remote',
+      })
+    ).toBeUndefined()
+  })
+
+  test.each(['cloud', 'remote'] as const)(
+    'removes a local executable path for a %s executor',
+    deviceType => {
+      expect(
+        runtimeExecutablePathForTarget({
+          executablePath: '/tmp/claude',
+          targetDevice: {
+            device_id: 'remote-device',
+            device_type: deviceType,
+            status: 'online',
+          },
+        })
+      ).toBeUndefined()
+    }
+  )
+
+  test('prefers an explicit remote executor over stale local workspace metadata', () => {
+    expect(
+      runtimeExecutablePathForTarget({
+        executablePath: '/tmp/claude',
+        targetDevice: {
+          device_id: 'remote-device',
+          device_type: 'cloud',
+          status: 'online',
+        },
+        workspaceSource: 'local',
+      })
+    ).toBeUndefined()
+  })
+
+  test('keeps a configured executable for the local app executor', () => {
+    expect(
+      runtimeExecutablePathForTarget({
+        executablePath: '/tmp/claude',
+        targetDevice: {
+          device_id: 'app-device',
+          device_type: 'app',
+          status: 'online',
+        },
+      })
+    ).toBe('/tmp/claude')
   })
 })

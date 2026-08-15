@@ -50,6 +50,7 @@ from app.schemas.installed_plugin import (
     PluginAutoUpdateBatchResponse,
     PluginAutoUpdateItem,
     PluginCopyResponse,
+    PluginDeleteImpactResponse,
     PluginDeviceInstallationItem,
     PluginMarketplaceItem,
     PluginMarketplaceListResponse,
@@ -2333,6 +2334,102 @@ class PluginMarketplaceService:
             revoked,
         )
 
+    def delete_owned_personal_plugin(
+        self,
+        db: Session,
+        *,
+        plugin_id: int,
+        user_id: int,
+        impact_revision: str,
+        revoke_and_delete: bool,
+    ) -> list[tuple[int, int]]:
+        """Remove an owned personal listing and deactivate every installation."""
+        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        installations, shared_target_count, _, current_revision = (
+            self._personal_plugin_delete_snapshot(db, plugin=plugin)
+        )
+        if impact_revision != current_revision:
+            raise HTTPException(
+                status_code=409,
+                detail="Plugin usage changed; review the deletion impact again",
+            )
+        affected_users = {
+            installation_user_id
+            for installation_user_id, _ in installations
+            if installation_user_id != user_id
+        }
+        if (affected_users or shared_target_count) and not revoke_and_delete:
+            raise HTTPException(
+                status_code=409,
+                detail="Plugin is shared or installed by other users",
+            )
+        self._clear_plugin_grants(db, plugin_id=plugin.id)
+        self._deactivate_revoked_installations(db, installations)
+        plugin.status = "deleted"
+        plugin.allow_copy = False
+        plugin.featured_rank = 0
+        plugin.updated_at = datetime.now()
+        db.commit()
+        return installations
+
+    def get_personal_plugin_delete_impact(
+        self,
+        db: Session,
+        *,
+        plugin_id: int,
+        user_id: int,
+    ) -> PluginDeleteImpactResponse:
+        plugin = self._owned_plugin(db, plugin_id=plugin_id, user_id=user_id)
+        installations, shared_target_count, installed_device_count, revision = (
+            self._personal_plugin_delete_snapshot(db, plugin=plugin)
+        )
+        return PluginDeleteImpactResponse(
+            pluginId=plugin.id,
+            affectedUserCount=len(
+                {
+                    installation_user_id
+                    for installation_user_id, _ in installations
+                    if installation_user_id != user_id
+                }
+            ),
+            installedDeviceCount=installed_device_count,
+            sharedTargetCount=shared_target_count,
+            impactRevision=revision,
+        )
+
+    def _personal_plugin_delete_snapshot(
+        self,
+        db: Session,
+        *,
+        plugin: Plugin,
+    ) -> tuple[list[tuple[int, int]], int, int, str]:
+        installations = self._plugin_installations(db, plugin_id=plugin.id)
+        installation_ids = [installed_id for _, installed_id in installations]
+        device_rows: list[tuple[int, int, str, str]] = []
+        if installation_ids:
+            device_rows = [
+                (row.id, row.installed_kind_id, row.device_id, row.state)
+                for row in db.query(PluginDeviceInstallation)
+                .filter(
+                    PluginDeviceInstallation.installed_kind_id.in_(installation_ids)
+                )
+                .all()
+            ]
+        grants = self._plugin_grants(db, plugin.id)
+        revision_payload = {
+            "pluginUpdatedAt": plugin.updated_at.isoformat(),
+            "installations": sorted(installations),
+            "devices": sorted(device_rows),
+            "grants": sorted(
+                (grant.id, grant.entity_type, grant.entity_id, grant.status)
+                for grant in grants
+            ),
+        }
+        revision = hashlib.sha256(
+            json.dumps(revision_payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return installations, len(grants), len(device_rows), revision
+
     def _deactivate_revoked_installations(
         self,
         db: Session,
@@ -2503,6 +2600,27 @@ class PluginMarketplaceService:
                 Kind.kind == "InstalledPlugin",
                 Kind.namespace == "default",
                 Kind.user_id != owner_user_id,
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        return [
+            (row.user_id, row.id)
+            for row in rows
+            if (row.json.get("spec", {}) if isinstance(row.json, dict) else {}).get(
+                "pluginId"
+            )
+            == plugin_id
+        ]
+
+    def _plugin_installations(
+        self, db: Session, *, plugin_id: int
+    ) -> list[tuple[int, int]]:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
                 Kind.is_active.is_(True),
             )
             .all()
