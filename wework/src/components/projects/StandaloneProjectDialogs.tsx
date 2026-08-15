@@ -771,7 +771,7 @@ export function StandaloneFolderProjectDialog({
               key={activeDevice.device_id}
               device={activeDevice}
               mode="select"
-              variant={usesRemoteFolderPicker ? 'remoteDark' : 'light'}
+              variant={usesRemoteFolderPicker ? 'remote' : 'default'}
               confirmLabel={
                 usesRemoteFolderPicker ? t('workbench.project_add_confirm', '添加项目') : undefined
               }
