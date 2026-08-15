@@ -28,6 +28,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
+    ProjectChatAgentUpdate,
     ProjectChatSend,
     ProjectChatSubscribe,
 )
@@ -147,6 +148,38 @@ def test_project_supports_multiple_robots_with_execution_config(
     assert by_id[second.id].execution_device_id == "cloud-dev-1"
     assert by_id[second.id].max_concurrent_executions == 1
     assert by_id[second.id].created_by_user_id == test_user.id
+
+
+def test_update_agent_to_wegent_clears_codex_project_binding(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project(test_db, test_user)
+    agent = test_db.query(ProjectChatAgent).filter(ProjectChatAgent.id == "12").one()
+    agent.device_id = "local-dev-1"
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.project_automation_domain.runnable_wegent_team",
+        lambda db, user_id, team_id: object(),
+    )
+
+    updated = project_chat_service.update_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        agent_id=agent.id,
+        request=ProjectChatAgentUpdate(
+            version=agent.version,
+            runtime="wegent",
+            wegent_team_id=7,
+        ),
+    )
+
+    assert updated.runtime == "wegent"
+    assert updated.wegent_team_id == 7
+    assert updated.execution_device_id is None
+    assert updated.local_project_id is None
 
 
 def test_list_agents_filters_visibility_for_other_members(

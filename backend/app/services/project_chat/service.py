@@ -1582,8 +1582,8 @@ class ProjectChatService:
                 config.get("execution_environment") or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             ),
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
-            execution_device_id=row.device_id,
-            local_project_id=row.local_project_id,
+            execution_device_id=row.device_id or None,
+            local_project_id=row.local_project_id or None,
             max_concurrent_executions=int(
                 config.get("max_concurrent_executions")
                 or BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS

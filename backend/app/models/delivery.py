@@ -410,7 +410,8 @@ def loop_unset_datetime_for_connection(
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)
-def _populate_mysql_non_null_defaults(
+@event.listens_for(LoopNode, "before_update", propagate=True)
+def _adapt_mysql_non_null_defaults(
     _mapper: object, connection: Connection, target: LoopNode
 ) -> None:
     """Adapt nullable model values to the production MySQL sentinel schema."""
