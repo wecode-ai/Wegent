@@ -20,8 +20,10 @@ import {
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
+import { cn } from '@/lib/utils'
 
 interface ComposerToolbarProps {
+  className?: string
   canSend: boolean
   disabled?: boolean
   pluginPickerIconOnly?: boolean
@@ -67,6 +69,7 @@ const COMPACT_TOOLBAR_WIDTH = 475
 const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
+  className,
   canSend,
   disabled = false,
   pluginPickerIconOnly = false,
@@ -138,9 +141,12 @@ export function ComposerToolbar({
       ref={toolbarRef}
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
-      className="mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1"
+      className={cn(
+        'mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1',
+        className
+      )}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div data-composer-toolbar-group="features" className="flex min-w-0 items-center gap-2">
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
@@ -175,7 +181,7 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div className="flex min-w-0 items-center gap-1.5">
+      <div data-composer-toolbar-group="actions" className="flex min-w-0 items-center gap-1.5">
         <PermissionModeSelector
           value={runtimePermissionMode(selectedModelOptions)}
           disabled={disabled}
@@ -218,6 +224,7 @@ export function ComposerToolbar({
           >
             <button
               type="button"
+              data-composer-primary-action="true"
               data-testid="pause-response-button"
               onClick={onPause}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
@@ -235,6 +242,7 @@ export function ComposerToolbar({
             >
               <button
                 type="submit"
+                data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
                 className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
                 aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
@@ -298,6 +306,7 @@ export function ComposerToolbar({
           >
             <button
               type="submit"
+              data-composer-primary-action="true"
               data-testid={sendButtonTestId}
               disabled={!canSend}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
