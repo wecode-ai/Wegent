@@ -26,8 +26,8 @@ use super::{
         workbench_block_from_notification,
     },
     util::{
-        extract_text, is_completed_plan_item, item_id, item_type, now_ms, raw_string_field,
-        string_field,
+        extract_text, is_codex_context_compaction_item_type, is_completed_plan_item, item_id,
+        item_type, now_ms, raw_string_field, string_field,
     },
 };
 
@@ -59,6 +59,10 @@ fn reconnecting_model_kind(request: &ExecutionRequest) -> Option<String> {
 
 fn codex_notification_resumes_turn(method: &str) -> bool {
     method.starts_with("item/") || method.starts_with("turn/")
+}
+
+pub(crate) fn is_context_compaction_request(request: &ExecutionRequest) -> bool {
+    request.subtask_id.ends_with("-context-compact")
 }
 
 pub(crate) fn emit_response_event(
@@ -210,6 +214,7 @@ pub(crate) struct CodexNotificationEventMapper {
     tool_output_deltas: BTreeMap<String, String>,
     goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
+    completed_context_compaction_ids: BTreeSet<String>,
 }
 
 struct ProcessTextStream {
@@ -361,6 +366,10 @@ impl CodexNotificationEventMapper {
                     self.forget_subagent_item(notification.params);
                     return;
                 }
+                if is_context_compaction_notification(notification.params) {
+                    self.emit_context_compaction_once(&emit_context, notification.params);
+                    return;
+                }
                 if self.emit_applied_guidance(&emit_context, notification.params) {
                     return;
                 }
@@ -414,13 +423,7 @@ impl CodexNotificationEventMapper {
                 );
             }
             "context/compaction" => {
-                emit_context_compaction_event(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
-                    notification.params,
-                );
+                self.emit_context_compaction_once(&emit_context, notification.params);
             }
             "thread/tokenUsage/updated" => {
                 emit_response_event(
@@ -507,6 +510,24 @@ impl CodexNotificationEventMapper {
 
     fn has_active_goal(&self) -> bool {
         self.goal_status.as_deref() == Some("active")
+    }
+
+    fn emit_context_compaction_once(&mut self, context: &EventEmitContext<'_>, params: &Value) {
+        let item = params
+            .get("item")
+            .or_else(|| params.get("turn"))
+            .unwrap_or(params);
+        let block_id = item_id(item, "context_compaction");
+        if !self.completed_context_compaction_ids.insert(block_id) {
+            return;
+        }
+        emit_context_compaction_event(
+            context.event_tx,
+            context.device_id,
+            context.local_task_id,
+            context.request,
+            params,
+        );
     }
 
     fn emit_reconnecting(&mut self, context: &EventEmitContext<'_>, params: &Value) {
@@ -1271,8 +1292,17 @@ fn emit_context_compaction_event(
     );
 }
 
+fn is_context_compaction_notification(params: &Value) -> bool {
+    let item = params.get("item").unwrap_or(params);
+    is_codex_context_compaction_item_type(&item_type(item))
+}
+
 fn context_compaction_block(params: &Value) -> Value {
-    let block_id = item_id(params, "context_compaction");
+    let item = params
+        .get("item")
+        .or_else(|| params.get("turn"))
+        .unwrap_or(params);
+    let block_id = item_id(item, "context_compaction");
     json!({
         "id": block_id,
         "type": "tool",
@@ -2716,6 +2746,36 @@ mod tests {
                 }
             }),
         );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "context/compaction",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "ctx-2",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
 
         let pending = event_rx
             .try_recv()
@@ -2733,6 +2793,14 @@ mod tests {
             "context_compaction"
         );
         assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
+        let second_completed = event_rx
+            .try_recv()
+            .expect("a later context compaction should also be emitted");
+        assert_eq!(second_completed["payload"]["data"]["block"]["id"], "ctx-2");
+        assert_eq!(
+            second_completed["payload"]["data"]["block"]["status"],
+            "done"
+        );
         assert!(event_rx.try_recv().is_err());
     }
 
