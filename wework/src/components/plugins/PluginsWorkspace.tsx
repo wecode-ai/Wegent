@@ -58,6 +58,10 @@ import {
 } from '@/features/plugins/marketplaceSearch'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
+  LocalConnectorPluginSyncTimeoutError,
+  waitForLocalConnectorAuthAvailability,
+} from '@/features/plugins/waitForLocalConnectorAuthAvailability'
+import {
   getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
   sameInstalledPlugins,
@@ -2733,7 +2737,8 @@ export function PluginsWorkspace({
         })
         const syncSettled =
           /failed to synchronize/i.test(rawErrorMessage) ||
-          /PLUGIN_DEVICE_SYNC_FAILED/i.test(rawErrorMessage)
+          /PLUGIN_DEVICE_SYNC_FAILED/i.test(rawErrorMessage) ||
+          error instanceof LocalConnectorPluginSyncTimeoutError
         // Older backends 502 after Kind create; refresh so the row can show the
         // account install instead of leaving a permanent pink sync banner.
         if (syncSettled) {
@@ -3018,9 +3023,10 @@ export function PluginsWorkspace({
         localAuth: connector.localAuth ?? null,
       }
       try {
-        const health = await localConnectorAuthHealth(target)
+        const health = await waitForLocalConnectorAuthAvailability(target)
         if (health.status === 'ok') continue
-      } catch {
+      } catch (error) {
+        if (error instanceof LocalConnectorPluginSyncTimeoutError) throw error
         // Fall through to local login when health or tool discovery fails.
       }
       try {
