@@ -2,33 +2,18 @@ import { Cloud, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { columns } from './todoShared'
-import { projectSpaceKey } from './projectSpaceSelection'
+import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
 import { emptyTaskSearchFilters, searchTasks } from './taskSearch'
 
-interface SearchProject {
-  id: string
-  name: string
-  project_key: string
-  description: string
-  project_store: 'local' | 'backend'
-}
-
 interface GlobalTodoSearchProps {
-  projects: SearchProject[]
+  projects: LocatedProjectSpace[]
   projectItems: Record<string, CloudLoopItem[]>
   projectMembers: Record<string, CloudProjectMember[]>
   query: string
   onQueryChange: (query: string) => void
   onClose: () => void
-  onSelectProject: (project: SearchProject) => void
-  onSelectItem: (project: SearchProject, item: CloudLoopItem) => void
-}
-
-function projectKey(project: SearchProject): string {
-  return projectSpaceKey({
-    projectStore: project.project_store,
-    projectId: project.id,
-  })
+  onSelectProject: (project: LocatedProjectSpace) => void
+  onSelectItem: (project: LocatedProjectSpace, item: CloudLoopItem) => void
 }
 
 export function GlobalTodoSearch({
@@ -129,7 +114,7 @@ export function GlobalTodoSearch({
                   </h3>
                   {taskResults.slice(0, 50).map(({ item, parentPath, project }) => (
                     <button
-                      key={`${project.id}:${item.id}`}
+                      key={`${projectKey(project)}:${item.id}`}
                       type="button"
                       data-testid={`cloud-global-search-result-${item.id}`}
                       disabled={item.can_view_detail === false}

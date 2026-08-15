@@ -71,6 +71,7 @@ import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
 import { ProjectAutomationView } from './ProjectAutomationView'
 import {
+  type LocatedProjectSpace,
   projectSpaceKey,
   projectSpaceRef,
   projectSupportsRobotAutomation,
@@ -213,8 +214,12 @@ function AITableGroupFieldPicker({
   )
 }
 
-interface LocatedCloudProject extends CloudProject {
-  location: ProjectSpaceLocation
+type LocatedCloudProject = LocatedProjectSpace
+type LocatedLoopItem = CloudLoopItem & {
+  project_store?: RuntimeProjectSpaceRef['projectStore']
+}
+type LocatedMyWorkItem = CloudMyWorkItem & {
+  project_store: RuntimeProjectSpaceRef['projectStore']
 }
 
 interface AvailableProjectSpaceApi {
@@ -767,22 +772,22 @@ export function CloudTodoWorkspace({
   const selectedProjectRef =
     activeProjectRef === undefined ? internalSelectedProjectRef : activeProjectRef
   const selectedProjectId = selectedProjectRef?.projectId ?? null
-  const [items, setItems] = useState<CloudLoopItem[]>([])
+  const [items, setItems] = useState<LocatedLoopItem[]>([])
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
-  const [localMyWork, setLocalMyWork] = useState<CloudMyWorkItem[]>([])
-  const [cloudMyWork, setCloudMyWork] = useState<CloudMyWorkItem[]>([])
+  const [localMyWork, setLocalMyWork] = useState<LocatedMyWorkItem[]>([])
+  const [cloudMyWork, setCloudMyWork] = useState<LocatedMyWorkItem[]>([])
   const myWork = useMemo(() => [...localMyWork, ...cloudMyWork], [cloudMyWork, localMyWork])
   const [rootView, setRootView] = useState<RootView>('projects')
   const [projectView, setProjectView] = useState<ProjectView>('board')
-  const [selectedItem, setSelectedItem] = useState<CloudLoopItem | null>(null)
+  const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
   // Items of the detail drawer's project when it differs from the board project,
   // so the drawer can stay open without switching the board view.
-  const [detailItems, setDetailItems] = useState<CloudLoopItem[]>([])
+  const [detailItems, setDetailItems] = useState<LocatedLoopItem[]>([])
   const [createProjectOpen, setCreateProjectOpen] = useState(false)
   const [createTodoOpen, setCreateTodoOpen] = useState(false)
-  const [createTodoParent, setCreateTodoParent] = useState<CloudLoopItem | null>(null)
+  const [createTodoParent, setCreateTodoParent] = useState<LocatedLoopItem | null>(null)
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
@@ -901,6 +906,7 @@ export function CloudTodoWorkspace({
 
   const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
   const [cloudProjectsLoading, setCloudProjectsLoading] = useState(Boolean(projectSpaceApis.cloud))
+  const [localProjectsError, setLocalProjectsError] = useState<string | null>(null)
   const [boardError, setBoardError] = useState<string | null>(null)
   const [dingtalkAuthPrompt, setDingtalkAuthPrompt] = useState(false)
   const [dingtalkAuthBusy, setDingtalkAuthBusy] = useState(false)
@@ -977,24 +983,41 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
-  const projectForId = useCallback(
-    (projectId: string) => {
-      if (selectedProject?.id === projectId) return selectedProject
-      const matches = projects.filter(project => project.id === projectId)
+  const projectForItem = useCallback(
+    (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
+      if (item.project_store) {
+        return projects.find(project =>
+          sameProjectSpace(projectSpaceRef(project), {
+            projectStore: item.project_store!,
+            projectId: item.cloud_project_id,
+          })
+        )
+      }
+      if (selectedProject?.id === item.cloud_project_id) return selectedProject
+      const matches = projects.filter(project => project.id === item.cloud_project_id)
       return matches.length === 1 ? matches[0] : undefined
     },
     [projects, selectedProject]
   )
+  const locateItems = useCallback(
+    <T extends CloudLoopItem>(
+      sourceItems: T[],
+      projectStore: RuntimeProjectSpaceRef['projectStore']
+    ): Array<T & { project_store: RuntimeProjectSpaceRef['projectStore'] }> =>
+      sourceItems.map(item => ({ ...item, project_store: projectStore })),
+    []
+  )
   const updateMyWorkItem = useCallback(
     (updated: CloudLoopItem) => {
-      const project = projectForId(updated.cloud_project_id)
+      const current = myWork.find(entry => entry.id === updated.id)
+      const project = projectForItem(current ?? updated)
       if (!project) return
       const setSourceMyWork = project.location === 'local' ? setLocalMyWork : setCloudMyWork
       setSourceMyWork(current =>
         current.map(entry => (entry.id === updated.id ? { ...entry, ...updated } : entry))
       )
     },
-    [projectForId]
+    [myWork, projectForItem]
   )
   const selectedProjectAutomationSupported = selectedProject
     ? projectSupportsRobotAutomation(selectedProject)
@@ -1275,19 +1298,17 @@ export function CloudTodoWorkspace({
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
-  const selectedItemApi = selectedItem
-    ? apiForProject(projectForId(selectedItem.cloud_project_id))
-    : undefined
+  const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
+  const selectedItemApi = apiForProject(selectedItemProject)
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =
-    selectedItem && selectedItem.cloud_project_id !== selectedProjectId ? detailItems : items
+    selectedItemProject &&
+    !sameProjectSpace(projectSpaceRef(selectedItemProject), selectedProjectRef)
+      ? detailItems
+      : items
   const createTodoProject = createTodoParent
-    ? (projects.find(
-        project =>
-          project.id === createTodoParent.cloud_project_id &&
-          project.project_store === selectedProject?.project_store
-      ) ?? null)
+    ? (projectForItem(createTodoParent) ?? null)
     : selectedProject
   const createTodoApi = apiForProject(createTodoProject)
   const boardParent = items.find(item => item.id === boardParentId) ?? null
@@ -1364,7 +1385,7 @@ export function CloudTodoWorkspace({
 
   async function confirmArchiveItem() {
     if (!archiveItem || archiveBusy) return
-    const api = apiForProject(projectForId(archiveItem.cloud_project_id))
+    const api = apiForProject(projectForItem(archiveItem))
     if (!api) return
     setArchiveBusy(true)
     setArchiveError(null)
@@ -1442,6 +1463,7 @@ export function CloudTodoWorkspace({
       .listCloudProjects()
       .then(response => {
         if (!active) return
+        setLocalProjectsError(null)
         setLocalProjectSpaces(
           response.items.map(project => ({
             ...project,
@@ -1452,7 +1474,9 @@ export function CloudTodoWorkspace({
       })
       .catch(error => {
         console.error('[Wework project spaces] local list failed', error)
-        if (active) setLocalProjectSpaces([])
+        if (active) {
+          setLocalProjectsError(error instanceof Error ? error.message : '本地项目空间加载失败')
+        }
       })
       .finally(() => {
         if (active) setLocalProjectsLoading(false)
@@ -1490,7 +1514,7 @@ export function CloudTodoWorkspace({
     }
   }, [projectSpaceApis.cloud])
   useEffect(() => {
-    if (!selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
+    if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
     let active = true
     const refreshItems = () => {
       const prepare =
@@ -1505,9 +1529,10 @@ export function CloudTodoWorkspace({
           const signature = boardSnapshotKey(response.items, null)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
-          applyBoardItems(selectedProjectKey, response.items, null)
+          const locatedItems = locateItems(response.items, selectedProject.project_store)
+          applyBoardItems(selectedProjectKey, locatedItems, null)
           // Keep the projects-home cache in sync with the board fetch.
-          setProjectItems(current => ({ ...current, [selectedProjectKey]: response.items }))
+          setProjectItems(current => ({ ...current, [selectedProjectKey]: locatedItems }))
           setProjectCounts(current => ({
             ...current,
             [selectedProjectKey]: response.items.length,
@@ -1563,6 +1588,7 @@ export function CloudTodoWorkspace({
     selectedProjectApi,
     selectedProjectId,
     selectedProjectKey,
+    locateItems,
     services.aitableApi,
     services.dwsApi,
   ])
@@ -1623,7 +1649,7 @@ export function CloudTodoWorkspace({
     void api
       .listMyWork()
       .then(response => {
-        if (active) setLocalMyWork(response.items)
+        if (active) setLocalMyWork(locateItems(response.items, 'local'))
       })
       .catch(error => {
         console.error('[Wework project spaces] local my work failed', error)
@@ -1632,7 +1658,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [projectSpaceApis.local, rootView, selectedProjectId])
+  }, [locateItems, projectSpaceApis.local, rootView, selectedProjectId])
 
   useEffect(() => {
     if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
@@ -1642,7 +1668,7 @@ export function CloudTodoWorkspace({
     void api
       .listMyWork()
       .then(response => {
-        if (active) setCloudMyWork(response.items)
+        if (active) setCloudMyWork(locateItems(response.items, 'backend'))
       })
       .catch(error => {
         console.warn('[Wework project spaces] cloud my work failed', error)
@@ -1651,7 +1677,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [projectSpaceApis.cloud, rootView, selectedProjectId])
+  }, [locateItems, projectSpaceApis.cloud, rootView, selectedProjectId])
   useEffect(() => {
     if (!globalSearchOpen) return
     let active = true
@@ -1681,17 +1707,25 @@ export function CloudTodoWorkspace({
   // Load the drawer project's items when the drawer shows a todo from a project
   // other than the one on the board, so subtasks and parent options stay correct.
   useEffect(() => {
-    if (!selectedItem || selectedItem.cloud_project_id === selectedProjectId) return
-    const detailApi = apiForProject(projectForId(selectedItem.cloud_project_id))
+    if (
+      !selectedItem ||
+      (selectedItemProject &&
+        sameProjectSpace(projectSpaceRef(selectedItemProject), selectedProjectRef))
+    ) {
+      return
+    }
+    const detailApi = apiForProject(selectedItemProject)
     if (!detailApi) return
     let active = true
     void detailApi.listLoopItems(selectedItem.cloud_project_id).then(response => {
-      if (active) setDetailItems(response.items)
+      if (active && selectedItemProject) {
+        setDetailItems(locateItems(response.items, selectedItemProject.project_store))
+      }
     })
     return () => {
       active = false
     }
-  }, [apiForProject, projectForId, selectedItem, selectedProjectId])
+  }, [apiForProject, locateItems, selectedItem, selectedItemProject, selectedProjectRef])
 
   async function moveItem(itemId: string, columnKey: string, beforeItemId: string | null = null) {
     const item = items.find(candidate => candidate.id === itemId)
@@ -1730,7 +1764,7 @@ export function CloudTodoWorkspace({
     }
     setBoardError(null)
     try {
-      const itemApi = apiForProject(projectForId(item.cloud_project_id))
+      const itemApi = apiForProject(projectForItem(item))
       if (!itemApi) throw new Error('项目空间当前不可用')
       const update =
         nativeGroupBy === 'status'
@@ -1749,10 +1783,11 @@ export function CloudTodoWorkspace({
                   }
               : { tags: column.groupValue ? [column.groupValue] : [] }
       const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
+      const locatedUpdated = { ...updated, project_store: item.project_store }
       setItems(current =>
-        current.map(candidate => (candidate.id === updated.id ? updated : candidate))
+        current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
       )
-      setSelectedItem(current => (current?.id === updated.id ? updated : current))
+      setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
       if (reordered) {
         await itemApi.reorderLoopItems(item.cloud_project_id, {
           parent_id: item.parent_id,
@@ -1763,8 +1798,7 @@ export function CloudTodoWorkspace({
       track('board_item_moved', {
         group_by: nativeGroupBy,
         reordered: beforeItemId !== null,
-        source:
-          projects.find(project => project.id === item.cloud_project_id)?.location ?? 'unknown',
+        source: projectForItem(item)?.location ?? 'unknown',
       })
     } catch (cause) {
       setItems(previousItems)
@@ -1835,10 +1869,7 @@ export function CloudTodoWorkspace({
     }
   }
 
-  const aiChatProject =
-    selectedItem !== null
-      ? projects.find(project => project.id === selectedItem.cloud_project_id)
-      : undefined
+  const aiChatProject = selectedItemProject
 
   return (
     <div
@@ -2063,6 +2094,14 @@ export function CloudTodoWorkspace({
               />
             </div>
           )}
+          {!selectedProject && projects.length > 0 && localProjectsError ? (
+            <div
+              data-testid="local-project-spaces-error"
+              className="shrink-0 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
+            >
+              本地项目空间加载失败：{localProjectsError}
+            </div>
+          ) : null}
           {rootView === 'my-work' ? (
             <CloudMyWorkView
               items={myWork}
@@ -2071,7 +2110,7 @@ export function CloudTodoWorkspace({
                 if (item.can_view_detail !== false) setSelectedItem(item)
               }}
               onApproveItem={async item => {
-                const api = apiForProject(projectForId(item.cloud_project_id))
+                const api = apiForProject(projectForItem(item))
                 if (!api) return
                 try {
                   const updated = await api.approveLoopItemRun(
@@ -2085,6 +2124,13 @@ export function CloudTodoWorkspace({
                 }
               }}
             />
+          ) : !selectedProject && projects.length === 0 && localProjectsError ? (
+            <div
+              data-testid="local-project-spaces-error"
+              className="flex flex-1 items-center justify-center px-6 text-sm text-destructive"
+            >
+              本地项目空间加载失败：{localProjectsError}
+            </div>
           ) : (projectSpaceApis.local ? localProjectsLoading : cloudProjectsLoading) ? (
             <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
               正在加载项目空间…
@@ -2113,9 +2159,9 @@ export function CloudTodoWorkspace({
               myWork={myWork}
               searchQuery=""
               onCreateProject={() => setCreateProjectOpen(true)}
-              onSelectProject={project => selectProject(project as LocatedCloudProject)}
+              onSelectProject={selectProject}
               onManageProject={project => {
-                selectProject(project as LocatedCloudProject)
+                selectProject(project)
                 setProjectView('manage')
               }}
               onSelectItem={item => {
@@ -2743,7 +2789,7 @@ export function CloudTodoWorkspace({
           onQueryChange={setGlobalSearchQuery}
           onClose={() => setGlobalSearchOpen(false)}
           onSelectProject={project => {
-            selectProject(project as LocatedCloudProject)
+            selectProject(project)
             setRootView('projects')
             setProjectView('board')
             setSelectedItem(null)
@@ -2751,10 +2797,10 @@ export function CloudTodoWorkspace({
           }}
           onSelectItem={(project, item) => {
             if (item.can_view_detail === false) return
-            selectProject(project as LocatedCloudProject)
+            selectProject(project)
             setRootView('projects')
             setProjectView('board')
-            setSelectedItem(item)
+            setSelectedItem({ ...item, project_store: project.project_store })
             setGlobalSearchOpen(false)
           }}
         />
@@ -2770,13 +2816,12 @@ export function CloudTodoWorkspace({
           currentUserId={user.id}
           localProjects={localProjects}
           aitableApi={
-            projects.find(project => project.id === selectedItem.cloud_project_id)
-              ?.task_provider === 'dingtalk_aitable'
+            selectedItemProject?.task_provider === 'dingtalk_aitable'
               ? services.aitableApi
               : undefined
           }
           item={selectedItem}
-          project={projects.find(project => project.id === selectedItem.cloud_project_id)}
+          project={selectedItemProject}
           allItems={detailAllItems}
           onClose={() => {
             setSelectedItem(null)
@@ -2788,12 +2833,18 @@ export function CloudTodoWorkspace({
           }}
           onAddChild={() => openTodoCreation(selectedItem)}
           onUpdated={updated => {
-            setItems(current => current.map(item => (item.id === updated.id ? updated : item)))
-            setDetailItems(current =>
-              current.map(item => (item.id === updated.id ? updated : item))
+            const locatedUpdated = {
+              ...updated,
+              project_store: selectedItem.project_store,
+            }
+            setItems(current =>
+              current.map(item => (item.id === updated.id ? locatedUpdated : item))
             )
-            updateMyWorkItem(updated)
-            setSelectedItem(updated)
+            setDetailItems(current =>
+              current.map(item => (item.id === updated.id ? locatedUpdated : item))
+            )
+            updateMyWorkItem(locatedUpdated)
+            setSelectedItem(locatedUpdated)
             track('feature_action_completed', { domain: 'board_item', action: 'update' })
           }}
         />
@@ -2814,7 +2865,11 @@ export function CloudTodoWorkspace({
           defaultLocation={projectSpaceApis.defaultLocation}
           onClose={() => setCreateProjectOpen(false)}
           onCreated={(project, location) => {
-            const locatedProject = { ...project, location }
+            const locatedProject: LocatedCloudProject = {
+              ...project,
+              project_store: location === 'local' ? 'local' : 'backend',
+              location,
+            }
             const spaceKey = projectSpaceKey(projectSpaceRef(locatedProject))
             const projectApi = projectSpaceApis[location]
             prependProject(locatedProject)
@@ -2845,10 +2900,17 @@ export function CloudTodoWorkspace({
             setCreateTodoParent(null)
           }}
           onCreated={item => {
-            if (item.cloud_project_id === selectedProjectId) {
-              setItems(current => [...current, item])
+            const locatedItem = {
+              ...item,
+              project_store: createTodoProject.project_store,
+            }
+            if (
+              selectedProject &&
+              sameProjectSpace(projectSpaceRef(createTodoProject), projectSpaceRef(selectedProject))
+            ) {
+              setItems(current => [...current, locatedItem])
             } else {
-              setDetailItems(current => [...current, item])
+              setDetailItems(current => [...current, locatedItem])
             }
             const targetProjectKey = projectSpaceKey(projectSpaceRef(createTodoProject))
             setProjectCounts(current => ({
@@ -2857,7 +2919,7 @@ export function CloudTodoWorkspace({
             }))
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
-            if (item.assignee_agent_id) setSelectedItem(item)
+            if (item.assignee_agent_id) setSelectedItem(locatedItem)
             track('board_item_created', {
               has_parent: item.parent_id !== null,
               source: createTodoProject.location,

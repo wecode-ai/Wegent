@@ -7,34 +7,19 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
-import { projectSpaceKey } from './projectSpaceSelection'
+import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
 import { memberAvatarClasses, memberNameById } from './todoShared'
 
-export interface ProjectsHomeProject {
-  id: string
-  name: string
-  location: 'local' | 'cloud'
-  project_store: 'local' | 'backend'
-  updated_at: string
-}
-
-function projectKey(project: ProjectsHomeProject): string {
-  return projectSpaceKey({
-    projectStore: project.project_store,
-    projectId: project.id,
-  })
-}
-
 interface CloudProjectsHomeProps {
-  projects: ProjectsHomeProject[]
+  projects: LocatedProjectSpace[]
   projectCounts: Record<string, number>
   projectMembers: Record<string, CloudProjectMember[]>
   projectItems: Record<string, CloudLoopItem[]>
   myWork: CloudMyWorkItem[]
   searchQuery: string
   onCreateProject: () => void
-  onSelectProject: (project: ProjectsHomeProject) => void
-  onManageProject: (project: ProjectsHomeProject) => void
+  onSelectProject: (project: LocatedProjectSpace) => void
+  onManageProject: (project: LocatedProjectSpace) => void
   onSelectItem: (item: CloudMyWorkItem) => void
   onOpenMyWork: () => void
 }
@@ -52,13 +37,13 @@ function isWithinLastWeek(timestamp: string | null | undefined, nowMs: number): 
   return !Number.isNaN(valueMs) && valueMs >= nowMs - WEEK_MS
 }
 
-function matchesQuery(project: ProjectsHomeProject, query: string): boolean {
+function matchesQuery(project: LocatedProjectSpace, query: string): boolean {
   if (!query) return true
   return project.name.toLowerCase().includes(query)
 }
 
 interface ProjectSpaceRowProps {
-  project: ProjectsHomeProject
+  project: LocatedProjectSpace
   members: CloudProjectMember[]
   openLabel: string
   manageLabel: string

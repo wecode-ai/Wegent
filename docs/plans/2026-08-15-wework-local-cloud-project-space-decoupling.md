@@ -112,6 +112,16 @@ function projectSpaceKey(ref: ProjectSpaceRef): string {
 }
 ```
 
+`ProjectStore` 是持久化和路由身份，`ProjectSpaceLocation` 只是 UI 服务选择使用的
+`"local" | "cloud"` 表达。二者只允许在明确边界转换：
+
+- `projectStoreLocation("local") -> "local"`
+- `projectStoreLocation("backend") -> "cloud"`
+- 从创建位置回写项目身份时，`"local" -> "local"`，`"cloud" -> "backend"`
+
+`projectId` 全程保持字符串语义，不允许通过 `Number(...)` 或其他数值转换推断身份。路由
+解析、缺失 store 的兼容入口和缓存索引最终都必须产出完整 `ProjectSpaceRef`。
+
 以下状态不得继续仅用 `project.id` 索引：
 
 - 当前选中项目
@@ -371,15 +381,14 @@ ProjectSpacesWorkspace
 目标：本地项目自动化不再复用 Backend 项目自动化服务。
 
 当前 `projectAutomationApi` 仅由 Backend Services 创建，而本地 Executor 已有通用
-`automationApi`。实施前需要明确本地项目自动化规则的唯一数据所有者，然后采用以下一种
-主路径：
+`automationApi`。本次采用“本地规则能力尚未支持”的主路径：
 
-1. 如果本地 Executor 已拥有项目自动化规则，则实现本地
-   `ProjectAutomationRulesApi` 适配器，并从本地详情服务注入。
-2. 如果本地 Executor 当前只支持通用自动化，则把项目自动化 UI 改为使用本地
-   `automationApi` 的项目作用域能力。
-3. 如果本地尚未支持该能力，则在本地项目详情中明确隐藏或禁用该功能，并显示“本地项目
-   暂不支持”，不得回退到 Backend。
+- 本地详情服务不注入 Backend `projectAutomationApi`。
+- `ProjectAutomationRulesSection` 在本地 API 缺失时不挂载，不发规则请求。
+- 本地自动化页保留由本地详情服务提供的机器人、执行队列、设备和模型能力。
+- 独立自动化页继续使用本地 Executor 的通用 `automationApi`。
+- 后续若实现本地项目规则，必须先扩展本地 Executor 的项目作用域契约，不得借用 Backend
+  数据所有权。
 
 同时拆分自动化所需的辅助目录：
 

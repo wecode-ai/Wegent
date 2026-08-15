@@ -1011,6 +1011,29 @@ export function createHybridWorkbenchServices(
   const rememberAutomationRoutes = (deviceId: string, automations: Automation[]) => {
     automations.forEach(automation => automationDevices.set(automation.id, deviceId))
   }
+  const sameAutomationVersions = (left: Automation[], right: Automation[]) =>
+    left.length === right.length &&
+    left.every(automation =>
+      right.some(
+        candidate => candidate.id === automation.id && candidate.version === automation.version
+      )
+    )
+  const writeCloudAutomation = (deviceId: string, automation: Automation) => {
+    if (isLocalDeviceId(deviceId)) return
+    const current = rememberedCloudAutomations.get(deviceId) ?? []
+    rememberedCloudAutomations.set(deviceId, [
+      ...current.filter(candidate => candidate.id !== automation.id),
+      automation,
+    ])
+  }
+  const removeCloudAutomation = (deviceId: string, automationId: string) => {
+    if (isLocalDeviceId(deviceId)) return
+    const current = rememberedCloudAutomations.get(deviceId) ?? []
+    rememberedCloudAutomations.set(
+      deviceId,
+      current.filter(automation => automation.id !== automationId)
+    )
+  }
   const refreshCloudAutomationsInBackground = () => {
     rememberedCloudDevices.filter(isUsableDevice).forEach(device => {
       const deviceId = device.device_id
@@ -1018,9 +1041,12 @@ export function createHybridWorkbenchServices(
       const request = automationApiForDevice(deviceId)
         .listAutomations()
         .then(response => {
+          const previous = rememberedCloudAutomations.get(deviceId) ?? []
           rememberAutomationRoutes(deviceId, response.items)
           rememberedCloudAutomations.set(deviceId, response.items)
-          notifyWorkbenchAutomationsChanged()
+          if (!sameAutomationVersions(previous, response.items)) {
+            notifyWorkbenchAutomationsChanged()
+          }
         })
         .catch(error => {
           console.warn('[Wework] Failed to refresh cloud automations in background', {
@@ -1066,18 +1092,21 @@ export function createHybridWorkbenchServices(
       const deviceId = automationMutationDeviceId(data)
       const response = await automationApiForDevice(deviceId).createAutomation(data)
       rememberAutomationRoutes(deviceId, [response.automation])
+      writeCloudAutomation(deviceId, response.automation)
       return response
     },
     async updateAutomation(automationId, data) {
       const deviceId = automationDevices.get(automationId) ?? automationMutationDeviceId(data)
       const response = await automationApiForDevice(deviceId).updateAutomation(automationId, data)
       rememberAutomationRoutes(deviceId, [response.automation])
+      writeCloudAutomation(deviceId, response.automation)
       return response
     },
     async deleteAutomation(automationId) {
       const deviceId = await automationDeviceId(automationId)
       const response = await automationApiForDevice(deviceId).deleteAutomation(automationId)
       automationDevices.delete(automationId)
+      removeCloudAutomation(deviceId, automationId)
       return response
     },
     async toggleAutomation(automationId, enabled) {
@@ -1087,6 +1116,7 @@ export function createHybridWorkbenchServices(
         enabled
       )
       rememberAutomationRoutes(deviceId, [response.automation])
+      writeCloudAutomation(deviceId, response.automation)
       return response
     },
     async runAutomationNow(automationId) {

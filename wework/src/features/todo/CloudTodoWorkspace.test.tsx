@@ -83,8 +83,8 @@ const item = {
   completed_at: null,
 }
 
-function services(): WorkbenchServices {
-  const workbenchServices = {
+function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices {
+  const baseServices = {
     deliveryApi: {
       listCloudProjects: vi.fn(async () => ({ items: [project] })),
       createCloudProject: vi.fn(async values => ({
@@ -227,6 +227,7 @@ function services(): WorkbenchServices {
       })),
     },
   } as unknown as WorkbenchServices
+  const workbenchServices = { ...baseServices, ...overrides } as WorkbenchServices
   workbenchServices.projectSpaceDetailServices = {
     local: {
       get deliveryApi() {
@@ -322,15 +323,17 @@ describe('CloudTodoWorkspace', () => {
     localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
     const cloudApi = services().deliveryApi!
     cloudApi.listCloudProjects = vi.fn(() => new Promise(() => undefined))
-    const workbenchServices = {
-      ...localServices,
+    const workbenchServices = services({
       deliveryApi: cloudApi,
       projectSpaceApis: {
         local: localApi,
         cloud: cloudApi,
         defaultLocation: 'local' as const,
       },
-    } as WorkbenchServices
+      deviceApi: localServices.deviceApi,
+      modelApi: localServices.modelApi,
+      teamApi: localServices.teamApi,
+    })
 
     render(
       <CloudTodoWorkspace
@@ -344,6 +347,36 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('正在加载项目空间…')).not.toBeInTheDocument()
     expect(localApi.listLoopItems).not.toHaveBeenCalled()
     expect(localApi.listCloudProjectMembers).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a local project-list failure instead of rendering an empty state', async () => {
+    const localServices = services()
+    const localApi = localServices.deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => {
+      throw new Error('local executor unavailable')
+    })
+    const cloudApi = services().deliveryApi!
+    cloudApi.listCloudProjects = vi.fn(() => new Promise(() => undefined))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services({
+          deliveryApi: cloudApi,
+          projectSpaceApis: {
+            local: localApi,
+            cloud: cloudApi,
+            defaultLocation: 'local',
+          },
+        })}
+      />
+    )
+
+    expect(await screen.findByTestId('local-project-spaces-error')).toHaveTextContent(
+      'local executor unavailable'
+    )
+    expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
   })
 
   it('keeps local project details inside local services while cloud is unavailable', async () => {
@@ -399,8 +432,8 @@ describe('CloudTodoWorkspace', () => {
     expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
     expect(cloudApi.listCloudProjectMembers).not.toHaveBeenCalled()
     expect(cloudApi.listCloudFiles).not.toHaveBeenCalled()
-    expect(cloudServices.modelApi.listModels).not.toHaveBeenCalled()
-    expect(cloudServices.deviceApi.listDevices).not.toHaveBeenCalled()
+    expect(localServices.modelApi.listModels).toHaveBeenCalled()
+    expect(localServices.deviceApi.listDevices).toHaveBeenCalled()
   })
 
   it('resets project-specific view state when a controlled project changes externally', async () => {
@@ -2241,6 +2274,67 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Implement cloud MCP')
     expect(screen.getByTestId('my-work-group-action-WEG-1')).toBeVisible()
     expect(screen.queryByTestId('cloud-todo-board-breadcrumb')).toBeNull()
+  })
+
+  it('routes my-work actions by project store when local and cloud IDs collide', async () => {
+    const sharedProjectId = 'same-project-id'
+    const localProject = {
+      ...project,
+      id: sharedProjectId,
+      name: 'Local project',
+      project_store: 'local' as const,
+    }
+    const cloudProject = {
+      ...project,
+      id: sharedProjectId,
+      name: 'Cloud project',
+      project_store: 'backend' as const,
+    }
+    const approvalItem = {
+      ...item,
+      id: 'LOCAL-APPROVAL',
+      cloud_project_id: sharedProjectId,
+      project_key: 'LOCAL',
+      project_name: 'Local project',
+      has_active_task: false,
+      execution_state: 'pending_approval',
+      can_approve: true,
+    }
+    const localApi = services().deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listMyWork = vi.fn(async () => ({ items: [approvalItem] }))
+    localApi.approveLoopItemRun = vi.fn(async () => approvalItem)
+    const cloudApi = services().deliveryApi!
+    cloudApi.listCloudProjects = vi.fn(async () => ({ items: [cloudProject] }))
+    cloudApi.listMyWork = vi.fn(async () => ({ items: [] }))
+    cloudApi.approveLoopItemRun = vi.fn(async () => approvalItem)
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services({
+          deliveryApi: cloudApi,
+          projectSpaceApis: {
+            local: localApi,
+            cloud: cloudApi,
+            defaultLocation: 'local',
+          },
+        })}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-my-work'))
+    await userEvent.click(await screen.findByTestId('my-work-approve-LOCAL-APPROVAL'))
+
+    await waitFor(() =>
+      expect(localApi.approveLoopItemRun).toHaveBeenCalledWith(
+        sharedProjectId,
+        'LOCAL-APPROVAL',
+        item.version
+      )
+    )
+    expect(cloudApi.approveLoopItemRun).not.toHaveBeenCalled()
   })
 
   it('uses pointer dragging for TODO cards without starting a native system drag', async () => {
