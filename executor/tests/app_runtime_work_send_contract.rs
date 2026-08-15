@@ -3927,6 +3927,7 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       if printf '%s\n' "$line" | grep -q '"turnId":""'; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
         printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'

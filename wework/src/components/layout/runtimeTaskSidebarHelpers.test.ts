@@ -3,6 +3,7 @@ import type { RuntimeDeviceWorkspace } from '@/types/api'
 import {
   hasExpandedRuntimeSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
+  getRuntimeChatSidebarTaskItems,
   getRuntimeSidebarTaskItems,
   getRuntimeTaskAddress,
   getVisibleRuntimeSidebarTaskItems,
@@ -152,6 +153,59 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(
       getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.taskId)
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
+  })
+
+  test('hides automation manager sessions only from the standalone task list', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/chats',
+      workspaceKind: 'chat',
+      available: true,
+      tasks: [
+        {
+          taskId: 'automation-manager',
+          workspacePath: '/workspace/chats/automation-manager',
+          workspaceKind: 'chat',
+          title: 'Automation manager',
+          runtime: 'codex',
+          runtimeHandle: {
+            origin: {
+              type: 'project_automation',
+              automationRole: 'manager',
+              run_id: 'run-1',
+            },
+          },
+        },
+        {
+          taskId: 'project-robot',
+          workspacePath: '/workspace/chats/project-robot',
+          workspaceKind: 'chat',
+          title: 'Project robot',
+          runtime: 'codex',
+          runtimeHandle: {
+            origin: {
+              type: 'project_automation',
+              run_id: 'run-1',
+            },
+          },
+        },
+        {
+          taskId: 'ordinary-task',
+          workspacePath: '/workspace/chats/ordinary-task',
+          workspaceKind: 'chat',
+          title: 'Ordinary task',
+          runtime: 'codex',
+        },
+      ],
+    }
+
+    expect(getRuntimeChatSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'project-robot',
+      'ordinary-task',
+    ])
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toContain(
+      'automation-manager'
+    )
   })
 
   test('sorts queued runtime tasks by their real execution position', () => {

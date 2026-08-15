@@ -2532,6 +2532,53 @@ describe('createLocalAppServices', () => {
     expect(prompt).toContain('read_item_attachment')
   })
 
+  test('does not inject project-space MCP instructions into automation execution prompts', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-project-automation',
+      runtime: 'codex',
+      message: 'Review cloud://projects/P-1/todos/T-1 using the supplied context.',
+      origin: {
+        type: 'project_automation',
+        cloudProjectId: 'P-1',
+        loopItemId: 'T-1',
+        run_id: 'run-1',
+      },
+      additionalContext: {
+        project: { kind: 'application', value: '{"id":"P-1","name":"Project"}' },
+        task: { kind: 'application', value: '{"id":"T-1","title":"Review"}' },
+        event: { kind: 'application', value: '{"type":"task.created"}' },
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    const prompt = payload.executionRequest.prompt as string
+    expect(prompt).toContain('[project]')
+    expect(prompt).toContain('[task]')
+    expect(prompt).toContain('[event]')
+    expect(prompt).not.toContain('[projectSpaceCapability]')
+    expect(prompt).not.toContain('wework_space')
+    expect(prompt).not.toContain('get_board_item')
+    expect(prompt).not.toContain('list_spaces')
+    expect(payload.executionRequest).toEqual(
+      expect.objectContaining({
+        task_id: 'task-project-automation',
+        execution_target_type: 'local',
+        device_id: 'device-uuid',
+        new_session: true,
+      })
+    )
+  })
+
   test('adds configured local proxy to local runtime execution requests', async () => {
     saveLocalProxyUrl('http://127.0.0.1:7890')
     const request = vi.fn().mockResolvedValue({ accepted: true })

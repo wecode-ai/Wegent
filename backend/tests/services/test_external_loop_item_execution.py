@@ -11,9 +11,11 @@ execution table and never creates a local task row.
 import uuid
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
@@ -57,6 +59,17 @@ def _make_gitlab_project(db: Session, user: User) -> CloudProject:
 def _make_bot(
     db: Session, project: CloudProject, user: User, *, mode: str = "auto"
 ) -> ProjectChatAgent:
+    device_id = f"cloud-{uuid.uuid4().hex[:10]}"
+    db.add(
+        Kind(
+            kind="Device",
+            name=device_id,
+            namespace="default",
+            user_id=user.id,
+            is_active=True,
+            json={"spec": {"deviceType": "cloud"}},
+        )
+    )
     bot = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
@@ -64,6 +77,7 @@ def _make_bot(
         name="GitLab Bot",
         status="active",
         created_by_user_id=user.id,
+        device_id=device_id,
         metadata_json={
             "runtime": "codex",
             "execution_mode": mode,

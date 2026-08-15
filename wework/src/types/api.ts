@@ -1223,10 +1223,11 @@ export interface RuntimeTaskCreateRequest {
   deliveryId?: string
   cloudProjectId?: string
   origin?: {
-    type: 'board_comment' | 'board_task'
+    type: 'board_comment' | 'board_task' | 'project_automation'
     cloudProjectId: string
     loopItemId: string
     rootCommentId?: string
+    [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
 }

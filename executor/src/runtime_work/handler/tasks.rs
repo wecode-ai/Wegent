@@ -644,6 +644,7 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
+            restore_origin(&mut request, &link.runtime_handle);
         }
         request.new_session = false;
         if request.runtime_project_key.is_none() {
@@ -923,6 +924,7 @@ impl RuntimeWorkRpcHandler {
         apply_runtime_payload_metadata(&mut request, &payload);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
+        restore_origin(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());

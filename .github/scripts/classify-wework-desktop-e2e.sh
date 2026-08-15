@@ -6,6 +6,7 @@ core_segments=(
   workspace-tabs
   priority-filter
   automation-lifecycle
+  project-automation
   model-routing
   permission-modes
   core-task-flow
@@ -35,7 +36,7 @@ cloud_shards=(
   model-routing,embedded-browser,telemetry-consent
   window-lifecycle,conversation-state,browser-multi-tabs
   resilience,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,plugin-auto-update
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update
 )
 # Keep the number of core desktop runners fixed as checkpoints grow. Each
 # runner reuses the same prebuilt application and executes its shard serially.
@@ -45,7 +46,7 @@ core_shards=(
   model-routing,embedded-browser,claude-runtime,local-harness
   window-lifecycle,conversation-state,temporary-chat
   resilience,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,permission-modes,local-file-preview
+  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview
 )
 
 validate_core_shards() {
@@ -166,9 +167,16 @@ classify_wework_path() {
       select_target "core:priority-filter"
       return
       ;;
+    wework/src/features/todo/ProjectAutomation* | \
+      wework/src/features/todo/projectAutomationForm* | \
+      wework/src/api/projectAutomations* | \
+      wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
+      return
+      ;;
     wework/src/pages/AutomationsPage* | \
       wework/src/features/automations/* | \
-      wework/src/features/todo/ProjectAutomationView.tsx | \
       wework/src/types/automation.ts)
       select_target "core:automation-lifecycle"
       return

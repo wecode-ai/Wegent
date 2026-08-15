@@ -235,6 +235,7 @@ class CloudProjectListResponse(BaseModel):
 class CloudProjectMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
     role: BaseRole = BaseRole.Developer
+    capability_description: str = Field(default="", max_length=2_000)
 
     @field_validator("role")
     @classmethod
@@ -245,14 +246,21 @@ class CloudProjectMemberCreate(BaseModel):
 
 
 class CloudProjectMemberUpdate(BaseModel):
-    role: BaseRole
+    role: BaseRole | None = None
+    capability_description: str | None = Field(default=None, max_length=2_000)
 
     @field_validator("role")
     @classmethod
-    def reject_owner(cls, value: BaseRole) -> BaseRole:
+    def reject_owner(cls, value: BaseRole | None) -> BaseRole | None:
         if value == BaseRole.Owner:
             raise ValueError("Owner cannot be assigned")
         return value
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CloudProjectMemberUpdate":
+        if self.role is None and self.capability_description is None:
+            raise ValueError("Member update must change role or capability description")
+        return self
 
 
 class CloudProjectMemberResponse(BaseModel):
@@ -261,3 +269,4 @@ class CloudProjectMemberResponse(BaseModel):
     user_name: str
     email: str | None
     role: BaseRole
+    capability_description: str = ""

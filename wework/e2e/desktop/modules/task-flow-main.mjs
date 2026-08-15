@@ -527,6 +527,10 @@ async function main() {
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
       executorBinary = builtExecutor
+      await desktopScenario?.prepareCloud?.({
+        authToken: cloudEnvironment.authToken,
+        backendUrl: cloudEnvironment.backendUrl,
+      })
     } else {
       executorBinary = await buildExecutor()
     }

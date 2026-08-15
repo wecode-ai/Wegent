@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
@@ -86,19 +86,149 @@ function renderSection(mock: ReturnType<typeof services>) {
 }
 
 describe('ProjectChatAgentsSection', () => {
+  it('offers three templates with breathing room when no robots have been added', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    const templates = await screen.findByTestId('project-chat-agent-template-planning')
+    expect(templates.parentElement?.parentElement).toHaveClass('mt-5')
+    expect(screen.getByTestId('project-chat-agent-template-development')).toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-agent-template-review')).toBeInTheDocument()
+  })
+
+  it('opens the robot editor with all selected template defaults', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('project-chat-agent-template-development'))
+
+    expect(screen.getByTestId('cloud-project-chat-agent-name')).toHaveValue('开发实现机器人')
+    expect(screen.getByTestId('cloud-project-chat-agent-capability')).toHaveValue(
+      '编写代码、修复问题并完成必要验证'
+    )
+    expect(screen.getByTestId('cloud-project-chat-agent-system-prompt')).toHaveValue(
+      '你负责完成被指派的开发任务。先阅读项目约定和相关代码，确认问题根因与影响范围，再复用现有抽象实现最小而完整的修改。同步补充必要测试，运行与改动风险相称的验证，并清楚汇报结果、剩余风险和任何需要人工确认的事项。'
+    )
+  })
+
+  it('opens the robot editor across the webview with a split layout', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    const editor = screen.getByTestId('cloud-project-chat-agent-editor')
+    expect(editor.closest('section')?.parentElement?.parentElement).toBe(document.body)
+    expect(editor).toHaveClass('grid', 'md:grid-cols-[minmax(0,1.65fr)_minmax(360px,1fr)]')
+  })
+
+  it('groups robot options in dependency order', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('project-chat-agent-template-planning'))
+
+    const runtimeGroup = screen.getByTestId('cloud-project-chat-agent-runtime-group')
+    expect(within(runtimeGroup).getByText('运行环境')).toBeInTheDocument()
+    expect(
+      Array.from(runtimeGroup.querySelectorAll<HTMLElement>('[data-testid]')).map(
+        element => element.dataset.testid
+      )
+    ).toEqual([
+      'cloud-project-chat-agent-environment',
+      'cloud-project-chat-agent-device',
+      'cloud-project-chat-agent-execution-project',
+    ])
+    expect(within(runtimeGroup).getByText('决定可用设备和模型')).toBeInTheDocument()
+    expect(within(runtimeGroup).getByText('使用所选设备的工作区')).toBeInTheDocument()
+
+    const executionGroup = screen.getByTestId('cloud-project-chat-agent-execution-group')
+    expect(within(executionGroup).getByText('执行策略')).toBeInTheDocument()
+    expect(
+      Array.from(executionGroup.querySelectorAll<HTMLElement>('[data-testid]')).map(
+        element => element.dataset.testid
+      )
+    ).toEqual(['cloud-project-chat-agent-model', 'cloud-project-chat-agent-mode'])
+
+    const accessGroup = screen.getByTestId('cloud-project-chat-agent-access-group')
+    expect(within(accessGroup).getByText('访问权限')).toBeInTheDocument()
+    expect(
+      within(accessGroup).getByTestId('cloud-project-chat-agent-visibility')
+    ).toBeInTheDocument()
+  })
+
+  it('distinguishes selected and unselected states, then validates required selections', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+
+    const selectionState = (testId: string) => screen.getByTestId(testId).firstElementChild
+    expect(selectionState('cloud-project-chat-agent-environment')).toHaveAttribute(
+      'data-selection-state',
+      'selected'
+    )
+    expect(selectionState('cloud-project-chat-agent-environment')).toHaveClass('text-text-primary')
+    expect(selectionState('cloud-project-chat-agent-model')).toHaveAttribute(
+      'data-selection-state',
+      'unselected'
+    )
+    expect(selectionState('cloud-project-chat-agent-model')).toHaveClass('text-text-muted')
+    expect(selectionState('cloud-project-chat-agent-device')).toHaveAttribute(
+      'data-selection-state',
+      'unselected'
+    )
+    expect(selectionState('cloud-project-chat-agent-execution-project')).toHaveAttribute(
+      'data-selection-state',
+      'unselected'
+    )
+    expect(selectionState('cloud-project-chat-agent-execution-project')).toHaveClass(
+      'text-text-muted'
+    )
+    expect(screen.getAllByText('(必填)')).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+    expect(selectionState('cloud-project-chat-agent-model')).toHaveAttribute('data-invalid', 'true')
+    expect(selectionState('cloud-project-chat-agent-device')).toHaveAttribute(
+      'data-invalid',
+      'true'
+    )
+    expect(mock.create).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
+    expect(screen.queryByTestId('cloud-project-chat-agent-model-option-')).not.toBeInTheDocument()
+    await userEvent.click(
+      await screen.findByTestId(`cloud-project-chat-agent-model-option-${MODEL_NAME}`)
+    )
+    expect(selectionState('cloud-project-chat-agent-model')).toHaveAttribute(
+      'data-selection-state',
+      'selected'
+    )
+    expect(selectionState('cloud-project-chat-agent-model')).not.toHaveAttribute('data-invalid')
+  })
+
   it('requires a model before a new robot can be saved', async () => {
     const mock = services()
     renderSection(mock)
 
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
     await userEvent.type(screen.getByTestId('cloud-project-chat-agent-name'), '新机器人')
+    await userEvent.type(
+      screen.getByTestId('cloud-project-chat-agent-capability'),
+      '擅长前端交互与可访问性实现'
+    )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
     await userEvent.click(
       await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
     )
 
     const save = screen.getByTestId('cloud-project-chat-agent-save')
-    expect(save).toBeDisabled()
+    expect(save).toBeEnabled()
+    await userEvent.click(save)
+    expect(screen.getByTestId('cloud-project-chat-agent-model')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    expect(mock.create).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
     await userEvent.click(
@@ -110,7 +240,10 @@ describe('ProjectChatAgentsSection', () => {
     await waitFor(() =>
       expect(mock.create).toHaveBeenCalledWith(
         project.id,
-        expect.objectContaining({ model: MODEL_NAME })
+        expect.objectContaining({
+          model: MODEL_NAME,
+          capabilityDescription: '擅长前端交互与可访问性实现',
+        })
       )
     )
     expect(await screen.findByTestId('cloud-project-chat-agent-agent-created')).toHaveTextContent(
@@ -129,7 +262,13 @@ describe('ProjectChatAgentsSection', () => {
     )
 
     const save = screen.getByTestId('cloud-project-chat-agent-save')
-    expect(save).toBeDisabled()
+    expect(save).toBeEnabled()
+    await userEvent.click(save)
+    expect(screen.getByTestId('cloud-project-chat-agent-model')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    expect(mock.update).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
     await userEvent.click(
