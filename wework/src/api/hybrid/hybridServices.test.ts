@@ -1522,16 +1522,19 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudRuntimeIpcRequest.mockResolvedValue({ items: [cloudAutomation] })
     const listener = vi.fn()
     window.addEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, listener)
-    const services = createServices()
-    await services.cloudBackgroundApi?.listDevices?.()
+    try {
+      const services = createServices()
+      await services.cloudBackgroundApi?.listDevices?.()
 
-    await services.automationApi?.listAutomations()
-    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
+      await services.automationApi?.listAutomations()
+      await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
 
-    await services.automationApi?.listAutomations()
-    await vi.waitFor(() => expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledTimes(2))
-    expect(listener).toHaveBeenCalledTimes(1)
-    window.removeEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, listener)
+      await services.automationApi?.listAutomations()
+      await vi.waitFor(() => expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledTimes(2))
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, listener)
+    }
   })
 
   it('writes cloud automation mutations through to the immediate list cache', async () => {

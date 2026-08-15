@@ -907,6 +907,7 @@ export function CloudTodoWorkspace({
   const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
   const [cloudProjectsLoading, setCloudProjectsLoading] = useState(Boolean(projectSpaceApis.cloud))
   const [localProjectsError, setLocalProjectsError] = useState<string | null>(null)
+  const [localProjectsRefreshNonce, setLocalProjectsRefreshNonce] = useState(0)
   const [boardError, setBoardError] = useState<string | null>(null)
   const [dingtalkAuthPrompt, setDingtalkAuthPrompt] = useState(false)
   const [dingtalkAuthBusy, setDingtalkAuthBusy] = useState(false)
@@ -1455,6 +1456,12 @@ export function CloudTodoWorkspace({
     setCreateTodoOpen(true)
   }
 
+  function retryLocalProjects() {
+    setLocalProjectsError(null)
+    setLocalProjectsLoading(true)
+    setLocalProjectsRefreshNonce(current => current + 1)
+  }
+
   useEffect(() => {
     const api = projectSpaceApis.local
     if (!api) return
@@ -1484,7 +1491,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [projectSpaceApis.local])
+  }, [localProjectsRefreshNonce, projectSpaceApis.local])
 
   useEffect(() => {
     const api = projectSpaceApis.cloud
@@ -1540,8 +1547,15 @@ export function CloudTodoWorkspace({
           // Only sync the open drawer when it belongs to this project; a drawer
           // opened from another view (e.g. my work) must not be closed here.
           setSelectedItem(current =>
-            current && current.cloud_project_id === selectedProjectId
-              ? (response.items.find(item => item.id === current.id) ?? null)
+            current &&
+            sameProjectSpace(
+              {
+                projectStore: current.project_store ?? selectedProject.project_store,
+                projectId: current.cloud_project_id,
+              },
+              projectSpaceRef(selectedProject)
+            )
+              ? (locatedItems.find(item => item.id === current.id) ?? null)
               : current
           )
         })
@@ -2097,9 +2111,17 @@ export function CloudTodoWorkspace({
           {!selectedProject && projects.length > 0 && localProjectsError ? (
             <div
               data-testid="local-project-spaces-error"
-              className="shrink-0 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
+              className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
             >
-              本地项目空间加载失败：{localProjectsError}
+              <span>本地项目空间加载失败：{localProjectsError}</span>
+              <button
+                type="button"
+                data-testid="local-project-spaces-retry"
+                onClick={retryLocalProjects}
+                className="h-7 shrink-0 rounded-md border border-destructive/30 px-2 text-xs font-medium hover:bg-destructive/10"
+              >
+                {t('common.retry', '重试')}
+              </button>
             </div>
           ) : null}
           {rootView === 'my-work' ? (
@@ -2127,9 +2149,17 @@ export function CloudTodoWorkspace({
           ) : !selectedProject && projects.length === 0 && localProjectsError ? (
             <div
               data-testid="local-project-spaces-error"
-              className="flex flex-1 items-center justify-center px-6 text-sm text-destructive"
+              className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-destructive"
             >
-              本地项目空间加载失败：{localProjectsError}
+              <span>本地项目空间加载失败：{localProjectsError}</span>
+              <button
+                type="button"
+                data-testid="local-project-spaces-retry"
+                onClick={retryLocalProjects}
+                className="h-8 rounded-lg border border-destructive/30 px-3 text-sm font-medium hover:bg-destructive/10"
+              >
+                {t('common.retry', '重试')}
+              </button>
             </div>
           ) : (projectSpaceApis.local ? localProjectsLoading : cloudProjectsLoading) ? (
             <div className="flex flex-1 items-center justify-center text-sm text-text-muted">

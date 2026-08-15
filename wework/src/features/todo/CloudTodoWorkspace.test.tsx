@@ -352,9 +352,16 @@ describe('CloudTodoWorkspace', () => {
   it('surfaces a local project-list failure instead of rendering an empty state', async () => {
     const localServices = services()
     const localApi = localServices.deliveryApi!
-    localApi.listCloudProjects = vi.fn(async () => {
-      throw new Error('local executor unavailable')
-    })
+    const recoveredProject = {
+      ...project,
+      id: 23,
+      name: 'Recovered Local',
+      project_store: 'local' as const,
+    }
+    localApi.listCloudProjects = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('local executor unavailable'))
+      .mockResolvedValue({ items: [recoveredProject] })
     const cloudApi = services().deliveryApi!
     cloudApi.listCloudProjects = vi.fn(() => new Promise(() => undefined))
 
@@ -377,6 +384,12 @@ describe('CloudTodoWorkspace', () => {
       'local executor unavailable'
     )
     expect(screen.queryByText('创建第一个项目空间')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('local-project-spaces-retry'))
+    expect(await screen.findByTestId('cloud-sidebar-project-23')).toHaveTextContent(
+      'Recovered Local'
+    )
+    expect(screen.queryByTestId('local-project-spaces-error')).not.toBeInTheDocument()
   })
 
   it('keeps local project details inside local services while cloud is unavailable', async () => {
