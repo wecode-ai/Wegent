@@ -446,7 +446,16 @@
   --plugin-source-external-accent: 202 208 219;
 }
 
-/* Keep embedded diagram renderers aligned with Wework theme and available space. */
+/* Keep embedded file renderers aligned with Wework theme and available space. */
+.wework-workspace-file-viewer[data-viewer-theme] .image-viewer {
+  background: rgb(var(--color-bg-base));
+}
+
+.wework-workspace-file-viewer .image-stage img,
+.wework-workspace-file-viewer .image-lightbox img {
+  background: transparent;
+}
+
 .wework-diagram-preview .drawing-scroll,
 .wework-diagram-preview .drawing-canvas,
 .wework-diagram-preview .drawing-diagram-shell {

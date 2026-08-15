@@ -148,6 +148,8 @@ test('uses the application dark theme for code and binary previews', () => {
 
   expect(fileViewerMocks.render).toHaveBeenLastCalledWith(
     expect.objectContaining({
+      'data-viewer-theme': 'dark',
+      className: expect.stringContaining('wework-workspace-file-viewer'),
       options: expect.objectContaining({ theme: 'dark' }),
     })
   )
