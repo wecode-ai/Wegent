@@ -707,6 +707,7 @@ async def get_executor_workspace_file(
 
 class CancelTaskRequest(BaseModel):
     task_id: int = Field(..., strict=True)
+    subtask_id: Optional[int] = Field(None, strict=True)
 
 
 class ValidateImageRequest(BaseModel):
@@ -1010,10 +1011,10 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         )
 
         # Set task context for tracing (function handles OTEL enabled check internally)
-        set_task_context(task_id=request.task_id)
+        set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-        result = executor.cancel_task(request.task_id)
+        result = executor.cancel_task(request.task_id, request.subtask_id)
 
         if result["status"] == "success":
             logger.info(f"Successfully cancelled task {request.task_id}")
@@ -1150,6 +1151,8 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
                 f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
                 f"?task_id={request.task_id}"
             )
+            if request.subtask_id is not None:
+                cancel_url += f"&subtask_id={request.subtask_id}"
 
             try:
                 async with traced_async_client(timeout=10.0) as client:
@@ -1182,7 +1185,7 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
 
         else:
             # Find container by task_id and cancel
-            result = executor.cancel_task(request.task_id)
+            result = executor.cancel_task(request.task_id, request.subtask_id)
 
             if result.get("status") == "success":
                 logger.info(

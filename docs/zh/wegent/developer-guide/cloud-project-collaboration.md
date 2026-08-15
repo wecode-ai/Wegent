@@ -99,17 +99,31 @@ flowchart LR
 
     ASSIGN --> ITEM[(loop_items<br/>负责人真值)]
     ASSIGN --> EXEC[(loop_item_executions<br/>执行状态真值)]
+    ASSIGN --> BOT[ProjectChatAgent<br/>机器人实时配置]
     EXEC --> ROUTER{机器人 runtime 激活}
+    ITEM --> INPUT[统一可见 user input<br/>规范 ID + 任务 URI + 执行提示词]
+    EXEC --> INPUT
+    BOT --> INPUT
 
     ROUTER -->|Wework local| PULL[设备主动领取]
     ROUTER -->|Wework cloud| CONSUMER[云端队列消费者]
+    INPUT -.-> PULL
+    INPUT -.-> CONSUMER
     PULL --> RUNTIME[Wework Runtime]
     CONSUMER --> RUNTIME
 
     ROUTER -->|Wegent| JOB[持久提交后派发任务]
+    INPUT -.-> JOB
     JOB --> NATIVE[(原生 Task/Subtask)]
     JOB -.->|派发失败写终态| EXEC
     NATIVE --> TEAM[Wegent Team 执行器]
+    TEAM -->|使用输入中的规范 ID| MCPREAD[Wegent 看板 MCP]
+    MCPREAD --> ITEM
+
+    STOP[Wegent UI/API 主动停止] --> CANCEL[持久化取消意图]
+    CANCEL -->|Task CANCELLING| NATIVE
+    CANCEL -->|execution cancel_requested| EXEC
+    CANCEL -->|发送并等待 Runtime ACK| TEAM
 
     RUNTIME --> EVENTS[运行事件/心跳/终态]
     TEAM --> COMPLETE[TaskCompletedEvent]
@@ -128,7 +142,10 @@ flowchart LR
 | 自动化 → runtime 激活 | 在指派事务提交后激活新执行 | `project_automation_execution.py` |
 | Wework 激活 | 本地设备领取或云消费者 claim | `robot_queue_tasks.py`、Wework 本地 puller |
 | Wegent 激活 | 按 execution ID 创建 Task/Subtask 并入 Team 管线 | `board_team_execution.py`、`project_automation_tasks.py` |
+| 看板执行 → 三端输入 | 本地、云端和 Wegent 共用可见 user input：规范 ID、任务 URI、机器人执行提示词；任务正文由 runtime 通过 MCP 读取 | `loop_item_executions/profile.py`、`board_team_execution.py` |
 | Wegent 终态 → 执行真值 | 严格校验全部关联 ID 后投影终态 | `board_team_completion.py` |
+| Wegent 主动停止 → 取消意图 | 原生 Task 写 `CANCELLING`，看板 execution 写 `cancel_requested`，再发送 Runtime 取消命令 | `chat_namespace.py`、`board_team_completion.py` |
+| Runtime 取消 ACK → 两侧终态 | Runtime 确认进程停止后写 Task/Subtask `CANCELLED` 并通过统一终态投影器写看板 `cancelled` | Rust executor、`status_updating.py`、`board_team_completion.py` |
 
 2026-08-15 的排队缺陷来自一条缺失连线：HTTP 指派会调用 Wegent 激活器，但自动化调度员通过内部服务指派后只创建了 `queued` 执行记录，没有激活 runtime。结果是 `claimed_at`、`backend_task_id` 永远为空，设备消费者也不会领取 `execution_environment=wegent` 的记录。修复必须补上“自动化 → runtime 激活”这条边，不能把 Wegent 记录交给 Wework 设备消费者，也不能从队列 UI 推断执行已启动。
 
@@ -146,6 +163,7 @@ sequenceDiagram
     participant T as Wegent Task/Subtask
     participant W as Wegent Team 执行器
     participant C as 终态投影器
+    participant U as Wegent 用户
 
     E->>M: 创建自动化 run 与任务载体
     M->>A: 通过 wework_space 选择看板机器人
@@ -159,11 +177,28 @@ sequenceDiagram
             Q->>X: 锁定执行并再次校验 queued/Team/负责人
             alt 校验及原生 Task 派发成功
                 Q->>T: 创建原生 Task/Subtask
+                Note over Q,T: user input 仅携带规范 ID、任务 URI 和机器人执行提示词；任务数据由 MCP 读取
                 Q->>X: 写 backend_task_id
                 Note over X,T: 原生 Task 标签与 execution 绑定在同一事务提交
                 Q->>W: 派发 Team 执行
-                W-->>C: TaskCompletedEvent
-                C->>X: 校验 execution/task/subtask/team 后写终态
+                alt Team 自然结束或运行时终止
+                    W->>T: 写原生终态
+                    W-->>C: TaskCompletedEvent
+                    C->>X: 校验 execution/task/subtask/team 后写终态
+                else 用户在 Wegent 主动停止
+                    U->>T: chat:cancel
+                    T->>X: 同事务写 Task CANCELLING 与 execution cancel_requested
+                    T->>W: 发送 Runtime 取消命令
+                    alt Runtime 确认进程已停止
+                        W-->>T: CANCELLED 回调
+                        T->>T: 写 Task/Subtask CANCELLED
+                        T-->>C: TaskCompletedEvent(CANCELLED)
+                        C->>X: 校验全部关联 ID 并写 cancelled
+                    else 取消命令未送达
+                        T-->>U: 返回失败，不伪造 CANCELLED
+                        Note over T,X: 保持 CANCELLING/cancel_requested 表达状态未知并允许重试
+                    end
+                end
             else worker 激活失败
                 Q->>X: 写 failed 终态，不保留 queued
             end
@@ -183,9 +218,11 @@ sequenceDiagram
 2. runtime 激活只能发生在负责人和执行记录提交之后，避免消费者读不到执行。
 3. Wegent 派发按精确 `execution_id` 加锁并幂等检查 `backend_task_id`；原生 Task 标签和 execution 绑定必须在持锁事务中一起提交，不能用“最新任务”猜测，也不能在绑定前释放锁。
 4. `queued` 只代表执行意图已持久化；写入 `backend_task_id` 或 Runtime 接受事件前不能展示成运行中。
-5. 自动化 run、机器人执行、原生 Wegent Task 各有状态边界，终态只能通过带完整关联标签的事件向看板执行投影。
+5. 自动化 run、机器人执行、原生 Wegent Task 各有状态边界，终态只能通过校验完整关联标签的统一投影器写入看板执行；运行时事件和主动停止都必须调用该投影器。
 6. 人工指派、API 指派、定时自动化和 AI 调度员指派最终必须进入同一个 runtime 激活器；新增入口不得直接复制派发逻辑。
 7. 激活消息无法入队或 worker 激活失败时必须写明确的 `failed` 终态；没有消费者会继续处理的 execution 不得保留为 `queued`。
+8. Wegent 前端/API 主动停止只能先写 `CANCELLING/cancel_requested`；只有 Runtime ACK 或可信 `CANCELLED` 回调才能写两侧 `CANCELLED/cancelled`。取消发送失败不得伪造终态，前端必须等待并显示服务端 ACK。
+9. 三种 runtime 必须使用同一份可见 user input：规范 `project_id`、`task_id`、`execution_id`、任务 `cloud://` URI，以及用户配置的机器人执行提示词。执行提示词不得进入 Team/Ghost/Bot system prompt，也不得藏入 application context；任务标题、描述和状态由 MCP 读取最新值。
 
 ```mermaid
 flowchart LR
@@ -210,6 +247,7 @@ sequenceDiagram
     participant E as loop_item_executions
     participant T as Wegent Task
     participant R as Team 执行器
+    participant C as 终态投影器
 
     U->>B: 分配任务给看板机器人
     B->>B: 读取机器人 runtime 并校验绑定 Team
@@ -224,13 +262,30 @@ sequenceDiagram
         R-->>R: 不路由旧任务
     else E 仍为 running
         R->>R: 按 Team 的 Bot/协作模式执行
-        R->>T: 写入终态
-        T-->>B: TaskCompletedEvent
-        B->>E: 校验全部关联 ID 后写入同一终态
+        alt Runtime 自然结束
+            R->>T: 写入终态
+            T-->>C: TaskCompletedEvent
+            C->>E: 校验全部关联 ID 后写入同一终态
+        else 用户在 Wegent 主动停止
+            U->>B: chat:cancel
+            B->>T: 写 Task CANCELLING
+            B->>E: 同事务写 cancel_requested
+            B->>R: 请求停止原生执行
+            alt Runtime 确认停止
+                R-->>B: CANCELLED 回调
+                B->>T: 写 Task/Subtask CANCELLED
+                B-->>C: TaskCompletedEvent(CANCELLED)
+                C->>E: 严格校验并写 cancelled
+                B-->>U: chat:cancel ACK success
+            else Runtime 拒绝或无法送达
+                B-->>U: chat:cancel ACK error
+                Note over T,E: 保留 CANCELLING/cancel_requested，不声称进程已停
+            end
+        end
     end
 ```
 
-重分配和停止操作先推进看板执行记录到 `cancel_requested`（尚可能存在真实进程）或 `cancelled`（确认尚未启动），再把取消路由到对应的设备 Runtime 或原生 Team Task。旧工作线程即使稍后领取到消息，也必须重新检查执行记录，不能启动已经取消的运行。
+从看板发起的重分配和停止，先推进看板执行记录到 `cancel_requested`（尚可能存在真实进程）或 `cancelled`（确认尚未启动），再把取消路由到对应的设备 Runtime 或原生 Team Task。从 Wegent 原生任务发起停止时，原生 Task 的 `CANCELLING` 与看板 execution 的 `cancel_requested` 在同一事务提交；Runtime 真正停止并回调后，原生 Task/Subtask 才能写 `CANCELLED`，统一终态事件再把看板 execution 推进为 `cancelled`。事件是终态证据的传递机制，不能用前端按钮点击或 HTTP 请求送达替代 Runtime ACK。旧工作线程即使稍后领取到消息，也必须重新检查执行记录，不能启动已经取消的运行。
 
 同一任务的执行域始终按看板机器人归属。`agent_id` 决定队列列、分配历史和并发身份，`team_id` 只记录 Wegent runtime 的实际目标；不同任务进入原生 Team 管线后，Team 的协作配置仍决定内部并行度。
 

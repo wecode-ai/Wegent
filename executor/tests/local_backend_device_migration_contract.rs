@@ -854,9 +854,13 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         heartbeat_transport.calls()[1].payload["running_task_ids"],
         json!([])
     );
-    assert!(sink.events().iter().any(|event| event.event_type == "error"
-        && event.data["code"] == "cancelled"
-        && event.task_id == "501"));
+    assert!(sink
+        .events()
+        .iter()
+        .any(|event| event.event_type == "response.incomplete"
+            && event.data["response"]["status"] == "cancelled"
+            && event.data["response"]["error"]["code"] == "cancelled"
+            && event.task_id == "501"));
 }
 
 #[derive(Clone, Debug)]

@@ -297,7 +297,8 @@ async def test_board_team_completion_updates_only_matching_execution_truth(
                 "weworkSpaceProjectId": "project-1",
                 "weworkSpaceTaskId": item.id,
             }
-        }
+        },
+        "status": {"status": "COMPLETED"},
     }
     test_db.commit()
 
@@ -307,6 +308,18 @@ async def test_board_team_completion_updates_only_matching_execution_truth(
 
     monkeypatch.setattr("app.services.board_team_completion.get_db_session", session)
     from app.services.board_team_completion import handle_board_team_task_completed
+
+    await handle_board_team_task_completed(
+        TaskCompletedEvent(
+            task_id=task.id,
+            subtask_id=54,
+            user_id=test_user.id,
+            status="COMPLETED",
+            result={"value": "Unrelated completion"},
+        )
+    )
+    test_db.refresh(execution)
+    assert execution.status == "running"
 
     await handle_board_team_task_completed(
         TaskCompletedEvent(
@@ -322,6 +335,90 @@ async def test_board_team_completion_updates_only_matching_execution_truth(
     assert execution.status == "completed"
     assert execution.observed_state == "succeeded"
     assert execution.backend_task_id == task.id
+
+
+@pytest.mark.asyncio
+async def test_board_team_cancel_event_projects_runtime_acknowledged_truth(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    team = Kind(
+        kind="Team",
+        name="board-cancel-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name="board-cancel-task",
+        namespace="default",
+        json={"metadata": {"labels": {}}},
+    )
+    item = LoopItem(
+        id="board-cancel-item",
+        cloud_project_id="project-1",
+        title="Cancel board task",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add_all([team, task, item])
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id="project-1",
+        executor_owner_user_id=test_user.id,
+        team_id=team.id,
+        backend_task_id=task.id,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="running",
+        observed_state="running",
+        sync_state="in_sync",
+    )
+    test_db.add(execution)
+    test_db.flush()
+    task.json = {
+        "metadata": {
+            "labels": {
+                "source": "board_team_assignment",
+                "boardTeamExecutionId": str(execution.id),
+                "boardTeamSubtaskId": "53",
+                "boardTeamTeamId": str(team.id),
+                "weworkSpaceProjectId": "project-1",
+                "weworkSpaceTaskId": item.id,
+            }
+        },
+        "status": {"status": "CANCELLED"},
+    }
+    test_db.commit()
+
+    @contextmanager
+    def session():
+        yield test_db
+
+    monkeypatch.setattr("app.services.board_team_completion.get_db_session", session)
+    from app.services.board_team_completion import handle_board_team_task_completed
+
+    await handle_board_team_task_completed(
+        TaskCompletedEvent(
+            task_id=task.id,
+            subtask_id=53,
+            user_id=test_user.id,
+            status="CANCELLED",
+            result={"value": "Stopped in Wegent"},
+        )
+    )
+
+    test_db.refresh(execution)
+    assert execution.status == "cancelled"
+    assert execution.observed_state == "cancelled"
+    assert execution.sync_state == "in_sync"
+    assert execution.termination_reason == "runtime_cancel_acknowledged"
 
 
 @pytest.mark.asyncio

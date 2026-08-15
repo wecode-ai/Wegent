@@ -115,12 +115,12 @@ where
             return false;
         };
         state.handle.abort();
+        let _ = state.handle.await;
         self.running_tasks.remove(&task_id);
-        let _ = self
-            .sink
-            .send(state.builder.error(message, "cancelled"))
-            .await;
-        true
+        self.sink
+            .send(state.builder.response_cancelled(message))
+            .await
+            .is_ok()
     }
 }
 
@@ -218,7 +218,7 @@ async fn run_managed_task<E, S>(
             builder.response_waiting_for_user_input(&stop_reason)
         }
         ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
-        ExecutionOutcome::Cancelled { message } => builder.error(&message, "cancelled"),
+        ExecutionOutcome::Cancelled { message } => builder.response_cancelled(&message),
         ExecutionOutcome::Running => return,
     };
     let _ = sink.send(event).await;

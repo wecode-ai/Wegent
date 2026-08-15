@@ -130,7 +130,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         ),
         "execution_device_id": row.device_id,
         "model": metadata.get("model"),
-        "system_prompt": metadata.get("system_prompt", ""),
+        "execution_prompt": metadata.get("system_prompt", ""),
         "max_concurrent_executions": bot_max_concurrent_executions(row),
     }
 
@@ -1571,8 +1571,8 @@ class ProjectChatService:
             ),
             model=config.get("model") if isinstance(config.get("model"), str) else None,
             system_prompt=(
-                config.get("system_prompt")
-                if isinstance(config.get("system_prompt"), str)
+                config.get("execution_prompt")
+                if isinstance(config.get("execution_prompt"), str)
                 else ""
             ),
             capability_description=row.description or "",

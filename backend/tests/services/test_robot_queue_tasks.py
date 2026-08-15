@@ -190,13 +190,18 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
     assert payload["executionRequest"]["subtask_id"] == (
         f"codex-queue-{execution.id}-assistant"
     )
-    assert payload["message"]
-    # The instruction stays separate from the current full task context.
-    assert "你是 Dispatch Bot，这个项目任务的 AI 执行者。" in payload["message"]
-    assert "Verify before reporting." in payload["message"]
+    assert payload["message"] == (
+        f"project_id: {project.id}\n"
+        f"task_id: {execution.loop_item_id}\n"
+        f"execution_id: {execution.id}\n\n"
+        f"看板任务数据位于 cloud://projects/{project.id}/todos/"
+        f"{execution.loop_item_id}，请通过看板工具自行查看。\n\n"
+        "Verify before reporting."
+    )
     assert "Build the landing page" not in payload["message"]
-    assert "get_board_item" not in payload["additionalContext"]["projectChat"]["value"]
-    assert "Build the landing page" in payload["additionalContext"]["task"]["value"]
+    assert "system_prompt" not in payload["executionRequest"]
+    assert "system_prompt" not in payload["executionRequest"]["bot"][0]
+    assert payload["additionalContext"] == {}
     assert payload["executionRequest"]["mcp_servers"] == []
 
     test_db.refresh(execution)

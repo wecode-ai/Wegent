@@ -811,6 +811,7 @@ class LoopItemExecutionService:
         *,
         execution_id: int,
         note: Optional[str] = None,
+        commit: bool = True,
     ) -> Optional[LoopItemExecution]:
         """Commit cancellation after Runtime's stop ACK or cancelled event."""
 
@@ -827,6 +828,7 @@ class LoopItemExecutionService:
                 observed_state=OBSERVED_CANCELLED,
                 observed_at=utcnow(),
                 termination_reason="stall_timeout",
+                commit=commit,
             )
         return self._transition_terminal(
             db,
@@ -838,6 +840,7 @@ class LoopItemExecutionService:
             observed_state=OBSERVED_CANCELLED,
             observed_at=utcnow(),
             termination_reason="runtime_cancel_acknowledged",
+            commit=commit,
         )
 
     # ------------------------------------------------------------------
@@ -1658,13 +1661,18 @@ class LoopItemExecutionService:
             execution.executor_type != "automation_manager"
             and execution.status == STATUS_RUNNING
         ):
+            visible_prompt = prompt or profile.user_input(
+                project_id=execution.cloud_project_id,
+                task_id=execution.loop_item_id,
+                execution_id=execution.id,
+            )
             project_chat_service._set_task_ai_state(
                 db,
                 row=row,
                 trigger=None,
                 agent=agent,
                 status_value="running",
-                prompt=prompt or profile.runtime_prompt(),
+                prompt=visible_prompt,
                 user_id=execution.executor_owner_user_id,
             )
         if commit:
@@ -2775,6 +2783,7 @@ class LoopItemExecutionService:
         try:
             return profile.build_runtime_payload(
                 db,
+                execution_id=execution.id,
                 runtime_task_id=(
                     execution.runtime_task_id or runtime_task_id_for(execution.id)
                 ),
@@ -2822,17 +2831,13 @@ class LoopItemExecutionService:
                 # project robot is assigned it must execute through the same
                 # role + live task-context contract as an ordinary assignment;
                 # the manager's scheduling prompt is not an execution prompt.
-                instruction = ""
                 origin_context = self._automation_runtime_context(run, rule)
             else:
-                origin_context, instruction = self._task_automation_context(
+                origin_context, _ = self._task_automation_context(
                     db, execution.loop_item_id
                 )
             return (
-                WeworkExecutionProfile.for_project_robot(
-                    agent,
-                    instruction=instruction,
-                ),
+                WeworkExecutionProfile.for_project_robot(agent),
                 origin_context,
             )
 
@@ -2887,7 +2892,6 @@ class LoopItemExecutionService:
                 display_name="自定义 AI 调度员",
                 instruction=manager_prompt,
                 model=model,
-                system_prompt="你只负责选择项目成员或项目机器人，不执行原始任务。",
             ),
             self._automation_runtime_context(run, rule),
         )

@@ -9,6 +9,7 @@ from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.services.loop_item_executions.profile import build_project_robot_user_input
 from app.services.project_automation_managed_execution import (
     project_automation_managed_execution_service,
 )
@@ -19,6 +20,7 @@ def _execution_prompt(
     *,
     item: LoopItem,
     execution: LoopItemExecution,
+    execution_prompt: str,
 ) -> tuple[str, str]:
     from app.services.loop_item_executions.service import loop_item_execution_service
 
@@ -30,13 +32,11 @@ def _execution_prompt(
     if context is None:
         raise RuntimeError("Assigned board task context is unavailable")
     title = context.title or "Board task"
-    description = context.description.strip()
-    task = f"请执行看板任务 {item.id}：{title}。"
-    if description:
-        task = f"{task}\n\n任务说明：\n{description}"
-    prompt = (
-        f"{task}\n\n请通过 Wegent 看板工具读取最新任务上下文；"
-        "执行期间以看板任务及其执行记录为状态真值。"
+    prompt = build_project_robot_user_input(
+        project_id=str(item.cloud_project_id),
+        task_id=item.id,
+        execution_id=execution.id,
+        execution_prompt=execution_prompt,
     )
     return prompt, title
 
@@ -128,7 +128,12 @@ async def dispatch_board_robot_execution(
     if owner is None:
         raise RuntimeError("Board robot execution owner is unavailable")
 
-    prompt, title = _execution_prompt(db, item=item, execution=execution)
+    prompt, title = _execution_prompt(
+        db,
+        item=item,
+        execution=execution,
+        execution_prompt=str(config.get("execution_prompt") or ""),
+    )
     await project_automation_managed_execution_service.dispatch_board_team(
         db=db,
         owner=owner,

@@ -99,17 +99,31 @@ flowchart LR
 
     ASSIGN --> ITEM[(loop_items<br/>assignee truth)]
     ASSIGN --> EXEC[(loop_item_executions<br/>execution truth)]
+    ASSIGN --> BOT[ProjectChatAgent<br/>live Bot configuration]
     EXEC --> ROUTER{Bot runtime activation}
+    ITEM --> INPUT[One visible user input<br/>canonical IDs + task URI + execution prompt]
+    EXEC --> INPUT
+    BOT --> INPUT
 
     ROUTER -->|Wework local| PULL[Device pull]
     ROUTER -->|Wework cloud| CONSUMER[Cloud queue consumer]
+    INPUT -.-> PULL
+    INPUT -.-> CONSUMER
     PULL --> RUNTIME[Wework Runtime]
     CONSUMER --> RUNTIME
 
     ROUTER -->|Wegent| JOB[Post-commit dispatch job]
+    INPUT -.-> JOB
     JOB --> NATIVE[(Native Task/Subtask)]
     JOB -.->|Persist terminal dispatch failure| EXEC
     NATIVE --> TEAM[Wegent Team executor]
+    TEAM -->|Use canonical IDs from the input| MCPREAD[Wegent board MCP]
+    MCPREAD --> ITEM
+
+    STOP[Wegent UI/API stop] --> CANCEL[Persist cancellation intent]
+    CANCEL -->|Task CANCELLING| NATIVE
+    CANCEL -->|execution cancel_requested| EXEC
+    CANCEL -->|Send and await Runtime ACK| TEAM
 
     RUNTIME --> EVENTS[Runtime events/heartbeats/terminal]
     TEAM --> COMPLETE[TaskCompletedEvent]
@@ -128,7 +142,10 @@ Every edge has one owner:
 | Automation → runtime activation | Activate the new execution after assignment commit | `project_automation_execution.py` |
 | Wework activation | Local device pull or cloud consumer claim | `robot_queue_tasks.py`, Wework local puller |
 | Wegent activation | Create Task/Subtask by execution ID and enter Team pipeline | `board_team_execution.py`, `project_automation_tasks.py` |
+| Board execution → all runtime inputs | Local, cloud, and Wegent share one visible user input containing canonical IDs, the task URI, and the Bot execution prompt; the runtime reads task content through MCP | `loop_item_executions/profile.py`, `board_team_execution.py` |
 | Wegent terminal → execution truth | Project terminal state after strict identity checks | `board_team_completion.py` |
+| Wegent user stop → cancellation intent | Persist Task `CANCELLING` and execution `cancel_requested`, then send the Runtime cancellation command | `chat_namespace.py`, `board_team_completion.py` |
+| Runtime cancellation ACK → terminal truth | After process-stop confirmation, persist Task/Subtask `CANCELLED` and project board `cancelled` through the unified terminal projector | Rust executor, `status_updating.py`, `board_team_completion.py` |
 
 The 2026-08-15 queue defect was a missing edge: HTTP assignment invoked Wegent activation, while an automation manager's internal assignment only created a `queued` execution. Consequently `claimed_at` and `backend_task_id` stayed empty, and device consumers correctly ignored records whose `execution_environment=wegent`. The fix must add the automation-to-runtime-activation edge. It must not send Wegent rows to a Wework device consumer or infer execution from the queue UI.
 
@@ -146,6 +163,7 @@ sequenceDiagram
     participant T as Wegent Task/Subtask
     participant W as Wegent Team executor
     participant C as Terminal projector
+    participant U as Wegent user
 
     E->>M: Create automation run and task carrier
     M->>A: Select a board Bot through wework_space
@@ -159,11 +177,28 @@ sequenceDiagram
             Q->>X: Lock and revalidate queued/Team/owner
             alt Validation and native Task dispatch succeed
                 Q->>T: Create native Task/Subtask
+                Note over Q,T: User input carries only canonical IDs, the task URI, and the Bot execution prompt; MCP reads task data
                 Q->>X: Persist backend_task_id
                 Note over X,T: Native Task labels and execution binding commit atomically
                 Q->>W: Dispatch Team execution
-                W-->>C: TaskCompletedEvent
-                C->>X: Verify execution/task/subtask/team and persist terminal state
+                alt Team completes or Runtime terminates
+                    W->>T: Persist native terminal state
+                    W-->>C: TaskCompletedEvent
+                    C->>X: Verify execution/task/subtask/team and persist terminal state
+                else User stops the task in Wegent
+                    U->>T: chat:cancel
+                    T->>X: Atomically persist Task CANCELLING and execution cancel_requested
+                    T->>W: Send Runtime cancellation command
+                    alt Runtime confirms process stop
+                        W-->>T: CANCELLED callback
+                        T->>T: Persist Task/Subtask CANCELLED
+                        T-->>C: TaskCompletedEvent(CANCELLED)
+                        C->>X: Verify every identity and persist cancelled
+                    else Cancellation command is not delivered
+                        T-->>U: Return failure without inventing CANCELLED
+                        Note over T,X: Keep CANCELLING/cancel_requested to express uncertainty and permit retry
+                    end
+                end
             else Worker activation fails
                 Q->>X: Persist failed instead of leaving queued
             end
@@ -183,9 +218,11 @@ Review the sequence against these invariants, in order:
 2. Runtime activation occurs only after assignee and execution commit, so consumers can always read the execution.
 3. Wegent dispatch locks an exact `execution_id` and idempotently checks `backend_task_id`; native Task labels and the execution binding commit together while the lock is held, so it never guesses the latest task or releases the lock before binding.
 4. `queued` only means execution intent is durable. The UI cannot show running before a `backend_task_id` or Runtime acceptance event exists.
-5. Automation run, Bot execution, and native Wegent Task keep separate state boundaries; only fully labelled events project terminal state.
+5. Automation run, Bot execution, and native Wegent Task keep separate state boundaries. Only the unified projector may write board terminal truth after verifying every identity label; Runtime events and user stops both invoke it.
 6. Manual, API, scheduled, and AI-manager assignment converge on one runtime activator. New entry points must not copy dispatch logic.
 7. Failure to enqueue activation, or activation failure in the worker, must persist an explicit `failed` terminal state; an execution with no remaining consumer must never stay `queued`.
+8. A Wegent UI/API stop first writes only `CANCELLING/cancel_requested`. Both sides become `CANCELLED/cancelled` only after a Runtime ACK or trustworthy `CANCELLED` callback. Delivery failure cannot invent terminal truth, and the frontend must await and display the server ACK.
+9. All three runtimes use the same visible user input: canonical `project_id`, `task_id`, and `execution_id`, the task `cloud://` URI, and the user-configured Bot execution prompt. The execution prompt never enters a Team/Ghost/Bot system prompt or hidden application context; MCP reads the latest task title, description, and state.
 
 ```mermaid
 flowchart LR
@@ -210,6 +247,7 @@ sequenceDiagram
     participant E as loop_item_executions
     participant T as Wegent Task
     participant R as Team executor
+    participant C as Terminal projector
 
     U->>B: Assign task to board Bot
     B->>B: Read Bot runtime and validate its bound Team
@@ -224,13 +262,30 @@ sequenceDiagram
         R-->>R: Do not route the stale run
     else E is still running
         R->>R: Execute the Team's Bots and collaboration mode
-        R->>T: Persist terminal state
-        T-->>B: TaskCompletedEvent
-        B->>E: Verify every identity and persist the same terminal state
+        alt Runtime completes naturally
+            R->>T: Persist terminal state
+            T-->>C: TaskCompletedEvent
+            C->>E: Verify every identity and persist the same terminal state
+        else User stops the native Wegent task
+            U->>B: chat:cancel
+            B->>T: Persist Task CANCELLING
+            B->>E: Persist cancel_requested in the same transaction
+            B->>R: Request native execution stop
+            alt Runtime confirms stop
+                R-->>B: CANCELLED callback
+                B->>T: Persist Task/Subtask CANCELLED
+                B-->>C: TaskCompletedEvent(CANCELLED)
+                C->>E: Verify every identity and persist cancelled
+                B-->>U: chat:cancel ACK success
+            else Runtime rejects or cannot receive cancellation
+                B-->>U: chat:cancel ACK error
+                Note over T,E: Keep CANCELLING/cancel_requested and do not claim the process stopped
+            end
+        end
     end
 ```
 
-Reassignment and stop first move board truth to `cancel_requested` when a process may exist, or `cancelled` when execution provably has not started, then route cancellation to the device Runtime or native Team Task. A delayed worker must recheck board execution truth after claiming and cannot start a cancelled run.
+A board-originated reassignment or stop first moves board truth to `cancel_requested` when a process may exist, or `cancelled` when execution provably has not started, then routes cancellation to the device Runtime or native Team Task. A native Wegent stop atomically persists Task `CANCELLING` and board execution `cancel_requested`. Only after the Runtime actually stops and calls back may Task/Subtask become `CANCELLED`; the unified terminal event then advances the board execution to `cancelled`. A UI click or delivered HTTP request is not a substitute for Runtime ACK. A delayed worker must recheck board execution truth after claiming and cannot start a cancelled run.
 
 Execution scope remains owned by the board Bot. `agent_id` determines queue columns, assignment history, and concurrency identity; `team_id` records only the actual Wegent runtime target. Different board tasks may still enter the native Team pipeline concurrently, where Team collaboration configuration controls internal parallelism.
 

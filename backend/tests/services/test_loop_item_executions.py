@@ -1602,22 +1602,20 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert isinstance(execution_request, dict)
     assert execution_request["task_id"]
     assert execution_request["bot"][0]["id"] == bot.id
-    assert (
-        "Verify before reporting completion"
-        in execution_request["bot"][0]["system_prompt"]
-    )
-    assert "你是" in execution_request["prompt"]
+    assert "system_prompt" not in execution_request["bot"][0]
+    assert "system_prompt" not in execution_request
     assert "Build the landing page" not in execution_request["prompt"]
     assert "Create three subtasks for testing." not in execution_request["prompt"]
-    assert "Verify before reporting completion" in execution_request["prompt"]
+    assert execution_request["prompt"] == (
+        f"project_id: {project.id}\n"
+        f"task_id: {item.id}\n"
+        f"execution_id: {claimed.id}\n\n"
+        f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
+        "请通过看板工具自行查看。\n\n"
+        "Verify before reporting completion."
+    )
     assert execution_request["prompt"] == payload["message"]
-    project_chat = payload["additionalContext"]["projectChat"]["value"]
-    assert "get_board_item" not in project_chat
-    assert "wework_space" not in project_chat
-    assert f"/todos/{item.id}" in project_chat
-    task_context = payload["additionalContext"]["task"]["value"]
-    assert "Build the landing page" in task_context
-    assert "Create three subtasks for testing." in task_context
+    assert payload["additionalContext"] == {}
     assert execution_request["mcp_servers"] == []
     assert execution_request["preload_skills"] == []
     assert execution_request["user_selected_skills"] == []
@@ -1648,6 +1646,7 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
     )
     payload = profile.build_runtime_payload(
         test_db,
+        execution_id=91,
         runtime_task_id="runtime-task-1",
         task=TaskContext(
             id="item-1",
@@ -1668,8 +1667,11 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
     assert payload["local_project_id"] == 91
     assert payload["executionRequest"]["standalone_chat_workspace"] is False
     assert payload["origin"]["automationRole"] == "manager"
-    assert set(payload["additionalContext"]) == {"projectChatAgent"}
-    assert "Bound task" not in str(payload["additionalContext"])
+    assert payload["origin"]["type"] == "project_automation"
+    assert payload["message"] == "Run task"
+    assert "system_prompt" not in payload["executionRequest"]
+    assert "system_prompt" not in payload["executionRequest"]["bot"][0]
+    assert payload["additionalContext"] == {}
 
 
 def test_claim_binds_canonical_runtime_identity(
@@ -2007,7 +2009,7 @@ def test_terminal_failure_closes_streaming_activity_with_error(
     assert message.content == "stream disconnected before completion"
 
 
-def test_automation_run_uses_the_same_generic_project_context_as_other_tasks(
+def test_automation_robot_uses_the_same_visible_input_and_board_origin(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -2028,13 +2030,13 @@ def test_automation_run_uses_the_same_generic_project_context_as_other_tasks(
         test_db, execution=execution
     )
     assert payload is not None
-    project_chat = payload["additionalContext"]["projectChat"]["value"]
-    assert "get_board_item" not in project_chat
-    assert "wework_space" not in project_chat
-    assert "report_automation_bug" not in project_chat
-    assert "automation scan" not in project_chat
-    assert "run-123" not in project_chat
-    assert "Scheduled bug scan" in payload["additionalContext"]["task"]["value"]
+    assert payload["origin"]["type"] == "board_task"
+    assert payload["origin"]["run_id"] == "run-123"
+    assert payload["additionalContext"] == {}
+    assert f"project_id: {project.id}" in payload["message"]
+    assert f"task_id: {item.id}" in payload["message"]
+    assert "Scheduled bug scan" not in payload["message"]
+    assert "Scan the checkout for reproducible bugs." not in payload["message"]
 
 
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
@@ -2892,8 +2894,13 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     assert "model_config" not in str(payload)
     assert "api_key" not in str(payload)
     if executor_type == "automation_manager":
-        assert "选择项目成员或项目机器人" in payload["message"]
-        assert "不执行原始任务" in payload["message"]
+        assert f"project_id: {project.id}" in payload["message"]
+        assert f"task_id: {item.id}" in payload["message"]
+        assert f"automation_run_id: {run.id}" in payload["message"]
+        assert (
+            "请读取候选执行者并按调度要求完成分派，不要执行任务。" in payload["message"]
+        )
+        assert "Handle the task" in payload["message"]
 
 
 def test_public_cloud_model_uses_backend_gateway_config(
@@ -3083,6 +3090,11 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     bot, team = _make_wegent_bot(test_db, project, test_user)
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "system_prompt": "Robot-defined execution prompt.",
+    }
+    test_db.commit()
     from app.services.loop_items.service import loop_item_service
 
     loop_item_service.assign(
@@ -3129,6 +3141,15 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
     assert dispatch.await_args.kwargs["execution_id"] == execution.id
     assert dispatch.await_args.kwargs["team"].id == team.id
     assert dispatch.await_args.kwargs["owner"].id == test_user.id
+    prompt = dispatch.await_args.kwargs["prompt"]
+    assert prompt == (
+        f"project_id: {project.id}\n"
+        f"task_id: {item.id}\n"
+        f"execution_id: {execution.id}\n\n"
+        f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
+        "请通过看板工具自行查看。\n\n"
+        "Robot-defined execution prompt."
+    )
 
 
 def test_wegent_runtime_enqueue_failure_does_not_leave_execution_queued(
