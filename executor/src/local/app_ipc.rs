@@ -1329,20 +1329,20 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let execution = match method {
                 "executions.start_requested" => runtime.request_runtime_start(
                     execution_id,
-                    &runtime_device_id,
-                    &runtime_task_id,
+                    runtime_device_id,
+                    runtime_task_id,
                     lease_seconds,
                 ),
                 "executions.runtime_start" => runtime.confirm_runtime_accepted(
                     execution_id,
-                    &runtime_device_id,
-                    &runtime_task_id,
+                    runtime_device_id,
+                    runtime_task_id,
                     lease_seconds,
                 ),
                 _ => runtime.mark_runtime_dispatch_unknown(
                     execution_id,
-                    &runtime_device_id,
-                    &runtime_task_id,
+                    runtime_device_id,
+                    runtime_task_id,
                     params
                         .get("error")
                         .and_then(Value::as_str)
