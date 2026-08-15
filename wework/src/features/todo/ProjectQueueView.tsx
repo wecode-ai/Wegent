@@ -483,7 +483,7 @@ export function ProjectQueueView({
               className="flex min-h-40 flex-col rounded-xl border border-border bg-background"
             >
               <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
-                {column.bot || column.team ? (
+                {column.bot ? (
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/10 text-violet-600">
                     <Bot className="h-3.5 w-3.5" />
                   </span>

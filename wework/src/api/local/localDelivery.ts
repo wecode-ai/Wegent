@@ -359,7 +359,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       projectId: string,
       input: {
         name: string
-        runtime: 'codex'
+        runtime: 'codex' | 'wegent'
+        wegentTeamId?: number | null
         model?: string | null
         systemPrompt?: string
         visibility?: LocalProjectChatAgent['visibility']
@@ -370,6 +371,9 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         maxConcurrentExecutions?: number
       }
     ): Promise<LocalProjectChatAgent> {
+      if (input.runtime !== 'codex') {
+        throw new Error('Local project robots only support the Wework runtime')
+      }
       const record = await request<LocalAgentRecord>('chat_agents.create', {
         project_id: projectId,
         agent: {
@@ -392,6 +396,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
       agentId: string,
       input: {
         version: number
+        runtime?: 'codex' | 'wegent'
+        wegentTeamId?: number | null
         name?: string
         model?: string | null
         systemPrompt?: string
@@ -404,6 +410,9 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         maxConcurrentExecutions?: number
       }
     ): Promise<LocalProjectChatAgent> {
+      if (input.runtime && input.runtime !== 'codex') {
+        throw new Error('Local project robots only support the Wework runtime')
+      }
       const record = await request<LocalAgentRecord>('chat_agents.update', {
         project_id: projectId,
         agent_id: agentId,

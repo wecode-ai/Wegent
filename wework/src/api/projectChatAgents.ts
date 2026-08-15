@@ -28,6 +28,7 @@ export type ProjectChatAgentInput = Pick<
   ProjectChatAgent,
   | 'name'
   | 'runtime'
+  | 'wegentTeamId'
   | 'model'
   | 'systemPrompt'
   | 'capabilityDescription'
@@ -54,6 +55,8 @@ export function createProjectChatAgentApi(client: HttpClient) {
         Pick<
           ProjectChatAgent,
           | 'name'
+          | 'runtime'
+          | 'wegentTeamId'
           | 'model'
           | 'systemPrompt'
           | 'capabilityDescription'
