@@ -30,6 +30,8 @@ export interface MermaidDiagramProps {
   className?: string
 }
 
+const DIAGRAM_SURFACE_HORIZONTAL_PADDING = 32
+
 /**
  * MermaidDiagram Component
  *
@@ -297,7 +299,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     (dimensions: { width: number; height: number } | null): number => {
       const availableWidth = diagramRef.current?.clientWidth ?? 0
       if (!dimensions || availableWidth <= 0) return 1
-      return Math.min(1, availableWidth / dimensions.width)
+      const drawableWidth = Math.max(1, availableWidth - DIAGRAM_SURFACE_HORIZONTAL_PADDING)
+      return Math.min(1, drawableWidth / dimensions.width)
     },
     []
   )

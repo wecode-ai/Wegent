@@ -11,8 +11,9 @@ sidebar_position: 5
 
 1. 在更新线上 `code-wiki-ghost` 前，记录两个 Wiki 当前已发布 generation，作为 baseline。不要
    重新生成 baseline。
-2. 对每个样本记录仓库 commit、执行模型完整引用、语言和 prompt 标识。任何一项不同，本轮对照
-   无效。
+2. 对每个样本记录仓库 commit、执行模型完整引用、语言和 prompt 标识。baseline 与 candidate 的
+   commit、模型和语言必须相同；prompt 标识应不同，作为本轮唯一的生成策略变量。其余资源变更也
+   必须记录，不能与 prompt 变更混在同一轮归因。
 3. 手动更新 Ghost 与所需静态资源的实际数据，并记录 Mermaid skill 是否已挂载。本评分表的候选
    基线为 `mermaid_skill=off`。
 4. 在 Wiki Reader 点击“重新生成”。前端会发送 `force_full=true`，所以即使 commit 未变化也会
@@ -78,12 +79,7 @@ SELECT
   SUM(page_path IS NULL) AS pathless_page_count
 FROM page_paths;
 
-SELECT
-  COALESCE(SUM(CHAR_LENGTH(content)), 0) AS content_chars,
-  COALESCE(SUM(
-    (CHAR_LENGTH(content) - CHAR_LENGTH(REPLACE(content, '```mermaid', '')))
-    / CHAR_LENGTH('```mermaid')
-  ), 0) AS mermaid_blocks
+SELECT COALESCE(SUM(CHAR_LENGTH(content)), 0) AS content_chars
 FROM wiki_contents
 WHERE generation_id = @generation_id;
 
@@ -98,6 +94,29 @@ SELECT
   JSON_EXTRACT(ext, '$.publishGate.correctionPending') AS correction_pending
 FROM wiki_generations
 WHERE id = @generation_id;
+```
+
+Mermaid block 数不能用 SQL 的字符串计数：它会把被更长 fence 包住的示例当成图，也会漏掉大小写不同的
+fence。改用后端 `count_mermaid_blocks`，它与结构检查共用同一套 fenced-block 语法；下列只读命令只
+输出总数，不会把正文打印或复制到评分记录。
+
+```bash
+cd backend
+uv run python - <<'PY'
+from app.db.session import SessionLocal
+from app.models.wiki import WikiContent
+from app.services.knowledge.code_wiki.mermaid_check import count_mermaid_blocks
+
+generation_id = 0  # Replace with one explicit generation ID.
+with SessionLocal() as db:
+    mermaid_blocks = sum(
+        count_mermaid_blocks(content)
+        for (content,) in db.query(WikiContent.content)
+        .filter(WikiContent.generation_id == generation_id)
+        .all()
+    )
+print(mermaid_blocks)
+PY
 ```
 
 `publish_warnings` 同时包含结构与 Mermaid warning；按 warning 文本分类后记录到评分表。该
@@ -161,7 +180,10 @@ UTC；不得直接用这两个字段相减计算耗时。优先记录任务执�
 1. Before updating the deployed resources, record the currently published `abtest` and
    `user-graph-ci` generations as baselines. Do not regenerate them.
 2. Record the KB ID, generation ID, repository commit, complete model namespace/name, language,
-   prompt ID, timestamps, status, retries, and publish/correction notes for each baseline.
+   prompt ID, timestamps, status, retries, and publish/correction notes for each baseline. Baseline
+   and candidate must use the same commit, model, and language; their prompt identifiers must differ
+   as the generation-strategy variable. Record any other resource change so it is not attributed to
+   the prompt.
 3. Manually synchronize the updated Ghost and required static resources to the target environment,
    and record whether the Mermaid skill is attached. This candidate baseline uses
    `mermaid_skill=off`.
@@ -197,9 +219,11 @@ Mermaid block count, detected Mermaid structural warnings, status, reliable task
 token/cost data when available. More pages or text is not automatically better. Zero diagrams is a
 defect only when the repository contains applicable architecture or workflow relationships.
 
-Use the read-only SQL in the Chinese section with one explicit generation ID at a time. Code Wiki
-hierarchy comes from `wiki_contents.ext.path`, not `parent_id`; incremental seeding resets
-`parent_id` to zero. Normal Code Wiki generations should have zero pathless pages.
+Use the read-only SQL and Mermaid-count command in the Chinese section with one explicit generation
+ID at a time. The command reuses the backend fence parser rather than a SQL substring count, and
+prints only the total. Code Wiki hierarchy comes from `wiki_contents.ext.path`, not `parent_id`;
+incremental seeding resets `parent_id` to zero. Normal Code Wiki generations should have zero
+pathless pages.
 
 `wiki_generations.ext.publishGate` is the authoritative source for stored warnings and correction
 state. The run-history API does not currently expose those details; record N/A when the field is not

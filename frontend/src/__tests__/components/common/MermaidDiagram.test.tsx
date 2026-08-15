@@ -200,18 +200,19 @@ describe('MermaidDiagram', () => {
     await act(async () => {
       resizeObserverCallback?.([], {} as ResizeObserver)
     })
-    expect(screen.getByText('50%')).toBeInTheDocument()
+    expect(screen.getByText('47%')).toBeInTheDocument()
+    expect(fitContainer.querySelector('svg')).toHaveAttribute('width', '468px')
 
     await act(async () => {
       fireEvent.wheel(fitContainer, { ctrlKey: true, deltaY: -100 })
       resizeObserverCallback?.([], {} as ResizeObserver)
     })
-    expect(screen.getByText('60%')).toBeInTheDocument()
+    expect(screen.getByText('57%')).toBeInTheDocument()
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('mermaid-reset-zoom-button'))
     })
-    expect(screen.getByText('50%')).toBeInTheDocument()
+    expect(screen.getByText('47%')).toBeInTheDocument()
   })
 
   it('handles zoom in', async () => {

@@ -142,6 +142,11 @@ code_wiki 的 splitter **由系统按目标类型固定,用户不可选/不可�
 1. 在 B 之上加 note → page 关联字段;note 本身是 `origin='user'` 的文档,故**扛过重生成**。
    - **靠关联而非物理放置**:note 属于 user 内容区,用关联字段指向生成页,UI 再把它展示在
      该页旁边。**不要**把 note 放进 generated 文件夹——那里会被 agent 重组/删除。
+   - **以路径而非 document ID 关联**:关联目标是规范化的 generated page path。只要 path 不变,
+     重生成后的投影文档换了 ID 也能重新找到 note。
+   - **重命名或删除不自动猜测迁移**:完整重生成把 path 变化视为删除加新增。旧 path 消失时保留
+     `origin='user'` note,标为待重新关联,由用户显式选定新的 generated page;不得自动重映射或
+     删除 note。
 2. 重生成某页时,把该页关联的 notes 一并喂进生成 prompt,让 agent 采纳人类纠正。
 3. 保持"生成是唯一真源":人不直接改生成页,只提供反馈。
 
