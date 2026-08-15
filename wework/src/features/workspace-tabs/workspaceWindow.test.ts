@@ -79,7 +79,7 @@ describe('openWorkspaceTabWindow', () => {
     expect(setFocus).toHaveBeenCalledOnce()
     expect(destroy).not.toHaveBeenCalled()
     const [label] = WebviewWindow.mock.calls[0]
-    expect(JSON.parse(localStorage.getItem(`wework.workspaceTabs.v2:${label}`) ?? 'null')).toEqual({
+    expect(JSON.parse(localStorage.getItem(`wework.workspaceTabs.v3:${label}`) ?? 'null')).toEqual({
       activeTabId: tab.id,
       tabs: [tab],
     })
@@ -100,7 +100,7 @@ describe('openWorkspaceTabWindow', () => {
     expect(destroy).toHaveBeenCalledOnce()
     expect(show).not.toHaveBeenCalled()
     const [label] = WebviewWindow.mock.calls[0]
-    expect(localStorage.getItem(`wework.workspaceTabs.v2:${label}`)).toBeNull()
+    expect(localStorage.getItem(`wework.workspaceTabs.v3:${label}`)).toBeNull()
   })
 
   test('destroys a created Tauri window when revealing it fails', async () => {
@@ -113,7 +113,7 @@ describe('openWorkspaceTabWindow', () => {
     expect(destroy).toHaveBeenCalledOnce()
     expect(setFocus).not.toHaveBeenCalled()
     const [label] = WebviewWindow.mock.calls[0]
-    expect(localStorage.getItem(`wework.workspaceTabs.v2:${label}`)).toBeNull()
+    expect(localStorage.getItem(`wework.workspaceTabs.v3:${label}`)).toBeNull()
   })
 
   test('destroys a hidden Tauri window when creation times out', async () => {
@@ -130,7 +130,7 @@ describe('openWorkspaceTabWindow', () => {
     expect(destroy).toHaveBeenCalledOnce()
     expect(show).not.toHaveBeenCalled()
     const [label] = WebviewWindow.mock.calls[0]
-    expect(localStorage.getItem(`wework.workspaceTabs.v2:${label}`)).toBeNull()
+    expect(localStorage.getItem(`wework.workspaceTabs.v3:${label}`)).toBeNull()
     vi.useRealTimers()
   })
 })

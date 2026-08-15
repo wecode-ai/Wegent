@@ -15,6 +15,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
   notifyWorkbenchCloudSearchResults,
+  notifyWorkbenchAutomationsChanged,
   notifyWorkbenchModelsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
@@ -336,6 +337,8 @@ export function createHybridWorkbenchServices(
   })
   const cloudRuntimeApis = new Map<string, NonNullable<WorkbenchServices['runtimeWorkApi']>>()
   const cloudAutomationApis = new Map<string, NonNullable<WorkbenchServices['automationApi']>>()
+  const rememberedCloudAutomations = new Map<string, Automation[]>()
+  const cloudAutomationRequests = new Map<string, Promise<void>>()
   const automationDevices = new Map<string, string>()
   const localDeviceIds = new Set<string>([LOCAL_DEVICE_ID])
   const localRuntimeInstanceIds = new Set<string>()
@@ -1008,6 +1011,55 @@ export function createHybridWorkbenchServices(
   const rememberAutomationRoutes = (deviceId: string, automations: Automation[]) => {
     automations.forEach(automation => automationDevices.set(automation.id, deviceId))
   }
+  const sameAutomationVersions = (left: Automation[], right: Automation[]) =>
+    left.length === right.length &&
+    left.every(automation =>
+      right.some(
+        candidate => candidate.id === automation.id && candidate.version === automation.version
+      )
+    )
+  const writeCloudAutomation = (deviceId: string, automation: Automation) => {
+    if (isLocalDeviceId(deviceId)) return
+    const current = rememberedCloudAutomations.get(deviceId) ?? []
+    rememberedCloudAutomations.set(deviceId, [
+      ...current.filter(candidate => candidate.id !== automation.id),
+      automation,
+    ])
+  }
+  const removeCloudAutomation = (deviceId: string, automationId: string) => {
+    if (isLocalDeviceId(deviceId)) return
+    const current = rememberedCloudAutomations.get(deviceId) ?? []
+    rememberedCloudAutomations.set(
+      deviceId,
+      current.filter(automation => automation.id !== automationId)
+    )
+  }
+  const refreshCloudAutomationsInBackground = () => {
+    rememberedCloudDevices.filter(isUsableDevice).forEach(device => {
+      const deviceId = device.device_id
+      if (cloudAutomationRequests.has(deviceId)) return
+      const request = automationApiForDevice(deviceId)
+        .listAutomations()
+        .then(response => {
+          const previous = rememberedCloudAutomations.get(deviceId) ?? []
+          rememberAutomationRoutes(deviceId, response.items)
+          rememberedCloudAutomations.set(deviceId, response.items)
+          if (!sameAutomationVersions(previous, response.items)) {
+            notifyWorkbenchAutomationsChanged()
+          }
+        })
+        .catch(error => {
+          console.warn('[Wework] Failed to refresh cloud automations in background', {
+            deviceId,
+            error,
+          })
+        })
+        .finally(() => {
+          cloudAutomationRequests.delete(deviceId)
+        })
+      cloudAutomationRequests.set(deviceId, request)
+    })
+  }
   const automationMutationDeviceId = (data: { taskRequest?: RuntimeTaskCreateRequest }) => {
     const deviceId = data.taskRequest?.deviceId?.trim()
     if (!deviceId) throw new Error('Automation target device is required')
@@ -1023,17 +1075,12 @@ export function createHybridWorkbenchServices(
   }
   const automationApi: NonNullable<WorkbenchServices['automationApi']> = {
     async listAutomations() {
-      const cloudDeviceIds = rememberedCloudDevices
-        .filter(device => isUsableDevice(device))
-        .map(device => device.device_id)
-      const deviceIds = [LOCAL_DEVICE_ID, ...cloudDeviceIds]
-      const responses = await Promise.all(
-        deviceIds.map(deviceId => automationApiForDevice(deviceId).listAutomations())
-      )
-      responses.forEach((response, index) =>
-        rememberAutomationRoutes(deviceIds[index], response.items)
-      )
-      return { items: responses.flatMap(response => response.items) }
+      const localResponse = await localServices.automationApi!.listAutomations()
+      rememberAutomationRoutes(LOCAL_DEVICE_ID, localResponse.items)
+      refreshCloudAutomationsInBackground()
+      return {
+        items: [...localResponse.items, ...Array.from(rememberedCloudAutomations.values()).flat()],
+      }
     },
     async getAutomation(automationId) {
       const deviceId = await automationDeviceId(automationId)
@@ -1045,18 +1092,21 @@ export function createHybridWorkbenchServices(
       const deviceId = automationMutationDeviceId(data)
       const response = await automationApiForDevice(deviceId).createAutomation(data)
       rememberAutomationRoutes(deviceId, [response.automation])
+      writeCloudAutomation(deviceId, response.automation)
       return response
     },
     async updateAutomation(automationId, data) {
       const deviceId = automationDevices.get(automationId) ?? automationMutationDeviceId(data)
       const response = await automationApiForDevice(deviceId).updateAutomation(automationId, data)
       rememberAutomationRoutes(deviceId, [response.automation])
+      writeCloudAutomation(deviceId, response.automation)
       return response
     },
     async deleteAutomation(automationId) {
       const deviceId = await automationDeviceId(automationId)
       const response = await automationApiForDevice(deviceId).deleteAutomation(automationId)
       automationDevices.delete(automationId)
+      removeCloudAutomation(deviceId, automationId)
       return response
     },
     async toggleAutomation(automationId, enabled) {
@@ -1066,6 +1116,7 @@ export function createHybridWorkbenchServices(
         enabled
       )
       rememberAutomationRoutes(deviceId, [response.automation])
+      writeCloudAutomation(deviceId, response.automation)
       return response
     },
     async runAutomationNow(automationId) {
@@ -1077,16 +1128,7 @@ export function createHybridWorkbenchServices(
         const deviceId = await automationDeviceId(automationId)
         return automationApiForDevice(deviceId).listAutomationRuns(automationId)
       }
-      const deviceIds = [
-        LOCAL_DEVICE_ID,
-        ...rememberedCloudDevices
-          .filter(device => isUsableDevice(device))
-          .map(device => device.device_id),
-      ]
-      const responses = await Promise.all(
-        deviceIds.map(deviceId => automationApiForDevice(deviceId).listAutomationRuns())
-      )
-      return { items: responses.flatMap(response => response.items) }
+      return localServices.automationApi!.listAutomationRuns()
     },
   }
 
@@ -1148,6 +1190,10 @@ export function createHybridWorkbenchServices(
       local: localServices.deliveryApi,
       cloud: cloudProjectSpaceApi,
       defaultLocation: 'cloud',
+    },
+    projectSpaceDetailServices: {
+      local: localServices.projectSpaceDetailServices?.local,
+      cloud: cloudServices.projectSpaceDetailServices?.cloud,
     },
     teamApi: {
       // Wegent Teams are backend CRDs. The local service only exposes the
