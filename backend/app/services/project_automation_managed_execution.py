@@ -187,6 +187,7 @@ class ProjectAutomationManagedExecutionService:
             params=params,
             should_trigger_ai=True,
             source="board_team_assignment",
+            commit=False,
         )
         if result.assistant_subtask is None:
             raise RuntimeError(

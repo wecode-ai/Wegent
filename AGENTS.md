@@ -40,6 +40,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 ## Engineering rules
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
+- Before developing or changing board automation, start from the connection graph and sequence diagram in `docs/zh/wegent/developer-guide/cloud-project-collaboration.md` (then keep the English counterpart synchronized). Trace every entry, assignment, execution-truth, runtime-activation, and terminal-projection edge against the code before implementation; update both diagrams and their invariants whenever the architecture changes.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.

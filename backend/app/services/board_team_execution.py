@@ -49,6 +49,8 @@ async def dispatch_board_team_assignment(
 ) -> LoopItemExecution | None:
     """Dispatch the newest Wegent-runtime execution for one assigned robot."""
 
+    del user
+
     if not item.assignee_agent_id:
         return None
     agent = db.get(ProjectChatAgent, item.assignee_agent_id)
@@ -71,15 +73,65 @@ async def dispatch_board_team_assignment(
         .order_by(LoopItemExecution.id.desc())
         .first()
     )
-    if execution is None or execution.backend_task_id:
+    if execution is None:
+        return None
+    return await dispatch_board_robot_execution(db, execution_id=execution.id)
+
+
+async def dispatch_board_robot_execution(
+    db: Session,
+    *,
+    execution_id: int,
+) -> LoopItemExecution | None:
+    """Idempotently activate one exact Wegent-runtime board execution."""
+
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.id == execution_id)
+        .populate_existing()
+        .with_for_update()
+        .one_or_none()
+    )
+    if execution is None:
+        return None
+    if execution.status != "queued" or execution.backend_task_id:
         return execution
-    team = db.get(Kind, team_id)
+    if not execution.agent_id or execution.team_id is None:
+        raise RuntimeError("Board robot execution has no Wegent runtime target")
+
+    item = db.get(LoopItem, execution.loop_item_id)
+    agent = db.get(ProjectChatAgent, execution.agent_id)
+    if (
+        item is None
+        or agent is None
+        or item.cloud_project_id != execution.cloud_project_id
+        or item.assignee_agent_id != agent.id
+        or agent.cloud_project_id != execution.cloud_project_id
+        or agent.status != "active"
+    ):
+        raise RuntimeError("Board robot execution no longer matches its assignment")
+
+    from app.services.project_chat.service import bot_config
+
+    config = bot_config(agent)
+    if (
+        config.get("runtime") != "wegent"
+        or config.get("wegent_team_id") is None
+        or int(config["wegent_team_id"]) != execution.team_id
+    ):
+        raise RuntimeError("Board robot Wegent runtime configuration changed")
+
+    team = db.get(Kind, execution.team_id)
+    owner = db.get(User, execution.executor_owner_user_id)
     if team is None or team.kind != "Team" or not team.is_active:
         raise RuntimeError("Assigned Wegent Team is unavailable")
+    if owner is None:
+        raise RuntimeError("Board robot execution owner is unavailable")
+
     prompt, title = _execution_prompt(db, item=item, execution=execution)
     await project_automation_managed_execution_service.dispatch_board_team(
         db=db,
-        owner=user,
+        owner=owner,
         team=team,
         prompt=prompt,
         title=title,
@@ -88,7 +140,38 @@ async def dispatch_board_team_assignment(
         execution_id=execution.id,
     )
     db.expire_all()
-    return db.get(LoopItemExecution, execution.id)
+    return db.get(LoopItemExecution, execution_id)
+
+
+def schedule_board_robot_execution(
+    db: Session,
+    execution: LoopItemExecution,
+) -> None:
+    """Schedule runtime activation after the assignment transaction commits."""
+
+    if (
+        execution.status != "queued"
+        or not execution.agent_id
+        or execution.team_id is None
+        or execution.backend_task_id
+    ):
+        return
+    from app.tasks.project_automation_tasks import dispatch_board_robot_execution
+
+    try:
+        dispatch_board_robot_execution.delay(execution_id=execution.id)
+    except Exception as exc:
+        from app.services.loop_item_executions.service import (
+            loop_item_execution_service,
+        )
+
+        loop_item_execution_service.fail(
+            db,
+            execution_id=execution.id,
+            error=str(exc) or "Wegent runtime activation enqueue failed",
+            termination_reason="wegent_runtime_activation_enqueue_failed",
+        )
+        raise
 
 
 def request_execution_cancellations(

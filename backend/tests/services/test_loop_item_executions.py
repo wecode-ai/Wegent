@@ -6,7 +6,7 @@
 
 import uuid
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -27,6 +27,8 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.schemas.project_chat import LoopItemAssign
+from app.services.board_team_execution import dispatch_board_robot_execution
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
 from app.services.loop_item_executions.service import (
     TaskContext,
@@ -104,6 +106,41 @@ def _make_bot(
     db.commit()
     db.refresh(bot)
     return bot
+
+
+def _make_wegent_bot(
+    db: Session, project: CloudProject, user: User
+) -> tuple[ProjectChatAgent, Kind]:
+    team = Kind(
+        kind="Team",
+        name=f"board-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=user.id,
+        is_active=True,
+        json={},
+    )
+    db.add(team)
+    db.flush()
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Wegent Execution Bot",
+        name="Wegent Execution Bot",
+        status="active",
+        created_by_user_id=user.id,
+        device_id="",
+        metadata_json={
+            "runtime": "wegent",
+            "wegent_team_id": team.id,
+            "execution_mode": "auto",
+            "visibility": "public",
+        },
+    )
+    db.add(bot)
+    db.commit()
+    db.refresh(bot)
+    db.refresh(team)
+    return bot, team
 
 
 def _make_item(
@@ -2979,6 +3016,162 @@ def test_legacy_unbound_project_robot_is_claimed_by_its_owners_local_app(
     assert claimed.id == execution.id
     assert claimed.execution_device_id == "local-device"
     assert claimed.executor_owner_user_id == test_user.id
+
+
+def test_automation_assignment_schedules_wegent_runtime_after_commit(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot, team = _make_wegent_bot(test_db, project, test_user)
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Wegent automation",
+        description="Run through the bound board robot.",
+        status="enabled",
+        assignee_agent_id=bot.id,
+        created_by_user_id=test_user.id,
+        metadata_json={"assignment_mode": "manual"},
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Wegent automation run",
+        status="pending",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger": "manual"},
+    )
+    test_db.add_all([rule, run])
+    test_db.commit()
+    schedule = MagicMock()
+    monkeypatch.setattr(
+        "app.services.board_team_execution.schedule_board_robot_execution",
+        schedule,
+    )
+
+    project_automation_execution._assign_project_robot(
+        test_db,
+        owner=test_user,
+        rule=rule,
+        run=run,
+        agent_id=bot.id,
+        context={"run_id": str(run.id)},
+        instruction="",
+    )
+
+    execution = (
+        test_db.query(LoopItemExecution)
+        .filter(LoopItemExecution.automation_run_id == str(run.id))
+        .one()
+    )
+    assert execution.status == "queued"
+    assert execution.agent_id == bot.id
+    assert execution.team_id == team.id
+    schedule.assert_called_once_with(test_db, execution)
+
+
+@pytest.mark.asyncio
+async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot, team = _make_wegent_bot(test_db, project, test_user)
+    from app.services.loop_items.service import loop_item_service
+
+    loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            assignee_type="agent",
+            assignee_id=bot.id,
+            version=item.version,
+        ),
+    )
+    execution = (
+        test_db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.loop_item_id == item.id,
+            LoopItemExecution.agent_id == bot.id,
+        )
+        .one()
+    )
+
+    async def persist_backend_task(**kwargs) -> None:
+        kwargs["db"].get(
+            LoopItemExecution, kwargs["execution_id"]
+        ).backend_task_id = 1234
+        kwargs["db"].commit()
+
+    dispatch = AsyncMock(side_effect=persist_backend_task)
+    monkeypatch.setattr(
+        "app.services.board_team_execution."
+        "project_automation_managed_execution_service.dispatch_board_team",
+        dispatch,
+    )
+
+    activated = await dispatch_board_robot_execution(test_db, execution_id=execution.id)
+    repeated = await dispatch_board_robot_execution(test_db, execution_id=execution.id)
+
+    assert activated is not None
+    assert activated.backend_task_id == 1234
+    assert repeated is not None
+    assert repeated.backend_task_id == 1234
+    dispatch.assert_awaited_once()
+    assert dispatch.await_args.kwargs["execution_id"] == execution.id
+    assert dispatch.await_args.kwargs["team"].id == team.id
+    assert dispatch.await_args.kwargs["owner"].id == test_user.id
+
+
+def test_wegent_runtime_enqueue_failure_does_not_leave_execution_queued(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot, _ = _make_wegent_bot(test_db, project, test_user)
+    from app.services.board_team_execution import schedule_board_robot_execution
+    from app.services.loop_items.service import loop_item_service
+
+    loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            assignee_type="agent",
+            assignee_id=bot.id,
+            version=item.version,
+        ),
+    )
+    execution = (
+        test_db.query(LoopItemExecution)
+        .filter(
+            LoopItemExecution.loop_item_id == item.id,
+            LoopItemExecution.agent_id == bot.id,
+        )
+        .one()
+    )
+    monkeypatch.setattr(
+        "app.tasks.project_automation_tasks." "dispatch_board_robot_execution.delay",
+        MagicMock(side_effect=RuntimeError("broker unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        schedule_board_robot_execution(test_db, execution)
+
+    test_db.refresh(execution)
+    assert execution.status == "failed"
+    assert execution.termination_reason == ("wegent_runtime_activation_enqueue_failed")
 
 
 def test_custom_manager_assignment_survives_manager_transport_failure(

@@ -87,6 +87,106 @@ inbox → pending → in_progress → in_review → completed
 
 看板负责人只允许项目成员或项目机器人（`ProjectChatAgent`）。Wegent 智能体（`Kind(kind=Team)`）是机器人的 runtime 配置，不是负责人：用户先在当前看板创建机器人，再把执行环境设为 Wegent 并绑定一个可运行的 Team。绑定保存在机器人现有 `metadata_json` 中，不新建表。
 
+#### 自动化执行连线图
+
+```mermaid
+flowchart LR
+    API[用户/API 创建或指派] --> ASSIGN[统一任务指派服务]
+    TIMER[定时/事件自动化] --> MANAGER[自动化调度员执行]
+    MCP[调度员 wework_space 工具] --> AUTO[自动化指派编排]
+    MANAGER --> MCP
+    AUTO --> ASSIGN
+
+    ASSIGN --> ITEM[(loop_items<br/>负责人真值)]
+    ASSIGN --> EXEC[(loop_item_executions<br/>执行状态真值)]
+    EXEC --> ROUTER{机器人 runtime 激活}
+
+    ROUTER -->|Wework local| PULL[设备主动领取]
+    ROUTER -->|Wework cloud| CONSUMER[云端队列消费者]
+    PULL --> RUNTIME[Wework Runtime]
+    CONSUMER --> RUNTIME
+
+    ROUTER -->|Wegent| JOB[持久提交后派发任务]
+    JOB --> NATIVE[(原生 Task/Subtask)]
+    JOB -.->|派发失败写终态| EXEC
+    NATIVE --> TEAM[Wegent Team 执行器]
+
+    RUNTIME --> EVENTS[运行事件/心跳/终态]
+    TEAM --> COMPLETE[TaskCompletedEvent]
+    EVENTS --> EXEC
+    COMPLETE --> FENCE[校验 execution/task/subtask/team 标签]
+    FENCE --> EXEC
+    EXEC --> VIEW[队列/卡片/活动流]
+```
+
+连线的代码归属必须逐条保持一致：
+
+| 连线 | 唯一职责 | 当前代码归属 |
+| --- | --- | --- |
+| 入口 → 指派 | 校验成员/机器人并写负责人 | `loop_items/service.py`、`external_provider.py` |
+| 指派 → 执行真值 | 取消旧尝试并创建新尝试 | `loop_item_executions/service.py` |
+| 自动化 → runtime 激活 | 在指派事务提交后激活新执行 | `project_automation_execution.py` |
+| Wework 激活 | 本地设备领取或云消费者 claim | `robot_queue_tasks.py`、Wework 本地 puller |
+| Wegent 激活 | 按 execution ID 创建 Task/Subtask 并入 Team 管线 | `board_team_execution.py`、`project_automation_tasks.py` |
+| Wegent 终态 → 执行真值 | 严格校验全部关联 ID 后投影终态 | `board_team_completion.py` |
+
+2026-08-15 的排队缺陷来自一条缺失连线：HTTP 指派会调用 Wegent 激活器，但自动化调度员通过内部服务指派后只创建了 `queued` 执行记录，没有激活 runtime。结果是 `claimed_at`、`backend_task_id` 永远为空，设备消费者也不会领取 `execution_environment=wegent` 的记录。修复必须补上“自动化 → runtime 激活”这条边，不能把 Wegent 记录交给 Wework 设备消费者，也不能从队列 UI 推断执行已启动。
+
+#### 自动化指派与执行时序图
+
+```mermaid
+sequenceDiagram
+    participant E as 事件/定时器
+    participant M as 自动化调度员
+    participant A as 自动化指派编排
+    participant L as LoopItem 指派服务
+    participant X as loop_item_executions
+    participant R as Runtime 激活器
+    participant Q as Celery 派发任务
+    participant T as Wegent Task/Subtask
+    participant W as Wegent Team 执行器
+    participant C as 终态投影器
+
+    E->>M: 创建自动化 run 与任务载体
+    M->>A: 通过 wework_space 选择看板机器人
+    A->>L: assign(agent_id, automation_run_id)
+    L->>X: 取消旧尝试并创建新执行
+    L-->>A: 提交负责人和 queued 执行
+    A->>R: 按新 execution_id 激活 runtime
+    alt runtime = Wegent
+        alt 激活消息入队成功
+            R->>Q: 提交后入队 execution_id
+            Q->>X: 锁定执行并再次校验 queued/Team/负责人
+            alt 校验及原生 Task 派发成功
+                Q->>T: 创建原生 Task/Subtask
+                Q->>X: 写 backend_task_id
+                Note over X,T: 原生 Task 标签与 execution 绑定在同一事务提交
+                Q->>W: 派发 Team 执行
+                W-->>C: TaskCompletedEvent
+                C->>X: 校验 execution/task/subtask/team 后写终态
+            else worker 激活失败
+                Q->>X: 写 failed 终态，不保留 queued
+            end
+        else 激活消息入队失败
+            R->>X: 写 failed 终态，不保留 queued
+        end
+    else runtime = Wework cloud/local
+        R-->>X: 保持设备队列可领取
+        Note over X: cloud consumer 或 local puller claim 后启动 Runtime
+    end
+    X-->>A: 队列、卡片、活动流只读取执行真值
+```
+
+该时序必须满足以下不变量，评审时按顺序反查：
+
+1. `LoopItem.assignee_agent_id` 始终是看板机器人，Wegent Team 只存在于机器人配置和执行的 `team_id`。
+2. runtime 激活只能发生在负责人和执行记录提交之后，避免消费者读不到执行。
+3. Wegent 派发按精确 `execution_id` 加锁并幂等检查 `backend_task_id`；原生 Task 标签和 execution 绑定必须在持锁事务中一起提交，不能用“最新任务”猜测，也不能在绑定前释放锁。
+4. `queued` 只代表执行意图已持久化；写入 `backend_task_id` 或 Runtime 接受事件前不能展示成运行中。
+5. 自动化 run、机器人执行、原生 Wegent Task 各有状态边界，终态只能通过带完整关联标签的事件向看板执行投影。
+6. 人工指派、API 指派、定时自动化和 AI 调度员指派最终必须进入同一个 runtime 激活器；新增入口不得直接复制派发逻辑。
+7. 激活消息无法入队或 worker 激活失败时必须写明确的 `failed` 终态；没有消费者会继续处理的 execution 不得保留为 `queued`。
+
 ```mermaid
 flowchart LR
     TEAM[全局 Wegent Team] -->|仅在机器人配置时绑定| BOT[看板 ProjectChatAgent]

@@ -186,6 +186,7 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         execution_id=61,
     )
     assert execution.backend_task_id == 51
+    assert create_chat_task.await_args.kwargs["commit"] is False
     assert task.json["metadata"]["labels"] == {
         "source": "board_team_assignment",
         "boardTeamExecutionId": "61",
@@ -207,6 +208,38 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         source="board_team_assignment",
         execution_id=61,
     )
+
+
+def test_board_runtime_activation_task_marks_worker_failure(monkeypatch):
+    from app.tasks.project_automation_tasks import dispatch_board_robot_execution
+
+    db = MagicMock()
+    dispatch = AsyncMock(side_effect=RuntimeError("invalid runtime target"))
+    fail = MagicMock()
+    monkeypatch.setattr(
+        "app.tasks.project_automation_tasks.SessionLocal",
+        MagicMock(return_value=db),
+    )
+    monkeypatch.setattr(
+        "app.services.board_team_execution.dispatch_board_robot_execution",
+        dispatch,
+    )
+    monkeypatch.setattr(
+        "app.services.loop_item_executions.service." "loop_item_execution_service.fail",
+        fail,
+    )
+
+    with pytest.raises(RuntimeError, match="invalid runtime target"):
+        dispatch_board_robot_execution.run(execution_id=61)
+
+    db.rollback.assert_called_once_with()
+    fail.assert_called_once_with(
+        db,
+        execution_id=61,
+        error="invalid runtime target",
+        termination_reason="wegent_runtime_activation_failed",
+    )
+    db.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio

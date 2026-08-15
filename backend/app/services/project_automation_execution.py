@@ -241,6 +241,12 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
+        if execution.team_id is not None:
+            from app.services.board_team_execution import (
+                schedule_board_robot_execution,
+            )
+
+            schedule_board_robot_execution(db, execution)
         logger.info(
             "[ProjectAutomation] Queued project robot run=%s execution=%s device=%s",
             run.id,

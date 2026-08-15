@@ -33,6 +33,41 @@ def check_due_project_automations() -> int:
 
 
 @celery_app.task(
+    name="app.tasks.project_automation_tasks.dispatch_board_robot_execution"
+)
+def dispatch_board_robot_execution(*, execution_id: int) -> bool:
+    """Activate one exact Wegent-runtime board execution after commit."""
+
+    from app.services.board_team_execution import (
+        dispatch_board_robot_execution as dispatch_execution,
+    )
+
+    db = SessionLocal()
+    try:
+        execution = asyncio.run(dispatch_execution(db, execution_id=execution_id))
+        return execution is not None
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Board robot runtime activation failed: execution_id=%s",
+            execution_id,
+        )
+        from app.services.loop_item_executions.service import (
+            loop_item_execution_service,
+        )
+
+        loop_item_execution_service.fail(
+            db,
+            execution_id=execution_id,
+            error=str(exc) or "Wegent runtime activation failed",
+            termination_reason="wegent_runtime_activation_failed",
+        )
+        raise
+    finally:
+        db.close()
+
+
+@celery_app.task(
     name="app.tasks.project_automation_tasks.execute_managed_project_automation"
 )
 def execute_managed_project_automation(

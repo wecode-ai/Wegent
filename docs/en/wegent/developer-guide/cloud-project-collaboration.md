@@ -87,6 +87,106 @@ Completed TODOs may be reopened into `in_progress`. Updates carry a `version` va
 
 A board assignee is either a project member or a project Bot (`ProjectChatAgent`). A Wegent Agent (`Kind(kind=Team)`) is runtime configuration for that Bot, not an assignee: the user creates a Bot in the board, selects Wegent as its execution environment, and binds one runnable Team. The binding lives in the Bot's existing `metadata_json`; no table is created.
 
+#### Automation execution connection graph
+
+```mermaid
+flowchart LR
+    API[User/API create or assign] --> ASSIGN[Unified task assignment service]
+    TIMER[Scheduled/event automation] --> MANAGER[Automation manager execution]
+    MCP[Manager wework_space tool] --> AUTO[Automation assignment orchestration]
+    MANAGER --> MCP
+    AUTO --> ASSIGN
+
+    ASSIGN --> ITEM[(loop_items<br/>assignee truth)]
+    ASSIGN --> EXEC[(loop_item_executions<br/>execution truth)]
+    EXEC --> ROUTER{Bot runtime activation}
+
+    ROUTER -->|Wework local| PULL[Device pull]
+    ROUTER -->|Wework cloud| CONSUMER[Cloud queue consumer]
+    PULL --> RUNTIME[Wework Runtime]
+    CONSUMER --> RUNTIME
+
+    ROUTER -->|Wegent| JOB[Post-commit dispatch job]
+    JOB --> NATIVE[(Native Task/Subtask)]
+    JOB -.->|Persist terminal dispatch failure| EXEC
+    NATIVE --> TEAM[Wegent Team executor]
+
+    RUNTIME --> EVENTS[Runtime events/heartbeats/terminal]
+    TEAM --> COMPLETE[TaskCompletedEvent]
+    EVENTS --> EXEC
+    COMPLETE --> FENCE[Verify execution/task/subtask/team labels]
+    FENCE --> EXEC
+    EXEC --> VIEW[Queue/card/activity]
+```
+
+Every edge has one owner:
+
+| Edge | Sole responsibility | Current code owner |
+| --- | --- | --- |
+| Entry → assignment | Validate member/Bot and persist assignee | `loop_items/service.py`, `external_provider.py` |
+| Assignment → execution truth | Cancel the old attempt and create a new one | `loop_item_executions/service.py` |
+| Automation → runtime activation | Activate the new execution after assignment commit | `project_automation_execution.py` |
+| Wework activation | Local device pull or cloud consumer claim | `robot_queue_tasks.py`, Wework local puller |
+| Wegent activation | Create Task/Subtask by execution ID and enter Team pipeline | `board_team_execution.py`, `project_automation_tasks.py` |
+| Wegent terminal → execution truth | Project terminal state after strict identity checks | `board_team_completion.py` |
+
+The 2026-08-15 queue defect was a missing edge: HTTP assignment invoked Wegent activation, while an automation manager's internal assignment only created a `queued` execution. Consequently `claimed_at` and `backend_task_id` stayed empty, and device consumers correctly ignored records whose `execution_environment=wegent`. The fix must add the automation-to-runtime-activation edge. It must not send Wegent rows to a Wework device consumer or infer execution from the queue UI.
+
+#### Automation assignment and execution sequence
+
+```mermaid
+sequenceDiagram
+    participant E as Event/scheduler
+    participant M as Automation manager
+    participant A as Assignment orchestration
+    participant L as LoopItem assignment service
+    participant X as loop_item_executions
+    participant R as Runtime activator
+    participant Q as Celery dispatch job
+    participant T as Wegent Task/Subtask
+    participant W as Wegent Team executor
+    participant C as Terminal projector
+
+    E->>M: Create automation run and task carrier
+    M->>A: Select a board Bot through wework_space
+    A->>L: assign(agent_id, automation_run_id)
+    L->>X: Cancel old attempt and create new execution
+    L-->>A: Commit assignee and queued execution
+    A->>R: Activate runtime by new execution_id
+    alt runtime = Wegent
+        alt Activation message enqueued
+            R->>Q: Enqueue execution_id after commit
+            Q->>X: Lock and revalidate queued/Team/owner
+            alt Validation and native Task dispatch succeed
+                Q->>T: Create native Task/Subtask
+                Q->>X: Persist backend_task_id
+                Note over X,T: Native Task labels and execution binding commit atomically
+                Q->>W: Dispatch Team execution
+                W-->>C: TaskCompletedEvent
+                C->>X: Verify execution/task/subtask/team and persist terminal state
+            else Worker activation fails
+                Q->>X: Persist failed instead of leaving queued
+            end
+        else Activation message enqueue fails
+            R->>X: Persist failed instead of leaving queued
+        end
+    else runtime = Wework cloud/local
+        R-->>X: Leave execution claimable by the device queue
+        Note over X: Cloud consumer or local puller claims before Runtime start
+    end
+    X-->>A: Queue, card, and activity only project execution truth
+```
+
+Review the sequence against these invariants, in order:
+
+1. `LoopItem.assignee_agent_id` is always the board Bot; the Wegent Team exists only in Bot configuration and execution `team_id`.
+2. Runtime activation occurs only after assignee and execution commit, so consumers can always read the execution.
+3. Wegent dispatch locks an exact `execution_id` and idempotently checks `backend_task_id`; native Task labels and the execution binding commit together while the lock is held, so it never guesses the latest task or releases the lock before binding.
+4. `queued` only means execution intent is durable. The UI cannot show running before a `backend_task_id` or Runtime acceptance event exists.
+5. Automation run, Bot execution, and native Wegent Task keep separate state boundaries; only fully labelled events project terminal state.
+6. Manual, API, scheduled, and AI-manager assignment converge on one runtime activator. New entry points must not copy dispatch logic.
+7. Failure to enqueue activation, or activation failure in the worker, must persist an explicit `failed` terminal state; an execution with no remaining consumer must never stay `queued`.
+
 ```mermaid
 flowchart LR
     TEAM[Global Wegent Team] -->|bound only in Bot configuration| BOT[Board ProjectChatAgent]
