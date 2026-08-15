@@ -215,11 +215,13 @@ impl RuntimeWorkRpcHandler {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
         }
         let mut event_request = route.request.clone();
-        if let Some(turn_id) = notification_turn_id {
-            if event_request.subtask_id != turn_id {
-                event_request.subtask_id = turn_id;
-                event_request.extra.remove("client_user_message_id");
-                event_request.extra.remove("clientUserMessageId");
+        if !is_context_compaction_request(&event_request) {
+            if let Some(turn_id) = notification_turn_id {
+                if event_request.subtask_id != turn_id {
+                    event_request.subtask_id = turn_id;
+                    event_request.extra.remove("client_user_message_id");
+                    event_request.extra.remove("clientUserMessageId");
+                }
             }
         }
         route.event_mapper.map(
