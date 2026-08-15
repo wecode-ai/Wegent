@@ -713,6 +713,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
+      hasManualZoomRef.current = true
       const delta = e.deltaY > 0 ? -0.1 : 0.1
       setScale(prev => Math.max(0.5, Math.min(3, prev + delta)))
     }
