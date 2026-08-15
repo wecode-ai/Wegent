@@ -2341,6 +2341,71 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
 }
 
 #[test]
+fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
+    let (event_tx, mut event_rx) = broadcast::channel(4);
+    let index_path = temp_runtime_work_index_path("context-compaction-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: format!("{local_task_id}-context-compact"),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "compact-turn-1",
+            "item": {
+                "id": "context-compaction-1",
+                "type": "contextCompaction"
+            }
+        }
+    }));
+
+    let event = event_rx
+        .try_recv()
+        .expect("compaction event should be emitted");
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(
+        event["payload"]["subtaskId"],
+        "runtime-task-1-context-compact"
+    );
+    assert_eq!(
+        event["payload"]["data"]["block"]["tool_name"],
+        "context_compaction"
+    );
+
+    handler.route_codex_notification(json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turn": {
+                "id": "compact-turn-1",
+                "status": "completed",
+                "items": []
+            }
+        }
+    }));
+    assert!(
+        event_rx.try_recv().is_err(),
+        "turn completion must not duplicate an emitted compaction block"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn thread_read_repairs_legacy_activity_time_pollution() {
     let index_path = temp_runtime_work_index_path("repair-legacy-activity-time");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

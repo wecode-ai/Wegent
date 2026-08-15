@@ -1404,6 +1404,51 @@ describe('runtimeConversationTurns', () => {
     }
   })
 
+  test('replaces the optimistic context compaction block with the runtime block', () => {
+    const createdAt = 1_780_000_001_250
+    let turns = reduceRuntimeConversationTurns(
+      [{ id: 'task-1-context-compact', items: [], status: 'streaming' }],
+      {
+        type: 'block_created',
+        subtaskId: 'task-1-context-compact',
+        block: {
+          id: 'context-compaction-optimistic',
+          subtaskId: 'task-1-context-compact',
+          type: 'tool',
+          toolName: 'context_compaction',
+          status: 'pending',
+          createdAt,
+        },
+      }
+    )
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'task-1-context-compact',
+      block: {
+        id: 'context-compaction-runtime',
+        subtaskId: 'task-1-context-compact',
+        type: 'tool',
+        toolName: 'context_compaction',
+        status: 'done',
+        createdAt: createdAt + 500,
+        completedAt: createdAt + 500,
+      },
+    })
+
+    expect(turns[0].items).toHaveLength(1)
+    expect(turns[0].items[0]).toMatchObject({
+      id: 'context-compaction-runtime',
+      type: 'block',
+      block: {
+        id: 'context-compaction-runtime',
+        status: 'done',
+        createdAt,
+        completedAt: createdAt + 500,
+      },
+    })
+  })
+
   test('uses the runtime tool duration when completing a streamed block', () => {
     const createdAt = 1_780_000_001_250
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {

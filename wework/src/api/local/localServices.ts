@@ -3175,42 +3175,44 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
+  const teamApi = {
+    listTeams: async () => [LOCAL_WORKBENCH_TEAM],
+    getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
+  }
+  const modelApi = {
+    listModels: async () => {
+      let codexOfficialModels: CodexOfficialModel[]
+      let codexOfficialError: string | null
+      let codexAuthConfigured: boolean
+      try {
+        await ensureStatus()
+        const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
+          requestLocalCodexOfficialModels(request).then(
+            value => ({ value, error: null }),
+            error => ({
+              value: null,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          ),
+          loadLocalCodexAuthConfigured(request),
+        ])
+        codexOfficialModels = codexOfficialResult.value?.models ?? []
+        codexOfficialError = codexOfficialResult.error
+        codexAuthConfigured = nextCodexAuthConfigured
+      } catch (error) {
+        codexOfficialModels = []
+        codexOfficialError = error instanceof Error ? error.message : String(error)
+        codexAuthConfigured = false
+      }
+      return {
+        data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
+      }
+    },
+  }
 
   return {
-    teamApi: {
-      listTeams: async () => [LOCAL_WORKBENCH_TEAM],
-      getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
-    },
-    modelApi: {
-      listModels: async () => {
-        let codexOfficialModels: CodexOfficialModel[]
-        let codexOfficialError: string | null
-        let codexAuthConfigured: boolean
-        try {
-          await ensureStatus()
-          const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
-            requestLocalCodexOfficialModels(request).then(
-              value => ({ value, error: null }),
-              error => ({
-                value: null,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            ),
-            loadLocalCodexAuthConfigured(request),
-          ])
-          codexOfficialModels = codexOfficialResult.value?.models ?? []
-          codexOfficialError = codexOfficialResult.error
-          codexAuthConfigured = nextCodexAuthConfigured
-        } catch (error) {
-          codexOfficialModels = []
-          codexOfficialError = error instanceof Error ? error.message : String(error)
-          codexAuthConfigured = false
-        }
-        return {
-          data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
-        }
-      },
-    },
+    teamApi,
+    modelApi,
     skillApi: {
       listSkills: async () => [],
       getTeamSkills: async () => ({ skills: [], preload_skills: [] }),
@@ -3254,6 +3256,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     projectSpaceApis: {
       local: deliveryApi,
       defaultLocation: 'local',
+    },
+    projectSpaceDetailServices: {
+      local: {
+        deliveryApi,
+        projectChatClient: localProjectChatClient,
+        projectChatAgentApi: localProjectChatAgentApi,
+        loopItemExecutionApi: localLoopItemExecutionApi,
+        deviceApi,
+        modelApi,
+        teamApi,
+      },
     },
     runtimeWorkApi,
     automationApi,

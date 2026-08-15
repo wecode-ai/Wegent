@@ -183,23 +183,25 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass(
-      'min-h-[76px]',
-      'pb-1.5',
-      'pt-2',
-      'bg-background'
-    )
-    expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
+    const form = screen.getByTestId('project-chat-composer-form')
+    const input = screen.getByTestId('chat-message-input')
+
+    expect(form).toHaveClass('min-h-[76px]', 'pb-1.5', 'pt-2', 'bg-background')
+    expect(form).not.toHaveClass('bg-surface')
+    expect(form).toHaveAttribute('data-short-collapse', 'true')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.getByTestId('project-chat-composer')).toHaveClass(
       'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
     )
-    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
-    expect(screen.getByTestId('chat-message-input')).toHaveClass(
-      'min-h-[48px]',
-      'max-h-[112px]',
-      'pt-1',
-      'placeholder:text-text-muted/55'
-    )
+    expect(input).toHaveAttribute('rows', '1')
+    expect(input).toHaveClass('min-h-8', 'max-h-[112px]', 'pt-1', 'placeholder:text-text-muted/55')
+    fireEvent.click(input)
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+    fireEvent.pointerDown(document.body)
+    fireEvent.blur(input, { relatedTarget: document.body })
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+    fireEvent.click(document.body)
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()

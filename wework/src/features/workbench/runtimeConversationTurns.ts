@@ -651,7 +651,17 @@ function upsertBlocks(
   if (!blocks?.length) return items
   let next = items
   for (const block of blocks) {
-    const index = next.findIndex(item => item.type === 'block' && item.id === block.id)
+    const exactIndex = next.findIndex(item => item.type === 'block' && item.id === block.id)
+    const contextCompactionIndex =
+      exactIndex < 0 && isContextCompactionBlock(block)
+        ? next.findIndex(
+            item =>
+              item.type === 'block' &&
+              item.block.subtaskId === block.subtaskId &&
+              isContextCompactionBlock(item.block)
+          )
+        : -1
+    const index = exactIndex >= 0 ? exactIndex : contextCompactionIndex
     const canonicalItem: RuntimeConversationItem = {
       id: block.id,
       type: 'block',
@@ -663,6 +673,10 @@ function upsertBlocks(
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
   }
   return next
+}
+
+function isContextCompactionBlock(block: ProcessingBlock): boolean {
+  return block.type === 'tool' && block.toolName === 'context_compaction'
 }
 
 function replaceAssistantTextWithBlock(

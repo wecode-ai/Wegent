@@ -1137,18 +1137,59 @@ impl RuntimeWorkRpcHandler {
             runtime_event_request_from_link(&link),
             true,
         );
+        let previous_turn_id = match self.read_codex_recent_turns(&thread_id).await {
+            Ok(thread) => latest_codex_turn_id(&thread),
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
         match self
-            .call_codex_thread_method("thread/compact/start", json!({"threadId": thread_id}))
+            .call_codex_thread_method(
+                "thread/compact/start",
+                json!({"threadId": thread_id.clone()}),
+            )
             .await
         {
             Ok(_) => {
+                let (turn_id, item_id) = match self
+                    .wait_for_context_compaction(&thread_id, previous_turn_id.as_deref())
+                    .await
+                {
+                    Ok(completion) => completion,
+                    Err(error) => return Ok(task_action_failure(&link, error)),
+                };
                 self.store.update_task(&local_task_id, |stored| {
                     stored.updated_at = now_ms();
                 });
-                Ok(task_action_success(&link))
+                let mut response = task_action_success(&link);
+                if let Some(response) = response.as_object_mut() {
+                    response.insert("turnId".to_owned(), Value::String(turn_id));
+                    response.insert("compactionItemId".to_owned(), Value::String(item_id));
+                }
+                Ok(response)
             }
             Err(error) => Ok(task_action_failure(&link, error)),
         }
+    }
+
+    async fn wait_for_context_compaction(
+        &self,
+        thread_id: &str,
+        previous_turn_id: Option<&str>,
+    ) -> Result<(String, String), String> {
+        let mut last_error = None;
+        for _ in 0..CONTEXT_COMPACTION_WAIT_ATTEMPTS {
+            match self.read_codex_recent_turns(thread_id).await {
+                Ok(thread) => {
+                    if let Some(completion) =
+                        completed_context_compaction(&thread, previous_turn_id)
+                    {
+                        return Ok(completion);
+                    }
+                }
+                Err(error) => last_error = Some(error),
+            }
+            sleep(Duration::from_millis(CONTEXT_COMPACTION_WAIT_MS)).await;
+        }
+        Err(last_error.unwrap_or_else(|| "context compaction timed out".to_owned()))
     }
 
     pub(super) async fn resume_codex_thread_for_action(
@@ -1639,9 +1680,39 @@ fn retry_source_turn_id(payload: &Value) -> Option<String> {
         .filter(|turn_id| !turn_id.trim().is_empty())
 }
 
+fn latest_codex_turn_id(thread: &Value) -> Option<String> {
+    thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.last())
+        .and_then(|turn| string_field(turn, "id"))
+}
+
+fn completed_context_compaction(
+    thread: &Value,
+    previous_turn_id: Option<&str>,
+) -> Option<(String, String)> {
+    thread
+        .get("turns")
+        .and_then(Value::as_array)?
+        .iter()
+        .rev()
+        .filter_map(|turn| Some((turn, string_field(turn, "id")?)))
+        .filter(|(_, turn_id)| Some(turn_id.as_str()) != previous_turn_id)
+        .find_map(|(turn, turn_id)| {
+            turn.get("items")
+                .and_then(Value::as_array)?
+                .iter()
+                .find(|item| is_codex_context_compaction_item_type(&item_type(item)))
+                .map(|item| (turn_id, item_id(item, "context_compaction")))
+        })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_friendly_title;
+    use serde_json::json;
+
+    use super::{completed_context_compaction, normalize_friendly_title};
 
     #[test]
     fn normalizes_model_title_to_one_short_line() {
@@ -1654,5 +1725,30 @@ mod tests {
     #[test]
     fn rejects_empty_model_title() {
         assert_eq!(normalize_friendly_title(" \n\t "), None);
+    }
+
+    #[test]
+    fn finds_a_new_completed_context_compaction() {
+        let thread = json!({
+            "turns": [
+                {
+                    "id": "turn-before",
+                    "items": [{"id": "message-1", "type": "agentMessage"}]
+                },
+                {
+                    "id": "turn-compact",
+                    "items": [{"id": "compact-1", "type": "contextCompaction"}]
+                }
+            ]
+        });
+
+        assert_eq!(
+            completed_context_compaction(&thread, Some("turn-before")),
+            Some(("turn-compact".to_owned(), "compact-1".to_owned()))
+        );
+        assert_eq!(
+            completed_context_compaction(&thread, Some("turn-compact")),
+            None
+        );
     }
 }
