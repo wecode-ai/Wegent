@@ -128,6 +128,7 @@ def decide_run_mode(
     days_since_full: Optional[float] = None,
     policy: RunModePolicy = DEFAULT_POLICY,
     total_source_files: Optional[int] = None,
+    force_full: bool = False,
 ) -> RunModeDecision:
     """Choose the mode for one run.
 
@@ -141,7 +142,11 @@ def decide_run_mode(
         policy: Thresholds to apply.
         total_source_files: Files under consideration at ``head_commit``, used for the
             proportional threshold; skipped when unknown.
+        force_full: Whether an explicit caller requested a fresh full rebuild.
     """
+    if force_full:
+        return RunModeDecision(RunMode.FULL, "full rebuild explicitly requested")
+
     if not last_commit:
         return RunModeDecision(RunMode.FULL, "first run for this repository")
 

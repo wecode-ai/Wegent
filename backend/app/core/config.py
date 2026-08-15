@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
@@ -43,6 +44,15 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
 
 
 VALID_RAG_RUNTIME_MODES = {"local", "remote"}
+GIT_TOKEN_CRYPTO_ENV_NAMES = ("GIT_TOKEN_AES_KEY", "GIT_TOKEN_AES_IV")
+
+
+def load_git_token_crypto_environment(env_file: Path) -> None:
+    """Make git-token crypto settings available to the shared crypto module."""
+    values = dotenv_values(env_file, interpolate=False)
+    for name in GIT_TOKEN_CRYPTO_ENV_NAMES:
+        if name not in os.environ and (value := values.get(name)) is not None:
+            os.environ[name] = value
 
 
 def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
@@ -881,6 +891,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+
+# The shared crypto module reads these values directly from ``os.environ`` rather
+# than from ``Settings``. Keep local ``backend/.env`` startup behavior aligned
+# with Docker's explicit environment injection, without overriding deployment
+# environment variables.
+load_git_token_crypto_environment(Path(__file__).resolve().parents[2] / ".env")
 
 # Global configuration instance
 settings = Settings()
