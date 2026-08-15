@@ -81,6 +81,7 @@ export function useLocalConnectorAuthSession({
   const tRef = useRef(t)
   const sessionRef = useRef(0)
   const activeAuthSessionRef = useRef<string | null>(null)
+  const cancelRequestedRef = useRef(false)
   const cancelledAuthSessionsRef = useRef(new Set<string>())
 
   useEffect(() => {
@@ -123,6 +124,7 @@ export function useLocalConnectorAuthSession({
     const browserMode = targetUsesBrowser
 
     const start = async () => {
+      cancelRequestedRef.current = false
       setBusy(true)
       setError(null)
       setStatus(null)
@@ -131,7 +133,7 @@ export function useLocalConnectorAuthSession({
         // executor reading the installed plugin manifest by pluginKey/slug.
         const started = await localConnectorAuthStart(authTarget)
         if (!isCurrent()) {
-          if (started.sessionId) {
+          if (cancelRequestedRef.current && started.sessionId) {
             cancelAuthSession(authTarget, started.sessionId)
           }
           return
@@ -214,12 +216,6 @@ export function useLocalConnectorAuthSession({
       }
       if (startTimer) clearTimeout(startTimer)
       if (pollTimer) clearTimeout(pollTimer)
-      if (authSessionId) {
-        cancelAuthSession(authTarget, authSessionId)
-        if (activeAuthSessionRef.current === authSessionId) {
-          activeAuthSessionRef.current = null
-        }
-      }
     }
   }, [
     enabled,
@@ -237,6 +233,7 @@ export function useLocalConnectorAuthSession({
   }, [])
 
   const cancelActiveSession = useCallback(() => {
+    cancelRequestedRef.current = true
     const sessionId = activeAuthSessionRef.current
     activeAuthSessionRef.current = null
     if (!sessionId) return

@@ -461,6 +461,22 @@ fn browser_auth_sessions() -> &'static Mutex<HashMap<String, BrowserAuthSession>
     BROWSER_AUTH_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+async fn active_browser_auth_state(plugin_key: &str, connector_slug: &str) -> Option<Value> {
+    let state = {
+        let sessions = browser_auth_sessions().lock().await;
+        sessions
+            .values()
+            .find(|session| {
+                session.plugin_key == plugin_key
+                    && session.connector_slug == connector_slug
+                    && !session.task.is_finished()
+            })
+            .map(|session| Arc::clone(&session.state))
+    }?;
+    let response = state.lock().await.clone();
+    Some(response)
+}
+
 async fn start_browser_auth(
     payload: Value,
     plugin_root: PathBuf,
@@ -473,6 +489,9 @@ async fn start_browser_auth(
         .or_else(|| string_field(&payload, "connector_slug"))
         .or_else(|| string_field(&payload, "slug"))
         .ok_or_else(|| AppIpcError::new("bad_request", "connectorSlug is required"))?;
+    if let Some(state) = active_browser_auth_state(&plugin_key, &connector_slug).await {
+        return Ok(state);
+    }
     let session_id = Uuid::new_v4().to_string();
     let state = Arc::new(Mutex::new(browser_session_state(
         "preparing",
@@ -865,6 +884,43 @@ mod tests {
         assert!(missing
             .windows(2)
             .any(|pair| pair == ["--wait-seconds", "0"]));
+    }
+
+    #[tokio::test]
+    async fn reuses_active_browser_auth_session_state() {
+        let plugin_key = format!("plugin-{}", Uuid::new_v4());
+        let connector_slug = "browser-auth".to_owned();
+        let session_id = Uuid::new_v4().to_string();
+        let state = Arc::new(tokio::sync::Mutex::new(browser_session_state(
+            "waiting_browser",
+            "Complete authorization in the browser",
+            &session_id,
+        )));
+        let task = tokio::spawn(async { std::future::pending::<()>().await });
+        browser_auth_sessions().lock().await.insert(
+            session_id.clone(),
+            BrowserAuthSession {
+                plugin_key: plugin_key.clone(),
+                connector_slug: connector_slug.clone(),
+                state,
+                task,
+            },
+        );
+
+        let reused = active_browser_auth_state(&plugin_key, &connector_slug)
+            .await
+            .expect("active session");
+
+        assert_eq!(
+            reused.get("sessionId").and_then(Value::as_str),
+            Some(session_id.as_str())
+        );
+        let session = browser_auth_sessions()
+            .lock()
+            .await
+            .remove(&session_id)
+            .expect("inserted session");
+        session.task.abort();
     }
 
     #[test]
