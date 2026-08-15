@@ -10,6 +10,18 @@ export interface ProjectSpaceOption {
   api: ProjectSpaceApi
 }
 
+export function projectStoreLocation(
+  projectStore: RuntimeProjectSpaceRef['projectStore']
+): 'local' | 'cloud' {
+  return projectStore === 'local' ? 'local' : 'cloud'
+}
+
+export function projectLocationStore(
+  location: 'local' | 'cloud'
+): RuntimeProjectSpaceRef['projectStore'] {
+  return location === 'local' ? 'local' : 'backend'
+}
+
 export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
   return {
     projectStore: project.project_store,
@@ -19,6 +31,14 @@ export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
 
 export function projectSpaceKey(ref: RuntimeProjectSpaceRef): string {
   return `${ref.projectStore}:${ref.projectId}`
+}
+
+export function sameProjectSpace(
+  left: RuntimeProjectSpaceRef | null | undefined,
+  right: RuntimeProjectSpaceRef | null | undefined
+): boolean {
+  if (!left || !right) return left === right
+  return left.projectStore === right.projectStore && left.projectId === right.projectId
 }
 
 export function runtimeCloudProjectId(project: CloudProject | null): string | undefined {

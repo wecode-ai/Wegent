@@ -84,7 +84,7 @@ const item = {
 }
 
 function services(): WorkbenchServices {
-  return {
+  const workbenchServices = {
     deliveryApi: {
       listCloudProjects: vi.fn(async () => ({ items: [project] })),
       createCloudProject: vi.fn(async values => ({
@@ -227,6 +227,55 @@ function services(): WorkbenchServices {
       })),
     },
   } as unknown as WorkbenchServices
+  workbenchServices.projectSpaceDetailServices = {
+    local: {
+      get deliveryApi() {
+        return workbenchServices.projectSpaceApis?.local ?? workbenchServices.deliveryApi!
+      },
+      get projectChatClient() {
+        return workbenchServices.localProjectChatClient
+      },
+      get projectChatAgentApi() {
+        return workbenchServices.localProjectChatAgentApi
+      },
+      get loopItemExecutionApi() {
+        return workbenchServices.localLoopItemExecutionApi
+      },
+      get deviceApi() {
+        return workbenchServices.deviceApi
+      },
+      get modelApi() {
+        return workbenchServices.modelApi
+      },
+      get teamApi() {
+        return workbenchServices.teamApi
+      },
+    },
+    cloud: {
+      get deliveryApi() {
+        return workbenchServices.projectSpaceApis?.cloud ?? workbenchServices.deliveryApi!
+      },
+      get projectChatClient() {
+        return workbenchServices.projectChatClient
+      },
+      get projectChatAgentApi() {
+        return workbenchServices.projectChatAgentApi
+      },
+      get projectAutomationApi() {
+        return workbenchServices.projectAutomationApi
+      },
+      get deviceApi() {
+        return workbenchServices.deviceApi
+      },
+      get modelApi() {
+        return workbenchServices.modelApi
+      },
+      get teamApi() {
+        return workbenchServices.teamApi
+      },
+    },
+  }
+  return workbenchServices
 }
 
 describe('CloudTodoWorkspace', () => {
@@ -247,7 +296,7 @@ describe('CloudTodoWorkspace', () => {
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[]}
         services={services()}
-        activeProjectId={null}
+        activeProjectRef={null}
         onActiveProjectChange={onActiveProjectChange}
       />
     )
@@ -259,6 +308,99 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '项目空间' }))
     expect(onActiveProjectChange).toHaveBeenLastCalledWith(null)
+  })
+
+  it('renders local projects without waiting for the cloud project list', async () => {
+    const localProject = {
+      ...project,
+      id: 21,
+      name: 'Local Board',
+      project_store: 'local' as const,
+    }
+    const localServices = services()
+    const localApi = localServices.deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    const cloudApi = services().deliveryApi!
+    cloudApi.listCloudProjects = vi.fn(() => new Promise(() => undefined))
+    const workbenchServices = {
+      ...localServices,
+      deliveryApi: cloudApi,
+      projectSpaceApis: {
+        local: localApi,
+        cloud: cloudApi,
+        defaultLocation: 'local' as const,
+      },
+    } as WorkbenchServices
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-sidebar-project-21')).toHaveTextContent('Local Board')
+    expect(screen.queryByText('正在加载项目空间…')).not.toBeInTheDocument()
+    expect(localApi.listLoopItems).not.toHaveBeenCalled()
+    expect(localApi.listCloudProjectMembers).not.toHaveBeenCalled()
+  })
+
+  it('keeps local project details inside local services while cloud is unavailable', async () => {
+    const localProject = {
+      ...project,
+      id: 22,
+      name: 'Offline Local',
+      project_store: 'local' as const,
+    }
+    const localItem = { ...item, id: 'LOCAL-1', cloud_project_id: 22 }
+    const localServices = services()
+    const localApi = localServices.deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({ items: [localProject] }))
+    localApi.listLoopItems = vi.fn(async () => ({ items: [localItem] }))
+    const cloudServices = services()
+    const cloudApi = cloudServices.deliveryApi!
+    cloudApi.listCloudProjects = vi.fn(() => new Promise(() => undefined))
+    const workbenchServices = {
+      ...localServices,
+      deliveryApi: cloudApi,
+      projectSpaceApis: {
+        local: localApi,
+        cloud: cloudApi,
+        defaultLocation: 'local' as const,
+      },
+      projectSpaceDetailServices: {
+        local: {
+          deliveryApi: localApi,
+          deviceApi: localServices.deviceApi,
+          modelApi: localServices.modelApi,
+          teamApi: localServices.teamApi,
+        },
+      },
+    } as WorkbenchServices
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-22'))
+    expect(await screen.findByTestId('cloud-todo-card-LOCAL-1')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-files-view'))
+    expect(await screen.findByTestId('cloud-files-upload')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    expect(await screen.findByTestId('cloud-project-members-toggle')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
+
+    expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
+    expect(cloudApi.listCloudProjectMembers).not.toHaveBeenCalled()
+    expect(cloudApi.listCloudFiles).not.toHaveBeenCalled()
+    expect(cloudServices.modelApi.listModels).not.toHaveBeenCalled()
+    expect(cloudServices.deviceApi.listDevices).not.toHaveBeenCalled()
   })
 
   it('resets project-specific view state when a controlled project changes externally', async () => {
@@ -273,7 +415,7 @@ describe('CloudTodoWorkspace', () => {
         user={user}
         localProjects={[]}
         services={workbenchServices}
-        activeProjectId={controlledProject.id}
+        activeProjectRef={{ projectStore: 'backend', projectId: controlledProject.id }}
       />
     )
 
@@ -285,7 +427,7 @@ describe('CloudTodoWorkspace', () => {
         user={user}
         localProjects={[]}
         services={workbenchServices}
-        activeProjectId={null}
+        activeProjectRef={null}
       />
     )
 
@@ -738,14 +880,14 @@ describe('CloudTodoWorkspace', () => {
     }))
     const selectedProjectIds = new Set<number>()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async (projectId: number) => {
-      // The bootstrap preloads counts for every project; only the board fetch
-      // for the selected project stays pending so the skeleton can be asserted.
-      if (selectedProjectIds.has(projectId)) {
+      // Project lists no longer preload board details. Keep each project's first
+      // explicit detail fetch pending so the switching skeleton can be asserted.
+      if (!selectedProjectIds.has(projectId)) {
+        selectedProjectIds.add(projectId)
         await new Promise<void>(resolve => {
           resolveBoardFetch = () => resolve()
         })
       }
-      selectedProjectIds.add(projectId)
       return { items: projectId === 12 ? [otherItem] : [item] }
     })
     render(
@@ -1112,7 +1254,7 @@ describe('CloudTodoWorkspace', () => {
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[]}
         services={workbenchServices}
-        activeProjectId={null}
+        activeProjectRef={null}
         onActiveProjectChange={onActiveProjectChange}
       />
     )

@@ -6,6 +6,7 @@ import { useAuth } from '@/features/auth/useAuth'
 import type {
   IMPrivateSession,
   ProjectWithTasks,
+  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
@@ -88,6 +89,13 @@ function boardRouteParam(contentRoute: string, name: string): string | null {
   const searchIndex = contentRoute.indexOf('?')
   if (searchIndex < 0) return null
   return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get(name)
+}
+
+function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | null {
+  const projectId = boardRouteParam(contentRoute, 'projectId')
+  const projectStore = boardRouteParam(contentRoute, 'projectStore')
+  if (!projectId || (projectStore !== 'local' && projectStore !== 'backend')) return null
+  return { projectId, projectStore }
 }
 
 interface DesktopWorkbenchLayoutProps {
@@ -923,9 +931,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                activeProjectId={
+                activeProjectRef={
                   workspaceTabs?.activeTab.kind === 'board'
-                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'projectId')
+                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                     : undefined
                 }
                 focusedItemId={
@@ -935,12 +943,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 }
                 onFocusedItemHandled={() => {
                   if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
-                  const projectId = boardRouteParam(
-                    workspaceTabs.activeTab.contentRoute,
-                    'projectId'
-                  )
+                  const projectRef = boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                   const params = new URLSearchParams()
-                  if (projectId) params.set('projectId', projectId)
+                  if (projectRef) {
+                    params.set('projectStore', projectRef.projectStore)
+                    params.set('projectId', projectRef.projectId)
+                  }
                   workspaceTabs.updateActiveTab({
                     contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
                   })
@@ -955,6 +963,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                     return
                   }
                   const params = new URLSearchParams()
+                  params.set('projectStore', project.project_store)
                   params.set('projectId', project.id)
                   workspaceTabs.updateActiveTab({
                     title: project.name,

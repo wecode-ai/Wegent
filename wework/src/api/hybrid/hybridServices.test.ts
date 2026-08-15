@@ -1447,6 +1447,52 @@ describe('createHybridWorkbenchServices', () => {
     expect(services.workspaceSessionApi).toBe(mocks.cloudWorkspaceSessionApi)
   })
 
+  it('returns local automations without waiting for an unresponsive cloud executor', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        device_id: 'cloud-device',
+        device_type: 'cloud',
+        status: 'online',
+      },
+    ])
+    mocks.localAutomationApi.listAutomations.mockResolvedValue({
+      items: [
+        {
+          id: 'local-automation',
+          source: 'local',
+          version: 1,
+          name: 'Local automation',
+          description: '',
+          prompt: 'Run locally',
+          schedule: { type: 'interval', value: 1, unit: 'hours' },
+          timezone: 'UTC',
+          enabled: true,
+          conversationMode: 'independent',
+          notificationPolicy: 'all_runs',
+          taskRequest: { deviceId: 'local-device' },
+          createdAt: '2026-08-15T00:00:00Z',
+          updatedAt: '2026-08-15T00:00:00Z',
+        },
+      ],
+    })
+    mocks.cloudRuntimeIpcRequest.mockImplementation(method =>
+      method === 'runtime.automations.list'
+        ? new Promise(() => undefined)
+        : Promise.resolve({ items: [] })
+    )
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+
+    const response = await services.automationApi?.listAutomations()
+
+    expect(response?.items.map(item => item.id)).toEqual(['local-automation'])
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.automations.list',
+      {},
+      'cloud-device'
+    )
+  })
+
   it('routes cloud automations to the selected remote executor', async () => {
     mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, params) => {
       if (method === 'runtime.automations.create') {
