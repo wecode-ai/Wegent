@@ -135,7 +135,31 @@ class ExternalLoopItemProvider:
                 project, self._number(issue), {"state": "closed"}
             )
         item_id = f"{project.project_key}-{self._number(issue)}"
-        if values.assignee_team_id:
+        if values.assignee_agent_id:
+            agent = db.get(ProjectChatAgent, values.assignee_agent_id)
+            if agent is None:  # Already validated while building the label.
+                raise RuntimeError("Validated project robot is unavailable")
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="agent",
+                assignee_id=agent.id,
+                assignee_name=agent.title or agent.name,
+                user_id=user_id,
+            )
+            self._create_execution_for_agent(
+                db,
+                item_id=item_id,
+                project=project,
+                agent=agent,
+                user_id=user_id,
+                priority=values.priority,
+                automation_context=automation_context,
+                instruction=instruction,
+            )
+            db.commit()
+        elif values.assignee_team_id:
             team = runnable_wegent_team(db, user_id, values.assignee_team_id)
             self._ensure_index_row(
                 db,

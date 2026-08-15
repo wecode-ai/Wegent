@@ -661,6 +661,37 @@ export function TaskActivityView({
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
       if (assignedAgent && !selfManagedExecution) {
+        if (assignedAgent.runtime === 'wegent') {
+          if (!client.continueWegentTask) {
+            setCardAiErrors(current => ({
+              ...current,
+              [rootId]: t('workbench.project_chat_agent_start_failed'),
+            }))
+          } else {
+            void client
+              .continueWegentTask({
+                projectId: project.id,
+                taskId: task.id,
+                triggerMessageId: message.messageId,
+                agentId: assignedAgent.id,
+                attachmentIds: attachments.map(attachment => attachment.id),
+              })
+              .then(incoming => {
+                setMessages(current => mergeProjectChatMessages(current, [incoming]))
+              })
+              .catch(cause => {
+                setCardAiErrors(current => ({
+                  ...current,
+                  [rootId]:
+                    cause instanceof Error
+                      ? cause.message
+                      : t('workbench.project_chat_agent_start_failed'),
+                }))
+              })
+          }
+          revealCardBottom(rootId)
+          return { ok: true }
+        }
         // The comment is already posted; keep the input cleared and let the
         // AI start settle in the background, surfacing failures in the card.
         void startTaskAiRun({

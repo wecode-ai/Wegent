@@ -116,9 +116,22 @@ flowchart LR
     INPUT -.-> JOB
     JOB --> NATIVE[(Native Task/Subtask)]
     JOB -.->|Persist terminal dispatch failure| EXEC
-    NATIVE --> TEAM[Wegent Team executor]
-    TEAM -->|Use canonical IDs from the input| MCPREAD[Wegent board MCP]
+    NATIVE --> BUILD[Backend ExecutionRequest builder]
+    BUILD -->|Detect board Task labels| INJECT[Inject Backend board MCP<br/>task-scoped authentication]
+    INJECT --> CHAT[ChatShell]
+    INJECT --> CODE[Executor: ClaudeCode/Codex/Agno]
+    CHAT --> MCPREAD[Backend board MCP<br/>canonical tool contract]
+    CODE --> MCPREAD
     MCPREAD --> ITEM
+
+    RUNTIME --> LOCALMCP[Wework native local Space MCP]
+    LOCALMCP -->|Local/cloud space routing| ITEM
+
+    COMMENT[User replies to a Wegent board comment] --> CONTINUE[Backend continuation resolver]
+    CONTINUE -->|Verify execution + Task + Team + Bot| NATIVE
+    CONTINUE -->|Create User/Assistant Subtasks in the same native Task| TEAM
+    TEAM --> FOLLOWUP[Continuation terminal projector]
+    FOLLOWUP --> VIEW
 
     STOP[Wegent UI/API stop] --> CANCEL[Persist cancellation intent]
     CANCEL -->|Task CANCELLING| NATIVE
@@ -142,10 +155,16 @@ Every edge has one owner:
 | Automation → runtime activation | Activate the new execution after assignment commit | `project_automation_execution.py` |
 | Wework activation | Local device pull or cloud consumer claim | `robot_queue_tasks.py`, Wework local puller |
 | Wegent activation | Create Task/Subtask by execution ID and enter Team pipeline | `board_team_execution.py`, `project_automation_tasks.py` |
+| Wegent board MCP injection | Backend detects board execution from native Task labels and injects the Backend MCP URL plus task-scoped authentication into the same `ExecutionRequest` used by ChatShell and Executor; it must not depend on a caller-owned temporary boolean | `execution/request_builder.py`, `mcp_server/server.py` |
+| Backend board MCP → domain services | Expose the canonical local-Space-MCP tool names and operate through existing Backend CloudProject, LoopItem, file, attachment, delivery, and assignment services; never invoke the Wework local stdio MCP | `mcp_server/tools/wework_space.py` and the corresponding domain services |
+| Wework local MCP | Started only by the Wework Runtime for local project-space and local-path capabilities; it must not replace the remote board MCP injected for a Wegent Runtime | `executor/src/task_runtime/mcp.rs` |
 | Board execution → all runtime inputs | Local, cloud, and Wegent share one visible user input containing canonical IDs, the task URI, and the Bot execution prompt; the runtime reads task content through MCP | `loop_item_executions/profile.py`, `board_team_execution.py` |
 | Wegent terminal → execution truth | Project terminal state after strict identity checks | `board_team_completion.py` |
+| Wegent comment → native continuation | Resolve the exact `backend_task_id` from the reply target and create Subtasks in the same Task; project the result only to that reply without rewriting the terminal execution | `board_team_continuation.py`, `project_automation_tasks.py` |
 | Wegent user stop → cancellation intent | Persist Task `CANCELLING` and execution `cancel_requested`, then send the Runtime cancellation command | `chat_namespace.py`, `board_team_completion.py` |
 | Runtime cancellation ACK → terminal truth | After process-stop confirmation, persist Task/Subtask `CANCELLED` and project board `cancelled` through the unified terminal projector | Rust executor, `status_updating.py`, `board_team_completion.py` |
+
+The Backend board MCP exposes the complete Backend cloud-board domain surface: `get_current_context`; space `list/create/update`; board-item `list/search/create/get/update/reorder`; assignment candidates and `assign`; provider comments; space-file `list/read`; item-attachment `list/upload/read/delete`; and delivery `list/read`. The remote MCP transfers file contents as inline text or Base64 and never accepts a Runtime-local file path. DingTalk AI Table dynamic field/record tools remain a Wework-local provider route and must not be faked when no Backend provider service exists.
 
 The 2026-08-15 queue defect was a missing edge: HTTP assignment invoked Wegent activation, while an automation manager's internal assignment only created a `queued` execution. Consequently `claimed_at` and `backend_task_id` stayed empty, and device consumers correctly ignored records whose `execution_environment=wegent`. The fix must add the automation-to-runtime-activation edge. It must not send Wegent rows to a Wework device consumer or infer execution from the queue UI.
 
@@ -161,6 +180,8 @@ sequenceDiagram
     participant R as Runtime activator
     participant Q as Celery dispatch job
     participant T as Wegent Task/Subtask
+    participant B as Backend request builder
+    participant P as Backend board MCP
     participant W as Wegent Team executor
     participant C as Terminal projector
     participant U as Wegent user
@@ -180,7 +201,11 @@ sequenceDiagram
                 Note over Q,T: User input carries only canonical IDs, the task URI, and the Bot execution prompt; MCP reads task data
                 Q->>X: Persist backend_task_id
                 Note over X,T: Native Task labels and execution binding commit atomically
-                Q->>W: Dispatch Team execution
+                Q->>B: Build ExecutionRequest from Task labels
+                B->>B: Inject board MCP URL + Task Token
+                B->>W: Dispatch to ChatShell or Executor
+                W->>P: Call canonical board tools with injected auth
+                P->>X: Verify Task labels and project role, then read/write board truth
                 alt Team completes or Runtime terminates
                     W->>T: Persist native terminal state
                     W-->>C: TaskCompletedEvent
@@ -223,6 +248,40 @@ Review the sequence against these invariants, in order:
 7. Failure to enqueue activation, or activation failure in the worker, must persist an explicit `failed` terminal state; an execution with no remaining consumer must never stay `queued`.
 8. A Wegent UI/API stop first writes only `CANCELLING/cancel_requested`. Both sides become `CANCELLED/cancelled` only after a Runtime ACK or trustworthy `CANCELLED` callback. Delivery failure cannot invent terminal truth, and the frontend must await and display the server ACK.
 9. All three runtimes use the same visible user input: canonical `project_id`, `task_id`, and `execution_id`, the task `cloud://` URI, and the user-configured Bot execution prompt. The execution prompt never enters a Team/Ghost/Bot system prompt or hidden application context; MCP reads the latest task title, description, and state.
+10. A Wegent comment continuation resolves the native Task from the reply target's exact `execution_id` and `backend_task_id`, then revalidates the current board Bot and Team. It never infers a session from the latest execution, a device runtime list, or frontend memory. Each turn creates Subtasks in the same Task, preserves the execution's terminal state, and uses the reply comment only as that turn's display projection. A native Task may have at most one `pending` or `streaming` continuation at a time so concurrent requests cannot overwrite the active Subtask label or cross-write projections.
+11. Whenever native Wegent Task labels identify a board execution or board automation, Backend injects the board MCP on every request build. ChatShell and Executor consume the same injection result, and continuations never depend on MCP state left in a previous container.
+12. The Backend board MCP and Wework's native local Space MCP are separate runtime boundaries. Backend owns the former with Task Token authentication; Wework Runtime starts the latter locally. They share canonical tool names and domain semantics but never fall back to or overwrite each other.
+13. The Task Token's `task_id/subtask_id` and native Task labels jointly scope the current board space. The model may operate on other items inside that space, but the current item, automation run, and execution identities are resolved by the server and are never guessed, and a Task Token cannot cross the current space boundary.
+
+#### Wegent board comment continuation sequence
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as Wework board
+    participant B as Comment continuation service
+    participant M as project_chat_messages
+    participant T as Native Wegent Task
+    participant Q as Celery dispatch
+    participant R as Team executor
+    participant P as Continuation terminal projector
+
+    U->>UI: Reply to a Wegent Bot comment
+    UI->>M: Persist the user comment
+    UI->>B: trigger_message_id + agent_id
+    B->>M: Lock the user comment and read its reply target
+    B->>B: Verify project/task/execution/agent/team/backend_task_id
+    B->>T: Create User/Assistant Subtasks in the same Task
+    B->>M: Create one pending Bot reply bound to the Subtask
+    B->>Q: Enqueue the persisted continuation
+    Q->>M: pending -> streaming
+    Q->>R: Dispatch the exact Task/Subtask
+    R-->>P: TaskCompletedEvent(task_id, subtask_id)
+    P->>P: Verify Task labels, Subtask, and comment binding
+    P->>M: Persist completed/failed/cancelled and the result
+    M-->>UI: Push this turn's reply
+    Note over B,T: Do not create a local-device Runtime Task or mutate the terminal board execution
+```
 
 ```mermaid
 flowchart LR

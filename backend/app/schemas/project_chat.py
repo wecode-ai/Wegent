@@ -260,6 +260,16 @@ class ProjectChatAgentFailure(ProjectChatSchema):
     error: str | None = Field(default=None, max_length=2_000)
 
 
+class ProjectChatWegentContinuation(ProjectChatSchema):
+    """Continue the native Wegent Task behind one board comment thread."""
+
+    project_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    trigger_message_id: str = Field(min_length=1, max_length=64)
+    agent_id: str = Field(min_length=1, max_length=128)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=64)
+
+
 class ProjectChatMessageView(ProjectChatSchema):
     sequence_number: int
     message_id: str

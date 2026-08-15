@@ -468,10 +468,49 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     assert.equal(teamExecution.agentId, wegentAgent.id)
     assert.equal(Number(teamExecution.teamId), Number(boardTeam.id))
     assert.ok(teamExecution.backendTaskId > 0)
+    const projectedTeamTask = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(item => item.id === teamTask.id)?.ai_state
+          ?.project_chat_message_id,
+      'The completed Wegent execution did not project its board message identity',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.id === teamTask.id))
+    const rootMessageId = projectedTeamTask.ai_state.project_chat_message_id
     await control.command('waitFor', `[data-testid="cloud-todo-detail"]`, {
       text: wegentAgent.name,
       timeoutMs: uiTimeoutMs,
     })
+    await control.command(
+      'waitFor',
+      `[data-testid="cloud-task-activity-message-${rootMessageId}"]`,
+      { timeoutMs: uiTimeoutMs }
+    )
+    const replyComposer = `[data-testid="cloud-task-activity-card-composer-${rootMessageId}"]`
+    await control.command('fill', replyComposer, { value: '确认继续执行' })
+    await control.command('press', replyComposer, { key: 'Enter' })
+    const continuedTask = await waitForValue(
+      () => cloudRequest(`/api/tasks/${teamExecution.backendTaskId}`),
+      task => (task.subtasks ?? []).some(subtask => subtask.prompt === '确认继续执行'),
+      'The board reply did not append a user turn to the native Wegent Task',
+      uiTimeoutMs * 3
+    )
+    assert.equal(continuedTask.id, teamExecution.backendTaskId)
+    const agentExecutionBadgeSelector = '[data-testid^="cloud-task-activity-execution-badge-"]'
+    await waitForValue(
+      () => control.command('getElementCount', agentExecutionBadgeSelector),
+      count => Number(count) === 2,
+      'The native Wegent continuation was not projected as a second agent comment',
+      uiTimeoutMs * 3
+    )
+    const unchangedExecution = await waitForCompletedExecution(
+      projectId,
+      teamTask.id,
+      'project_robot'
+    )
+    assert.equal(unchangedExecution.id, teamExecution.id)
+    assert.equal(unchangedExecution.backendTaskId, teamExecution.backendTaskId)
+    await captureScreenshot(control, 'project-automation-board-team-continuation.png')
     await captureScreenshot(control, 'project-automation-board-team-real.png')
     await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
       timeoutMs: uiTimeoutMs,
@@ -866,7 +905,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           writeEvents([responseCreated(responseId), responseCompleted(responseId)])
           return true
         }
-        const isManagerRequest = serialized.includes('AI 分派调度员，不是任务执行者')
+        const isManagerRequest = serialized.includes(
+          '请读取候选执行者并按调度要求完成分派，不要执行任务。'
+        )
         if (isManagerRequest) {
           assert.ok(cloudAgent?.id, 'AI manager ran before the project robot was prepared')
           const assignment = {

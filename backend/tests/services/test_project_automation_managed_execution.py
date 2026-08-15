@@ -338,6 +338,126 @@ async def test_board_team_completion_updates_only_matching_execution_truth(
 
 
 @pytest.mark.asyncio
+async def test_board_team_continuation_projects_to_its_comment_without_rewriting_execution(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name="board-team-continuation",
+        namespace="default",
+        json={"metadata": {"labels": {}}},
+    )
+    item = LoopItem(
+        id="board-team-continuation-item",
+        cloud_project_id="project-1",
+        title="Continue board task",
+        status="in_review",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add_all([task, item])
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id="project-1",
+        executor_owner_user_id=test_user.id,
+        team_id=8,
+        backend_task_id=task.id,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="completed",
+        observed_state="succeeded",
+        sync_state="in_sync",
+    )
+    test_db.add(execution)
+    test_db.flush()
+    continuation_subtask = Subtask(
+        user_id=test_user.id,
+        task_id=task.id,
+        team_id=8,
+        title="Continue board task",
+        bot_ids=[],
+        role=SubtaskRole.ASSISTANT,
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+    )
+    test_db.add(continuation_subtask)
+    test_db.flush()
+    activity = ProjectChatMessage(
+        message_id="continuation-activity",
+        client_message_id="continuation-activity",
+        project_id="project-1",
+        task_id=item.id,
+        sender_type="agent",
+        sender_id="board-agent-1",
+        sender_name="Board Agent",
+        message_type="agent_chunk",
+        content="",
+        metadata_json={
+            "execution_id": execution.id,
+            "executor_type": "wegent_team",
+            "backend_task_id": task.id,
+            "backend_subtask_id": continuation_subtask.id,
+            "run_status": "running",
+        },
+        agent_id="board-agent-1",
+        runtime_task_id=f"wegent:{task.id}:{continuation_subtask.id}",
+        status="streaming",
+    )
+    test_db.add(activity)
+    test_db.flush()
+    task.json = {
+        "metadata": {
+            "labels": {
+                "source": "board_team_assignment",
+                "boardTeamExecutionId": str(execution.id),
+                "boardTeamSubtaskId": "53",
+                "boardTeamTeamId": "8",
+                "boardTeamActiveSubtaskId": str(continuation_subtask.id),
+                "boardTeamActiveMessageId": activity.message_id,
+                "weworkSpaceProjectId": "project-1",
+                "weworkSpaceTaskId": item.id,
+            }
+        },
+        "status": {"status": "COMPLETED"},
+    }
+    test_db.commit()
+
+    @contextmanager
+    def session():
+        yield test_db
+
+    push = MagicMock()
+    monkeypatch.setattr("app.services.board_team_completion.get_db_session", session)
+    monkeypatch.setattr(
+        "app.services.board_team_continuation.push_project_chat_message", push
+    )
+    from app.services.board_team_completion import handle_board_team_task_completed
+
+    await handle_board_team_task_completed(
+        TaskCompletedEvent(
+            task_id=task.id,
+            subtask_id=continuation_subtask.id,
+            user_id=test_user.id,
+            status="COMPLETED",
+            result={"value": "继续执行完成"},
+        )
+    )
+
+    test_db.refresh(activity)
+    test_db.refresh(execution)
+    assert activity.status == "completed"
+    assert activity.content == "继续执行完成"
+    assert activity.metadata_json["run_status"] == "completed"
+    assert execution.status == "completed"
+    assert execution.observed_state == "succeeded"
+    push.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_board_team_cancel_event_projects_runtime_acknowledged_truth(
     test_db,
     test_user,

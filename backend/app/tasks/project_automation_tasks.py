@@ -156,6 +156,61 @@ def execute_managed_project_automation(
 
 
 @celery_app.task(
+    name="app.tasks.project_automation_tasks.execute_board_team_continuation"
+)
+def execute_board_team_continuation(
+    *,
+    task_id: int,
+    assistant_subtask_id: int,
+    user_subtask_id: int,
+    team_id: int,
+    user_id: int,
+    prompt: str,
+) -> dict[str, int | str]:
+    """Execute one persisted follow-up turn in a board Bot's native Task."""
+
+    from app.services.board_team_continuation import (
+        CONTINUATION_SOURCE,
+        fail_board_team_continuation,
+    )
+    from app.services.project_automation_managed_execution import (
+        ManagedTeamExecutionHandle,
+        project_automation_managed_execution_service,
+    )
+
+    handle = ManagedTeamExecutionHandle(
+        task_id=task_id,
+        subtask_id=assistant_subtask_id,
+        source=CONTINUATION_SOURCE,
+    )
+    try:
+        dispatched = asyncio.run(
+            project_automation_managed_execution_service.execute(
+                handle=handle,
+                user_subtask_id=user_subtask_id,
+                team_id=team_id,
+                user_id=user_id,
+                prompt=prompt,
+                source=CONTINUATION_SOURCE,
+            )
+        )
+    except Exception as exc:
+        error = str(exc) or "Wegent continuation dispatch failed"
+        logger.exception("Board Team continuation failed: task_id=%s", task_id)
+        fail_board_team_continuation(
+            task_id=task_id,
+            subtask_id=assistant_subtask_id,
+            user_id=user_id,
+            error=error,
+        )
+        raise
+    return {
+        "status": "dispatched" if dispatched else "skipped",
+        "task_id": task_id,
+    }
+
+
+@celery_app.task(
     name="app.tasks.project_automation_tasks.cancel_managed_board_team_execution"
 )
 def cancel_managed_board_team_execution(*, task_id: int, user_id: int) -> bool:

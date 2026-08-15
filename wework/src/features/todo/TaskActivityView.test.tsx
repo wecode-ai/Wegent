@@ -1618,6 +1618,102 @@ describe('TaskActivityView', () => {
     expect(createProjectRuntimeTask).not.toHaveBeenCalled()
   })
 
+  it('continues a Wegent board Task without creating a local runtime task', async () => {
+    agentsMock.value = [
+      {
+        ...agentsMock.value[0],
+        runtime: 'wegent',
+        wegentTeamId: 32,
+      },
+    ]
+    const user = userEvent.setup()
+    const rootMessage: ProjectChatMessage = {
+      ...agentMessage,
+      messageId: 'wegent-result-1',
+      content: '请确认下一步。',
+      metadata: {
+        execution_id: 229,
+        executor_type: 'wegent_team',
+        backend_task_id: 288,
+      },
+      status: 'completed',
+      rootMessageId: null,
+      runtimeAddress: null,
+    }
+    const triggerMessage: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 3,
+      messageId: 'confirmation-1',
+      content: '确认',
+      replyToMessageId: rootMessage.messageId,
+      rootMessageId: rootMessage.messageId,
+    }
+    const continuationMessage: ProjectChatMessage = {
+      ...agentMessage,
+      sequenceNumber: 4,
+      messageId: 'wegent-continuation-1',
+      metadata: {
+        execution_id: 229,
+        executor_type: 'wegent_team',
+        backend_task_id: 288,
+        backend_subtask_id: 301,
+      },
+      triggerMessageId: triggerMessage.messageId,
+      replyToMessageId: triggerMessage.messageId,
+      rootMessageId: rootMessage.messageId,
+      runtimeAddress: null,
+      status: 'pending',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [rootMessage], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => triggerMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      continueWegentTask: vi.fn(async () => continuationMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            status: 'in_review',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+        linear
+      />
+    )
+
+    await user.type(
+      await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),
+      '确认{Enter}'
+    )
+
+    await waitFor(() => expect(client.continueWegentTask).toHaveBeenCalledOnce())
+    expect(client.continueWegentTask).toHaveBeenCalledWith({
+      projectId: '11',
+      taskId: 'WEG-1',
+      triggerMessageId: 'confirmation-1',
+      agentId: '12',
+      attachmentIds: [],
+    })
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(
+      await screen.findByTestId('cloud-task-activity-message-wegent-continuation-1')
+    ).toBeInTheDocument()
+  })
+
   it('replies to the parent comment from the card composer by default', async () => {
     const user = userEvent.setup()
     const rootMessage: ProjectChatMessage = {

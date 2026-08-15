@@ -20,7 +20,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import LoopItemResponse, LoopItemUpdate
+from app.schemas.delivery import LoopItemCreate, LoopItemResponse, LoopItemUpdate
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -33,6 +33,7 @@ from app.services.loop_items.external_provider import (
     ASSIGNEE_PREFIX,
     external_loop_item_provider,
 )
+from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 
 
@@ -135,8 +136,17 @@ def _mock_issue(monkeypatch: pytest.MonkeyPatch) -> None:
         state["issue"] = issue
         return dict(issue)
 
+    def create_issue(_project, title, description, labels):
+        issue = _issue()
+        issue["title"] = title
+        issue["description"] = description
+        issue["labels"] = list(labels)
+        state["issue"] = issue
+        return dict(issue)
+
     monkeypatch.setattr(external_loop_item_provider, "_get_issue", get_issue)
     monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+    monkeypatch.setattr(external_loop_item_provider, "_create_issue", create_issue)
 
 
 def _active_execution(db: Session, item_id: str) -> LoopItemExecution | None:
@@ -221,6 +231,52 @@ def test_assign_wegent_runtime_robot_on_gitlab_keeps_robot_identity(
     assert row.assignee_team_id is None
     assert row.assignee_agent_id == bot.id
     execution = _active_execution(test_db, _item_id(project))
+    assert execution is not None
+    assert execution.team_id == team.id
+    assert execution.agent_id == bot.id
+    assert execution.executor_type == "project_robot"
+
+
+def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"external-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    _mock_issue(monkeypatch)
+    bot = _make_bot(
+        test_db,
+        project,
+        test_user,
+        runtime="wegent",
+        wegent_team_id=team.id,
+    )
+
+    created = loop_item_provider_router.create(
+        test_db,
+        project,
+        test_user,
+        LoopItemCreate(
+            title="Created and assigned",
+            assignee_agent_id=bot.id,
+        ),
+        automation_context={"run_id": "automation-run-1"},
+        instruction="Handle the external issue",
+    )
+
+    assert created.values["assignee_agent_id"] == bot.id
+    assert created.internal_item is not None
+    assert created.internal_item.assignee_agent_id == bot.id
+    execution = _active_execution(test_db, str(created.values["id"]))
     assert execution is not None
     assert execution.team_id == team.id
     assert execution.agent_id == bot.id

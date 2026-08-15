@@ -171,6 +171,20 @@ async def handle_board_team_task_completed(event: TaskCompletedEvent) -> None:
     """Accept terminal state only from the labelled Team Task for this run."""
 
     with get_db_session() as db:
+        from app.services.board_team_continuation import (
+            project_board_team_continuation,
+        )
+
+        if project_board_team_continuation(
+            db,
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            user_id=event.user_id,
+            status_value=event.status,
+            content=_result_text(event.result),
+            error=event.error,
+        ):
+            return
         if event.status.upper() == "CANCELLED":
             project_board_team_cancellation(db, event)
             return

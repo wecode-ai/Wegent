@@ -36,6 +36,7 @@ from shared.telemetry.decorators import trace_async
 logger = logging.getLogger(__name__)
 
 _TERMINAL_TASK_STATUSES = {"COMPLETED", "FAILED", "CANCELLED", "DELETE"}
+_BOARD_TEAM_SOURCES = {"board_team_assignment", "board_team_continuation"}
 
 
 @dataclass(frozen=True)
@@ -329,7 +330,7 @@ class ProjectAutomationManagedExecutionService:
         from app.services.execution import execution_dispatcher
         from app.services.execution.emitters import SSEResultEmitter
 
-        if source == "board_team_assignment":
+        if source in _BOARD_TEAM_SOURCES:
             from app.services.board_team_completion import (
                 register_board_team_completion_handler,
             )
@@ -378,8 +379,20 @@ class ProjectAutomationManagedExecutionService:
                     execution.status,
                 )
                 return False
-        else:
+        elif source == "project_automation":
             mark_project_automation_dispatch_started(task_id=handle.task_id)
+        elif source == "board_team_continuation":
+            from app.services.board_team_continuation import (
+                mark_board_team_continuation_started,
+            )
+
+            mark_board_team_continuation_started(
+                task_id=handle.task_id,
+                subtask_id=handle.subtask_id,
+                user_id=user_id,
+            )
+        else:
+            raise ValueError(f"Unsupported managed execution source: {source}")
         objects = self._load_detached_execution_objects(
             handle=handle,
             team_id=team_id,
@@ -437,7 +450,10 @@ class ProjectAutomationManagedExecutionService:
             if task is None or task.user_id != user_id:
                 return False
             labels = ProjectAutomationManagedExecutionService._labels(task)
-            if labels.get("source") != source:
+            expected_task_source = (
+                "board_team_assignment" if source in _BOARD_TEAM_SOURCES else source
+            )
+            if labels.get("source") != expected_task_source:
                 return False
             try:
                 labelled_subtask_id = int(
@@ -445,7 +461,11 @@ class ProjectAutomationManagedExecutionService:
                         (
                             "boardTeamSubtaskId"
                             if source == "board_team_assignment"
-                            else "projectAutomationSubtaskId"
+                            else (
+                                "boardTeamActiveSubtaskId"
+                                if source == "board_team_continuation"
+                                else "projectAutomationSubtaskId"
+                            )
                         )
                     ]
                 )
@@ -497,14 +517,16 @@ class ProjectAutomationManagedExecutionService:
             if task is None or task.user_id != user_id or subtask is None:
                 return False
             labels = ProjectAutomationManagedExecutionService._labels(task)
-            subtask_label = (
-                "boardTeamSubtaskId"
-                if source == "board_team_assignment"
-                else "projectAutomationSubtaskId"
+            subtask_label = {
+                "board_team_assignment": "boardTeamSubtaskId",
+                "board_team_continuation": "boardTeamActiveSubtaskId",
+            }.get(source, "projectAutomationSubtaskId")
+            expected_task_source = (
+                "board_team_assignment" if source in _BOARD_TEAM_SOURCES else source
             )
-            if labels.get("source") != source or labels.get(subtask_label) != str(
-                handle.subtask_id
-            ):
+            if labels.get("source") != expected_task_source or labels.get(
+                subtask_label
+            ) != str(handle.subtask_id):
                 return False
             task_crd = Task.model_validate(task.json)
             task_status = task_crd.status.status if task_crd.status else None

@@ -2647,6 +2647,7 @@ export function CloudTodoWorkspace({
           mode="edit"
           api={selectedItemApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          teamApi={services.teamApi}
           projectChatClient={selectedProjectChatClient}
           selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
@@ -2719,6 +2720,7 @@ export function CloudTodoWorkspace({
           mode="create"
           api={createTodoApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          teamApi={services.teamApi}
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}

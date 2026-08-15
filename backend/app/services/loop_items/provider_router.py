@@ -51,7 +51,7 @@ class LoopItemProviderRouter:
                 )
             internal_item = (
                 db.get(LoopItem, str(created["id"]))
-                if values.assignee_team_id
+                if values.assignee_agent_id or values.assignee_team_id
                 else None
             )
             return RoutedLoopItem(values=created, internal_item=internal_item)

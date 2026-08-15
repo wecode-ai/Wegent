@@ -116,9 +116,22 @@ flowchart LR
     INPUT -.-> JOB
     JOB --> NATIVE[(原生 Task/Subtask)]
     JOB -.->|派发失败写终态| EXEC
-    NATIVE --> TEAM[Wegent Team 执行器]
-    TEAM -->|使用输入中的规范 ID| MCPREAD[Wegent 看板 MCP]
+    NATIVE --> BUILD[Backend ExecutionRequest 构建器]
+    BUILD -->|按看板 Task 标签判定| INJECT[注入 Backend 看板 MCP<br/>任务级认证]
+    INJECT --> CHAT[ChatShell]
+    INJECT --> CODE[Executor: ClaudeCode/Codex/Agno]
+    CHAT --> MCPREAD[Backend 看板 MCP<br/>统一工具契约]
+    CODE --> MCPREAD
     MCPREAD --> ITEM
+
+    RUNTIME --> LOCALMCP[Wework 本地原生 Space MCP]
+    LOCALMCP -->|本地/云空间路由| ITEM
+
+    COMMENT[用户回复 Wegent 看板评论] --> CONTINUE[后端续聊解析器]
+    CONTINUE -->|校验 execution + Task + Team + 机器人| NATIVE
+    CONTINUE -->|同一原生 Task 新建 User/Assistant Subtask| TEAM
+    TEAM --> FOLLOWUP[续聊终态投影]
+    FOLLOWUP --> VIEW
 
     STOP[Wegent UI/API 主动停止] --> CANCEL[持久化取消意图]
     CANCEL -->|Task CANCELLING| NATIVE
@@ -142,10 +155,16 @@ flowchart LR
 | 自动化 → runtime 激活 | 在指派事务提交后激活新执行 | `project_automation_execution.py` |
 | Wework 激活 | 本地设备领取或云消费者 claim | `robot_queue_tasks.py`、Wework 本地 puller |
 | Wegent 激活 | 按 execution ID 创建 Task/Subtask 并入 Team 管线 | `board_team_execution.py`、`project_automation_tasks.py` |
+| Wegent 看板 MCP 注入 | Backend 从原生 Task 标签识别看板执行，为 ChatShell 与 Executor 的同一 `ExecutionRequest` 注入 Backend MCP URL 和任务级认证；不得依赖调用方临时布尔参数 | `execution/request_builder.py`、`mcp_server/server.py` |
+| Backend 看板 MCP → 领域服务 | 使用与本地 Space MCP 一致的规范工具名，通过 Backend 现有 CloudProject、LoopItem、文件、附件、交付和指派服务操作；不得转调 Wework 本地 stdio MCP | `mcp_server/tools/wework_space.py` 及对应领域服务 |
+| Wework 本地 MCP | 仅由 Wework Runtime 原生启动，负责本地项目空间和本地文件路径能力；不得覆盖 Backend 为 Wegent Runtime 注入的远程看板 MCP | `executor/src/task_runtime/mcp.rs` |
 | 看板执行 → 三端输入 | 本地、云端和 Wegent 共用可见 user input：规范 ID、任务 URI、机器人执行提示词；任务正文由 runtime 通过 MCP 读取 | `loop_item_executions/profile.py`、`board_team_execution.py` |
 | Wegent 终态 → 执行真值 | 严格校验全部关联 ID 后投影终态 | `board_team_completion.py` |
+| Wegent 评论 → 原生续聊 | 从回复目标解析精确 `backend_task_id`，在同一 Task 新建 Subtask；续聊结果只投影到对应评论，不重写已终结的 execution | `board_team_continuation.py`、`project_automation_tasks.py` |
 | Wegent 主动停止 → 取消意图 | 原生 Task 写 `CANCELLING`，看板 execution 写 `cancel_requested`，再发送 Runtime 取消命令 | `chat_namespace.py`、`board_team_completion.py` |
 | Runtime 取消 ACK → 两侧终态 | Runtime 确认进程停止后写 Task/Subtask `CANCELLED` 并通过统一终态投影器写看板 `cancelled` | Rust executor、`status_updating.py`、`board_team_completion.py` |
+
+Backend 看板 MCP 必须完整暴露 Backend 云看板已有的领域能力：`get_current_context`，空间的 `list/create/update`，看板任务的 `list/search/create/get/update/reorder`，指派候选与 `assign`，provider 评论，空间文件的 `list/read`，任务附件的 `list/upload/read/delete`，以及交付的 `list/read`。远程 MCP 的文件内容使用内联文本或 Base64 传输，不接受 Runtime 本地文件路径。钉钉 AI 表格的动态字段/记录工具属于 Wework 本地 provider 路由，不得在没有 Backend provider 服务时伪造同名实现。
 
 2026-08-15 的排队缺陷来自一条缺失连线：HTTP 指派会调用 Wegent 激活器，但自动化调度员通过内部服务指派后只创建了 `queued` 执行记录，没有激活 runtime。结果是 `claimed_at`、`backend_task_id` 永远为空，设备消费者也不会领取 `execution_environment=wegent` 的记录。修复必须补上“自动化 → runtime 激活”这条边，不能把 Wegent 记录交给 Wework 设备消费者，也不能从队列 UI 推断执行已启动。
 
@@ -161,6 +180,8 @@ sequenceDiagram
     participant R as Runtime 激活器
     participant Q as Celery 派发任务
     participant T as Wegent Task/Subtask
+    participant B as Backend 请求构建器
+    participant P as Backend 看板 MCP
     participant W as Wegent Team 执行器
     participant C as 终态投影器
     participant U as Wegent 用户
@@ -180,7 +201,11 @@ sequenceDiagram
                 Note over Q,T: user input 仅携带规范 ID、任务 URI 和机器人执行提示词；任务数据由 MCP 读取
                 Q->>X: 写 backend_task_id
                 Note over X,T: 原生 Task 标签与 execution 绑定在同一事务提交
-                Q->>W: 派发 Team 执行
+                Q->>B: 按 Task 标签构建 ExecutionRequest
+                B->>B: 注入看板 MCP URL + Task Token
+                B->>W: 派发到 ChatShell 或 Executor
+                W->>P: 使用规范看板工具（认证随请求注入）
+                P->>X: 校验 Task 标签和项目权限后读写看板
                 alt Team 自然结束或运行时终止
                     W->>T: 写原生终态
                     W-->>C: TaskCompletedEvent
@@ -223,6 +248,40 @@ sequenceDiagram
 7. 激活消息无法入队或 worker 激活失败时必须写明确的 `failed` 终态；没有消费者会继续处理的 execution 不得保留为 `queued`。
 8. Wegent 前端/API 主动停止只能先写 `CANCELLING/cancel_requested`；只有 Runtime ACK 或可信 `CANCELLED` 回调才能写两侧 `CANCELLED/cancelled`。取消发送失败不得伪造终态，前端必须等待并显示服务端 ACK。
 9. 三种 runtime 必须使用同一份可见 user input：规范 `project_id`、`task_id`、`execution_id`、任务 `cloud://` URI，以及用户配置的机器人执行提示词。执行提示词不得进入 Team/Ghost/Bot system prompt，也不得藏入 application context；任务标题、描述和状态由 MCP 读取最新值。
+10. Wegent 评论续聊必须从回复目标携带的 `execution_id` 和 `backend_task_id` 精确解析原生 Task，并再次校验当前看板机器人和 Team；不得从“最新执行”、设备运行列表或前端内存猜测会话。每轮续聊在同一 Task 新建 Subtask，execution 保持原终态，回复评论是该轮展示投影。同一原生 Task 同一时刻最多允许一个 `pending` 或 `streaming` 续聊，防止并发请求覆盖活动 Subtask 标签或串写投影。
+11. 只要原生 Wegent Task 的标签表明它来自看板执行或看板自动化，Backend 就必须在每一轮构建请求时注入看板 MCP；ChatShell 与 Executor 共用同一注入结果，续聊不得依赖上一轮容器内的 MCP 配置。
+12. Backend 看板 MCP 与 Wework 本地原生 Space MCP 是两个 runtime 边界。前者由 Backend 托管并使用 Task Token，后者由 Wework Runtime 本地启动；二者复用规范工具名和领域语义，但不得互相 fallback 或覆盖。
+13. Task Token 的 `task_id/subtask_id` 和原生 Task 标签共同限定当前看板空间。模型可以操作该空间内的其他任务，但当前任务、自动化 run 和 execution 身份必须由服务端解析，不能要求模型猜 ID，也不能用 Task Token 越过当前空间。
+
+#### Wegent 看板评论续聊时序图
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant UI as Wework 看板
+    participant B as 评论续聊服务
+    participant M as project_chat_messages
+    participant T as 原生 Wegent Task
+    participant Q as Celery 派发
+    participant R as Team 执行器
+    participant P as 续聊终态投影器
+
+    U->>UI: 回复 Wegent 机器人评论
+    UI->>M: 持久化用户评论
+    UI->>B: trigger_message_id + agent_id
+    B->>M: 锁定用户评论并读取回复目标
+    B->>B: 校验 project/task/execution/agent/team/backend_task_id
+    B->>T: 在同一 Task 创建 User/Assistant Subtask
+    B->>M: 创建唯一 pending 机器人回复并绑定 subtask
+    B->>Q: 提交持久化后的续聊任务
+    Q->>M: pending -> streaming
+    Q->>R: 派发精确 Task/Subtask
+    R-->>P: TaskCompletedEvent(task_id, subtask_id)
+    P->>P: 校验 Task 标签、Subtask 和评论绑定
+    P->>M: 写 completed/failed/cancelled 与结果
+    M-->>UI: 推送该轮回复
+    Note over B,T: 不创建 local-device Runtime Task，不改变已终结的看板 execution
+```
 
 ```mermaid
 flowchart LR
