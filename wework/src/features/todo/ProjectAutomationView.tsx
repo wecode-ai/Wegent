@@ -66,6 +66,7 @@ export function ProjectAutomationView({
           projectChatAgentApi={projectChatAgentApi}
           deviceApi={deviceApi}
           modelApi={modelApi}
+          teamApi={teamApi}
           localProjects={localProjects}
           runtimeWork={runtimeWork}
           canManage={canManageAgents}
@@ -82,7 +83,6 @@ export function ProjectAutomationView({
               api={api}
               project={project}
               projectChatAgentApi={projectChatAgentApi}
-              teamApi={teamApi}
               executionApi={executionApi}
               currentUserId={currentUserId}
               onOpenTask={onOpenTask}

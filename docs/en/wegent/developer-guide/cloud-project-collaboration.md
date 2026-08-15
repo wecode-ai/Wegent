@@ -85,14 +85,15 @@ Completed TODOs may be reopened into `in_progress`. Updates carry a `version` va
 
 ### Board execution by Bots and Agents
 
-A board assignee is an exclusive union of a project member, a project Bot (`ProjectChatAgent`), or a Wegent Agent (`Kind(kind=Team)`). A Team must not be stored in the Bot's `assignee_agent_id`, because that would discard its multi-Bot composition, collaboration mode, models, Skills, and MCP configuration. The implementation adds references to the existing `loop_items` and `loop_item_executions` tables and creates no table.
+A board assignee is either a project member or a project Bot (`ProjectChatAgent`). A Wegent Agent (`Kind(kind=Team)`) is runtime configuration for that Bot, not an assignee: the user creates a Bot in the board, selects Wegent as its execution environment, and binds one runnable Team. The binding lives in the Bot's existing `metadata_json`; no table is created.
 
 ```mermaid
 flowchart LR
-    UI[Wework board] -->|assignee_type=team| API[LoopItem assignment API]
-    API --> TEAM[Validate an accessible runnable Team]
-    API --> ITEM[(loop_items.assignee_team_id)]
-    API --> EXEC[(loop_item_executions.team_id)]
+    TEAM[Global Wegent Team] -->|bound only in Bot configuration| BOT[Board ProjectChatAgent]
+    UI[Wework board] -->|assignee_type=agent| API[LoopItem assignment API]
+    API --> ITEM[(loop_items.assignee_agent_id)]
+    ITEM --> BOT
+    API --> EXEC[(loop_item_executions: agent_id + team_id)]
     EXEC --> TASK[(existing tasks / subtasks)]
     TASK --> PIPELINE[Native Wegent Team pipeline]
     PIPELINE --> EVENT[TaskCompletedEvent]
@@ -110,8 +111,8 @@ sequenceDiagram
     participant T as Wegent Task
     participant R as Team executor
 
-    U->>B: Assign task to Agent
-    B->>B: Validate Team access and runtime readiness
+    U->>B: Assign task to board Bot
+    B->>B: Read Bot runtime and validate its bound Team
     B->>E: Create queued execution
     B->>T: Create native Task/Subtask with identity labels
     B->>E: Persist backend_task_id
@@ -131,7 +132,7 @@ sequenceDiagram
 
 Reassignment and stop first move board truth to `cancel_requested` when a process may exist, or `cancelled` when execution provably has not started, then route cancellation to the device Runtime or native Team Task. A delayed worker must recheck board execution truth after claiming and cannot start a cancelled run.
 
-Attempts for one board task share the `wegent_team:{loop_item_id}` execution scope and therefore serialize. Different board tasks may enter the native Team pipeline concurrently; the Team collaboration configuration controls its internal parallelism. Existing per-device and per-Bot limits for project Bots remain separate from Team execution.
+Execution scope remains owned by the board Bot. `agent_id` determines queue columns, assignment history, and concurrency identity; `team_id` records only the actual Wegent runtime target. Different board tasks may still enter the native Team pipeline concurrently, where Team collaboration configuration controls internal parallelism.
 
 ### LoopItemTaskBinding
 

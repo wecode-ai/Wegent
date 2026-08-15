@@ -415,6 +415,9 @@ class LoopItemExecutionService:
             else inferred_context
         )
         mode = str(bot_config(agent).get("execution_mode") or "auto")
+        config = bot_config(agent)
+        runtime = str(config.get("runtime") or "codex")
+        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
         return self._enqueue(
             db,
             loop_item_id=loop_item_id,
@@ -422,10 +425,10 @@ class LoopItemExecutionService:
             executor_type="project_robot",
             owner_user_id=int(agent.created_by_user_id or 0),
             agent_id=agent.id,
-            team_id=None,
+            team_id=team_id,
             assigner_user_id=assigner_user_id,
-            environment=environment,
-            execution_device_id=execution_device_id,
+            environment="wegent" if runtime == "wegent" else environment,
+            execution_device_id=None if runtime == "wegent" else execution_device_id,
             priority=priority,
             automation_context=effective_context,
             requires_approval=mode == "manual_approval",

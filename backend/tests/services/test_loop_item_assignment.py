@@ -45,6 +45,8 @@ def _make_bot(
     *,
     mode: str = "auto",
     visibility: str = "public",
+    runtime: str = "codex",
+    wegent_team_id: int | None = None,
 ) -> ProjectChatAgent:
     device_id = f"local-{uuid.uuid4().hex[:10]}"
     db.add(
@@ -64,9 +66,10 @@ def _make_bot(
         name="Queue Bot",
         status="active",
         created_by_user_id=user.id,
-        device_id=device_id,
+        device_id=device_id if runtime == "codex" else None,
         metadata_json={
-            "runtime": "codex",
+            "runtime": runtime,
+            "wegent_team_id": wegent_team_id,
             "execution_mode": mode,
             "execution_environment": "local",
             "visibility": visibility,
@@ -161,10 +164,9 @@ def test_assign_to_robot_enters_queue_with_history(
     assert execution.assigner_user_id == test_user.id
 
 
-def test_assign_to_wegent_team_uses_team_execution_truth(
+def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
     test_db: Session,
     test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
@@ -179,9 +181,12 @@ def test_assign_to_wegent_team_uses_team_execution_truth(
     test_db.add(team)
     test_db.commit()
     test_db.refresh(team)
-    monkeypatch.setattr(
-        "app.services.loop_items.service.runnable_wegent_team",
-        lambda db, user_id, team_id: team,
+    bot = _make_bot(
+        test_db,
+        project,
+        test_user,
+        runtime="wegent",
+        wegent_team_id=team.id,
     )
 
     updated = loop_item_service.assign(
@@ -191,22 +196,23 @@ def test_assign_to_wegent_team_uses_team_execution_truth(
         user_id=test_user.id,
         values=LoopItemAssign(
             version=item.version,
-            assignee_type="team",
-            assignee_id=str(team.id),
+            assignee_type="agent",
+            assignee_id=bot.id,
         ),
     )
 
-    assert updated.assignee_team_id == team.id
+    assert updated.assignee_team_id is None
     assert updated.assignee_user_id is None
-    assert updated.assignee_agent_id == ""
+    assert updated.assignee_agent_id == bot.id
     history = (updated.metadata_json or {})["assignment_history"]
-    assert history[-1]["to_type"] == "team"
-    assert history[-1]["to_id"] == str(team.id)
+    assert history[-1]["to_type"] == "agent"
+    assert history[-1]["to_id"] == bot.id
     execution = _active_execution(test_db, updated)
     assert execution is not None
-    assert execution.executor_type == "wegent_team"
+    assert execution.executor_type == "project_robot"
     assert execution.team_id == team.id
-    assert execution.agent_id == ""
+    assert execution.agent_id == bot.id
+    assert execution.execution_environment == "wegent"
     assert execution.status == "queued"
 
 

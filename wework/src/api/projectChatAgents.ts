@@ -4,7 +4,8 @@ export interface ProjectChatAgent {
   id: string
   projectId: string
   name: string
-  runtime: 'codex'
+  runtime: 'codex' | 'wegent'
+  wegentTeamId?: number | null
   model: string | null
   systemPrompt: string
   capabilityDescription?: string

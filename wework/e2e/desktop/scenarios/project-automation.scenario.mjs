@@ -190,9 +190,7 @@ async function requestJson(baseUrl, authToken, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...fetchOptions,
     headers: {
-      ...(useApiKey
-        ? { 'X-API-Key': authToken }
-        : { Authorization: `Bearer ${authToken}` }),
+      ...(useApiKey ? { 'X-API-Key': authToken } : { Authorization: `Bearer ${authToken}` }),
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...options.headers,
     },
@@ -288,6 +286,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
+  let wegentAgent = null
   let cloudTeam = null
   let personalApiKey = null
   let managerToolCalls = 0
@@ -356,9 +355,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       `Automation ${ruleId} did not reach succeeded${taskId ? ` for ${taskId}` : ''}`,
       uiTimeoutMs * 3
     ).then(items =>
-      items.find(
-        item => item.status === 'succeeded' && (taskId === null || item.taskId === taskId)
-      )
+      items.find(item => item.status === 'succeeded' && (taskId === null || item.taskId === taskId))
     )
   }
 
@@ -404,6 +401,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         localProjectId: null,
       }),
     })
+    wegentAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Wegent Runtime Robot',
+        runtime: 'wegent',
+        wegentTeamId: Number(boardTeam.id),
+        systemPrompt: '',
+        capabilityDescription: 'Execute through the bound Wegent Agent.',
+        visibility: 'creator_admin',
+        executionMode: 'auto',
+      }),
+    })
+    assert.equal(wegentAgent.runtime, 'wegent')
+    assert.equal(Number(wegentAgent.wegentTeamId), Number(boardTeam.id))
     assert.equal(
       cloudAgent.executionDeviceId,
       CLOUD_DEVICE_ID,
@@ -434,35 +445,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     })
     const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
     await control.command('waitFor', assigneeSelector, {
-      text: boardTeam.displayName || boardTeam.name,
+      text: wegentAgent.name,
       timeoutMs: uiTimeoutMs,
     })
     await control.command('fill', assigneeSelector, {
-      value: `team:${boardTeam.id}`,
+      value: `agent:${wegentAgent.id}`,
     })
-    assert.equal(await control.command('getValue', assigneeSelector), `team:${boardTeam.id}`)
+    assert.equal(await control.command('getValue', assigneeSelector), `agent:${wegentAgent.id}`)
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
     const teamTask = await waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
       response =>
         (response.items ?? []).find(
           item =>
-            item.title === '真实后端智能体看板任务' &&
-            Number(item.assignee_team_id) === Number(boardTeam.id)
+            item.title === '真实后端智能体看板任务' && item.assignee_agent_id === wegentAgent.id
         ),
-      'Board task was not assigned to the Wegent Team by the real backend',
+      'Board task was not assigned to the Wegent-runtime robot by the real backend',
       uiTimeoutMs
     ).then(response => response.items.find(item => item.title === '真实后端智能体看板任务'))
-    const teamExecution = await waitForCompletedExecution(
-      projectId,
-      teamTask.id,
-      'wegent_team'
-    )
-    assert.equal(teamExecution.executorType, 'wegent_team')
+    const teamExecution = await waitForCompletedExecution(projectId, teamTask.id, 'project_robot')
+    assert.equal(teamExecution.executorType, 'project_robot')
+    assert.equal(teamExecution.agentId, wegentAgent.id)
     assert.equal(Number(teamExecution.teamId), Number(boardTeam.id))
     assert.ok(teamExecution.backendTaskId > 0)
     await control.command('waitFor', `[data-testid="cloud-todo-detail"]`, {
-      text: boardTeam.displayName || boardTeam.name,
+      text: wegentAgent.name,
       timeoutMs: uiTimeoutMs,
     })
     await captureScreenshot(control, 'project-automation-board-team-real.png')
@@ -637,15 +644,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         body: JSON.stringify(values),
       })
 
-    const directTeamTask = await createTask('API · Wegent 智能体直接执行', {
-      assignee_team_id: Number(cloudTeam.id),
+    const directTeamTask = await createTask('API · Wegent runtime 机器人执行', {
+      assignee_agent_id: wegentAgent.id,
     })
-    assert.equal(Number(directTeamTask.assignee_team_id), Number(cloudTeam.id))
+    assert.equal(directTeamTask.assignee_agent_id, wegentAgent.id)
     const directTeamExecution = await waitForCompletedExecution(
       projectId,
       directTeamTask.id,
-      'wegent_team'
+      'project_robot'
     )
+    assert.equal(directTeamExecution.agentId, wegentAgent.id)
     assert.equal(Number(directTeamExecution.teamId), Number(cloudTeam.id))
     assert.ok(directTeamExecution.backendTaskId > 0)
 
@@ -705,7 +713,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     )
     assert.equal(customManagerExecution.automationRunId, customManagerRun.id)
     assert.equal(customRobotExecution.automationRunId, customManagerRun.id)
-    assert.ok(managerToolCalls > customToolCallsBefore, 'Custom AI manager did not call assign_board_item')
+    assert.ok(
+      managerToolCalls > customToolCallsBefore,
+      'Custom AI manager did not call assign_board_item'
+    )
     await disableRule(projectId, customManagerRule)
 
     const wegentManagerRule = await createRule({
@@ -733,7 +744,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       'project_robot'
     )
     assert.equal(wegentRobotExecution.automationRunId, wegentManagerRun.id)
-    assert.ok(managerToolCalls > wegentToolCallsBefore, 'Wegent manager did not call assign_board_item')
+    assert.ok(
+      managerToolCalls > wegentToolCallsBefore,
+      'Wegent manager did not call assign_board_item'
+    )
     await disableRule(projectId, wegentManagerRule)
 
     const scheduleRule = await createRule({
@@ -764,12 +778,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     assert.equal(scheduleExecution.automationRunId, scheduleRun.id)
 
     const boardItems = await cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`)
-    for (const task of [
-      directTeamTask,
-      manualEventTask,
-      customManagerTask,
-      wegentManagerTask,
-    ]) {
+    for (const task of [directTeamTask, manualEventTask, customManagerTask, wegentManagerTask]) {
       assert.ok(
         boardItems.items.some(item => item.id === task.id),
         `API-created task ${task.id} was not projected back to the board`

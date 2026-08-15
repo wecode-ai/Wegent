@@ -16,6 +16,7 @@ def _to_camel(value: str) -> str:
 BotVisibility = Literal["private", "creator_admin", "public"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
+BotRuntime = Literal["codex", "wegent"]
 
 
 class ProjectChatSchema(BaseModel):
@@ -24,7 +25,8 @@ class ProjectChatSchema(BaseModel):
 
 class ProjectChatAgentCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=100)
-    runtime: Literal["codex"] = "codex"
+    runtime: BotRuntime = "codex"
+    wegent_team_id: int | None = Field(default=None, ge=1)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
@@ -38,6 +40,8 @@ class ProjectChatAgentCreate(ProjectChatSchema):
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
     version: int = Field(ge=1)
+    runtime: BotRuntime | None = None
+    wegent_team_id: int | None = Field(default=None, ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default=None, max_length=20_000)
@@ -55,7 +59,8 @@ class ProjectChatAgentView(ProjectChatSchema):
     id: str
     project_id: str
     name: str
-    runtime: Literal["codex"]
+    runtime: BotRuntime
+    wegent_team_id: int | None
     model: str | None
     system_prompt: str
     capability_description: str
@@ -74,10 +79,10 @@ class ProjectChatAgentView(ProjectChatSchema):
 
 
 class LoopItemAssign(ProjectChatSchema):
-    """Assign a loop item to a project member, robot, or Wegent Team."""
+    """Assign a loop item to a project member or board robot."""
 
     version: int = Field(ge=1)
-    assignee_type: Literal["user", "agent", "team"]
+    assignee_type: Literal["user", "agent"]
     assignee_id: str = Field(min_length=1, max_length=128)
 
 

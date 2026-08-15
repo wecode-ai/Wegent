@@ -85,14 +85,15 @@ inbox → pending → in_progress → in_review → completed
 
 ### 看板任务的机器人与智能体执行
 
-看板负责人是互斥联合类型：项目成员、项目机器人（`ProjectChatAgent`）或 Wegent 智能体（`Kind(kind=Team)`）三者最多存在一个。智能体不能写入机器人的 `assignee_agent_id`，否则会丢失 Team 内的多 Bot、协作模式、模型、Skill 与 MCP 配置。实现只在现有 `loop_items` 和 `loop_item_executions` 增加关联字段，不新建表。
+看板负责人只允许项目成员或项目机器人（`ProjectChatAgent`）。Wegent 智能体（`Kind(kind=Team)`）是机器人的 runtime 配置，不是负责人：用户先在当前看板创建机器人，再把执行环境设为 Wegent 并绑定一个可运行的 Team。绑定保存在机器人现有 `metadata_json` 中，不新建表。
 
 ```mermaid
 flowchart LR
-    UI[Wework 看板] -->|assignee_type=team| API[LoopItem 分配接口]
-    API --> TEAM[校验可访问且可运行的 Team]
-    API --> ITEM[(loop_items.assignee_team_id)]
-    API --> EXEC[(loop_item_executions.team_id)]
+    TEAM[全局 Wegent Team] -->|仅在机器人配置时绑定| BOT[看板 ProjectChatAgent]
+    UI[Wework 看板] -->|assignee_type=agent| API[LoopItem 分配接口]
+    API --> ITEM[(loop_items.assignee_agent_id)]
+    ITEM --> BOT
+    API --> EXEC[(loop_item_executions: agent_id + team_id)]
     EXEC --> TASK[(现有 tasks / subtasks)]
     TASK --> PIPELINE[原生 Wegent Team 执行管线]
     PIPELINE --> EVENT[TaskCompletedEvent]
@@ -110,8 +111,8 @@ sequenceDiagram
     participant T as Wegent Task
     participant R as Team 执行器
 
-    U->>B: 分配任务给智能体
-    B->>B: 校验 Team 可访问且执行依赖就绪
+    U->>B: 分配任务给看板机器人
+    B->>B: 读取机器人 runtime 并校验绑定 Team
     B->>E: 创建 queued 执行记录
     B->>T: 创建原生 Task/Subtask 并写入关联标签
     B->>E: 写入 backend_task_id
@@ -131,7 +132,7 @@ sequenceDiagram
 
 重分配和停止操作先推进看板执行记录到 `cancel_requested`（尚可能存在真实进程）或 `cancelled`（确认尚未启动），再把取消路由到对应的设备 Runtime 或原生 Team Task。旧工作线程即使稍后领取到消息，也必须重新检查执行记录，不能启动已经取消的运行。
 
-同一看板任务的 Team 尝试通过 `wegent_team:{loop_item_id}` 执行域串行化；不同任务仍可进入原生 Team 管线并由 Team 的协作配置决定内部并行度。项目机器人的单设备与单机器人并发限制保持原逻辑，不与 Team 执行混用。
+同一任务的执行域始终按看板机器人归属。`agent_id` 决定队列列、分配历史和并发身份，`team_id` 只记录 Wegent runtime 的实际目标；不同任务进入原生 Team 管线后，Team 的协作配置仍决定内部并行度。
 
 ### LoopItemTaskBinding
 

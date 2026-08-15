@@ -183,7 +183,7 @@ async def assign_loop_item(
         response = external_loop_item_provider.assign(
             db, item_id, current_user.id, values
         )
-        if values.assignee_type == "team":
+        if values.assignee_type == "agent":
             from app.services.board_team_execution import (
                 dispatch_board_team_assignment,
             )
@@ -204,7 +204,7 @@ async def assign_loop_item(
         user_id=current_user.id,
         values=values,
     )
-    if values.assignee_type == "team":
+    if values.assignee_type == "agent":
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)

@@ -57,7 +57,6 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
-  Team,
   User as UserProfile,
 } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
@@ -725,7 +724,6 @@ export function CloudTodoWorkspace({
   // Active robots of the selected project, used to resolve the assignee name
   // of robot-assigned tasks (local loop items only carry the agent id).
   const [projectAgents, setProjectAgents] = useState<Record<string, ProjectChatAgent[]>>({})
-  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
   // Every project's loop items, cached for the projects-home overview
   // (stats, recent activity). Keyed by project id.
   const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
@@ -1038,26 +1036,6 @@ export function CloudTodoWorkspace({
   }, [selectedProjectAgentApi, selectedProjectId])
 
   useEffect(() => {
-    if (selectedProject?.location !== 'cloud' || !services.teamApi) {
-      return
-    }
-    let cancelled = false
-    void services.teamApi
-      .listTeams()
-      .then(teams => {
-        if (!cancelled) setWegentTeams(teams.filter(team => team.is_active !== false))
-      })
-      .catch(() => {
-        if (!cancelled) setWegentTeams([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedProject?.location, services.teamApi])
-
-  const selectedProjectTeams = selectedProject?.location === 'cloud' ? wegentTeams : []
-
-  useEffect(() => {
     if (!selectedProjectId || !selectedProjectLocation) return
     track('board_view_opened', {
       source: selectedProjectLocation,
@@ -1173,31 +1151,6 @@ export function CloudTodoWorkspace({
               sourceStatus: null,
               groupValue: `agent:${agent.agent_id}`,
               dotClass: 'bg-indigo-500',
-            })),
-            ...Array.from(
-              new Map(
-                [
-                  ...selectedProjectTeams,
-                  ...items.flatMap(item =>
-                    item.assignee_team_id
-                      ? [
-                          {
-                            id: item.assignee_team_id,
-                            name: item.assignee_team_name || String(item.assignee_team_id),
-                            is_active: true,
-                          } as Team,
-                        ]
-                      : []
-                  ),
-                ].map(team => [team.id, team])
-              ).values()
-            ).map(team => ({
-              key: `assignee-team-${team.id}`,
-              label: team.displayName || team.name,
-              status: 'inbox',
-              sourceStatus: null,
-              groupValue: `team:${team.id}`,
-              dotClass: 'bg-violet-500',
             })),
             {
               key: 'assignee-unassigned',
@@ -2694,12 +2647,6 @@ export function CloudTodoWorkspace({
           mode="edit"
           api={selectedItemApi}
           projectChatAgentApi={selectedProjectAgentApi}
-          teamApi={
-            projects.find(project => project.id === selectedItem.cloud_project_id)?.location ===
-            'cloud'
-              ? services.teamApi
-              : undefined
-          }
           projectChatClient={selectedProjectChatClient}
           selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
@@ -2772,7 +2719,6 @@ export function CloudTodoWorkspace({
           mode="create"
           api={createTodoApi}
           projectChatAgentApi={selectedProjectAgentApi}
-          teamApi={createTodoProject.location === 'cloud' ? services.teamApi : undefined}
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}

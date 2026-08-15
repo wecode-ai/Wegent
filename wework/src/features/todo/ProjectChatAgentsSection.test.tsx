@@ -71,7 +71,17 @@ function services(initialAgents: ProjectChatAgent[] = []) {
     ]),
     executeCommand: vi.fn(async () => ({ success: true, stdout: 'true' })),
   }
-  return { projectChatAgentApi, modelApi, deviceApi, list, create, update }
+  const teamApi = {
+    listTeams: vi.fn(async () => [
+      {
+        id: 42,
+        name: 'development-team',
+        displayName: 'Development Team',
+        is_active: true,
+      },
+    ]),
+  }
+  return { projectChatAgentApi, modelApi, deviceApi, teamApi, list, create, update }
 }
 
 function renderSection(mock: ReturnType<typeof services>) {
@@ -81,6 +91,7 @@ function renderSection(mock: ReturnType<typeof services>) {
       projectChatAgentApi={mock.projectChatAgentApi}
       deviceApi={mock.deviceApi}
       modelApi={mock.modelApi}
+      teamApi={mock.teamApi}
       localProjects={[]}
       canManage
     />
@@ -88,6 +99,37 @@ function renderSection(mock: ReturnType<typeof services>) {
 }
 
 describe('ProjectChatAgentsSection', () => {
+  it('binds a Wegent Agent inside the board robot runtime configuration', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-environment'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-environment-option-wegent')
+    )
+
+    expect(screen.queryByTestId('cloud-project-chat-agent-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-chat-agent-model')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-wegent-team'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-wegent-team-option-42')
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(mock.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          runtime: 'wegent',
+          wegentTeamId: 42,
+          executionDeviceId: null,
+          localProjectId: null,
+        })
+      )
+    )
+  })
+
   it('offers three templates with breathing room when no robots have been added', async () => {
     const mock = services()
     renderSection(mock)

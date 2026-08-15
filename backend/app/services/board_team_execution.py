@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Dispatch Team-assigned board tasks through the native Wegent pipeline."""
+"""Dispatch Wegent-runtime board robots through the native Wegent pipeline."""
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
@@ -47,15 +47,25 @@ async def dispatch_board_team_assignment(
     item: LoopItem,
     user: User,
 ) -> LoopItemExecution | None:
-    """Dispatch the newest undispatched Team execution for one assigned item."""
+    """Dispatch the newest Wegent-runtime execution for one assigned robot."""
 
-    if not item.assignee_team_id:
+    if not item.assignee_agent_id:
         return None
+    agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+    if agent is None:
+        return None
+    from app.services.project_chat.service import bot_config
+
+    config = bot_config(agent)
+    if config.get("runtime") != "wegent" or config.get("wegent_team_id") is None:
+        return None
+    team_id = int(config["wegent_team_id"])
     execution = (
         db.query(LoopItemExecution)
         .filter(
             LoopItemExecution.loop_item_id == item.id,
-            LoopItemExecution.team_id == item.assignee_team_id,
+            LoopItemExecution.agent_id == item.assignee_agent_id,
+            LoopItemExecution.team_id == team_id,
             LoopItemExecution.status == "queued",
         )
         .order_by(LoopItemExecution.id.desc())
@@ -63,7 +73,7 @@ async def dispatch_board_team_assignment(
     )
     if execution is None or execution.backend_task_id:
         return execution
-    team = db.get(Kind, item.assignee_team_id)
+    team = db.get(Kind, team_id)
     if team is None or team.kind != "Team" or not team.is_active:
         raise RuntimeError("Assigned Wegent Team is unavailable")
     prompt, title = _execution_prompt(db, item=item, execution=execution)

@@ -295,7 +295,7 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if created.internal_item.assignee_team_id:
+        if created.internal_item.assignee_agent_id:
             from app.services.board_team_execution import (
                 dispatch_board_team_assignment,
             )
@@ -369,17 +369,17 @@ async def update_loop_item(
         response = external_loop_item_provider.update(
             db, item_id, current_user.id, values
         )
-        if values.assignee_team_id:
+        if values.assignee_agent_id:
             from app.services.board_team_execution import dispatch_board_team_assignment
 
             item = db.get(LoopItem, item_id)
             if item is None:
-                raise RuntimeError("External Team assignment index is unavailable")
+                raise RuntimeError("External robot assignment index is unavailable")
             await dispatch_board_team_assignment(db, item=item, user=current_user)
             response = external_loop_item_provider.get(db, item_id, current_user.id)
         return LoopItemResponse.model_validate(response)
     item = loop_item_service.update(db, item_id, current_user.id, values)
-    if item.assignee_team_id and "assignee_team_id" in values.model_fields_set:
+    if item.assignee_agent_id and "assignee_agent_id" in values.model_fields_set:
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)

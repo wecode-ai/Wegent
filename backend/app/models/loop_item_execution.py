@@ -212,6 +212,6 @@ class LoopItemExecution(Base):
     def executor_type(self) -> str:
         """Return the transport role without persisting redundant state."""
 
-        if self.team_id:
-            return "wegent_team"
-        return "project_robot" if self.agent_id else "automation_manager"
+        if self.agent_id:
+            return "project_robot"
+        return "wegent_team" if self.team_id else "automation_manager"
