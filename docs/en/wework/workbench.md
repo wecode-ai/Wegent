@@ -26,6 +26,8 @@ Select a project name to expand or collapse its runtime tasks. Collapsed project
 
 Drag a task from the sidebar to the top, bottom, left, or right target in the workbench to create a split in that direction. Dropping on the center target replaces the task in the current area. Once the pointer enters the workbench, sidebar sorting and automatic scrolling stop so they cannot take over the split operation. Move the pointer back into the sidebar to resume task reordering.
 
+A split is saved as a conversation group. Tasks in the same group show the same **Split N** badge in the sidebar. Selecting any member restores the complete split group and focuses that task. Selecting a task outside the group switches to a single-task view without replacing a member of the saved split; selecting any member later returns to the group. Multiple split groups can be retained, but a task belongs to only one group at a time. A group dissolves automatically when closing panes leaves only one task.
+
 ## Start a new task
 
 The new-task page uses compact suggestion buttons to help choose a task direction. Selecting a direction reveals more specific prompts. Selecting a prompt writes it into the composer, where it can still be edited before sending.

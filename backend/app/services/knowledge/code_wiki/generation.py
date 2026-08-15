@@ -168,6 +168,7 @@ def start_generation(
     task_id: int = 0,
     policy: Optional[RunModePolicy] = None,
     now: Optional[datetime] = None,
+    force_full: bool = False,
 ) -> StartedGeneration:
     """Begin a run, unless there is nothing to do or one is already going.
 
@@ -185,6 +186,7 @@ def start_generation(
         task_id: Task driving the run, when one exists yet.
         policy: Thresholds promoting an incremental run to a full one.
         now: Reference time, for tests.
+        force_full: Whether to rebuild from an empty generation regardless of diff.
 
     Returns:
         The started run, or a decision explaining why none was needed.
@@ -233,6 +235,7 @@ def start_generation(
         total_source_files=total_source_files,
         incrementals_since_full=since_full[0],
         days_since_full=since_full[1],
+        force_full=force_full,
         # Passed only when given: the callee defaults it, and forwarding ``None``
         # would replace that default with nothing.
         **({"policy": policy} if policy is not None else {}),

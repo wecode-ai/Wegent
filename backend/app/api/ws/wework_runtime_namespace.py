@@ -167,6 +167,13 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         except (RuntimeRpcError, DeviceCommandError) as exc:
             return ipc_error(data, "runtime_rpc_failed", str(exc), request_id)
 
+        if result.get("success") is False:
+            return ipc_error(
+                data,
+                "runtime_rpc_failed",
+                runtime_rpc_failure_message(result, method),
+                request_id,
+            )
         return {"id": request_id, "ok": True, "result": result}
 
     async def on_project_chat_subscribe(self, sid: str, data: dict) -> dict:
@@ -340,6 +347,19 @@ def ipc_error(
         "ok": False,
         "error": {"code": code, "message": message},
     }
+
+
+def runtime_rpc_failure_message(result: dict, method: str) -> str:
+    """Translate an executor runtime failure envelope into an IPC error."""
+
+    error = result.get("error")
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+    return f"Runtime RPC '{method}' failed"
 
 
 def request_id_from(data: Any) -> str:

@@ -222,6 +222,8 @@ describe('loadProjectEnvironment', () => {
             title: 'feat(wework): show pull request status',
             state: 'OPEN',
             isDraft: false,
+            mergeable: 'CONFLICTING',
+            mergeStateStatus: 'DIRTY',
             statusCheckRollup: [
               { status: 'COMPLETED', conclusion: 'SUCCESS' },
               { status: 'IN_PROGRESS', conclusion: '' },
@@ -252,6 +254,7 @@ describe('loadProjectEnvironment', () => {
         state: 'open',
         draft: false,
         checks: 'pending',
+        mergeability: 'conflicting',
       },
     })
     expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
@@ -402,6 +405,7 @@ describe('loadProjectEnvironment', () => {
     expect(info.changeRequest?.changeRequest).toMatchObject({
       state: 'merged',
       checks: 'success',
+      mergeability: 'unknown',
     })
   })
 
@@ -552,6 +556,7 @@ describe('loadProjectEnvironment', () => {
         state: 'open',
         draft: true,
         checks: 'success',
+        mergeability: 'unknown',
       },
     })
   })

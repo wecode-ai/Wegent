@@ -836,17 +836,6 @@ export function useWorkbenchDataRefresh({
     )
   }, [])
 
-  const updateLocalRuntimeTaskExecution = useCallback(
-    (address: RuntimeTaskAddress, running: boolean, status: string) => {
-      localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
-        running,
-        status,
-        optimistic: true,
-      })
-    },
-    []
-  )
-
   const updateLocalRuntimeTaskSupervisor = useCallback(
     (address: RuntimeTaskAddress, supervisor: RuntimeSupervisorState | null) => {
       localRuntimeWorkRef.current = updateRuntimeWorkTask(localRuntimeWorkRef.current, address, {
@@ -905,7 +894,6 @@ export function useWorkbenchDataRefresh({
     refreshWorkLists,
     refreshRuntimeTask,
     refreshDevices,
-    updateLocalRuntimeTaskExecution,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,

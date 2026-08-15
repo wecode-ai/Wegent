@@ -1,10 +1,12 @@
-fn normalize_inactive_running_task(link: &mut RuntimeTaskLink) {
-    if !is_inactive_running_task(link) {
+fn normalize_settled_task_state(link: &mut RuntimeTaskLink) {
+    if link.running || link.completed_at.is_none() || link.status == "archived" {
         return;
     }
-    link.status = "active".to_owned();
-    link.running = false;
-    link.thread_status = "idle".to_owned();
+
+    link.status = settled_task_status(link).to_owned();
+    if runtime_status_is_running(&link.thread_status) {
+        link.thread_status = "idle".to_owned();
+    }
     if link
         .turn_status
         .as_deref()
@@ -12,7 +14,35 @@ fn normalize_inactive_running_task(link: &mut RuntimeTaskLink) {
     {
         link.turn_status = Some("completed".to_owned());
     }
-    link.updated_at = now_ms();
+}
+
+fn settled_task_status(link: &RuntimeTaskLink) -> &'static str {
+    let statuses = [
+        link.status.as_str(),
+        link.thread_status.as_str(),
+        link.turn_status.as_deref().unwrap_or_default(),
+    ];
+    if statuses.iter().any(|status| {
+        matches!(
+            normalized_runtime_status(status).as_str(),
+            "failed" | "error" | "systemerror"
+        )
+    }) {
+        return "failed";
+    }
+    if statuses.iter().any(|status| {
+        matches!(
+            normalized_runtime_status(status).as_str(),
+            "cancelled" | "canceled" | "interrupted" | "aborted"
+        )
+    }) {
+        return "cancelled";
+    }
+    "done"
+}
+
+fn normalized_runtime_status(status: &str) -> String {
+    status.replace(['_', '-'], "").to_ascii_lowercase()
 }
 
 fn apply_local_execution_state(
@@ -45,7 +75,8 @@ fn apply_local_execution_state(
         return;
     }
     if !running {
-        normalize_inactive_running_task(link);
+        link.running = false;
+        normalize_settled_task_state(link);
         return;
     }
 
@@ -53,17 +84,6 @@ fn apply_local_execution_state(
     link.status = "running".to_owned();
     link.thread_status = "active".to_owned();
     link.turn_status = Some("inProgress".to_owned());
-}
-
-fn is_inactive_running_task(link: &RuntimeTaskLink) -> bool {
-    if !link.running {
-        return false;
-    }
-    let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();
-    matches!(
-        status.as_str(),
-        "running" | "inprogress" | "busy" | "pending"
-    )
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {

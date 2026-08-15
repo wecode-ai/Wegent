@@ -3,6 +3,7 @@ import type { LocalLoopItemExecution } from './local/localDelivery'
 
 export type ProjectAutomationRunStatus =
   | 'pending'
+  | 'queued'
   | 'waiting_device'
   | 'running'
   | 'succeeded'
@@ -10,17 +11,19 @@ export type ProjectAutomationRunStatus =
   | 'skipped'
   | 'cancelled'
 
-export interface ProjectAutomationRule {
+interface ProjectAutomationRuleBase {
   id: string
   projectId: string
   name: string
   prompt: string
-  cronExpression: string
+  triggerType: 'schedule' | 'event'
+  eventType: 'task.created' | null
+  eventConfig: Record<string, unknown>
+  webhookEventId: string | null
+  webhookSecret: string | null
+  cronExpression: string | null
   timezone: string
-  agentId: string
   agentName: string
-  executionEnvironment: 'local' | 'cloud'
-  executionDeviceId: string | null
   enabled: boolean
   nextRunAt: string | null
   lastRunAt: string | null
@@ -30,35 +33,102 @@ export interface ProjectAutomationRule {
   updatedAt: string
 }
 
+export type ProjectAutomationRule = ProjectAutomationRuleBase &
+  (
+    | {
+        assignmentMode: 'manual'
+        managerType: null
+        agentId: string
+        wegentTeamId: null
+        model: string | null
+        executionEnvironment: 'local' | 'cloud'
+        executionDeviceId: string | null
+      }
+    | {
+        assignmentMode: 'ai_managed'
+        managerType: 'custom'
+        agentId: null
+        wegentTeamId: null
+        model: string
+        executionEnvironment: 'local' | 'cloud'
+        executionDeviceId: string
+      }
+    | {
+        assignmentMode: 'ai_managed'
+        managerType: 'wegent'
+        agentId: null
+        wegentTeamId: number
+        model: null
+        executionEnvironment: 'managed'
+        executionDeviceId: null
+      }
+  )
+
 export interface ProjectAutomationRun {
   id: string
   automationId: string
   projectId: string
-  trigger: 'scheduled' | 'manual'
+  trigger: 'scheduled' | 'manual' | 'event'
   status: ProjectAutomationRunStatus
   timezone: string
   scheduledFor: string
   expiresAt: string | null
   taskId: string | null
+  taskTitle?: string | null
+  backendTaskId: number | null
   deviceId: string | null
   error: string | null
   createdAt: string
   updatedAt: string
+  completedAt: string | null
+  retryable?: boolean
 }
 
-export interface ProjectAutomationInput {
+interface ProjectAutomationInputBase {
   name: string
   prompt: string
-  cronExpression: string
+  triggerType: 'schedule' | 'event'
+  eventType: 'task.created' | null
+  eventConfig: Record<string, unknown>
+  cronExpression: string | null
   timezone: string
-  agentId: string
   enabled: boolean
 }
 
+export type ProjectAutomationInput = ProjectAutomationInputBase &
+  (
+    | {
+        assignmentMode: 'manual'
+        managerType: null
+        agentId: string
+        wegentTeamId: null
+        model: null
+        executionEnvironment: null
+        executionDeviceId: null
+      }
+    | {
+        assignmentMode: 'ai_managed'
+        managerType: 'custom'
+        agentId: null
+        wegentTeamId: null
+        model: string
+        executionEnvironment: 'local' | 'cloud'
+        executionDeviceId: string
+      }
+    | {
+        assignmentMode: 'ai_managed'
+        managerType: 'wegent'
+        agentId: null
+        wegentTeamId: number
+        model: null
+        executionEnvironment: null
+        executionDeviceId: null
+      }
+  )
+
 function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
-  const payload = (row.executionPayload as Record<string, unknown> | null) ?? null
-  const request = (payload?.executionRequest as Record<string, unknown> | undefined) ?? {}
-  const bots = Array.isArray(request.bot) ? request.bot : []
+  const payload = (row.runtimePayload as Record<string, unknown> | null) ?? null
+  const bots = Array.isArray(payload?.bot) ? payload.bot : []
   const bot = (bots[0] as Record<string, unknown> | undefined) ?? {}
   return {
     id: Number(row.id),
@@ -84,7 +154,7 @@ function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
     agent_name: String(bot.name ?? 'AI'),
     agent_system_prompt: String(bot.system_prompt ?? bot.systemPrompt ?? ''),
     agent_model: payload?.modelId == null ? null : String(payload.modelId),
-    execution_payload: payload,
+    runtime_payload: payload,
   }
 }
 
@@ -168,6 +238,12 @@ export function createProjectAutomationApi(client: HttpClient) {
     delete(projectId: string, automationId: string) {
       return client.delete<void>(`/v1/cloud-projects/${projectId}/automations/${automationId}`)
     },
+    rotateWebhookSecret(projectId: string, automationId: string) {
+      return client.post<ProjectAutomationRule>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}/rotate-webhook-secret`,
+        {}
+      )
+    },
     runNow(projectId: string, automationId: string) {
       return client.post<ProjectAutomationRun>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}/run`,
@@ -182,6 +258,12 @@ export function createProjectAutomationApi(client: HttpClient) {
     cancelRun(projectId: string, runId: string) {
       return client.post<ProjectAutomationRun>(
         `/v1/cloud-projects/${projectId}/automation-runs/${runId}/cancel`,
+        {}
+      )
+    },
+    retryRun(projectId: string, runId: string) {
+      return client.post<ProjectAutomationRun>(
+        `/v1/cloud-projects/${projectId}/automation-runs/${runId}/retry`,
         {}
       )
     },

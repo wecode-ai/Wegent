@@ -101,13 +101,10 @@ export const codeWikiApi = {
     ),
 
   /**
-   * Regenerate now, without waiting for a schedule.
-   *
-   * Answers 202 even when nothing was needed; read `started` to tell which happened.
+   * Regenerate the complete wiki now, without waiting for a schedule or a new commit.
    */
   regenerate: async (knowledgeBaseId: number): Promise<CodeWikiRunResponse> =>
-    client.post<CodeWikiRunResponse>(
-      `/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`,
-      {}
-    ),
+    client.post<CodeWikiRunResponse>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`, {
+      force_full: true,
+    }),
 }

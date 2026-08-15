@@ -6,39 +6,74 @@ import { useRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { CloudProject } from '@/api/deliveries'
-import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { ModelOptions, ModelType, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { AiChatModal } from './AiChatModal'
 
 const mocks = vi.hoisted(() => ({
   chatPanelMounts: 0,
+  createProjectRuntimeTask: vi.fn(async () => false),
   lastOnAddressChange: null as null | ((address: RuntimeTaskAddress | null) => void),
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
-    createProjectRuntimeTask: vi.fn(async () => false),
+    createProjectRuntimeTask: mocks.createProjectRuntimeTask,
   }),
 }))
 
 vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: ({
     currentProject,
+    createTask,
     initialAddress,
     onAddressChange,
   }: {
     currentProject: ProjectWithTasks | null
+    createTask?: (
+      message: string,
+      options: {
+        attachments: []
+        executionModel: {
+          modelId?: string
+          modelType?: ModelType | null
+          modelOptions?: ModelOptions
+        }
+        onError: (message: string) => void
+        onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
+      }
+    ) => Promise<RuntimeTaskAddress | false>
     initialAddress?: RuntimeTaskAddress | null
     onAddressChange?: (address: RuntimeTaskAddress | null) => void
   }) => {
     const mountId = useRef(++mocks.chatPanelMounts).current
     mocks.lastOnAddressChange = onAddressChange ?? null
     return (
-      <div
-        data-testid="mock-chat-panel"
-        data-project-id={currentProject?.id ?? ''}
-        data-mount-id={mountId}
-        data-has-initial-address={initialAddress ? 'yes' : 'no'}
-      />
+      <>
+        <button
+          type="button"
+          data-testid="mock-chat-send"
+          onClick={() =>
+            void createTask?.('给出任务列表', {
+              attachments: [],
+              executionModel: {
+                modelId: 'backend-codex',
+                modelType: 'user',
+                modelOptions: { reasoningEffort: 'high' },
+              },
+              onError: vi.fn(),
+              onRuntimeTaskOptimisticOpen: vi.fn(),
+            })
+          }
+        >
+          send
+        </button>
+        <div
+          data-testid="mock-chat-panel"
+          data-project-id={currentProject?.id ?? ''}
+          data-mount-id={mountId}
+          data-has-initial-address={initialAddress ? 'yes' : 'no'}
+        />
+      </>
     )
   },
 }))
@@ -85,6 +120,34 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  it('always creates private AI conversations with the Codex runtime', async () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        runtime: 'codex',
+        executionModel: {
+          modelId: 'backend-codex',
+          modelType: 'user',
+          modelOptions: { reasoningEffort: 'high' },
+        },
+        cloudProjectId: '11',
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
   it('defaults the runtime project to the one matching the chat project', async () => {
     render(
       <AiChatModal

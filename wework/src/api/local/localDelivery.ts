@@ -136,7 +136,8 @@ export interface LocalLoopItemExecution {
   agent_name: string
   agent_system_prompt: string
   agent_model?: string | null
-  execution_payload?: Record<string, unknown> | null
+  /** Available only on a successful claim and never persisted with the queue row. */
+  runtime_payload?: Record<string, unknown> | null
 }
 
 function stringList(value: unknown): string[] {

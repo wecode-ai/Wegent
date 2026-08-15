@@ -87,6 +87,37 @@ export interface LocalPluginCopyImportResult {
   pluginPath: string
 }
 
+export interface LocalPluginImportIssue {
+  code: string
+  path: string | null
+  message: string
+}
+
+export interface LocalPluginImportPreview {
+  valid: boolean
+  archivePath: string
+  sha256: string
+  name: string
+  displayName: string
+  version: string
+  description: string
+  skillCount: number
+  mcpServerCount: number
+  executableCapabilities: string[]
+  existing: boolean
+  existingVersion: string | null
+  issues: LocalPluginImportIssue[]
+}
+
+interface LocalPluginPackageImportResult {
+  pluginName: string
+  displayName: string
+  version: string
+  marketplacePath: string
+  pluginPath: string
+  rollbackId: string
+}
+
 export interface LocalPluginCloudLink {
   localPluginName: string
   cloudPluginId: number
@@ -130,6 +161,13 @@ export interface LocalCodexPluginApi {
     cloudReleaseId: number | null
   ): Promise<void>
   importMarketplaceCopy(descriptor: PluginCopyResponse): Promise<InstalledPlugin>
+  previewPluginImport(archivePath: string): Promise<LocalPluginImportPreview>
+  importPluginPackage(
+    preview: LocalPluginImportPreview,
+    overwrite: boolean
+  ): Promise<InstalledPlugin>
+  savePluginExample(destinationPath: string): Promise<string>
+  deletePersonalPlugin(pluginName: string, marketplacePath?: string): Promise<void>
   readState(params?: {
     q?: string
     marketplaceId?: string
@@ -885,6 +923,26 @@ export function installedPluginMatchesReference(
   )
 }
 
+export function installedPluginMatchesImportedPersonalPlugin(
+  plugin: InstalledPlugin,
+  pluginName: string
+): boolean {
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? plugin.spec.sourcePayload
+      : {}
+  const marketplaceNames = [
+    plugin.metadata.namespace,
+    plugin.spec.source.marketplace,
+    plugin.spec.source.providerKey,
+    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '',
+  ]
+  return (
+    plugin.spec.source.pluginKey === pluginName &&
+    marketplaceNames.some(name => name === WEWORK_PERSONAL_MARKETPLACE_ID)
+  )
+}
+
 function isLocalMarketplacePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
 }
@@ -1098,8 +1156,8 @@ type PersonalMarketplacePluginSummary = {
   description?: string | null
   logo?: string | null
   category?: string | null
+  marketplacePath?: string | null
   pluginPath: string
-  installed?: boolean
 }
 
 type PersonalMarketplaceListResult = {
@@ -1114,7 +1172,6 @@ function toDiskPersonalMarketplaceItem(
 ): PluginMarketplaceItem {
   const displayName = plugin.displayName?.trim() || plugin.name
   const description = plugin.description?.trim() || ''
-  const installed = Boolean(plugin.installed)
   return {
     id: `personal-disk:${plugin.name}`,
     remotePluginId: plugin.name,
@@ -1125,10 +1182,10 @@ function toDiskPersonalMarketplaceItem(
     author: null,
     visibility: 'personal',
     featured: false,
-    installed,
-    installedPluginId: installed ? `${plugin.name}@${WEWORK_PERSONAL_MARKETPLACE_ID}` : null,
-    installedLocally: installed,
-    enabled: installed,
+    installed: false,
+    installedPluginId: null,
+    installedLocally: false,
+    enabled: false,
     sourceType: 'marketplace',
     interface: {
       displayName,
@@ -1187,7 +1244,10 @@ export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMa
   return listed.plugins.map(plugin =>
     toDiskPersonalMarketplaceItem(
       plugin,
-      listed.marketplacePath || marketplacePath || WEWORK_PERSONAL_MARKETPLACE_ID
+      plugin.marketplacePath ||
+        listed.marketplacePath ||
+        marketplacePath ||
+        WEWORK_PERSONAL_MARKETPLACE_ID
     )
   )
 }
@@ -1566,6 +1626,7 @@ function toMarketplaceItem(
       name: plugin.name,
       id: plugin.id,
       marketplaceId: marketplace.name,
+      marketplacePath: marketplace.path ?? null,
       source: plugin.source ?? null,
       installPolicy: plugin.installPolicy ?? null,
       authPolicy: plugin.authPolicy ?? null,
@@ -2453,6 +2514,26 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         })
       }
     },
+    async deletePersonalPlugin(pluginName, sourceMarketplacePath) {
+      if (!isTauriRuntime()) {
+        throw new Error('Deleting a personal plugin requires the Wework desktop app')
+      }
+      const marketplacePath =
+        sourceMarketplacePath && isLocalMarketplacePath(sourceMarketplacePath)
+          ? sourceMarketplacePath.trim()
+          : await resolveWeworkPersonalMarketplacePath()
+      try {
+        await invoke('local_executor_delete_personal_plugin', {
+          marketplacePath,
+          pluginName,
+        })
+      } catch (error) {
+        throw new Error(getErrorMessage(error, 'Failed to delete personal plugin'), {
+          cause: error,
+        })
+      }
+      clearLocalCodexPluginsReadStateCache()
+    },
     async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId) {
       if (!isTauriRuntime()) return
       const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
@@ -2521,6 +2602,77 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         throw new Error('Plugin copy installed but was not returned by App Server')
       }
       return installed
+    },
+    async previewPluginImport(archivePath) {
+      if (!isTauriRuntime()) {
+        throw new Error('Importing a plugin package requires the Wework desktop app')
+      }
+      const marketplacePath = await resolveWeworkPersonalMarketplacePath()
+      return invoke<LocalPluginImportPreview>('local_executor_preview_plugin_import', {
+        archivePath,
+        marketplacePath,
+      })
+    },
+    async importPluginPackage(preview, overwrite) {
+      if (!isTauriRuntime()) {
+        throw new Error('Importing a plugin package requires the Wework desktop app')
+      }
+      if (!preview.valid || !preview.name) {
+        throw new Error('The selected plugin package did not pass validation')
+      }
+      const marketplacePath = await resolveWeworkPersonalMarketplacePath()
+      const imported = await invoke<LocalPluginPackageImportResult>(
+        'local_executor_import_plugin_package',
+        {
+          archivePath: preview.archivePath,
+          marketplacePath,
+          expectedSha256: preview.sha256,
+          overwrite,
+        }
+      )
+      clearLocalCodexPluginsReadStateCache()
+      try {
+        await codexAppServerRequest('plugin/install', {
+          marketplacePath: codexMarketplaceManifestSource(marketplacePath),
+          remoteMarketplaceName: null,
+          pluginName: imported.pluginName,
+        })
+        const nextState = await readState({
+          marketplaceId: WEWORK_PERSONAL_MARKETPLACE_ID,
+          refresh: true,
+        })
+        const installed = nextState.installedPlugins.find(plugin =>
+          installedPluginMatchesImportedPersonalPlugin(plugin, imported.pluginName)
+        )
+        if (!installed) {
+          throw new Error('Plugin package installed but was not returned by App Server')
+        }
+        await invoke('local_executor_finalize_plugin_import', {
+          marketplacePath,
+          rollbackId: imported.rollbackId,
+        }).catch(error => {
+          console.warn('[Wework] failed to clear plugin import backup', error)
+        })
+        return installed
+      } catch (error) {
+        await invoke('local_executor_rollback_plugin_import', {
+          marketplacePath,
+          rollbackId: imported.rollbackId,
+        }).catch(() => undefined)
+        clearLocalCodexPluginsReadStateCache()
+        throw new Error(
+          `Plugin package installation failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error }
+        )
+      }
+    },
+    savePluginExample(destinationPath) {
+      if (!isTauriRuntime()) {
+        throw new Error('Saving the plugin example requires the Wework desktop app')
+      }
+      return invoke<string>('local_executor_save_plugin_example', { destinationPath })
     },
     readState(params = {}) {
       return readState({

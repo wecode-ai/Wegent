@@ -19,7 +19,7 @@ change the callers.
 
 import re
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import Iterator, List, Sequence
 
 FENCE_PATTERN = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([A-Za-z0-9_+-]*)\s*$")
 
@@ -158,16 +158,9 @@ def _unbalanced_bracket(body: Sequence[str]) -> str:
     return ""
 
 
-def check_mermaid_blocks(markdown: str) -> List[MermaidWarning]:
-    """Find structural problems in the Mermaid diagrams of a Markdown document.
-
-    Returns an empty list when nothing is definitely wrong. Nested fences inside other
-    fenced blocks are skipped, so a Mermaid example quoted inside a code sample is not
-    mistaken for a diagram.
-    """
-    warnings: List[MermaidWarning] = []
+def _iter_mermaid_blocks(markdown: str) -> Iterator[tuple[int, List[str], bool]]:
+    """Yield Mermaid fences using the same nesting rules as structural checks."""
     lines = markdown.splitlines()
-
     index = 0
     while index < len(lines):
         match = FENCE_PATTERN.match(lines[index])
@@ -201,10 +194,24 @@ def check_mermaid_blocks(markdown: str) -> List[MermaidWarning]:
             body.append(lines[index])
             index += 1
 
-        if not is_mermaid:
-            # A non-Mermaid fence is only consumed so its contents cannot be mistaken
-            # for a diagram; problems inside it are not ours to report.
-            continue
+        if is_mermaid:
+            yield opened_at, body, closed
+
+
+def count_mermaid_blocks(markdown: str) -> int:
+    """Count declared Mermaid fences with the same grammar as structural checks."""
+    return sum(1 for _ in _iter_mermaid_blocks(markdown))
+
+
+def check_mermaid_blocks(markdown: str) -> List[MermaidWarning]:
+    """Find structural problems in Mermaid diagrams of a Markdown document.
+
+    Returns an empty list when nothing is definitely wrong. Nested fences inside other
+    fenced blocks are skipped, so a Mermaid example quoted inside a code sample is not
+    mistaken for a diagram.
+    """
+    warnings: List[MermaidWarning] = []
+    for opened_at, body, closed in _iter_mermaid_blocks(markdown):
 
         if not closed:
             warnings.append(MermaidWarning(opened_at, "diagram fence is never closed"))

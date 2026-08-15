@@ -16,6 +16,7 @@ import { PatchDiff } from '@pierre/diffs/react'
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import type { CSSProperties } from 'react'
 import { useEffect, useMemo, useState } from 'react'
+import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
@@ -23,6 +24,17 @@ import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
 const LARGE_DIFF_FILE_COUNT_THRESHOLD = 12
 const LARGE_DIFF_LINE_COUNT_THRESHOLD = 700
 const PIERRE_DIFF_CSS = `
+  :host {
+    --diffs-light-bg: rgb(var(--color-bg-base));
+    --diffs-light: rgb(var(--color-text-primary));
+    --diffs-dark-bg: rgb(var(--color-bg-base));
+    --diffs-dark: rgb(var(--color-text-primary));
+    --diffs-fg-number-override: rgb(var(--color-text-muted));
+    --diffs-bg-context-override: rgb(var(--color-bg-base));
+    --diffs-bg-context-gutter-override: rgb(var(--color-bg-surface));
+    --diffs-bg-hover-override: rgb(var(--color-muted));
+    background: rgb(var(--color-bg-base)) !important;
+  }
   :host, pre, code {
     font-family: var(--font-code);
     font-size: var(--text-code);
@@ -30,30 +42,30 @@ const PIERRE_DIFF_CSS = `
   }
   [data-diffs-file-header], [data-diffs-header] {
     min-height: 36px;
-    border-bottom: 1px solid rgb(224 224 224);
-    background: rgb(255 255 255);
+    border-bottom: 1px solid rgb(var(--color-border));
+    background: rgb(var(--color-bg-base));
     font-family: var(--font-ui);
     font-size: var(--text-sm);
     font-weight: 500;
   }
   [data-diffs-line-addition], [data-diffs-line-added] {
-    background: rgb(240 253 244);
+    background: rgb(34 197 94 / 0.12);
   }
   [data-diffs-line-deletion], [data-diffs-line-deleted] {
-    background: rgb(254 242 242);
+    background: rgb(239 68 68 / 0.12);
   }
 `
 const PIERRE_FILE_TREE_CSS = `
   :host {
     --trees-bg-override: transparent;
-    --trees-bg-muted-override: rgb(247 247 248);
-    --trees-fg-override: rgb(102 102 102);
-    --trees-fg-muted-override: rgb(140 140 140);
-    --trees-border-color-override: rgb(224 224 224);
-    --trees-selected-bg-override: rgb(247 247 248);
-    --trees-selected-fg-override: rgb(26 26 26);
-    --trees-selected-focused-border-color-override: rgb(20 184 166);
-    --trees-focus-ring-color-override: rgb(20 184 166 / 0.35);
+    --trees-bg-muted-override: rgb(var(--color-muted));
+    --trees-fg-override: rgb(var(--color-text-secondary));
+    --trees-fg-muted-override: rgb(var(--color-text-muted));
+    --trees-border-color-override: rgb(var(--color-border));
+    --trees-selected-bg-override: rgb(var(--color-bg-surface));
+    --trees-selected-fg-override: rgb(var(--color-text-primary));
+    --trees-selected-focused-border-color-override: rgb(var(--color-primary));
+    --trees-focus-ring-color-override: rgb(var(--color-primary) / 0.35);
     --trees-focus-ring-width-override: 1px;
     --trees-focus-ring-offset-override: 0px;
     --trees-gap-override: 2px;
@@ -61,10 +73,10 @@ const PIERRE_FILE_TREE_CSS = `
     --trees-item-padding-x-override: 4px;
     --trees-item-margin-x-override: 0px;
     --trees-padding-inline-override: 4px;
-    --trees-indent-guide-bg-override: rgb(224 224 224);
-    --trees-scrollbar-thumb-override: rgb(224 224 224);
-    --trees-search-bg-override: rgb(255 255 255);
-    --trees-search-fg-override: rgb(26 26 26);
+    --trees-indent-guide-bg-override: rgb(var(--color-border));
+    --trees-scrollbar-thumb-override: rgb(var(--color-text-muted));
+    --trees-search-bg-override: rgb(var(--color-bg-base));
+    --trees-search-fg-override: rgb(var(--color-text-primary));
     --trees-status-added-override: rgb(57 151 75);
     --trees-status-modified-override: rgb(57 151 75);
     --trees-status-renamed-override: rgb(57 151 75);
@@ -75,44 +87,44 @@ const PIERRE_FILE_TREE_CSS = `
     --trees-git-renamed-color-override: rgb(57 151 75);
     --trees-git-untracked-color-override: rgb(57 151 75);
     --trees-git-deleted-color-override: rgb(210 57 57);
-    --trees-file-icon-color: rgb(140 140 140);
-    --trees-file-icon-color-default: rgb(140 140 140);
-    --trees-icon-blue: rgb(140 140 140);
-    --trees-icon-cyan: rgb(140 140 140);
-    --trees-icon-green: rgb(140 140 140);
-    --trees-icon-indigo: rgb(140 140 140);
-    --trees-icon-mauve: rgb(140 140 140);
-    --trees-icon-orange: rgb(140 140 140);
-    --trees-icon-pink: rgb(140 140 140);
-    --trees-icon-purple: rgb(140 140 140);
-    --trees-icon-red: rgb(140 140 140);
-    --trees-icon-teal: rgb(140 140 140);
-    --trees-icon-vermilion: rgb(140 140 140);
-    --trees-icon-yellow: rgb(140 140 140);
+    --trees-file-icon-color: rgb(var(--color-text-muted));
+    --trees-file-icon-color-default: rgb(var(--color-text-muted));
+    --trees-icon-blue: rgb(var(--color-text-muted));
+    --trees-icon-cyan: rgb(var(--color-text-muted));
+    --trees-icon-green: rgb(var(--color-text-muted));
+    --trees-icon-indigo: rgb(var(--color-text-muted));
+    --trees-icon-mauve: rgb(var(--color-text-muted));
+    --trees-icon-orange: rgb(var(--color-text-muted));
+    --trees-icon-pink: rgb(var(--color-text-muted));
+    --trees-icon-purple: rgb(var(--color-text-muted));
+    --trees-icon-red: rgb(var(--color-text-muted));
+    --trees-icon-teal: rgb(var(--color-text-muted));
+    --trees-icon-vermilion: rgb(var(--color-text-muted));
+    --trees-icon-yellow: rgb(var(--color-text-muted));
     font-family: var(--font-ui);
     font-size: var(--text-sm);
-    color: rgb(102 102 102);
+    color: rgb(var(--color-text-secondary));
     background: transparent !important;
   }
   button[data-type='item'] {
     box-sizing: border-box;
     border-radius: 6px;
-    color: rgb(102 102 102);
+    color: rgb(var(--color-text-secondary));
     background: transparent;
     background-clip: padding-box;
   }
   button[data-type='item']:hover {
-    color: rgb(26 26 26);
-    background: rgb(247 247 248);
+    color: rgb(var(--color-text-primary));
+    background: rgb(var(--color-muted));
     box-shadow:
-      0 0 0 1px rgb(255 255 255),
+      0 0 0 1px rgb(var(--color-bg-base)),
       0 1px 2px rgb(0 0 0 / 0.04);
   }
   button[data-type='item'][data-item-selected] {
-    color: rgb(26 26 26);
-    background: rgb(247 247 248) !important;
+    color: rgb(var(--color-text-primary));
+    background: rgb(var(--color-muted)) !important;
     box-shadow:
-      0 0 0 1px rgb(255 255 255),
+      0 0 0 1px rgb(var(--color-bg-base)),
       0 1px 2px rgb(0 0 0 / 0.04);
   }
   button[data-type='item'][data-item-selected='true']:has(+ [data-item-selected='true']),
@@ -129,9 +141,9 @@ const PIERRE_FILE_TREE_CSS = `
     box-shadow: inset 0 0 0 1px var(--trees-selected-focused-border-color);
   }
   input {
-    background: rgb(255 255 255);
-    color: rgb(26 26 26);
-    border-color: rgb(224 224 224);
+    background: rgb(var(--color-bg-base));
+    color: rgb(var(--color-text-primary));
+    border-color: rgb(var(--color-border));
   }
 `
 
@@ -171,6 +183,12 @@ export function FileChangesReviewPanel({
   onRefresh,
 }: FileChangesReviewPanelProps) {
   const { t } = useTranslation('chat')
+  const appearance = useOptionalAppearance()
+  const themeType =
+    appearance?.resolvedMode ??
+    (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
+      ? 'dark'
+      : 'light')
   const [selection, setSelection] = useState<{
     diff: string
     focusFilePath?: string
@@ -224,6 +242,7 @@ export function FileChangesReviewPanel({
   return (
     <div
       data-testid="file-changes-review-panel"
+      data-theme={themeType}
       className={cn('min-h-0 flex-1 overflow-hidden bg-background', className)}
     >
       {loading ? (
@@ -273,6 +292,7 @@ export function FileChangesReviewPanel({
                 expandFileLabel={t('file_changes.actions.expand_file_diff')}
                 collapseFileLabel={t('file_changes.actions.collapse_file_diff')}
                 onToggleSectionCollapsed={toggleSectionCollapsed}
+                themeType={themeType}
               />
             )}
             {sections.length > 0 && fileTreeVisible && (
@@ -598,6 +618,7 @@ function AllDiffSections({
   expandFileLabel,
   collapseFileLabel,
   onToggleSectionCollapsed,
+  themeType,
 }: {
   sections: DiffFileSection[]
   ariaLabel: string
@@ -607,6 +628,7 @@ function AllDiffSections({
   expandFileLabel: string
   collapseFileLabel: string
   onToggleSectionCollapsed: (section: DiffFileSection, index: number) => void
+  themeType: 'light' | 'dark'
 }) {
   return (
     <section
@@ -635,6 +657,7 @@ function AllDiffSections({
               expandFileLabel={expandFileLabel}
               collapseFileLabel={collapseFileLabel}
               onToggle={() => onToggleSectionCollapsed(section, index)}
+              themeType={themeType}
             />
           )
         })}
@@ -652,6 +675,7 @@ function FileDiffSection({
   expandFileLabel,
   collapseFileLabel,
   onToggle,
+  themeType,
 }: {
   section: DiffFileSection
   index: number
@@ -661,6 +685,7 @@ function FileDiffSection({
   expandFileLabel: string
   collapseFileLabel: string
   onToggle: () => void
+  themeType: 'light' | 'dark'
 }) {
   const stats = useMemo(() => getDiffStats(section.lines), [section.lines])
   const patchChunks = useMemo(() => getPierrePatchChunks([section]), [section])
@@ -691,7 +716,11 @@ function FileDiffSection({
         <span className="shrink-0 font-normal text-red-600">-{stats.deletions}</span>
       </button>
       {!collapsed ? (
-        <div id={getDiffSectionDomId(index)} data-testid="file-changes-review-file-diff-body">
+        <div
+          id={getDiffSectionDomId(index)}
+          data-testid="file-changes-review-file-diff-body"
+          data-theme={themeType}
+        >
           {patchChunks.map((patch, patchIndex) => (
             <PatchDiff
               key={`${wrapLines}:${hunksCollapsed}:${patchIndex}:${patch}`}
@@ -703,7 +732,7 @@ function FileDiffSection({
                 disableFileHeader: true,
                 overflow: wrapLines ? 'wrap' : 'scroll',
                 stickyHeader: false,
-                themeType: 'light',
+                themeType,
                 tokenizeMaxLength: 250_000,
                 tokenizeMaxLineLength: 2_000,
                 unsafeCSS: PIERRE_DIFF_CSS,

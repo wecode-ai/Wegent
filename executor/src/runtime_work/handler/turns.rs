@@ -367,10 +367,12 @@ impl RuntimeWorkRpcHandler {
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
         self.store.update_task(local_task_id, |link| {
             link.running = false;
+            link.status = "failed".to_owned();
             link.thread_status = "failed".to_owned();
             link.turn_status = Some("failed".to_owned());
             link.updated_at = now_ms();
             link.completed_at = Some(link.updated_at);
+            normalize_settled_task_state(link);
             if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
                 runtime_handle.remove("queuePosition");
                 runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
@@ -381,11 +383,12 @@ impl RuntimeWorkRpcHandler {
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
         self.store.update_task(local_task_id, |link| {
             link.running = false;
-            link.status = "active".to_owned();
+            link.status = "cancelled".to_owned();
             link.thread_status = "cancelled".to_owned();
             link.turn_status = Some("cancelled".to_owned());
             link.updated_at = now_ms();
             link.completed_at = Some(link.updated_at);
+            normalize_settled_task_state(link);
             if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
                 runtime_handle.remove("queuePosition");
             }
@@ -614,8 +617,10 @@ impl RuntimeWorkRpcHandler {
             });
             let route_handler = handler.clone();
             let route_local_task_id = turn_local_task_id.clone();
+            let route_request = request.clone();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
                 route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
+                route_handler.register_codex_thread_workspace_root(&thread_id, &route_request);
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();

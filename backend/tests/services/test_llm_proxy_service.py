@@ -359,6 +359,7 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
     assert config["model_id"] == "gpt-4-turbo"
     assert config["base_url"] == "https://api.example.com/v1"
     assert config["api_key"] == "sk-test-key"
+    assert config["upstream_api_format"] == "openai-responses"
     assert "codex_responses_compat_proxy" not in config
 
 

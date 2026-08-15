@@ -89,7 +89,7 @@ resolve_executor_binary() {
   fi
   local bin="$target_dir/debug/wegent-executor"
   if [ ! -x "$bin" ] || [ -n "${CLOUD_DEVICE_REBUILD:-}" ]; then
-    echo "Building executor (first run may take a while)..."
+    echo "Building executor (first run may take a while)..." >&2
     (
       cd "$EXECUTOR_DIR"
       cargo build --bin wegent-executor

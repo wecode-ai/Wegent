@@ -28,11 +28,13 @@ Both the Markdown preview and source view must own a vertical scrolling region. 
 
 ## Data Transfer
 
-Binary files are read through `workspace_read_file_chunk` in 1 MiB chunks. Every request keeps workspace-root validation and rejects escapes through symlinks or relative paths. The workspace itself may be opened through a symlink path; when the executor returns a canonical filesystem path, the frontend maps directory entries and file responses back to the workspace path selected by the user while continuing to validate response paths, file names, and chunk offsets. The frontend assembles chunks into a `File` for the viewer; code and text continue to use `workspace_read_text_file` to avoid unnecessary binary transfer.
+For local workspaces, directory listing, text reads, and binary chunk reads access the disk directly in the Wework Tauri process instead of traversing executor IPC. Text reads are capped at 256 KiB, while `read_local_workspace_file_chunk` reads binary files in 1 MiB chunks. Every request includes the workspace root and performs canonical-path validation in Rust, rejecting escapes through symlinks or relative paths. The frontend assembles binary chunks into a `File` for the viewer.
 
-`workspace_read_text_file` returns `editable` and `revision`. Only untruncated files that decode as UTF-8 can enter edit mode; binary files, text larger than 256 KiB, and decode failures remain preview-only.
+Workspaces opened through remote devices continue to use the device-side workspace API. The frontend still validates response paths, file names, and chunk offsets, and must not use the local native command as a fallback for a failed remote read.
 
-Saving is a local Wework IPC capability implemented by the Rust executor through `workspace_write_text_file`; it is not registered as a Backend command. The IPC payload carries the file content, file name, and the `revision` returned by the read command. Before writing, the executor rereads the file on disk and compares the SHA-256 revision. If another process changed the file, saving fails and the frontend must block the overwrite and offer reload. Writes must stay inside the same workspace root and replace the target through a same-directory temporary file. Files opened through remote devices remain preview-only.
+The local native command `read_local_workspace_text_file` returns `editable` and `revision`; remote devices use the executor IPC command `workspace_read_text_file`. Only untruncated files that decode as UTF-8 can enter edit mode; binary files, text larger than 256 KiB, and decode failures remain preview-only.
+
+Saving still uses the Rust executor's `workspace_write_text_file` capability because writes retain the task-workspace concurrency check and atomic replacement semantics. The IPC payload carries the file content, file name, and the `revision` returned by the read command. Before writing, the executor rereads the file on disk and compares the SHA-256 revision. If another process changed the file, saving fails and the frontend must block the overwrite and offer reload. Writes must stay inside the same workspace root and replace the target through a same-directory temporary file. Files opened through remote devices remain preview-only.
 
 ## Preview State Lifecycle
 

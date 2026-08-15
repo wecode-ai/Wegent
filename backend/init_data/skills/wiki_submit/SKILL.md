@@ -24,6 +24,17 @@ insertion, so reword titles freely and move paths rarely.
 Send a page's **complete content** every time. There is no patch format; what you send
 replaces the page.
 
+A section that holds pages needs a page of its own. If you submit
+`architecture/backend`, also submit `architecture` with an overview of that section.
+Write `index` as the wiki overview.
+
+Link to another wiki page by its complete page path without an extension, for example
+`[Backend](architecture/backend)`. Do not use `./architecture/backend.md` or a URL: wiki
+pages are not files served at those locations.
+
+Anything submitted is part of the version; there is no scratch page or draft namespace.
+Remove an accidental page before completing the run.
+
 ## Usage
 
 ### Submit a page from a markdown file
@@ -81,8 +92,20 @@ Report the commit you documented, so the next run knows what has already been co
 ```bash
 node wiki_submit.js complete \
   --generation-id 123 \
-  --head-commit "$(git rev-parse HEAD)"
+  --head-commit "$(git rev-parse HEAD)" \
+  --structure-order index,quickstart,architecture,modules
 ```
+
+`--structure-order` controls the order readers see. Put `index` first and arrange the
+remaining paths so the wiki reads from overview to detail. Unlisted paths are appended.
+
+The response says whether the version was published. A completed version can still be
+refused when it is unexpectedly smaller than the published wiki. If publication is
+refused, write the missing pages and run `complete` again.
+
+The response may also report Mermaid diagrams that do not render after a successful
+publication. Rewrite the named pages at the same paths and run `complete` again so the
+corrected version is republished.
 
 ### Mark generation as failed
 
