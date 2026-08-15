@@ -4747,7 +4747,7 @@ mod tests {
                         {
                             "path": "/workspace/repo/live.txt",
                             "kind": { "type": "add" },
-                            "diff": "first\nsecond\n"
+                            "diff": "title\n- first\n- second\n"
                         }
                     ]
                 }
@@ -4764,7 +4764,23 @@ mod tests {
         );
         assert_eq!(
             updated["payload"]["data"]["updates"]["file_changes"]["additions"],
-            2
+            3
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["deletions"],
+            0
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["diff"],
+            concat!(
+                "diff --git a/live.txt b/live.txt\n",
+                "--- /dev/null\n",
+                "+++ b/live.txt\n",
+                "@@ -0,0 +1,3 @@\n",
+                "+title\n",
+                "+- first\n",
+                "+- second\n"
+            )
         );
 
         let created = event_rx
