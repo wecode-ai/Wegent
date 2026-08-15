@@ -2310,7 +2310,7 @@ describe('CloudTodoWorkspace', () => {
       project_key: 'LOCAL',
       project_name: 'Local project',
       has_active_task: false,
-      execution_state: 'pending_approval',
+      execution_state: 'waiting_approval',
       can_approve: true,
     }
     const localApi = services().deliveryApi!
