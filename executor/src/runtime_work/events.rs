@@ -4767,6 +4767,10 @@ mod tests {
             3
         );
         assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["deletions"],
+            0
+        );
+        assert_eq!(
             updated["payload"]["data"]["updates"]["file_changes"]["diff"],
             concat!(
                 "diff --git a/live.txt b/live.txt\n",
