@@ -232,6 +232,7 @@ interface CloudTodoWorkspaceProps {
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
   services: WorkbenchServices
+  embedded?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   focusedItemId?: string | null
   onFocusedItemHandled?: () => void
@@ -704,6 +705,7 @@ export function CloudTodoWorkspace({
   localProjects,
   runtimeWork,
   services,
+  embedded = false,
   activeProjectRef,
   focusedItemId,
   onFocusedItemHandled,
@@ -1888,214 +1890,220 @@ export function CloudTodoWorkspace({
   return (
     <div
       className={cn(
-        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary'
+        'z-content flex min-h-0 min-w-0 overflow-hidden bg-background text-text-primary',
+        embedded ? 'relative flex-1' : 'absolute inset-0 w-full'
       )}
       data-testid="cloud-todo-workspace"
-      data-sidebar-collapsed={sidebarCollapsed}
+      data-embedded={embedded}
+      data-sidebar-collapsed={embedded || sidebarCollapsed}
     >
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside
-          className={cn(
-            'relative shrink-0 overflow-hidden border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-200',
-            sidebarCollapsed ? 'w-0 border-r-0' : 'w-[240px]'
-          )}
-        >
-          <div className="flex h-full w-[240px] flex-col px-1.5 pt-1.5">
-            <DesktopSidebarHeader
-              actionsTestId="cloud-todo-sidebar-chrome-controls"
-              actions={
-                <>
-                  <DesktopWindowControls
-                    sidebarCollapsed={false}
-                    onToggleSidebar={() => setSidebarCollapsed(true)}
-                    className="gap-0"
-                    toggleTestId="cloud-todo-collapse-sidebar"
-                  />
-                  <Tooltip label={t('workbench.search')} side="bottom" align="end">
-                    <button
-                      type="button"
-                      data-testid="cloud-search-toggle"
-                      onClick={() => setGlobalSearchOpen(true)}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                      aria-label={t('workbench.search')}
-                    >
-                      <Search className="h-4 w-4" />
-                    </button>
-                  </Tooltip>
-                </>
-              }
-            />
-            <nav className="space-y-0.5">
-              <DesktopSidebarNavItem
-                icon={Cloud}
-                label="项目空间"
-                selected={rootView === 'projects'}
-                onClick={() => {
-                  setRootView('projects')
-                  selectProject(null)
-                  setSelectedItem(null)
-                }}
+        {!embedded ? (
+          <aside
+            className={cn(
+              'relative shrink-0 overflow-hidden border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-200',
+              sidebarCollapsed ? 'w-0 border-r-0' : 'w-[240px]'
+            )}
+          >
+            <div className="flex h-full w-[240px] flex-col px-1.5 pt-1.5">
+              <DesktopSidebarHeader
+                actionsTestId="cloud-todo-sidebar-chrome-controls"
+                actions={
+                  <>
+                    <DesktopWindowControls
+                      sidebarCollapsed={false}
+                      onToggleSidebar={() => setSidebarCollapsed(true)}
+                      className="gap-0"
+                      toggleTestId="cloud-todo-collapse-sidebar"
+                    />
+                    <Tooltip label={t('workbench.search')} side="bottom" align="end">
+                      <button
+                        type="button"
+                        data-testid="cloud-search-toggle"
+                        onClick={() => setGlobalSearchOpen(true)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                        aria-label={t('workbench.search')}
+                      >
+                        <Search className="h-4 w-4" />
+                      </button>
+                    </Tooltip>
+                  </>
+                }
               />
-              <DesktopSidebarNavItem
-                icon={CircleUserRound}
-                label="我的工作"
-                testId="cloud-my-work"
-                selected={rootView === 'my-work'}
-                onClick={() => setRootView('my-work')}
-              />
-            </nav>
-            <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
-              项目空间
-              <Tooltip
-                label={t('todo.new_project_space', '新建项目空间')}
-                side="bottom"
-                align="end"
-                className="ml-auto"
-              >
-                <button
-                  type="button"
-                  data-testid="cloud-project-add"
-                  onClick={() => setCreateProjectOpen(true)}
-                  className="h-6 w-6 rounded-md hover:bg-muted"
-                  aria-label={t('todo.new_project_space', '新建项目空间')}
+              <nav className="space-y-0.5">
+                <DesktopSidebarNavItem
+                  icon={Cloud}
+                  label="项目空间"
+                  selected={rootView === 'projects'}
+                  onClick={() => {
+                    setRootView('projects')
+                    selectProject(null)
+                    setSelectedItem(null)
+                  }}
+                />
+                <DesktopSidebarNavItem
+                  icon={CircleUserRound}
+                  label="我的工作"
+                  testId="cloud-my-work"
+                  selected={rootView === 'my-work'}
+                  onClick={() => setRootView('my-work')}
+                />
+              </nav>
+              <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
+                项目空间
+                <Tooltip
+                  label={t('todo.new_project_space', '新建项目空间')}
+                  side="bottom"
+                  align="end"
+                  className="ml-auto"
                 >
-                  <Plus className="mx-auto h-3.5 w-3.5" />
-                </button>
-              </Tooltip>
-            </div>
-            <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
-              {projects.map(project => {
-                const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
-                const spaceKey = projectSpaceKey(projectSpaceRef(project))
-                return (
-                  <div
-                    key={spaceKey}
-                    data-cloud-project-menu-root
-                    className={cn(
-                      'group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5',
-                      rootView === 'projects' &&
-                        sameProjectSpace(selectedProjectRef, projectSpaceRef(project))
-                        ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-                        : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
-                    )}
+                  <button
+                    type="button"
+                    data-testid="cloud-project-add"
+                    onClick={() => setCreateProjectOpen(true)}
+                    className="h-6 w-6 rounded-md hover:bg-muted"
+                    aria-label={t('todo.new_project_space', '新建项目空间')}
                   >
-                    <button
-                      type="button"
-                      data-testid={`cloud-sidebar-project-${project.id}`}
-                      onClick={() => {
-                        selectProject(project)
-                        setRootView('projects')
-                        setProjectView('board')
-                        setSelectedItem(null)
-                      }}
-                      className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base"
-                    >
-                      <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
-                      <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
-                    </button>
-                    {projectCounts[spaceKey] ? (
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover:hidden">
-                        {projectCounts[spaceKey]}
-                      </span>
-                    ) : null}
-                    <Tooltip
-                      label={t('todo.project_actions', '项目操作')}
-                      side="bottom"
-                      align="end"
+                    <Plus className="mx-auto h-3.5 w-3.5" />
+                  </button>
+                </Tooltip>
+              </div>
+              <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+                {projects.map(project => {
+                  const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+                  const spaceKey = projectSpaceKey(projectSpaceRef(project))
+                  return (
+                    <div
+                      key={spaceKey}
+                      data-cloud-project-menu-root
+                      className={cn(
+                        'group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5',
+                        rootView === 'projects' &&
+                          sameProjectSpace(selectedProjectRef, projectSpaceRef(project))
+                          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                          : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+                      )}
                     >
                       <button
                         type="button"
-                        data-testid={`cloud-sidebar-project-more-${project.id}`}
+                        data-testid={`cloud-sidebar-project-${project.id}`}
                         onClick={() => {
-                          setProjectMenuId(current => (current === project.id ? null : project.id))
+                          selectProject(project)
+                          setRootView('projects')
+                          setProjectView('board')
+                          setSelectedItem(null)
                         }}
-                        className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
-                        aria-expanded={projectMenuId === project.id}
-                        aria-label={t('todo.project_actions', '项目操作')}
+                        className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base"
                       >
-                        <Ellipsis className="h-3.5 w-3.5" />
+                        <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
+                        <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
                       </button>
-                    </Tooltip>
-                    {projectMenuId === project.id ? (
-                      <div
-                        data-testid={`cloud-sidebar-project-menu-${project.id}`}
-                        role="menu"
-                        className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
+                      {projectCounts[spaceKey] ? (
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover:hidden">
+                          {projectCounts[spaceKey]}
+                        </span>
+                      ) : null}
+                      <Tooltip
+                        label={t('todo.project_actions', '项目操作')}
+                        side="bottom"
+                        align="end"
                       >
-                        {project.created_by_user_id === user.id ||
-                        project.access_role === 'Owner' ||
-                        project.access_role === 'Maintainer' ? (
-                          <>
-                            <button
-                              type="button"
-                              data-testid={`cloud-sidebar-rename-project-${project.id}`}
-                              onClick={() => {
-                                setRenameProject(project)
-                                setRenameProjectName(project.name)
-                                setRenameError(null)
-                                setProjectMenuId(null)
-                              }}
-                              role="menuitem"
-                              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
-                            >
-                              <span className="w-3.5 text-center" aria-hidden="true">
-                                Aa
-                              </span>
-                              修改项目名称
-                            </button>
-                            <button
-                              type="button"
-                              data-testid={`cloud-sidebar-archive-project-${project.id}`}
-                              onClick={() => {
-                                setArchiveError(null)
-                                setArchiveProject(project)
-                                setProjectMenuId(null)
-                              }}
-                              role="menuitem"
-                              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
-                            >
-                              <span className="w-3.5 text-center" aria-hidden="true">
-                                ×
-                              </span>
-                              归档项目
-                            </button>
-                          </>
-                        ) : null}
                         <button
                           type="button"
-                          data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+                          data-testid={`cloud-sidebar-project-more-${project.id}`}
                           onClick={() => {
-                            void copyTextToClipboard(String(project.id)).then(() => {
-                              setCopiedProjectId(project.id)
-                              window.setTimeout(() => setCopiedProjectId(null), 2000)
-                            })
-                            setProjectMenuId(null)
+                            setProjectMenuId(current =>
+                              current === project.id ? null : project.id
+                            )
                           }}
-                          role="menuitem"
-                          className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
+                          aria-expanded={projectMenuId === project.id}
+                          aria-label={t('todo.project_actions', '项目操作')}
                         >
-                          {copiedProjectId === project.id ? (
-                            <Check className="h-3.5 w-3.5 text-green-600" />
-                          ) : (
-                            <Copy className="h-3.5 w-3.5" />
-                          )}
-                          {copiedProjectId === project.id
-                            ? t('todo.project_id_copied', '项目 ID 已复制')
-                            : t('todo.copy_project_id', '复制项目 ID')}
+                          <Ellipsis className="h-3.5 w-3.5" />
                         </button>
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
+                      </Tooltip>
+                      {projectMenuId === project.id ? (
+                        <div
+                          data-testid={`cloud-sidebar-project-menu-${project.id}`}
+                          role="menu"
+                          className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
+                        >
+                          {project.created_by_user_id === user.id ||
+                          project.access_role === 'Owner' ||
+                          project.access_role === 'Maintainer' ? (
+                            <>
+                              <button
+                                type="button"
+                                data-testid={`cloud-sidebar-rename-project-${project.id}`}
+                                onClick={() => {
+                                  setRenameProject(project)
+                                  setRenameProjectName(project.name)
+                                  setRenameError(null)
+                                  setProjectMenuId(null)
+                                }}
+                                role="menuitem"
+                                className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                              >
+                                <span className="w-3.5 text-center" aria-hidden="true">
+                                  Aa
+                                </span>
+                                修改项目名称
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`cloud-sidebar-archive-project-${project.id}`}
+                                onClick={() => {
+                                  setArchiveError(null)
+                                  setArchiveProject(project)
+                                  setProjectMenuId(null)
+                                }}
+                                role="menuitem"
+                                className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                              >
+                                <span className="w-3.5 text-center" aria-hidden="true">
+                                  ×
+                                </span>
+                                归档项目
+                              </button>
+                            </>
+                          ) : null}
+                          <button
+                            type="button"
+                            data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+                            onClick={() => {
+                              void copyTextToClipboard(String(project.id)).then(() => {
+                                setCopiedProjectId(project.id)
+                                window.setTimeout(() => setCopiedProjectId(null), 2000)
+                              })
+                              setProjectMenuId(null)
+                            }}
+                            role="menuitem"
+                            className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                          >
+                            {copiedProjectId === project.id ? (
+                              <Check className="h-3.5 w-3.5 text-green-600" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
+                            {copiedProjectId === project.id
+                              ? t('todo.project_id_copied', '项目 ID 已复制')
+                              : t('todo.copy_project_id', '复制项目 ID')}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        </aside>
+          </aside>
+        ) : null}
         <main className="relative flex min-w-0 flex-1 flex-col">
-          {!selectedProject && (
+          {!embedded && !selectedProject && (
             <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
           )}
-          {sidebarCollapsed && (
+          {!embedded && sidebarCollapsed && (
             <div
               data-testid="cloud-todo-collapsed-chrome-controls"
               className="absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
@@ -2206,10 +2214,12 @@ export function CloudTodoWorkspace({
                 data-testid="cloud-project-header"
                 className={cn(
                   'relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6',
-                  sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
+                  !embedded && sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
                 )}
               >
-                <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                {!embedded && (
+                  <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                )}
                 <div
                   ref={projectHeaderContentRef}
                   className="relative z-10 flex min-w-0 items-center"

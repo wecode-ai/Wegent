@@ -87,7 +87,6 @@ interface ProjectChatComposerProps {
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
-  selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -112,6 +111,7 @@ interface ProjectChatComposerProps {
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
 }
 
@@ -161,7 +161,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       cloudSpaceEnabled,
       onSelectExternalMention,
       onSelectCloudProject,
-      selectedCloudProjectId,
       planModeActive = false,
       onSetPlanMode,
       onClearPlanMode,
@@ -185,6 +184,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onDismissInputLeadingContext,
       toolbarLeadingContext,
       projectWorkBarTrailingContext,
+      projectWorkBarEndContext,
       modelSelectorOverride,
     },
     ref
@@ -345,6 +345,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
             trailingContext={projectWorkBarTrailingContext}
+            endContext={projectWorkBarEndContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
             buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
           />
@@ -534,9 +535,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
-            cloudProjectCandidates={cloudProjectCandidates}
-            selectedCloudProjectId={selectedCloudProjectId}
-            onSelectCloudProject={onSelectCloudProject}
           />
         </form>
       </div>

@@ -289,6 +289,31 @@ describe('CloudTodoWorkspace', () => {
     localStorage.clear()
   })
 
+  it('renders only the board content shell when embedded in the workbench', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id) }],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    await screen.findByTestId('cloud-project-header')
+    const workspace = screen.getByTestId('cloud-todo-workspace')
+    expect(workspace).toHaveAttribute('data-embedded', 'true')
+    expect(workspace.querySelector('aside')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
   it('reports the concrete project name for the active document tab', async () => {
     const onActiveProjectChange = vi.fn()
 

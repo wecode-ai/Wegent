@@ -14,9 +14,19 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
-## Move between project-space tasks and runtime tasks
+## Manage tasks with work items
 
-When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
+**Work items** in the left sidebar is a content switch inside the current Task tab. It replaces only the middle content with the local default **My tasks** board; the left sidebar and top-level tabs remain unchanged. Select **New task**, a project, or any task to return to task content in the same tab. A top-level Work-items tab is an independently pinned board view, not the destination of the sidebar action.
+
+Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. A successful runtime task moves the work item to **Completed** instead of leaving a stale in-progress card or removing it from the board.
+
+The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** is an explicit new-tab action: Wework creates a board tab focused on the linked work item while preserving the original Task tab.
+
+Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
+
+## Move between work items and runtime tasks
+
+The work-item details' **Task execution** section lists linked Wework runtime tasks. Select a record to return to its runtime task tab. Board and Task tabs retain their own routes and interface state.
 
 ## Use the project sidebar
 

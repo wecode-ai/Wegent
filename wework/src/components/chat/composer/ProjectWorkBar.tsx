@@ -109,6 +109,7 @@ interface ProjectWorkBarProps {
   externalMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
   trailingContext?: ReactNode
+  endContext?: ReactNode
 }
 
 export function ProjectWorkBar({
@@ -144,6 +145,7 @@ export function ProjectWorkBar({
   externalMenuOpenSignal,
   projectMenuAnchorElement = null,
   trailingContext,
+  endContext,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -1121,6 +1123,7 @@ export function ProjectWorkBar({
             onSelectBranch={onWorktreeBranchChange}
           />
         )}
+      {endContext}
       {selectedWorkspaceIsRemote && selectedWorkspaceDeviceIp && (
         <div
           data-testid="project-work-remote-status"

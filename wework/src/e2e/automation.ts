@@ -654,6 +654,20 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+async function pressDesktopControlKey(selector: string, key: string): Promise<string> {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.focus()
+  const keyboardEvent = parseDesktopControlKey(key)
+  for (const type of ['keydown', 'keyup']) {
+    element.dispatchEvent(
+      new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
+    )
+  }
+  await waitForDesktopControlTick()
+  return element.textContent?.trim() ?? ''
+}
+
 let activeDesktopControlDrag: {
   sourceText: string
   target: HTMLElement
@@ -969,6 +983,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           detail: JSON.parse(command.value ?? '{}'),
         })
       )
+      if (command.key) {
+        await waitForDesktopControlTick()
+        return pressDesktopControlKey(command.target ?? command.selector, command.key)
+      }
       return ''
     case 'reconcileLegacyRuntimeAssistantSnapshot': {
       const payload = JSON.parse(command.value ?? '{}') as {
@@ -1478,17 +1496,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {
-      const element = findDesktopControlElements(command.selector)[0]
-      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      element.focus()
-      const keyboardEvent = parseDesktopControlKey(command.key ?? '')
-      for (const type of ['keydown', 'keyup']) {
-        element.dispatchEvent(
-          new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
-        )
-      }
-      await waitForDesktopControlTick()
-      return element.textContent?.trim() ?? ''
+      return pressDesktopControlKey(command.selector, command.key ?? '')
     }
     case 'select': {
       const element = findDesktopControlElements(command.selector)[0]

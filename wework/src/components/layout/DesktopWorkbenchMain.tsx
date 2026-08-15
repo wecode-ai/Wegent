@@ -13,14 +13,12 @@ import {
   ArrowLeftRight,
   Bot,
   ChevronRight,
-  LayoutDashboard,
   Loader2,
   MessageCircle,
   MessageSquareWarning,
   X,
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
-import { ComposerModePill } from '@/components/chat/composer/GoalDraftPill'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
@@ -80,6 +78,8 @@ import {
   type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
+import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import {
   RIGHT_SPLIT_PANEL_MIN_WIDTH,
   useResizableRightSplitChat,
@@ -886,7 +886,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services } = useWorkbench()
+  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -1007,6 +1007,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeDeliveryItem,
     boundCloudItem,
     boundCloudProject,
+    boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,
     clearTodoBindingError,
@@ -1014,11 +1015,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     closeTodoBindingPicker,
     cloudActionNotice,
     cloudProjectMentionCandidates,
-    composerCloudProject,
+    defaultProject,
     deliveryDialogOpen,
     finishLocalDelivery,
     handleSelectCloudProject,
     handleTodoBound,
+    openBoundProjectSpaceTask,
     openDelivery,
     openTodoManager,
     pendingCloudProject,
@@ -1038,21 +1040,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
-  const pendingProjectSpaceContext =
-    !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
-      <ComposerModePill
-        label={pendingCloudProject.name}
-        icon={LayoutDashboard}
-        testId="project-space-context-pill"
-        cancelTestId="clear-project-space-context-button"
-        cancelLabel={t('workbench.clear_project_space_context', '不加入项目看板')}
-        onCancel={clearPendingProjectContext}
-        title={t(
-          'workbench.project_space_context_pending_title',
-          '发送后会在该项目空间的看板中创建任务'
-        )}
-      />
-    ) : null
+  const currentWorkItemContextKey = currentRuntimeTask
+    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
+    : null
+  const [openWorkItemContextKey, setOpenWorkItemContextKey] = useState<string | null>(null)
+  const workItemContextOpen =
+    currentWorkItemContextKey !== null && openWorkItemContextKey === currentWorkItemContextKey
+  const workItemContextAvailable = Boolean(
+    workItemContextOpen &&
+    currentProjectSpaceRuntimeTask &&
+    boundCloudProject &&
+    boundCloudItem &&
+    boundProjectSpaceApi
+  )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -1083,7 +1083,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const sendPaneInputWithContext = useCallback(
-    (
+    async (
       value?: string,
       options?: {
         guideWhenBusy?: boolean
@@ -1097,7 +1097,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = prepareSubmission(description)
+      const cloudSubmission = await prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,
@@ -1556,9 +1556,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
-    const workspaceTabs = canBrowseFiles
+    const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
-      : rightPanelTabs.filter(tab => tab !== 'files')
+      : rightPanelTabs.filter(tab => tab !== 'work-item')
+    const workspaceTabs = canBrowseFiles
+      ? availableContextTabs
+      : availableContextTabs.filter(tab => tab !== 'files')
     const permittedTabs = temporaryChatAvailable
       ? workspaceTabs
       : workspaceTabs.filter(tab => !tab.startsWith('chat:'))
@@ -1577,10 +1580,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
+    workItemContextAvailable,
     workspaceProject,
   ])
   const effectiveRightPanelView =
-    !temporaryChatAvailable && rightPanelView.startsWith('chat:') ? 'launcher' : rightPanelView
+    (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
+    (!workItemContextAvailable && rightPanelView === 'work-item')
+      ? 'launcher'
+      : rightPanelView
   const temporaryChatExpanded =
     temporaryChatAvailable && rightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
@@ -2607,6 +2614,40 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  const currentWorkItemGuideProject = boundCloudProject ?? pendingCloudProject ?? defaultProject
+  const workItemProjectOptions = cloudProjectMentionCandidates.flatMap(candidate =>
+    candidate.enabled && candidate.project ? [candidate.project] : []
+  )
+  const projectSpaceContext =
+    currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (
+      <WorkItemComposerGuide
+        project={boundCloudProject}
+        projects={workItemProjectOptions}
+        item={boundCloudItem}
+        api={boundProjectSpaceApi}
+        currentTask={currentProjectSpaceRuntimeTask}
+        currentUserName={state.user?.user_name}
+        refreshKey={`${runtimeTaskSummary?.running ?? false}:${runtimeTaskSummary?.turnStatus ?? ''}`}
+        onOpen={() => {
+          setOpenWorkItemContextKey(currentWorkItemContextKey)
+          openRightPanelTab('work-item')
+        }}
+        onOpenBoard={openBoundProjectSpaceTask}
+      />
+    ) : currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
+      <WorkItemComposerGuide
+        project={currentWorkItemGuideProject}
+        projects={workItemProjectOptions}
+        bindingPending
+      />
+    ) : !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
+      <WorkItemComposerGuide
+        project={pendingCloudProject}
+        projects={workItemProjectOptions}
+        onSelectProject={handleSelectCloudProject}
+        onCancel={clearPendingProjectContext}
+      />
+    ) : null
   useEffect(() => {
     if (!rightPanelImmediateLayout || !rightPanelOpen) return
 
@@ -2862,6 +2903,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
     if (tab === 'files') {
       setOpenFileRequest(null)
+    }
+    if (tab === 'work-item') {
+      setOpenWorkItemContextKey(null)
     }
     if (browserState?.label) {
       void closeEmbeddedBrowsers([browserState.label]).catch(error => {
@@ -3894,8 +3938,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
-                                    selectedCloudProjectId={composerCloudProject?.id}
-                                    toolbarLeadingContext={pendingProjectSpaceContext}
+                                    contextHeader={projectSpaceContext}
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={
@@ -4136,8 +4179,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                       }
                       onSelectCloudProject={handleSelectCloudProject}
-                      selectedCloudProjectId={composerCloudProject?.id}
-                      toolbarLeadingContext={pendingProjectSpaceContext}
+                      projectWorkBarEndContext={projectSpaceContext}
                       isStreaming={paneIsBusy}
                       onPause={pauseCurrentResponse}
                       onCompactContext={
@@ -4271,6 +4313,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              workItemPanel={
+                workItemContextAvailable &&
+                currentProjectSpaceRuntimeTask &&
+                boundCloudProject &&
+                boundCloudItem &&
+                boundProjectSpaceApi ? (
+                  <WorkItemContextPanel
+                    key={`${boundCloudProject.id}:${boundCloudItem.id}:${currentWorkItemContextKey}`}
+                    api={boundProjectSpaceApi}
+                    project={boundCloudProject}
+                    item={boundCloudItem}
+                    currentTask={currentProjectSpaceRuntimeTask}
+                    onOpenBoard={openBoundProjectSpaceTask}
+                    onOpenTask={openRuntimeTask}
+                  />
+                ) : null
+              }
               browserStates={browserStates}
               onBrowserStateChange={updateBrowserState}
               codeCommentCount={paneSession.codeCommentContexts.length}

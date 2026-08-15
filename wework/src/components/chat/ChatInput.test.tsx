@@ -3089,6 +3089,15 @@ describe('ChatInput', () => {
     expect(bar).toHaveTextContent('实现 plan 里的功能')
     expect(bar).toHaveTextContent('2m 58s')
 
+    expect(screen.getByTestId('goal-status-actions-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    await userEvent.click(screen.getByTestId('goal-status-actions-toggle'))
+    expect(screen.getByTestId('goal-status-actions-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     await userEvent.click(screen.getByTestId('edit-goal-button'))
     await userEvent.click(screen.getByTestId('pause-goal-button'))
     await userEvent.click(screen.getByTestId('clear-goal-button'))
@@ -3096,6 +3105,37 @@ describe('ChatInput', () => {
     expect(onEditGoal).toHaveBeenCalledTimes(1)
     expect(onPauseGoal).toHaveBeenCalledTimes(1)
     expect(onClearGoal).toHaveBeenCalledTimes(1)
+  })
+
+  test('places work-item context and goal in one rail above the composer', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: '完成工作项验收',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 12,
+      createdAt: 1780000000000,
+      updatedAt: 1780000000000,
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        contextHeader={<div data-testid="work-item-context-summary">WORK-1 · 下一步：验收</div>}
+        goal={goal}
+      />
+    )
+
+    const rail = screen.getByTestId('composer-context-rail')
+    const composer = screen.getByTestId('project-chat-composer-form')
+    expect(rail).toContainElement(screen.getByTestId('work-item-context-summary'))
+    expect(rail).toContainElement(screen.getByTestId('goal-status-bar'))
+    expect(rail.compareDocumentPosition(composer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   test('renders a newly created active goal with a zero-second timer', () => {

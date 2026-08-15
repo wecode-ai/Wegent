@@ -249,7 +249,7 @@ import {
 
 import {
   captureVerificationScreenshot,
-  configureDefaultProjectSpaceAssociation,
+  verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceDocumentTabs,
@@ -1601,7 +1601,10 @@ last_updated = "2026-07-30T00:00:00Z"`
     let associatedTaskTabTestId = null
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       phase = 'project-space-default-association-setup'
-      associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
+      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(
+        control,
+        projectRowSelector
+      )
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {

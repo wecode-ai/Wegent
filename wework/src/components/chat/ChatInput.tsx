@@ -179,14 +179,15 @@ export interface ChatInputProps {
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
-  selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
+  contextHeader?: ReactNode
   inputLeadingContext?: ReactNode
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
@@ -580,14 +581,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     cloudSpaceEnabled,
     onSelectExternalMention,
     onSelectCloudProject,
-    selectedCloudProjectId,
     isStreaming = false,
     onPause,
     showWorkspaceMenu,
+    contextHeader,
     inputLeadingContext,
     onDismissInputLeadingContext,
     toolbarLeadingContext,
     projectWorkBarTrailingContext,
+    projectWorkBarEndContext,
     modelSelectorOverride,
     onCompactContext,
     goal,
@@ -792,7 +794,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     cloudSpaceEnabled,
     onSelectExternalMention,
     onSelectCloudProject,
-    selectedCloudProjectId,
   }
   const errorBanner = error ? (
     <div
@@ -865,15 +866,20 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onApplyRefinedPrompt={applyRefinedPrompt}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
-        {displayedGoal && !goalDraftActive && (
-          <GoalStatusBar
-            goal={displayedGoal}
-            continuing={goalContinuing}
-            onEditGoal={onEditGoal}
-            onPauseGoal={onPauseGoal}
-            onResumeGoal={onResumeGoal}
-            onClearGoal={onClearGoal}
-          />
+        {(contextHeader || (displayedGoal && !goalDraftActive)) && (
+          <div data-testid="composer-context-rail" className="mb-2 flex min-w-0 items-center gap-2">
+            {contextHeader}
+            {displayedGoal && !goalDraftActive && (
+              <GoalStatusBar
+                goal={displayedGoal}
+                continuing={goalContinuing}
+                onEditGoal={onEditGoal}
+                onPauseGoal={onPauseGoal}
+                onResumeGoal={onResumeGoal}
+                onClearGoal={onClearGoal}
+              />
+            )}
+          </div>
         )}
         <ProjectChatComposer
           ref={composerRef}
@@ -934,6 +940,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           }
           showProjectWorkBar={showProjectWorkBar}
           projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+          projectWorkBarEndContext={projectWorkBarEndContext}
           modelSelectorOverride={modelSelectorOverride}
           onListLocalSkills={controls.listLocalSkills}
           onListLocalApps={controls.listLocalApps}

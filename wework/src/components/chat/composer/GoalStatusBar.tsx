@@ -35,6 +35,7 @@ export function GoalStatusBar({
     : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const timerKey = goalTimerKey(goal)
   const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
+  const [actionsExpanded, setActionsExpanded] = useState(false)
   const elapsedSeconds = useMemo(
     () => getLiveElapsedSeconds(goal, timerState, timerKey),
     [goal, timerKey, timerState]
@@ -63,52 +64,77 @@ export function GoalStatusBar({
   return (
     <div
       data-testid="goal-status-bar"
-      className="mb-2 flex h-11 w-full items-center gap-2 rounded-2xl border border-border/45 bg-background px-4 text-sm leading-[18px] text-text-secondary shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
+      className="group flex h-8 min-w-0 shrink items-center gap-1.5 overflow-hidden rounded-xl border border-border/60 bg-muted/55 px-2.5 text-xs text-text-secondary transition-[max-width,background-color] duration-200 hover:max-w-[560px] hover:bg-muted focus-within:max-w-[560px] focus-within:bg-muted"
     >
-      <Target className="h-4 w-4 shrink-0 text-text-muted" />
-      <div className="min-w-0 flex-1 truncate">
-        <span className="font-semibold text-text-primary">
-          {t(statusLabel.key, statusLabel.fallback)}
+      <Target className="h-4 w-4 shrink-0 text-primary" />
+      <div className="flex min-w-0 items-center">
+        <span className="shrink-0 font-semibold text-text-primary">
+          {t('workbench.goal_chip', '目标')}
         </span>
-        <span className="ml-1 truncate text-text-secondary">{goal.objective}</span>
+        <span className="ml-1 max-w-52 truncate text-text-secondary">· {goal.objective}</span>
       </div>
-      {elapsed && <span className="shrink-0 text-text-secondary">{elapsed}</span>}
-      <button
-        type="button"
-        data-testid="edit-goal-button"
-        onClick={onEditGoal}
-        disabled={!onEditGoal}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-secondary hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-        aria-label={t('workbench.goal_edit', '编辑目标')}
-        title={t('workbench.goal_edit', '编辑目标')}
+      <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
+      {elapsed && <span className="shrink-0 text-text-muted">{elapsed}</span>}
+      <div
+        id="goal-status-details"
+        data-testid="goal-status-details"
+        className={[
+          'flex shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 group-hover:max-w-80 group-hover:opacity-100 group-focus-within:max-w-80 group-focus-within:opacity-100',
+          actionsExpanded ? 'max-w-80 opacity-100' : 'max-w-0 opacity-0',
+        ].join(' ')}
       >
-        <Pencil className="h-4 w-4" />
-      </button>
-      {canToggle && (
         <button
           type="button"
-          data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
-          onClick={toggleAction}
-          disabled={!toggleAction}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-secondary hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label={toggleLabel}
-          title={toggleLabel}
+          data-testid="edit-goal-button"
+          onClick={onEditGoal}
+          disabled={!onEditGoal}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={t('workbench.goal_edit', '编辑目标')}
+          title={t('workbench.goal_edit', '编辑目标')}
         >
-          <ToggleIcon className="h-4 w-4" />
+          <Pencil className="h-3.5 w-3.5" />
         </button>
-      )}
+        {canToggle && (
+          <button
+            type="button"
+            data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
+            onClick={toggleAction}
+            disabled={!toggleAction}
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={toggleLabel}
+            title={toggleLabel}
+          >
+            <ToggleIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <button
+          type="button"
+          data-testid="clear-goal-button"
+          onClick={onClearGoal}
+          disabled={!onClearGoal}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={t('workbench.goal_clear', '删除目标')}
+          title={t('workbench.goal_clear', '删除目标')}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
       <button
         type="button"
-        data-testid="clear-goal-button"
-        onClick={onClearGoal}
-        disabled={!onClearGoal}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-secondary hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-        aria-label={t('workbench.goal_clear', '删除目标')}
-        title={t('workbench.goal_clear', '删除目标')}
+        data-testid="goal-status-actions-toggle"
+        onClick={() => setActionsExpanded(current => !current)}
+        aria-expanded={actionsExpanded}
+        aria-controls="goal-status-details"
+        aria-label={t('workbench.goal_actions_toggle', '展开目标操作')}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
       >
-        <Trash2 className="h-4 w-4" />
+        <ChevronRight
+          className={[
+            'h-3.5 w-3.5 transition-transform duration-200 group-hover:rotate-90 group-focus-within:rotate-90',
+            actionsExpanded ? 'rotate-90' : '',
+          ].join(' ')}
+        />
       </button>
-      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
     </div>
   )
 }

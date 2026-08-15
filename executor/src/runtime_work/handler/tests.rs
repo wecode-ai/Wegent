@@ -2224,6 +2224,40 @@ fn task_list_running_state_uses_local_execution_or_provider_turn() {
 }
 
 #[test]
+fn task_list_keeps_the_persisted_workspace_when_provider_cwd_changes() {
+    let index_path = temp_runtime_work_index_path("authoritative-task-workspace");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "task-1".to_owned(),
+        thread_id: Some("thread-1".to_owned()),
+        workspace_path: "/tmp/task-workspace".to_owned(),
+        ..RuntimeTaskLink::default()
+    });
+    let provider_thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/current-project",
+        "status": {"type": "idle"},
+        "turns": [{"status": "completed"}]
+    });
+
+    let link = handler
+        .link_from_thread(&provider_thread)
+        .expect("persisted task should produce a task link");
+
+    assert_eq!(link.workspace_path, "/tmp/task-workspace");
+    assert_eq!(
+        handler
+            .local_task_link("task-1")
+            .expect("task should remain stored")
+            .workspace_path,
+        "/tmp/task-workspace"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-local-task-route");
