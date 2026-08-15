@@ -54,6 +54,8 @@ export interface CloudLoopItem {
   assignee_name?: string | null
   assignee_agent_id?: string | null
   assignee_agent_name?: string | null
+  assignee_team_id?: number | null
+  assignee_team_name?: string | null
   execution_id?: number | null
   execution_state?: string | null
   execution_control_state?: string | null
@@ -64,7 +66,7 @@ export interface CloudLoopItem {
   can_approve?: boolean
   assignment_history?: Array<{
     by_user_id: number
-    to_type: 'user' | 'agent' | null
+    to_type: 'user' | 'agent' | 'team' | null
     to_id: string | null
     to_name?: string | null
     action: 'assign' | 'reassign' | 'unassign'
@@ -109,6 +111,7 @@ export interface CloudLoopItem {
     run_id?: string
     status?: string
     agent_id?: string | null
+    team_id?: number | null
     agent_name?: string | null
     trigger_message_id?: string | null
     project_chat_message_id?: string | null
@@ -147,7 +150,11 @@ export interface CloudLoopItemExecution {
   task_title: string
   task_status?: string | null
   task_priority?: string | null
-  agent_id: string
+  executor_type: 'project_robot' | 'automation_manager' | 'wegent_team' | string
+  agent_id: string | null
+  team_id?: number | null
+  backend_task_id?: number | null
+  automation_run_id: string
   assigner_user_id: number
   execution_environment: string
   execution_device_id?: string | null
@@ -439,7 +446,7 @@ export function createDeliveryApi(client: HttpClient) {
     listLoopItems(
       projectId: CloudProjectIdInput,
       filters?: {
-        assigneeType?: 'user' | 'agent'
+        assigneeType?: 'user' | 'agent' | 'team'
         assigneeId?: string | number
         executionState?: string
       }
@@ -473,7 +480,11 @@ export function createDeliveryApi(client: HttpClient) {
             task_title: String(row.taskTitle ?? ''),
             task_status: row.taskStatus == null ? null : String(row.taskStatus),
             task_priority: row.taskPriority == null ? null : String(row.taskPriority),
-            agent_id: String(row.agentId ?? ''),
+            executor_type: String(row.executorType ?? 'project_robot'),
+            agent_id: row.agentId == null ? null : String(row.agentId),
+            team_id: row.teamId == null ? null : Number(row.teamId),
+            backend_task_id: row.backendTaskId == null ? null : Number(row.backendTaskId),
+            automation_run_id: String(row.automationRunId ?? ''),
             assigner_user_id: Number(row.assignerUserId ?? 0),
             execution_environment: String(row.executionEnvironment ?? ''),
             execution_device_id:
@@ -556,6 +567,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'parent_id'
           | 'assignee_user_id'
           | 'assignee_agent_id'
+          | 'assignee_team_id'
           | 'due_at'
           | 'tags'
         >
@@ -570,7 +582,7 @@ export function createDeliveryApi(client: HttpClient) {
       itemId: string,
       data: {
         version: number
-        assigneeType: 'user' | 'agent'
+        assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
       }
     ): Promise<CloudLoopItem> {

@@ -15,6 +15,7 @@ from sqlalchemy import (
     BigInteger,
     Column,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -40,6 +41,24 @@ class LoopItemExecution(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     agent_id = Column(String(64), nullable=False, default="", server_default="")
+    team_id = Column(
+        Integer,
+        ForeignKey(
+            "kinds.id",
+            name="fk_loop_item_executions_team_id_kinds",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    backend_task_id = Column(
+        big_integer_id_type(),
+        ForeignKey(
+            "tasks.id",
+            name="fk_loop_item_executions_backend_task_id_tasks",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
     automation_run_id = Column(
         String(64), nullable=False, default="", server_default=""
     )
@@ -174,6 +193,7 @@ class LoopItemExecution(Base):
             "queued_at",
         ),
         Index("idx_exec_agent_status", "agent_id", "status"),
+        Index("idx_exec_team_status", "team_id", "status"),
         Index("idx_exec_automation_run_id", "automation_run_id"),
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
@@ -192,4 +212,6 @@ class LoopItemExecution(Base):
     def executor_type(self) -> str:
         """Return the transport role without persisting redundant state."""
 
+        if self.team_id:
+            return "wegent_team"
         return "project_robot" if self.agent_id else "automation_manager"

@@ -2806,6 +2806,7 @@
     "assignment_chain_trigger": "查看指派详情",
     "assignment_chain_unassigned": "未指派",
     "assignment_chain_agent": "机器人",
+    "assignment_chain_team": "Wegent 智能体",
     "assignment_action_assign": "指派",
     "assignment_action_reassign": "转派",
     "assignment_action_unassign": "取消指派",

@@ -83,6 +83,56 @@ inbox → pending → in_progress → in_review → completed
 
 已完成 TODO 可以重新进入 `in_progress`。更新操作必须携带 `version`，服务端使用乐观锁拒绝静默覆盖。
 
+### 看板任务的机器人与智能体执行
+
+看板负责人是互斥联合类型：项目成员、项目机器人（`ProjectChatAgent`）或 Wegent 智能体（`Kind(kind=Team)`）三者最多存在一个。智能体不能写入机器人的 `assignee_agent_id`，否则会丢失 Team 内的多 Bot、协作模式、模型、Skill 与 MCP 配置。实现只在现有 `loop_items` 和 `loop_item_executions` 增加关联字段，不新建表。
+
+```mermaid
+flowchart LR
+    UI[Wework 看板] -->|assignee_type=team| API[LoopItem 分配接口]
+    API --> TEAM[校验可访问且可运行的 Team]
+    API --> ITEM[(loop_items.assignee_team_id)]
+    API --> EXEC[(loop_item_executions.team_id)]
+    EXEC --> TASK[(现有 tasks / subtasks)]
+    TASK --> PIPELINE[原生 Wegent Team 执行管线]
+    PIPELINE --> EVENT[TaskCompletedEvent]
+    EVENT --> EXEC
+    EXEC --> VIEW[看板卡片 / 执行队列 / 活动流]
+```
+
+`loop_item_executions` 是看板执行状态的唯一事实来源；原生 `tasks/subtasks` 是 Team 内部执行事实。两者通过 `backend_task_id` 和带执行 ID、Subtask ID、Team ID 的标签严格关联。消息和活动记录只做展示投影，不能反向覆盖执行状态。
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant B as 看板 API
+    participant E as loop_item_executions
+    participant T as Wegent Task
+    participant R as Team 执行器
+
+    U->>B: 分配任务给智能体
+    B->>B: 校验 Team 可访问且执行依赖就绪
+    B->>E: 创建 queued 执行记录
+    B->>T: 创建原生 Task/Subtask 并写入关联标签
+    B->>E: 写入 backend_task_id
+    B-->>U: 返回由 E 投影的 queued 状态
+    R->>T: 原子领取 pending Subtask
+    R->>E: queued -> running（CAS）
+    alt E 已被取消或重分配
+        R->>T: 取消已领取的 Subtask
+        R-->>R: 不路由旧任务
+    else E 仍为 running
+        R->>R: 按 Team 的 Bot/协作模式执行
+        R->>T: 写入终态
+        T-->>B: TaskCompletedEvent
+        B->>E: 校验全部关联 ID 后写入同一终态
+    end
+```
+
+重分配和停止操作先推进看板执行记录到 `cancel_requested`（尚可能存在真实进程）或 `cancelled`（确认尚未启动），再把取消路由到对应的设备 Runtime 或原生 Team Task。旧工作线程即使稍后领取到消息，也必须重新检查执行记录，不能启动已经取消的运行。
+
+同一看板任务的 Team 尝试通过 `wegent_team:{loop_item_id}` 执行域串行化；不同任务仍可进入原生 Team 管线并由 Team 的协作配置决定内部并行度。项目机器人的单设备与单机器人并发限制保持原逻辑，不与 Team 执行混用。
+
 ### LoopItemTaskBinding
 
 `loop_item_task_bindings` 表达 TODO 与实际 Wework Task 的多对多历史关系。运行时 Task 使用 `task_user_id + device_id + task_id` 标识，因为本地执行 Task 不一定存在于 Backend `tasks` 表；`backend_task_id` 仅作为可选索引。解绑使用 `unlinked_at` 软删除，以保留执行来源审计。
@@ -143,6 +193,39 @@ Delivery 服务不负责 TODO CRUD；LoopItem 服务不直接访问 MinIO；MCP 
 /v1/cloud-work-items/my-work
 /v1/runtime-tasks/loop-item
 ```
+
+### 通过个人 API Key 创建看板和任务
+
+用户可以在保持原有权限和状态规则不变的前提下，通过个人 API Key 调用两个创建接口。支持 `X-API-Key: wg-...`，也支持 `Authorization: Bearer wg-...`；网页登录使用的 JWT 仍然有效。Service Key 不能以用户身份创建看板或任务。
+
+创建看板：
+
+```bash
+curl -X POST 'https://<host>/api/v1/cloud-projects' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: wg-<personal-api-key>' \
+  -d '{
+    "project_key": "OPS",
+    "name": "运维看板",
+    "description": "通过 API 创建"
+  }'
+```
+
+创建任务时使用上一步响应中的看板 `id`：
+
+```bash
+curl -X POST 'https://<host>/api/v1/cloud-projects/<project-id>/loop-items' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer wg-<personal-api-key>' \
+  -d '{
+    "title": "检查云端运行状态",
+    "description": "保持看板状态为真实状态源",
+    "priority": "high",
+    "tags": ["api"]
+  }'
+```
+
+任务创建仍经过看板成员权限、状态定义、Provider 路由和自动化规则校验。未指定 `status` 时进入看板的 `inbox` 状态；指定不存在的状态会返回 `422`，无权访问的私有看板按资源不可见规则返回 `404`。这两个接口是创建语义，不提供 PUT upsert；调用方重试 POST 前应确认前一次请求结果，避免重复资源。
 
 创建与更新使用不同端点，不提供 PUT upsert。共享文件支持创建目录、上传、重命名/移动、短期授权访问和递归删除；移动对象时先复制 MinIO 对象、提交元数据，再删除旧对象，失败时清理新对象。
 

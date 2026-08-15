@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudLoopItemExecution, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { TFunction } from 'i18next'
@@ -37,7 +38,10 @@ type QueueExecution = Pick<
   | 'version'
   | 'created_at'
   | 'updated_at'
->
+> & {
+  team_id?: number | null
+  executor_type?: string
+}
 
 export interface ExecutionListApi {
   list: (
@@ -113,6 +117,7 @@ function executionToItem(execution: QueueExecution): CloudLoopItem {
     created_by_user_id: execution.assigner_user_id,
     assignee_user_id: null,
     assignee_agent_id: execution.agent_id,
+    assignee_team_id: execution.team_id ?? null,
     assignee_agent_name: undefined,
     title: execution.task_title,
     description: '',
@@ -228,6 +233,7 @@ export function ProjectQueueView({
   api,
   project,
   projectChatAgentApi,
+  teamApi,
   executionApi,
   currentUserId,
   onOpenTask,
@@ -236,6 +242,7 @@ export function ProjectQueueView({
   api: DeliveryApi
   project: CloudProject
   projectChatAgentApi?: NonNullable<WorkbenchServices['projectChatAgentApi']>
+  teamApi?: WorkbenchServices['teamApi']
   executionApi?: ExecutionListApi
   currentUserId?: string | number
   onOpenTask?: (item: CloudLoopItem) => void
@@ -243,6 +250,7 @@ export function ProjectQueueView({
 }) {
   const { t } = useTranslation('common')
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
+  const [teams, setTeams] = useState<Team[]>([])
   const [myTasks, setMyTasks] = useState<CloudLoopItem[]>([])
   const [botQueues, setBotQueues] = useState<Record<string, CloudLoopItem[]>>({})
   const [loading, setLoading] = useState(true)
@@ -279,10 +287,11 @@ export function ProjectQueueView({
         setError(null)
       }
       try {
-        const [nextAgents, myResponse] = await Promise.all([
+        const [nextAgents, nextTeams, myResponse] = await Promise.all([
           projectChatAgentApi
             ? projectChatAgentApi.list(project.id)
             : Promise.resolve([] as ProjectChatAgent[]),
+          teamApi ? teamApi.listTeams() : Promise.resolve([] as Team[]),
           api.listLoopItems(project.id, {
             assigneeType: 'user',
             ...(currentUserId !== undefined ? { assigneeId: currentUserId } : {}),
@@ -290,19 +299,28 @@ export function ProjectQueueView({
         ])
         if (!active || seq !== loadSeq) return
         setAgents(nextAgents)
+        setTeams(nextTeams.filter(team => team.is_active !== false))
         setMyTasks(myResponse.items)
         const queues: Record<string, CloudLoopItem[]> = {}
         if (executionApi) {
           const all = await executionApi.list(project.id, {})
           if (!active || seq !== loadSeq) return
-          const byAgent = new Map<string, QueueExecution[]>()
+          const byExecutor = new Map<string, QueueExecution[]>()
           for (const execution of all) {
-            const bucket = byAgent.get(execution.agent_id) ?? []
+            const executorKey = execution.team_id
+              ? `team:${execution.team_id}`
+              : `agent:${execution.agent_id ?? ''}`
+            const bucket = byExecutor.get(executorKey) ?? []
             bucket.push(execution)
-            byAgent.set(execution.agent_id, bucket)
+            byExecutor.set(executorKey, bucket)
           }
           for (const agent of nextAgents) {
-            queues[agent.id] = (byAgent.get(agent.id) ?? [])
+            queues[`agent:${agent.id}`] = (byExecutor.get(`agent:${agent.id}`) ?? [])
+              .filter(executionInQueue)
+              .map(executionToItem)
+          }
+          for (const team of nextTeams) {
+            queues[`team:${team.id}`] = (byExecutor.get(`team:${team.id}`) ?? [])
               .filter(executionInQueue)
               .map(executionToItem)
           }
@@ -313,7 +331,15 @@ export function ProjectQueueView({
               assigneeId: agent.id,
             })
             if (!active || seq !== loadSeq) return
-            queues[agent.id] = response.items.filter(isInQueue)
+            queues[`agent:${agent.id}`] = response.items.filter(isInQueue)
+          }
+          for (const team of nextTeams) {
+            const response = await api.listLoopItems(project.id, {
+              assigneeType: 'team',
+              assigneeId: String(team.id),
+            })
+            if (!active || seq !== loadSeq) return
+            queues[`team:${team.id}`] = response.items.filter(isInQueue)
           }
         }
         setBotQueues(queues)
@@ -335,7 +361,7 @@ export function ProjectQueueView({
       active = false
       window.clearInterval(interval)
     }
-  }, [api, currentUserId, executionApi, project.id, projectChatAgentApi, reloadKey])
+  }, [api, currentUserId, executionApi, project.id, projectChatAgentApi, reloadKey, teamApi])
 
   const queueColumns = useMemo(() => {
     const columns: Array<{
@@ -343,6 +369,7 @@ export function ProjectQueueView({
       title: string
       items: CloudLoopItem[]
       bot?: ProjectChatAgent
+      team?: Team
     }> = []
     const visibleMyTasks = myTasks.filter(isInQueue)
     if (currentUserId !== undefined || visibleMyTasks.length > 0) {
@@ -356,12 +383,20 @@ export function ProjectQueueView({
       columns.push({
         key: agent.id,
         title: agent.name,
-        items: botQueues[agent.id] ?? [],
+        items: botQueues[`agent:${agent.id}`] ?? [],
         bot: agent,
       })
     }
+    for (const team of teams) {
+      columns.push({
+        key: `team-${team.id}`,
+        title: team.displayName || team.name,
+        items: botQueues[`team:${team.id}`] ?? [],
+        team,
+      })
+    }
     return columns
-  }, [agents, botQueues, currentUserId, myTasks, t])
+  }, [agents, botQueues, currentUserId, myTasks, t, teams])
 
   const stateCounts = useMemo(() => {
     const counts: Record<string, number> = { all: 0, my_approval: 0 }
@@ -478,7 +513,7 @@ export function ProjectQueueView({
               className="flex min-h-40 flex-col rounded-xl border border-border bg-background"
             >
               <header className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
-                {column.bot ? (
+                {column.bot || column.team ? (
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/10 text-violet-600">
                     <Bot className="h-3.5 w-3.5" />
                   </span>

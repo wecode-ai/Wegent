@@ -74,10 +74,10 @@ class ProjectChatAgentView(ProjectChatSchema):
 
 
 class LoopItemAssign(ProjectChatSchema):
-    """Assign a loop item to a project member or to a project robot."""
+    """Assign a loop item to a project member, robot, or Wegent Team."""
 
     version: int = Field(ge=1)
-    assignee_type: Literal["user", "agent"]
+    assignee_type: Literal["user", "agent", "team"]
     assignee_id: str = Field(min_length=1, max_length=128)
 
 
@@ -165,6 +165,9 @@ class LoopItemExecutionView(ProjectChatSchema):
     task_priority: str | None
     executor_type: str = "project_robot"
     agent_id: str | None = None
+    team_id: int | None = None
+    backend_task_id: int | None = None
+    automation_run_id: str = ""
     assigner_user_id: int
     execution_environment: str
     execution_device_id: str | None

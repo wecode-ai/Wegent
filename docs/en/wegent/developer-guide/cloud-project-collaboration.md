@@ -83,6 +83,56 @@ inbox → pending → in_progress → in_review → completed
 
 Completed TODOs may be reopened into `in_progress`. Updates carry a `version` value and use optimistic locking.
 
+### Board execution by Bots and Agents
+
+A board assignee is an exclusive union of a project member, a project Bot (`ProjectChatAgent`), or a Wegent Agent (`Kind(kind=Team)`). A Team must not be stored in the Bot's `assignee_agent_id`, because that would discard its multi-Bot composition, collaboration mode, models, Skills, and MCP configuration. The implementation adds references to the existing `loop_items` and `loop_item_executions` tables and creates no table.
+
+```mermaid
+flowchart LR
+    UI[Wework board] -->|assignee_type=team| API[LoopItem assignment API]
+    API --> TEAM[Validate an accessible runnable Team]
+    API --> ITEM[(loop_items.assignee_team_id)]
+    API --> EXEC[(loop_item_executions.team_id)]
+    EXEC --> TASK[(existing tasks / subtasks)]
+    TASK --> PIPELINE[Native Wegent Team pipeline]
+    PIPELINE --> EVENT[TaskCompletedEvent]
+    EVENT --> EXEC
+    EXEC --> VIEW[Board card / queue / activity]
+```
+
+`loop_item_executions` is the sole source of truth for board execution state, while native `tasks/subtasks` own Team-internal execution. `backend_task_id` and labels containing the execution, Subtask, and Team identities fence the two records together. Messages and activity rows are presentation projections and never override execution truth.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant B as Board API
+    participant E as loop_item_executions
+    participant T as Wegent Task
+    participant R as Team executor
+
+    U->>B: Assign task to Agent
+    B->>B: Validate Team access and runtime readiness
+    B->>E: Create queued execution
+    B->>T: Create native Task/Subtask with identity labels
+    B->>E: Persist backend_task_id
+    B-->>U: Return queued state projected from E
+    R->>T: Atomically claim pending Subtask
+    R->>E: queued -> running (CAS)
+    alt E was cancelled or reassigned
+        R->>T: Cancel the claimed Subtask
+        R-->>R: Do not route the stale run
+    else E is still running
+        R->>R: Execute the Team's Bots and collaboration mode
+        R->>T: Persist terminal state
+        T-->>B: TaskCompletedEvent
+        B->>E: Verify every identity and persist the same terminal state
+    end
+```
+
+Reassignment and stop first move board truth to `cancel_requested` when a process may exist, or `cancelled` when execution provably has not started, then route cancellation to the device Runtime or native Team Task. A delayed worker must recheck board execution truth after claiming and cannot start a cancelled run.
+
+Attempts for one board task share the `wegent_team:{loop_item_id}` execution scope and therefore serialize. Different board tasks may enter the native Team pipeline concurrently; the Team collaboration configuration controls its internal parallelism. Existing per-device and per-Bot limits for project Bots remain separate from Team execution.
+
 ### LoopItemTaskBinding
 
 `loop_item_task_bindings` stores the historical many-to-many relationship between a TODO and concrete Wework Tasks. A runtime Task is identified by `task_user_id + device_id + task_id`, because a locally executed Task may not exist in the Backend `tasks` table; `backend_task_id` is only an optional index. Unlinking sets `unlinked_at` so execution provenance remains auditable.
@@ -143,6 +193,39 @@ Delivery services do not own TODO CRUD. LoopItem services do not access MinIO di
 /v1/cloud-work-items/my-work
 /v1/runtime-tasks/loop-item
 ```
+
+### Create boards and tasks with a personal API key
+
+Users can call the two creation endpoints with a personal API key while preserving the existing authorization and board-state rules. Both `X-API-Key: wg-...` and `Authorization: Bearer wg-...` are supported, and browser JWT authentication remains valid. Service keys cannot create boards or tasks as a user.
+
+Create a board:
+
+```bash
+curl -X POST 'https://<host>/api/v1/cloud-projects' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: wg-<personal-api-key>' \
+  -d '{
+    "project_key": "OPS",
+    "name": "Operations board",
+    "description": "Created through the API"
+  }'
+```
+
+Create a task with the board `id` returned by the previous request:
+
+```bash
+curl -X POST 'https://<host>/api/v1/cloud-projects/<project-id>/loop-items' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer wg-<personal-api-key>' \
+  -d '{
+    "title": "Check cloud execution state",
+    "description": "Keep the board as the source of truth",
+    "priority": "high",
+    "tags": ["api"]
+  }'
+```
+
+Task creation still passes through board membership authorization, status-definition validation, provider routing, and automation rules. If `status` is omitted, the task enters the board's `inbox` state. An unknown status returns `422`, while an inaccessible private board returns `404` under the resource-hiding policy. These are create operations, not PUT upserts; callers should determine the outcome of an earlier POST before retrying to avoid duplicates.
 
 Creation and updates use separate endpoints rather than PUT upsert. Shared files support folder creation, upload, rename/move, short-lived access, and recursive deletion. A move copies MinIO objects first, commits metadata, and only then removes the old objects; failed moves clean up newly copied objects.
 

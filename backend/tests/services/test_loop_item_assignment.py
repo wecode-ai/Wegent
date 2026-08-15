@@ -161,6 +161,55 @@ def test_assign_to_robot_enters_queue_with_history(
     assert execution.assigner_user_id == test_user.id
 
 
+def test_assign_to_wegent_team_uses_team_execution_truth(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"board-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    monkeypatch.setattr(
+        "app.services.loop_items.service.runnable_wegent_team",
+        lambda db, user_id, team_id: team,
+    )
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="team",
+            assignee_id=str(team.id),
+        ),
+    )
+
+    assert updated.assignee_team_id == team.id
+    assert updated.assignee_user_id is None
+    assert updated.assignee_agent_id == ""
+    history = (updated.metadata_json or {})["assignment_history"]
+    assert history[-1]["to_type"] == "team"
+    assert history[-1]["to_id"] == str(team.id)
+    execution = _active_execution(test_db, updated)
+    assert execution is not None
+    assert execution.executor_type == "wegent_team"
+    assert execution.team_id == team.id
+    assert execution.agent_id == ""
+    assert execution.status == "queued"
+
+
 def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> None:
     project = _make_project(test_db, test_user)
     member = _make_member(test_db, project, "assignee", BaseRole.Developer)

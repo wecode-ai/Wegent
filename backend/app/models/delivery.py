@@ -100,6 +100,17 @@ class LoopNode(Base):
         server_default="",
         comment="Assigned project chat agent ID; empty when unassigned",
     )
+    assignee_team_id = Column(
+        Integer,
+        ForeignKey(
+            "kinds.id",
+            name="fk_loop_items_assignee_team_id_kinds",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+        comment="Assigned Wegent Team ID; null when the assignee is not a Team",
+    )
     task_id = Column(String(255), nullable=True)
     task_title = Column(String(255), nullable=True)
     backend_task_id = Column(

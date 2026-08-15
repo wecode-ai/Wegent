@@ -172,6 +172,50 @@ def test_assign_robot_on_gitlab_creates_index_row_and_execution(
     assert execution.agent_id == bot.id
 
 
+def test_assign_team_on_gitlab_uses_existing_index_and_execution_tables(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"external-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    _mock_issue(monkeypatch)
+    monkeypatch.setattr(
+        "app.services.loop_items.external_provider.runnable_wegent_team",
+        lambda db, user_id, team_id: team,
+    )
+
+    response = external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemAssign(
+            version=1,
+            assignee_type="team",
+            assignee_id=str(team.id),
+        ),
+    )
+
+    assert response["assignee_team_id"] == team.id
+    assert response["assignee_team_name"] == team.name
+    row = test_db.get(LoopItem, _item_id(project))
+    assert row is not None
+    assert row.assignee_team_id == team.id
+    assert row.assignee_agent_id == ""
+    execution = _active_execution(test_db, _item_id(project))
+    assert execution is not None
+    assert execution.team_id == team.id
+    assert execution.executor_type == "wegent_team"
+
+
 def test_assign_user_on_gitlab_creates_index_row_without_execution(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:

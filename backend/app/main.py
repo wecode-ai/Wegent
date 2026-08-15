@@ -379,6 +379,11 @@ async def lifespan(app: FastAPI):
     )
 
     register_project_automation_task_completion_handler(event_bus)
+    from app.services.board_team_completion import (
+        register_board_team_completion_handler,
+    )
+
+    register_board_team_completion_handler(event_bus)
     logger.info("✓ Project automation task completion handler registered")
 
     # Register code wiki run completion handler. A version's outcome is normally

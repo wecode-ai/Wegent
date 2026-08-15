@@ -119,6 +119,9 @@ def _execution_view(
             "task_priority": item.priority if item else None,
             "executor_type": row.executor_type,
             "agent_id": _optional_text(row.agent_id),
+            "team_id": row.team_id,
+            "backend_task_id": row.backend_task_id,
+            "automation_run_id": row.automation_run_id,
             "assigner_user_id": row.assigner_user_id,
             "execution_environment": row.execution_environment,
             "execution_device_id": _optional_text(row.execution_device_id),
@@ -532,6 +535,17 @@ def cancel_execution(
     row = loop_item_execution_service.cancel(
         db, execution_id=execution_id, note=values.note
     )
+    if row.team_id is not None and row.backend_task_id:
+        from app.services.project_automation_managed_execution import (
+            project_automation_managed_execution_service,
+        )
+
+        background_tasks.add_task(
+            project_automation_managed_execution_service.cancel,
+            task_id=row.backend_task_id,
+            user_id=row.executor_owner_user_id,
+            source="board_team_assignment",
+        )
     if (
         row is not None
         and row.status == "cancel_requested"
@@ -568,6 +582,17 @@ def stop_execution(
         execution_id=execution_id,
         note="Stopped from the automation queue",
     )
+    if row.team_id is not None and row.backend_task_id:
+        from app.services.project_automation_managed_execution import (
+            project_automation_managed_execution_service,
+        )
+
+        background_tasks.add_task(
+            project_automation_managed_execution_service.cancel,
+            task_id=row.backend_task_id,
+            user_id=row.executor_owner_user_id,
+            source="board_team_assignment",
+        )
     if (
         row is not None
         and row.status == "cancel_requested"

@@ -28,6 +28,7 @@ from app.models.delivery import (
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
 )
+from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
@@ -58,6 +59,7 @@ class TaskContext:
     tags: list[str] = field(default_factory=list)
     assignee_user_id: int | None = None
     assignee_agent_id: str | None = None
+    assignee_team_id: int | None = None
 
     def to_context(self) -> dict[str, Any]:
         return asdict(self)
@@ -111,12 +113,18 @@ def runtime_task_id_for(execution_id: int) -> str:
 
 
 def execution_scope_for(
-    *, loop_item_id: str, agent_id: str, automation_run_id: str
+    *,
+    loop_item_id: str,
+    agent_id: str,
+    team_id: int | None = None,
+    automation_run_id: str,
 ) -> str:
     """Return the concurrency and retry scope for one execution attempt."""
 
     if agent_id:
         return f"project_robot:{loop_item_id}"
+    if team_id:
+        return f"wegent_team:{loop_item_id}"
     manager_identity = automation_run_id or loop_item_id
     return f"automation_manager:{manager_identity}"
 
@@ -198,6 +206,7 @@ def execution_ai_state(
         return None
     state = dict(existing) if isinstance(existing, dict) else {}
     agent = db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
+    team = db.get(Kind, execution.team_id) if execution.team_id else None
 
     def iso(value: datetime) -> str | None:
         optional = _optional_datetime(value)
@@ -208,10 +217,15 @@ def execution_ai_state(
             "run_id": state.get("run_id") or f"exec-{execution.id}",
             "status": execution_display_state(execution),
             "agent_id": execution.agent_id or None,
+            "team_id": execution.team_id or None,
             "agent_name": (
                 "AI 托管"
                 if execution.executor_type == "automation_manager"
-                else ((agent.title or agent.name) if agent is not None else None)
+                else (
+                    team.name
+                    if execution.executor_type == "wegent_team" and team is not None
+                    else ((agent.title or agent.name) if agent is not None else None)
+                )
             ),
             "runtime_device_id": execution.runtime_device_id or None,
             "runtime_task_id": execution.runtime_task_id or None,
@@ -408,12 +422,41 @@ class LoopItemExecutionService:
             executor_type="project_robot",
             owner_user_id=int(agent.created_by_user_id or 0),
             agent_id=agent.id,
+            team_id=None,
             assigner_user_id=assigner_user_id,
             environment=environment,
             execution_device_id=execution_device_id,
             priority=priority,
             automation_context=effective_context,
             requires_approval=mode == "manual_approval",
+        )
+
+    def create_for_team_assignment(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        team: Kind,
+        assigner_user_id: int,
+        priority: str | None,
+    ) -> LoopItemExecution:
+        """Create the authoritative run for a Wegent Team assignment."""
+
+        return self._enqueue(
+            db,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
+            executor_type="wegent_team",
+            owner_user_id=assigner_user_id,
+            agent_id="",
+            team_id=team.id,
+            assigner_user_id=assigner_user_id,
+            environment="managed",
+            execution_device_id=None,
+            priority=priority,
+            automation_context=None,
+            requires_approval=False,
         )
 
     def enqueue_automation_manager(
@@ -439,6 +482,7 @@ class LoopItemExecutionService:
             executor_type="automation_manager",
             owner_user_id=owner_user_id,
             agent_id="",
+            team_id=None,
             assigner_user_id=assigner_user_id,
             environment=environment,
             execution_device_id=execution_device_id,
@@ -456,6 +500,7 @@ class LoopItemExecutionService:
         executor_type: str,
         owner_user_id: int,
         agent_id: str,
+        team_id: int | None,
         assigner_user_id: int,
         environment: str,
         execution_device_id: str | None,
@@ -496,6 +541,7 @@ class LoopItemExecutionService:
         execution_scope = execution_scope_for(
             loop_item_id=loop_item_id,
             agent_id=agent_id,
+            team_id=team_id,
             automation_run_id=automation_run_id,
         )
         previous = (
@@ -510,6 +556,7 @@ class LoopItemExecutionService:
             cloud_project_id=cloud_project_id,
             executor_owner_user_id=owner_user_id,
             agent_id=agent_id,
+            team_id=team_id,
             automation_run_id=automation_run_id,
             execution_environment=environment,
             execution_device_id=execution_device_id or "",
@@ -572,6 +619,56 @@ class LoopItemExecutionService:
         # rolls the approval back instead of half-applying it.
         db.flush()
         db.refresh(row)
+        return row
+
+    def mark_managed_running(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        backend_task_id: int,
+    ) -> LoopItemExecution:
+        """Record that the ordinary Wegent Team pipeline accepted a board run."""
+
+        now = utcnow()
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == execution_id,
+                LoopItemExecution.team_id.isnot(None),
+                LoopItemExecution.status == STATUS_QUEUED,
+            )
+            .update(
+                {
+                    "status": STATUS_RUNNING,
+                    "backend_task_id": backend_task_id,
+                    "started_at": now,
+                    "observed_state": OBSERVED_RUNNING,
+                    "sync_state": SYNC_IN_SYNC,
+                    "observed_at": now,
+                    "heartbeat_at": now,
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated != 1:
+            db.rollback()
+            current = db.get(LoopItemExecution, execution_id)
+            if current is None:
+                raise RuntimeError("Board Team execution disappeared")
+            return current
+        activity = self._linked_activity(db, db.get(LoopItemExecution, execution_id))
+        if activity is not None:
+            activity.status = "streaming"
+            metadata = dict(activity.metadata_json or {})
+            activity.metadata_json = {**metadata, "run_status": "running"}
+        db.commit()
+        db.expire_all()
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None:
+            raise RuntimeError("Board Team execution disappeared")
+        self._push_activity_after_commit(db, activity)
         return row
 
     def reject(
@@ -1767,6 +1864,8 @@ class LoopItemExecutionService:
             cloud_project_id=previous.cloud_project_id,
             executor_owner_user_id=previous.executor_owner_user_id,
             agent_id=previous.agent_id,
+            team_id=previous.team_id,
+            backend_task_id=None,
             automation_run_id=previous.automation_run_id,
             execution_environment=previous.execution_environment,
             execution_device_id=previous.execution_device_id,
@@ -2909,6 +3008,8 @@ class LoopItemExecutionService:
                 "executor_type": execution.executor_type,
                 "executor_owner_user_id": execution.executor_owner_user_id,
                 "agent_id": _optional_text(execution.agent_id),
+                "team_id": execution.team_id,
+                "backend_task_id": execution.backend_task_id,
                 "automation_run_id": execution.automation_run_id,
                 "assigner_user_id": execution.assigner_user_id,
                 "execution_environment": execution.execution_environment,

@@ -1778,6 +1778,7 @@ def test_cloud_project_manual_automation_waits_for_runtime_truth_after_local_cla
     assert execution["status"] == "claimed"
     assert execution["displayState"] == "starting"
     assert execution["observedState"] == "unconfirmed"
+    assert execution["automationRunId"] == run["id"]
     assert "executionPayload" not in execution
     assert execution["runtimePayload"]["message"]
     assert "executionRequest" not in execution["runtimePayload"]

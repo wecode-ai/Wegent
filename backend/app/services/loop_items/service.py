@@ -32,6 +32,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
     loop_node_non_nullable_attributes,
 )
+from app.models.kind import Kind
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -61,6 +62,7 @@ from app.services.loop_item_status_history import (
     project_board_statuses,
     write_status_change,
 )
+from app.services.project_automation_domain import runnable_wegent_team
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
 
@@ -136,6 +138,9 @@ class LoopItemService:
         if item.assignee_agent_id:
             agent = db.get(ProjectChatAgent, item.assignee_agent_id)
             values["assignee_agent_name"] = agent.name if agent else None
+        if item.assignee_team_id:
+            team = db.get(Kind, item.assignee_team_id)
+            values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         automation = metadata.get("automation")
         values["automation"] = automation if isinstance(automation, dict) else None
@@ -428,6 +433,7 @@ class LoopItemService:
         payload = values.model_dump()
         tags = payload.pop("tags")
         agent_id = payload.get("assignee_agent_id")
+        team_id = payload.get("assignee_team_id")
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
         if automation_context is not None:
@@ -447,12 +453,24 @@ class LoopItemService:
                     "AI assignee is not active in this project",
                 )
             payload["assignee_user_id"] = None
+            payload["assignee_team_id"] = None
             self._write_assignment_change(
                 task_metadata,
                 user_id,
                 "agent",
                 agent.id,
                 agent.title or agent.name,
+            )
+        elif team_id:
+            team = runnable_wegent_team(db, user_id, team_id)
+            payload["assignee_user_id"] = None
+            payload["assignee_agent_id"] = ""
+            self._write_assignment_change(
+                task_metadata,
+                user_id,
+                "team",
+                str(team.id),
+                team.name,
             )
         elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
@@ -522,6 +540,18 @@ class LoopItemService:
                     automation_context=automation_context,
                     instruction=instruction,
                 )
+        elif team_id:
+            db.flush()
+            team = db.get(Kind, team_id)
+            if team is not None:
+                loop_item_execution_service.create_for_team_assignment(
+                    db,
+                    loop_item_id=item.id,
+                    cloud_project_id=item.cloud_project_id,
+                    team=team,
+                    assigner_user_id=user_id,
+                    priority=item.priority,
+                )
         if commit:
             db.commit()
             db.refresh(item)
@@ -557,6 +587,15 @@ class LoopItemService:
             query = query.filter(LoopItem.assignee_user_id == assignee_user_id)
         elif assignee_type == "agent" and assignee_id:
             query = query.filter(LoopItem.assignee_agent_id == assignee_id)
+        elif assignee_type == "team" and assignee_id:
+            try:
+                assignee_team_id = int(assignee_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Team assignee id must be numeric",
+                ) from exc
+            query = query.filter(LoopItem.assignee_team_id == assignee_team_id)
         if execution_state:
             from app.models.loop_item_execution import LoopItemExecution
 
@@ -798,7 +837,13 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
         updates = values.model_dump(exclude={"version"}, exclude_unset=True)
-        if "assignee_agent_id" in values.model_fields_set:
+        if "assignee_team_id" in values.model_fields_set:
+            team_id = values.assignee_team_id
+            if team_id:
+                runnable_wegent_team(db, user_id, team_id)
+                updates["assignee_user_id"] = None
+                updates["assignee_agent_id"] = ""
+        elif "assignee_agent_id" in values.model_fields_set:
             agent_id = values.assignee_agent_id
             updates["assignee_agent_id"] = agent_id or ""
             if agent_id:
@@ -813,8 +858,10 @@ class LoopItemService:
                         "AI assignee is not active in this project",
                     )
                 updates["assignee_user_id"] = None
+                updates["assignee_team_id"] = None
         elif "assignee_user_id" in values.model_fields_set and values.assignee_user_id:
             updates["assignee_agent_id"] = ""
+            updates["assignee_team_id"] = None
         if "parent_id" in values.model_fields_set:
             self._validate_parent_change(db, item, values.parent_id)
         if "tags" in values.model_fields_set:
@@ -823,9 +870,11 @@ class LoopItemService:
             metadata = dict(item.metadata_json or {})
             metadata["tags"] = updates.pop("tags") or []
             updates["metadata_json"] = metadata
+        cancelled_runs: list = []
         assignee_changed = (
             "assignee_agent_id" in values.model_fields_set
             or "assignee_user_id" in values.model_fields_set
+            or "assignee_team_id" in values.model_fields_set
         )
         if assignee_changed:
             # Legacy assignment path: record the chain and derive the queue
@@ -834,12 +883,19 @@ class LoopItemService:
             metadata = dict(item.metadata_json or {})
             if isinstance(updates.get("metadata_json"), dict):
                 metadata = dict(updates["metadata_json"])
-            target_type = "agent" if updates.get("assignee_agent_id") else "user"
-            target_id = updates.get("assignee_agent_id") or (
-                str(updates["assignee_user_id"])
-                if updates.get("assignee_user_id")
-                else None
-            )
+            if updates.get("assignee_team_id"):
+                target_type = "team"
+                target_id = str(updates["assignee_team_id"])
+            elif updates.get("assignee_agent_id"):
+                target_type = "agent"
+                target_id = str(updates["assignee_agent_id"])
+            else:
+                target_type = "user"
+                target_id = (
+                    str(updates["assignee_user_id"])
+                    if updates.get("assignee_user_id")
+                    else None
+                )
             if target_id is None:
                 self._write_assignment_change(metadata, user_id, None, None, None)
             elif target_type == "agent":
@@ -851,6 +907,15 @@ class LoopItemService:
                     target_id,
                     agent.title or agent.name if agent is not None else None,
                 )
+            elif target_type == "team":
+                team = db.get(Kind, int(target_id))
+                self._write_assignment_change(
+                    metadata,
+                    user_id,
+                    "team",
+                    target_id,
+                    team.name if team is not None else None,
+                )
             else:
                 self._write_assignment_change(
                     metadata,
@@ -860,7 +925,7 @@ class LoopItemService:
                     None,
                 )
             updates["metadata_json"] = metadata
-            self._sync_execution_for_assignment(
+            cancelled_runs = self._sync_execution_for_assignment(
                 db,
                 item=item,
                 user_id=user_id,
@@ -869,6 +934,11 @@ class LoopItemService:
                 agent=(
                     db.get(ProjectChatAgent, target_id)
                     if target_type == "agent"
+                    else None
+                ),
+                team=(
+                    db.get(Kind, int(target_id))
+                    if target_type == "team" and target_id is not None
                     else None
                 ),
                 priority=item.priority,
@@ -918,6 +988,12 @@ class LoopItemService:
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO changed")
         db.commit()
         db.refresh(item)
+        if cancelled_runs:
+            from app.services.board_team_execution import (
+                request_execution_cancellations,
+            )
+
+            request_execution_cancellations(cancelled_runs)
         return item
 
     def assign(
@@ -931,7 +1007,7 @@ class LoopItemService:
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
     ) -> LoopItem:
-        """Assign a task to a project member or to a project robot.
+        """Assign a task to a project member, project robot, or Wegent Team.
 
         The task itself records who assigned it to whom (the chain) and the
         derived execution state. There is no separate queue storage: a task
@@ -968,6 +1044,7 @@ class LoopItemService:
             assignee_updates = {
                 "assignee_agent_id": agent.id,
                 "assignee_user_id": None,
+                "assignee_team_id": None,
             }
             self._write_assignment_change(
                 metadata,
@@ -983,6 +1060,7 @@ class LoopItemService:
                 target_type="agent",
                 target_id=agent.id,
                 agent=agent,
+                team=None,
                 priority=item.priority,
                 automation_context=automation_context,
                 instruction=instruction,
@@ -1004,6 +1082,7 @@ class LoopItemService:
             assignee_updates = {
                 "assignee_user_id": target_user_id,
                 "assignee_agent_id": "",
+                "assignee_team_id": None,
             }
             target = db.get(User, target_user_id)
             self._write_assignment_change(
@@ -1020,6 +1099,40 @@ class LoopItemService:
                 target_type="user",
                 target_id=str(target_user_id),
                 agent=None,
+                team=None,
+                priority=item.priority,
+                automation_context=automation_context,
+                instruction=instruction,
+            )
+        elif values.assignee_type == "team":
+            try:
+                target_team_id = int(values.assignee_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Team assignee id must be numeric",
+                ) from exc
+            team = runnable_wegent_team(db, user_id, target_team_id)
+            assignee_updates = {
+                "assignee_user_id": None,
+                "assignee_agent_id": "",
+                "assignee_team_id": team.id,
+            }
+            self._write_assignment_change(
+                metadata,
+                user_id,
+                "team",
+                str(team.id),
+                team.name,
+            )
+            cancelled_runs = self._sync_execution_for_assignment(
+                db,
+                item=item,
+                user_id=user_id,
+                target_type="team",
+                target_id=str(team.id),
+                agent=None,
+                team=team,
                 priority=item.priority,
                 automation_context=automation_context,
                 instruction=instruction,
@@ -1033,9 +1146,11 @@ class LoopItemService:
             db, item, values.version, metadata, **assignee_updates
         )
         if cancelled_runs:
-            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+            from app.services.board_team_execution import (
+                request_execution_cancellations,
+            )
 
-            emit_runtime_cancels(cancelled_runs)
+            request_execution_cancellations(cancelled_runs)
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
             if agent is not None and agent.created_by_user_id:
@@ -1770,6 +1885,7 @@ class LoopItemService:
         target_type: str,
         target_id: str | None,
         agent: ProjectChatAgent | None,
+        team: Kind | None,
         priority: str | None,
         automation_context: dict[str, Any] | None = None,
         instruction: str | None = None,
@@ -1819,6 +1935,8 @@ class LoopItemService:
                 cancelled.status == "cancel_requested"
                 and cancelled.runtime_device_id
                 and cancelled.runtime_task_id
+            ) or (
+                cancelled.team_id is not None and cancelled.backend_task_id is not None
             ):
                 cancelled_runs.append(cancelled)
         if target_type == "agent" and agent is not None:
@@ -1838,6 +1956,15 @@ class LoopItemService:
                 priority=priority,
                 automation_context=automation_context,
                 instruction=instruction,
+            )
+        elif target_type == "team" and team is not None:
+            loop_item_execution_service.create_for_team_assignment(
+                db,
+                loop_item_id=item.id,
+                cloud_project_id=item.cloud_project_id,
+                team=team,
+                assigner_user_id=user_id,
+                priority=priority,
             )
         return cancelled_runs
 

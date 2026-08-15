@@ -57,6 +57,7 @@ import type {
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
+  Team,
   User as UserProfile,
 } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
@@ -243,11 +244,14 @@ function boardStatusFromDropId(id: string | number | undefined): string | null {
 }
 
 function itemMatchesAssigneeGroup(item: CloudLoopItem, groupValue: string): boolean {
+  if (groupValue.startsWith('team:')) {
+    return item.assignee_team_id === Number(groupValue.slice('team:'.length))
+  }
   if (groupValue.startsWith('agent:')) {
     return item.assignee_agent_id === groupValue.slice('agent:'.length)
   }
   if (groupValue === '') {
-    return !item.assignee_user_id && !item.assignee_agent_id
+    return !item.assignee_user_id && !item.assignee_agent_id && !item.assignee_team_id
   }
   return String(item.assignee_user_id ?? '') === groupValue
 }
@@ -721,6 +725,7 @@ export function CloudTodoWorkspace({
   // Active robots of the selected project, used to resolve the assignee name
   // of robot-assigned tasks (local loop items only carry the agent id).
   const [projectAgents, setProjectAgents] = useState<Record<string, ProjectChatAgent[]>>({})
+  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
   // Every project's loop items, cached for the projects-home overview
   // (stats, recent activity). Keyed by project id.
   const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
@@ -1033,6 +1038,26 @@ export function CloudTodoWorkspace({
   }, [selectedProjectAgentApi, selectedProjectId])
 
   useEffect(() => {
+    if (selectedProject?.location !== 'cloud' || !services.teamApi) {
+      return
+    }
+    let cancelled = false
+    void services.teamApi
+      .listTeams()
+      .then(teams => {
+        if (!cancelled) setWegentTeams(teams.filter(team => team.is_active !== false))
+      })
+      .catch(() => {
+        if (!cancelled) setWegentTeams([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProject?.location, services.teamApi])
+
+  const selectedProjectTeams = selectedProject?.location === 'cloud' ? wegentTeams : []
+
+  useEffect(() => {
     if (!selectedProjectId || !selectedProjectLocation) return
     track('board_view_opened', {
       source: selectedProjectLocation,
@@ -1148,6 +1173,31 @@ export function CloudTodoWorkspace({
               sourceStatus: null,
               groupValue: `agent:${agent.agent_id}`,
               dotClass: 'bg-indigo-500',
+            })),
+            ...Array.from(
+              new Map(
+                [
+                  ...selectedProjectTeams,
+                  ...items.flatMap(item =>
+                    item.assignee_team_id
+                      ? [
+                          {
+                            id: item.assignee_team_id,
+                            name: item.assignee_team_name || String(item.assignee_team_id),
+                            is_active: true,
+                          } as Team,
+                        ]
+                      : []
+                  ),
+                ].map(team => [team.id, team])
+              ).values()
+            ).map(team => ({
+              key: `assignee-team-${team.id}`,
+              label: team.displayName || team.name,
+              status: 'inbox',
+              sourceStatus: null,
+              groupValue: `team:${team.id}`,
+              dotClass: 'bg-violet-500',
             })),
             {
               key: 'assignee-unassigned',
@@ -1563,17 +1613,26 @@ export function CloudTodoWorkspace({
             return { ...candidate, priority: column.groupValue as CloudLoopItem['priority'] }
           }
           if (nativeGroupBy === 'assignee') {
-            return column.groupValue.startsWith('agent:')
+            return column.groupValue.startsWith('team:')
               ? {
                   ...candidate,
                   assignee_user_id: null,
-                  assignee_agent_id: column.groupValue.slice('agent:'.length),
-                }
-              : {
-                  ...candidate,
-                  assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
                   assignee_agent_id: null,
+                  assignee_team_id: Number(column.groupValue.slice('team:'.length)),
                 }
+              : column.groupValue.startsWith('agent:')
+                ? {
+                    ...candidate,
+                    assignee_user_id: null,
+                    assignee_agent_id: column.groupValue.slice('agent:'.length),
+                    assignee_team_id: null,
+                  }
+                : {
+                    ...candidate,
+                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                    assignee_agent_id: null,
+                    assignee_team_id: null,
+                  }
           }
           return { ...candidate, tags: column.groupValue ? [column.groupValue] : [] }
         })
@@ -1589,15 +1648,23 @@ export function CloudTodoWorkspace({
           : nativeGroupBy === 'priority'
             ? { priority: column.groupValue as CloudLoopItem['priority'] }
             : nativeGroupBy === 'assignee'
-              ? column.groupValue.startsWith('agent:')
+              ? column.groupValue.startsWith('team:')
                 ? {
                     assignee_user_id: null,
-                    assignee_agent_id: column.groupValue.slice('agent:'.length),
-                  }
-                : {
-                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
                     assignee_agent_id: null,
+                    assignee_team_id: Number(column.groupValue.slice('team:'.length)),
                   }
+                : column.groupValue.startsWith('agent:')
+                  ? {
+                      assignee_user_id: null,
+                      assignee_agent_id: column.groupValue.slice('agent:'.length),
+                      assignee_team_id: null,
+                    }
+                  : {
+                      assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                      assignee_agent_id: null,
+                      assignee_team_id: null,
+                    }
               : { tags: column.groupValue ? [column.groupValue] : [] }
       const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
       setItems(current =>
@@ -2627,6 +2694,12 @@ export function CloudTodoWorkspace({
           mode="edit"
           api={selectedItemApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          teamApi={
+            projects.find(project => project.id === selectedItem.cloud_project_id)?.location ===
+            'cloud'
+              ? services.teamApi
+              : undefined
+          }
           projectChatClient={selectedProjectChatClient}
           selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
@@ -2699,6 +2772,7 @@ export function CloudTodoWorkspace({
           mode="create"
           api={createTodoApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          teamApi={createTodoProject.location === 'cloud' ? services.teamApi : undefined}
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}
@@ -2719,7 +2793,7 @@ export function CloudTodoWorkspace({
             }))
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
-            if (item.assignee_agent_id) setSelectedItem(item)
+            if (item.assignee_agent_id || item.assignee_team_id) setSelectedItem(item)
             track('board_item_created', {
               has_parent: item.parent_id !== null,
               source: createTodoProject.location,
