@@ -346,7 +346,7 @@ export function WorkspaceBrowserTabPanel({
   const [browserOcclusion, dispatchBrowserOcclusion] = useReducer(browserOcclusionReducer, {
     documentOverlayOccluded: false,
     generation: 0,
-    overlayIds: new Set(),
+    overlayIds: new Set<string>(),
   })
   const [occlusionSnapshot, setOcclusionSnapshot] = useState<{
     generation: number
