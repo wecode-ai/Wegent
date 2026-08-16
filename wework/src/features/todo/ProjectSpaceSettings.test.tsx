@@ -140,4 +140,27 @@ describe('ProjectSpaceSettings', () => {
       })
     )
   })
+
+  it('does not request automations for public catalog projects without reporter access', async () => {
+    const list = vi.fn().mockRejectedValue(new Error('Insufficient permission'))
+    render(
+      <ProjectSpaceSettings
+        projects={
+          [
+            {
+              id: 'public-project',
+              name: 'Public board',
+              location: 'cloud',
+              access_role: 'RestrictedAnalyst',
+            },
+          ] as never
+        }
+        projectServices={{ cloud: { projectAutomationApi: { list } } } as never}
+      />
+    )
+
+    expect(await screen.findByText('暂无项目自动化')).toBeInTheDocument()
+    expect(list).not.toHaveBeenCalled()
+    expect(screen.queryByText('Insufficient permission')).not.toBeInTheDocument()
+  })
 })

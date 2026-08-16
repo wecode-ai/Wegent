@@ -1889,6 +1889,7 @@
     "project_settings_cancel_run": "停止运行",
     "project_settings_disable_automation": "停用",
     "project_settings_enable_automation": "启用",
+    "project_settings_automation_partial_error": "{{count}} 个项目因权限或连接问题未能读取，其余项目仍可管理。",
     "friendly_task_titles_title": "使用友好标题",
     "friendly_task_titles_desc": "创建任务后，用你选择的模型异步生成简洁标题。",
     "friendly_task_titles_model": "标题模型",

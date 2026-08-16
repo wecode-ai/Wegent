@@ -22,6 +22,18 @@ interface GlobalAutomationRow {
   runs: ProjectAutomationRun[]
 }
 
+const ROLE_LEVEL: Record<string, number> = {
+  Owner: 0,
+  Maintainer: 1,
+  Developer: 2,
+  Reporter: 3,
+  RestrictedAnalyst: 4,
+}
+
+function projectRoleLevel(project: LocatedProjectSpace): number {
+  return ROLE_LEVEL[project.access_role ?? 'Owner'] ?? 4
+}
+
 const MAX_CONCURRENT_TASKS = 20
 const CREATE_PROJECT_EXAMPLE = `curl -X POST 'https://<host>/api/v1/cloud-projects' \\
   -H 'Content-Type: application/json' \\
@@ -86,22 +98,30 @@ export function ProjectSpaceSettings({
   const [automationError, setAutomationError] = useState('')
 
   const loadAutomations = useCallback(async () => {
-    const rows = await Promise.all(
-      projects.map(async project => {
-        const api = projectServices?.[project.location]?.projectAutomationApi
-        if (!api) return []
-        const rules = await api.list(String(project.id))
-        return Promise.all(
-          rules.map(async rule => ({
-            project,
-            rule,
-            runs: await api.listRuns(String(project.id), rule.id),
-          }))
-        )
-      })
+    const results = await Promise.allSettled(
+      projects
+        .filter(project => projectRoleLevel(project) <= ROLE_LEVEL.Reporter)
+        .map(async project => {
+          const api = projectServices?.[project.location]?.projectAutomationApi
+          if (!api) return []
+          const rules = await api.list(String(project.id))
+          return Promise.all(
+            rules.map(async rule => ({
+              project,
+              rule,
+              runs: await api.listRuns(String(project.id), rule.id),
+            }))
+          )
+        })
     )
-    setAutomations(rows.flat())
-  }, [projectServices, projects])
+    setAutomations(results.flatMap(result => (result.status === 'fulfilled' ? result.value : [])))
+    const failures = results.filter(result => result.status === 'rejected')
+    setAutomationError(
+      failures.length > 0
+        ? t('workbench.project_settings_automation_partial_error', { count: failures.length })
+        : ''
+    )
+  }, [projectServices, projects, t])
 
   const loadDevices = useCallback(async () => {
     if (!deviceApi) {
@@ -351,6 +371,7 @@ export function ProjectSpaceSettings({
               <div className="divide-y divide-border">
                 {automations.map(row => {
                   const activeRun = row.runs.find(run => isExecutionActive(run.status))
+                  const roleLevel = projectRoleLevel(row.project)
                   return (
                     <div
                       key={`${row.project.location}:${row.rule.id}`}
@@ -363,7 +384,9 @@ export function ProjectSpaceSettings({
                           {activeRun?.status ?? row.rule.lastRunStatus ?? 'idle'}
                         </div>
                       </div>
-                      {activeRun && isExecutionCancellable(activeRun.status) ? (
+                      {activeRun &&
+                      roleLevel <= ROLE_LEVEL.Developer &&
+                      isExecutionCancellable(activeRun.status) ? (
                         <button
                           type="button"
                           data-testid={`project-settings-cancel-run-${activeRun.id}`}
@@ -374,17 +397,19 @@ export function ProjectSpaceSettings({
                           {t('workbench.project_settings_cancel_run')}
                         </button>
                       ) : null}
-                      <button
-                        type="button"
-                        data-testid={`project-settings-toggle-automation-${row.rule.id}`}
-                        disabled={automationBusy === row.rule.id}
-                        onClick={() => void updateAutomation(row, !row.rule.enabled)}
-                        className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
-                      >
-                        {row.rule.enabled
-                          ? t('workbench.project_settings_disable_automation')
-                          : t('workbench.project_settings_enable_automation')}
-                      </button>
+                      {roleLevel <= ROLE_LEVEL.Maintainer ? (
+                        <button
+                          type="button"
+                          data-testid={`project-settings-toggle-automation-${row.rule.id}`}
+                          disabled={automationBusy === row.rule.id}
+                          onClick={() => void updateAutomation(row, !row.rule.enabled)}
+                          className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
+                        >
+                          {row.rule.enabled
+                            ? t('workbench.project_settings_disable_automation')
+                            : t('workbench.project_settings_enable_automation')}
+                        </button>
+                      ) : null}
                     </div>
                   )
                 })}

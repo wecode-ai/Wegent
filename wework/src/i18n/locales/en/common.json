@@ -1891,6 +1891,7 @@
     "project_settings_cancel_run": "Stop run",
     "project_settings_disable_automation": "Disable",
     "project_settings_enable_automation": "Enable",
+    "project_settings_automation_partial_error": "{{count}} project(s) could not be loaded due to permissions or connectivity; other projects remain manageable.",
     "friendly_task_titles_title": "Use friendly titles",
     "friendly_task_titles_desc": "After a task is created, use the selected model to generate a concise title asynchronously.",
     "friendly_task_titles_model": "Title model",
