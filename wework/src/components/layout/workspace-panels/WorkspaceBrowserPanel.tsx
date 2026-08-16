@@ -1539,7 +1539,6 @@ export function WorkspaceBrowserTabPanel({
         occluded: expanded,
         type: 'overlay',
       })
-      if (!expanded) setOcclusionSnapshot(null)
     }
 
     const handleBrowserOcclusion = (event: Event) => {
@@ -1552,7 +1551,6 @@ export function WorkspaceBrowserTabPanel({
         occluded: detail.occluded,
         type: 'overlay',
       })
-      if (!detail.occluded) setOcclusionSnapshot(null)
     }
 
     window.addEventListener(
@@ -1579,6 +1577,15 @@ export function WorkspaceBrowserTabPanel({
   }, [active])
 
   useEffect(() => {
+    if (embeddedBrowserOccluded) return undefined
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      setOcclusionSnapshot(null)
+    })
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [embeddedBrowserOccluded])
+
+  useEffect(() => {
     if (!active || !embeddedBrowserAvailable || !currentUrl) return
 
     let animationFrame: number | null = null
@@ -1587,7 +1594,6 @@ export function WorkspaceBrowserTabPanel({
       const host = browserHostRef.current
       const occluded = Boolean(host && hasEmbeddedBrowserOverlayConflict(host))
       dispatchBrowserOcclusion({ occluded, type: 'document' })
-      if (!occluded) setOcclusionSnapshot(null)
     }
     const scheduleOverlayOcclusionUpdate = () => {
       if (animationFrame !== null) return

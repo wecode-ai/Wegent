@@ -128,6 +128,16 @@ function createDeferred<T>() {
   return { promise, resolve }
 }
 
+function dispatchBrowserOcclusionChange(id: string, occluded: boolean) {
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id, occluded },
+      })
+    )
+  })
+}
+
 describe('WorkspaceBrowserPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -1565,13 +1575,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent('wework:embedded-browser-occlusion-change', {
-          detail: { id: 'workspace-add-menu', occluded: true },
-        })
-      )
-    })
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
 
     const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
     expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).not.toHaveBeenCalledWith(
@@ -1600,13 +1604,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent('wework:embedded-browser-occlusion-change', {
-          detail: { id: 'workspace-add-menu', occluded: false },
-        })
-      )
-    })
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
@@ -1636,11 +1634,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     rerender(<WorkspaceBrowserPanel active={false} />)
     embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockClear()
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: true },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
 
     await act(async () => {
       await Promise.resolve()
@@ -1660,11 +1654,7 @@ describe('WorkspaceBrowserPanel', () => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
     })
 
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: true },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
 
     const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
     expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalledWith(
@@ -1673,11 +1663,7 @@ describe('WorkspaceBrowserPanel', () => {
     expect(snapshot).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
     fireEvent.load(snapshot)
 
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: false },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
 
     await waitFor(() => {
       expect(screen.queryByTestId('workspace-browser-occlusion-snapshot')).not.toBeInTheDocument()
@@ -1687,11 +1673,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockImplementationOnce(
       () => nextSnapshot.promise
     )
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: true },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalledTimes(2)
@@ -1723,20 +1705,12 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: true },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
     await waitFor(() => {
       expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalled()
     })
 
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: false },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
         {
@@ -1783,7 +1757,10 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
     const dialogOverlay = document.createElement('div')
     dialogOverlay.className = 'fixed inset-0 z-modal'
-    document.body.append(dialogOverlay)
+    await act(async () => {
+      document.body.append(dialogOverlay)
+      await Promise.resolve()
+    })
 
     const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
     fireEvent.load(snapshot)
@@ -1801,7 +1778,10 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    dialogOverlay.remove()
+    await act(async () => {
+      dialogOverlay.remove()
+      await Promise.resolve()
+    })
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
