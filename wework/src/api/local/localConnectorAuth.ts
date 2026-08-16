@@ -37,6 +37,10 @@ export interface LocalConnectorAuthTarget {
   pluginRoot?: string | null
 }
 
+interface LocalConnectorAuthHealthOptions {
+  bypassCache?: boolean
+}
+
 /** Short TTL so send preflight does not re-probe an already-healthy connector. */
 const OK_HEALTH_TTL_MS = 120_000
 const okHealthCache = new Map<string, number>()
@@ -63,10 +67,13 @@ async function callLocalConnectorAuth(
   })
 }
 
-export function localConnectorAuthHealth(target: LocalConnectorAuthTarget) {
+export function localConnectorAuthHealth(
+  target: LocalConnectorAuthTarget,
+  options: LocalConnectorAuthHealthOptions = {}
+) {
   const key = healthCacheKey(target)
   const cachedAt = okHealthCache.get(key)
-  if (cachedAt != null && Date.now() - cachedAt < OK_HEALTH_TTL_MS) {
+  if (!options.bypassCache && cachedAt != null && Date.now() - cachedAt < OK_HEALTH_TTL_MS) {
     return Promise.resolve({ status: 'ok' as const satisfies LocalConnectorAuthStatus })
   }
   return callLocalConnectorAuth('health', target).then(result => {

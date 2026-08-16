@@ -12,6 +12,10 @@ The viewer enables the office, lite, and engineering capabilities: PDF, Word, Ex
 
 HTML must remain sandboxed and must not allow preview content to access Wework's same-origin state.
 
+## Image Preview
+
+PNG, JPEG, WebP, GIF, BMP, AVIF, TIFF, and SVG images use Flyfish Viewer's image renderer. The viewer container must receive Wework's active light or dark theme explicitly, and the canvas around the image uses Wework's semantic background color. The renderer must not force a white background onto image elements: images with an alpha channel render directly over the active theme background, including in the full-screen image preview.
+
 ## Diagram Preview and Export
 
 `.mermaid`, `.mmd`, `.plantuml`, and `.puml` files use the same diagram renderer as code blocks in conversations. The preview must follow the active Wework light or dark theme and fit proportionally when the panel changes size without clipping SVG edges.
@@ -46,4 +50,4 @@ The file panel determines workspace changes from the target's `deviceId`, `path`
 
 ## Validation
 
-When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, Mermaid, PlantUML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Diagram coverage must include light and dark themes, complete SVG fitting, PNG copy, and the system save dialog. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.
+When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, Mermaid, PlantUML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Image coverage must include light and dark themes and alpha transparency, confirming that neither the preview canvas nor transparent image regions retain the renderer's light background. Diagram coverage must include light and dark themes, complete SVG fitting, PNG copy, and the system save dialog. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.
