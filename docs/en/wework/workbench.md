@@ -14,9 +14,11 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
-## Manage tasks with work items
+## Manage issues and tasks in workspaces
 
-**Work items** in the left sidebar is a content switch inside the current Task tab. It replaces only the middle content with the local default **My tasks** board; the left sidebar and top-level tabs remain unchanged. Select **New task**, a project, or any task to return to task content in the same tab. A top-level Work-items tab is an independently pinned board view, not the destination of the sidebar action.
+The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
+
+Selecting **New Issue** in a workspace opens a lightweight composer instead of a task form. Choose the destination board and describe the outcome in natural language; the first non-empty line becomes the title and the remaining text becomes the description. The issue is created directly in the selected status column and opens immediately for follow-up details such as participants and execution steps. The board header and every status column expose the same creation flow.
 
 Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. A successful runtime task moves the work item to **Completed** instead of leaving a stale in-progress card or removing it from the board.
 
@@ -24,9 +26,9 @@ The work-item control above the composer shows the board name and work-item iden
 
 Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
 
-## Move between work items and runtime tasks
+## Move between issues and runtime tasks
 
-The work-item details' **Task execution** section lists linked Wework runtime tasks. Select a record to return to its runtime task tab. Board and Task tabs retain their own routes and interface state.
+The issue details' **Execution history** section lists linked Wework runtime tasks. Selecting a record opens the issue context and task conversation side by side in the unified workspace; select **Open full task** only when the complete execution interface is needed. Board and Task tabs retain their own routes and interface state.
 
 ## Use the project sidebar
 
