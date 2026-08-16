@@ -67,4 +67,20 @@ describe('IssueComposer', () => {
       description: '',
     })
   })
+
+  it('closes with Escape without showing a duplicate cancel action', () => {
+    const onCancel = vi.fn()
+    render(
+      <IssueComposer
+        boards={[{ key: 'backend:1', name: '产品发布' }]}
+        initialBoardKey="backend:1"
+        onCancel={onCancel}
+        onCreate={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument()
+    fireEvent.keyDown(screen.getByTestId('workspace-issue-input'), { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
 })

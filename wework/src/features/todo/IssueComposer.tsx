@@ -42,6 +42,11 @@ export function IssueComposer({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onCancel()
+      return
+    }
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
       event.preventDefault()
       submit()
@@ -106,20 +111,12 @@ export function IssueComposer({
             </span>
             <button
               type="button"
-              data-testid="workspace-issue-cancel"
-              onClick={onCancel}
-              className="ml-auto h-9 rounded-lg px-3 text-sm text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            >
-              {t('common.cancel', '取消')}
-            </button>
-            <button
-              type="button"
               data-testid="workspace-issue-submit"
               aria-label={t('todo.create_issue', '创建 Issue')}
               disabled={!canCreate}
               onClick={submit}
               className={cn(
-                'flex h-10 w-10 items-center justify-center rounded-xl transition',
+                'ml-auto flex h-10 w-10 items-center justify-center rounded-xl transition',
                 canCreate
                   ? 'bg-text-primary text-background hover:opacity-90'
                   : 'cursor-not-allowed bg-muted text-text-muted'
