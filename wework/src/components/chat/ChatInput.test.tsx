@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
@@ -38,7 +38,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ChatInput } from './ChatInput'
-import type { ChatSubmitOptions } from './ChatInput'
+import type { ChatInputHandle, ChatSubmitOptions } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
@@ -183,23 +183,25 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass(
-      'min-h-[76px]',
-      'pb-1.5',
-      'pt-2',
-      'bg-background'
-    )
-    expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
+    const form = screen.getByTestId('project-chat-composer-form')
+    const input = screen.getByTestId('chat-message-input')
+
+    expect(form).toHaveClass('min-h-[76px]', 'pb-1.5', 'pt-2', 'bg-background')
+    expect(form).not.toHaveClass('bg-surface')
+    expect(form).toHaveAttribute('data-short-collapse', 'true')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.getByTestId('project-chat-composer')).toHaveClass(
       'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
     )
-    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
-    expect(screen.getByTestId('chat-message-input')).toHaveClass(
-      'min-h-[48px]',
-      'max-h-[112px]',
-      'pt-1',
-      'placeholder:text-text-muted/55'
-    )
+    expect(input).toHaveAttribute('rows', '1')
+    expect(input).toHaveClass('min-h-8', 'max-h-[112px]', 'pt-1', 'placeholder:text-text-muted/55')
+    fireEvent.click(input)
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+    fireEvent.pointerDown(document.body)
+    fireEvent.blur(input, { relatedTarget: document.body })
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+    fireEvent.click(document.body)
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
@@ -805,6 +807,11 @@ describe('ChatInput', () => {
     await waitFor(() =>
       expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
     )
+
+    const editor = screen.getByTestId('chat-message-input')
+    expect(editor).toHaveFocus()
+    await userEvent.type(editor, '，继续')
+    expect(editor).toHaveTextContent('先检查引导条里的文本，继续')
   })
 
   test('shows lightweight interrupt action while guidance is sending', async () => {
@@ -945,6 +952,7 @@ describe('ChatInput', () => {
   })
 
   test('asks whether to preserve a paused queue before sending a new message', async () => {
+    const inputRef = createRef<ChatInputHandle>()
     const onSubmit = vi.fn()
     const onResumeQueue = vi.fn()
     const onChange = vi.fn()
@@ -952,6 +960,7 @@ describe('ChatInput', () => {
 
     render(
       <ChatInput
+        ref={inputRef}
         value="发送新消息"
         onChange={onChange}
         onSubmit={onSubmit}
@@ -981,6 +990,7 @@ describe('ChatInput', () => {
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onResumeQueueWithInput).toHaveBeenCalled()
     expect(onChange).toHaveBeenCalledWith('')
+    expect(inputRef.current?.getValue()).toBe('')
   })
 
   test('hides drag handles when fewer than two messages are queued', () => {
@@ -3604,7 +3614,7 @@ describe('ChatInput', () => {
     expect(removeButtons).toHaveLength(2)
     removeButtons.forEach(button => {
       expect(button).toHaveClass('absolute', '-right-1.5', '-top-1.5')
-      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-white')
+      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-background')
     })
   })
 

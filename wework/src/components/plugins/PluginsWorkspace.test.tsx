@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -7,7 +7,12 @@ import {
   clearLocalCodexPluginsReadStateCache,
   createLocalCodexPluginApi,
 } from '@/api/local/codexPlugins'
+import { clearLocalConnectorAuthHealthCache } from '@/api/local/localConnectorAuth'
 import { clearPluginDeviceAutoSyncAttempts } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  resetLocalExecutorCloudConnectionStatus,
+  setLocalExecutorCloudConnectionStatus,
+} from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import {
   clearPluginMarketplaceCache,
   setPluginMarketplaceCache,
@@ -179,12 +184,14 @@ function mockCodexAppServerInvoke(
       pluginDisplayNames?: string[]
     }>
     deviceId?: string
+    backendConnected?: boolean | (() => boolean)
     cloudLinks?: Array<{
       localPluginName: string
       cloudPluginId: number
       cloudReleaseId: number
     }>
     unlinkError?: Error
+    localConnectorAuthHealth?: () => Promise<unknown>
   } = {}
 ) {
   const marketplaces = [...(options.marketplaces ?? [])]
@@ -232,6 +239,16 @@ function mockCodexAppServerInvoke(
     const request = args as {
       method?: string
       params?: { method?: string; params?: Record<string, unknown> }
+    }
+    if (request.method === 'executor.backend.status') {
+      const connected =
+        typeof options.backendConnected === 'function'
+          ? options.backendConnected()
+          : options.backendConnected !== false
+      return Promise.resolve({ configured: true, connected })
+    }
+    if (request.method === 'runtime.local_connector_auth.health') {
+      return options.localConnectorAuthHealth?.() ?? Promise.resolve({ status: 'ok' })
     }
     if (request.method !== 'codex.app_server_request') return Promise.resolve(undefined)
 
@@ -375,6 +392,7 @@ function mockSystemSkillsFetch(
     installedMarketplaceLogo: string
     marketplaceCount: number
     marketplaceConnectorSlug: string
+    marketplaceConnectorLocal: boolean
     marketplaceHasSkill: boolean
     marketplaceVisibility: 'personal' | 'workspace' | 'public'
     marketplaceSourceProvider: 'codex' | 'wegent'
@@ -385,6 +403,7 @@ function mockSystemSkillsFetch(
     marketplaceUpdateAvailable: boolean
     marketplaceUpdatePolicy: 'manual' | 'auto'
     autoUpdateBatchSizes: number[]
+    deviceAutoSyncGate: Promise<void>
   }> = {}
 ) {
   let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
@@ -639,6 +658,16 @@ function mockSystemSkillsFetch(
             {
               slug: overrides.marketplaceConnectorSlug,
               authPolicy: 'on_install',
+              ...(overrides.marketplaceConnectorLocal
+                ? {
+                    localAuth: {
+                      kind: 'browser_oauth',
+                      health: ['scripts/local-auth.sh', 'health'],
+                      start: ['scripts/local-auth.sh', 'login'],
+                      poll: [],
+                    },
+                  }
+                : {}),
             },
           ]
         : [],
@@ -864,10 +893,7 @@ function mockSystemSkillsFetch(
       }
       if (requestUrl.pathname === '/api/plugins/installed/sync-device') {
         syncDeviceCalls += 1
-        if (deviceAutoSyncSucceeds) {
-          marketplaceDeviceState = 'installed'
-        }
-        return Promise.resolve({
+        const response = {
           ok: true,
           status: 200,
           json: () =>
@@ -895,7 +921,16 @@ function mockSystemSkillsFetch(
                 ],
               },
             }),
-        })
+        }
+        const completeSync = () => {
+          if (deviceAutoSyncSucceeds) {
+            marketplaceDeviceState = 'installed'
+          }
+          return response
+        }
+        return overrides.deviceAutoSyncGate
+          ? overrides.deviceAutoSyncGate.then(completeSync)
+          : Promise.resolve(completeSync())
       }
       if (requestUrl.pathname === '/api/plugins/installed/auto-update-batch') {
         autoUpdateBatchCalls += 1
@@ -1060,8 +1095,77 @@ describe('PluginsWorkspace', () => {
     clearPluginMarketplaceCache()
     clearPluginDeviceAutoSyncAttempts()
     clearLocalCodexPluginsReadStateCache()
+    clearLocalConnectorAuthHealthCache()
     resetLocalExecutorStateForTests()
+    resetLocalExecutorCloudConnectionStatus()
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    window.history.replaceState({}, '', '/')
     mockSystemSkillsFetch()
+  })
+
+  test('keeps the user on the plugin page when the current device is disconnected', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    mockCodexAppServerInvoke({ backendConnected: false })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+
+    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
+      '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
+    )
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'error'
+    )
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+    ).toBe(false)
+    expect(window.location.pathname).toBe('/')
+
+    await userEvent.click(screen.getByTestId('plugin-operation-notice-action'))
+
+    expect(window.location.pathname).toBe('/settings/connections')
+    expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+  })
+
+  test('rechecks the device connection before confirming a cloud install', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let backendConnected = true
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      backendConnected: () => backendConnected,
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    expect(await screen.findByTestId('install-plugin-dialog')).toBeInTheDocument()
+
+    backendConnected = false
+    await userEvent.click(screen.getByTestId('install-plugin-dialog-confirm'))
+
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+      '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
+    )
+    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+    ).toBe(false)
   })
 
   test('renders a Codex-style plugin marketplace page', async () => {
@@ -1904,6 +2008,50 @@ describe('PluginsWorkspace', () => {
     expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', { source: 'cloud' })
   })
 
+  test('waits for a cloud plugin to reach the local executor before starting local auth', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceName: 'dingtalk',
+      marketplaceDisplayName: '钉钉',
+      marketplaceConnectorSlug: 'dingtalk',
+      marketplaceConnectorLocal: true,
+    })
+    let postInstallHealthCalls = 0
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      localConnectorAuthHealth: () => {
+        const installRequested = vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) => String(input).includes('/plugins/marketplace/101/install'))
+        if (!installRequested) {
+          return Promise.reject(
+            new Error("plugin_not_installed: Installed plugin 'dingtalk' was not found")
+          )
+        }
+        postInstallHealthCalls += 1
+        if (postInstallHealthCalls === 1) {
+          return Promise.reject(
+            new Error("plugin_not_installed: Installed plugin 'dingtalk' was not found")
+          )
+        }
+        return Promise.resolve({ status: 'ok' })
+      },
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await screen.findByTestId('plugin-marketplace-install-101')
+    await installPluginFromMarketCard('plugin-marketplace-install-101')
+
+    const notice = await screen.findByTestId('plugin-operation-notice', {}, { timeout: 4_000 })
+    await waitFor(() => expect(notice).toHaveTextContent('钉钉 已安装'), { timeout: 4_000 })
+    expect(postInstallHealthCalls).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByTestId('local-connector-auth-dialog')).not.toBeInTheDocument()
+  })
+
   test('shows a lightweight notice while browser authorization is pending', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -2074,6 +2222,71 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
     expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
     expect(marketplaceMock.getSyncDeviceCalls()).toBe(1)
+  })
+
+  test('waits for the live socket connection before auto-syncing account installs', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
+    )
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+
+    act(() => {
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    })
+
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    )
+  })
+
+  test('stops showing syncing when the socket disconnects during auto-sync', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let releaseDeviceSync: (() => void) | null = null
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseDeviceSync = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: false,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('同步中')
+
+    act(() => {
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
+    )
+
+    act(() => releaseDeviceSync?.())
   })
 
   test('does not auto-sync an account install before same-device local state resolves', async () => {
@@ -2629,6 +2842,24 @@ describe('PluginsWorkspace', () => {
       'data-plugin-distribution',
       'personal'
     )
+    const actionsBar = screen.getByTestId('plugin-detail-actions-bar')
+    const actionMenu = screen.getByTestId('plugin-detail-actions-code-review')
+    const installAction = screen.getByTestId('plugin-detail-toggle-code-review')
+    expect(Array.from(actionsBar.children).indexOf(actionMenu.parentElement!)).toBeLessThan(
+      Array.from(actionsBar.children).indexOf(installAction)
+    )
+    await userEvent.click(actionMenu)
+    await userEvent.click(screen.getByTestId('plugin-detail-delete-code-review'))
+    expect(screen.getByTestId('delete-personal-plugin-dialog')).toHaveTextContent(
+      '将永久删除「Code Review」的本地插件源码'
+    )
+    await userEvent.click(screen.getByTestId('plugin-delete-confirm-button'))
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('local_executor_delete_personal_plugin', {
+        marketplacePath: '/Users/test/.codex/plugins/marketplaces/personal',
+        pluginName: 'code-review',
+      })
+    )
   })
 
   test('opens marketplace plugin detail from the plugin row', async () => {
@@ -2785,6 +3016,48 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
     expect(screen.getByTestId('plugin-detail-edit-101')).toHaveTextContent('继续编辑')
     expect(screen.getByTestId('plugin-detail-menu-publish-101')).toHaveTextContent('发布新版本')
+  })
+
+  test('allows deleting local source after a personal plugin has been published', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      canPublish: true,
+      canSharePersonalPlugins: true,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'dev-tools-local',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Developer tools',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId(/^plugin-detail-actions-(?!bar$)/))
+
+    expect(screen.getByTestId(/^plugin-detail-edit-/)).toHaveTextContent('继续编辑')
+    expect(screen.getByTestId(/^plugin-detail-menu-publish-/)).toHaveTextContent('发布新版本')
+    expect(screen.getByTestId(/^plugin-detail-delete-/)).toHaveTextContent('删除插件')
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the detail menu', async () => {

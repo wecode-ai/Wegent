@@ -1386,6 +1386,8 @@ describe('createLocalAppServices', () => {
       },
       message: 'edited question',
       messageId: 'user-last',
+      clientUserMessageId: 'user-edited',
+      retrySourceTurnId: 'turn-last',
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -1404,6 +1406,8 @@ describe('createLocalAppServices', () => {
         },
         message: 'edited question',
         messageId: 'user-last',
+        clientUserMessageId: 'user-edited',
+        retrySourceTurnId: 'turn-last',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -1413,6 +1417,7 @@ describe('createLocalAppServices', () => {
           task_id: 'task-1',
           subtask_id: expect.any(String),
           prompt: 'edited question',
+          client_user_message_id: 'user-edited',
           new_session: false,
           model_config: expect.objectContaining({
             model: 'openai',
@@ -2527,6 +2532,53 @@ describe('createLocalAppServices', () => {
     expect(prompt).toContain('read_item_attachment')
   })
 
+  test('does not inject project-space MCP instructions into automation execution prompts', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-project-automation',
+      runtime: 'codex',
+      message: 'Review cloud://projects/P-1/todos/T-1 using the supplied context.',
+      origin: {
+        type: 'project_automation',
+        cloudProjectId: 'P-1',
+        loopItemId: 'T-1',
+        run_id: 'run-1',
+      },
+      additionalContext: {
+        project: { kind: 'application', value: '{"id":"P-1","name":"Project"}' },
+        task: { kind: 'application', value: '{"id":"T-1","title":"Review"}' },
+        event: { kind: 'application', value: '{"type":"task.created"}' },
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    const prompt = payload.executionRequest.prompt as string
+    expect(prompt).toContain('[project]')
+    expect(prompt).toContain('[task]')
+    expect(prompt).toContain('[event]')
+    expect(prompt).not.toContain('[projectSpaceCapability]')
+    expect(prompt).not.toContain('wework_space')
+    expect(prompt).not.toContain('get_board_item')
+    expect(prompt).not.toContain('list_spaces')
+    expect(payload.executionRequest).toEqual(
+      expect.objectContaining({
+        task_id: 'task-project-automation',
+        execution_target_type: 'local',
+        device_id: 'device-uuid',
+        new_session: true,
+      })
+    )
+  })
+
   test('adds configured local proxy to local runtime execution requests', async () => {
     saveLocalProxyUrl('http://127.0.0.1:7890')
     const request = vi.fn().mockResolvedValue({ accepted: true })
@@ -2726,6 +2778,40 @@ describe('createLocalAppServices', () => {
       },
       intervalSeconds: 60,
     })
+
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      mode: 'auto',
+      instructions: 'Keep scope focused',
+      modelSelection: {
+        modelName: 'gpt-5.6-sol',
+        modelType: 'runtime',
+        options: {
+          reasoning: 'high',
+        },
+      },
+      intervalSeconds: 30,
+    })
+    expect(request).toHaveBeenLastCalledWith(
+      'runtime.tasks.supervisor.set',
+      expect.objectContaining({
+        address: { deviceId: 'device-uuid', taskId: 'task-1' },
+        modelSelection: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'runtime',
+          options: {
+            reasoning: 'high',
+          },
+        },
+        modelConfig: expect.objectContaining({
+          model_id: 'gpt-5.6-sol',
+          wework_model_kind: 'codex-official',
+          reasoning: {
+            effort: 'high',
+          },
+        }),
+      })
+    )
 
     await services.runtimeWorkApi?.runRuntimeSupervisorNow({
       address: { deviceId: 'local-device', taskId: 'task-1' },
@@ -3016,47 +3102,11 @@ describe('createLocalAppServices', () => {
     )
   })
 
-  test('routes workspace file APIs through local executor commands', async () => {
+  test('reads local workspace files through native commands', async () => {
     const request = vi
       .fn()
       .mockImplementation(async (method: string, data: Record<string, unknown>) => {
         if (method !== 'device.execute_command') return {}
-        if (data.command_key === 'workspace_tree') {
-          return {
-            success: true,
-            stdout: {
-              path: '/Users/me/.canonical/project',
-              entries: [
-                {
-                  name: 'src',
-                  path: '/Users/me/.canonical/project/src',
-                  is_directory: true,
-                  size: 0,
-                  modified_at: '2026-06-20T01:00:00Z',
-                },
-              ],
-            },
-            stderr: '',
-            exit_code: 0,
-          }
-        }
-        if (data.command_key === 'workspace_read_text_file') {
-          return {
-            success: true,
-            stdout: {
-              path: '/Users/me/.canonical/project/README.md',
-              name: 'README.md',
-              content: 'hello',
-              editable: true,
-              revision: 'sha256:old',
-              truncated: false,
-              size: 5,
-              modified_at: '2026-06-20T01:00:00Z',
-            },
-            stderr: '',
-            exit_code: 0,
-          }
-        }
         if (data.command_key === 'workspace_write_text_file') {
           return {
             success: true,
@@ -3074,28 +3124,46 @@ describe('createLocalAppServices', () => {
             exit_code: 0,
           }
         }
-        if (data.command_key === 'workspace_read_file_chunk') {
-          return {
-            success: true,
-            stdout: {
-              path: '/Users/me/.canonical/project/image.png',
-              name: 'image.png',
-              content_base64: 'aW1hZ2U=',
-              offset: 0,
-              eof: true,
-              size: 5,
-              modified_at: '2026-06-20T01:02:00Z',
-            },
-            stderr: '',
-            exit_code: 0,
-          }
-        }
         return { success: false, error: 'unexpected command', stderr: '', exit_code: 1 }
       })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/Users/me/project/README.md',
+      name: 'README.md',
+      content: 'hello',
+      editable: true,
+      revision: 'sha256:old',
+      truncated: false,
+      size: 5,
+      modifiedAt: '2026-06-20T01:00:00Z',
+    })
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/project',
+      entries: [
+        {
+          name: 'src',
+          path: '/Users/me/project/src',
+          isDirectory: true,
+          size: 0,
+          modifiedAt: '2026-06-20T01:00:00Z',
+        },
+      ],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: '/Users/me/.alias/project/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+      modifiedAt: '2026-06-20T01:02:00Z',
+    })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
+      readWorkspaceTextFile,
+      readWorkspaceFileChunk,
+      listWorkspaceEntries,
     })
 
     await expect(
@@ -3113,7 +3181,11 @@ describe('createLocalAppServices', () => {
       ],
     })
     await expect(
-      services.deviceApi.readWorkspaceTextFile('local-device', '/Users/me/project/README.md')
+      services.deviceApi.readWorkspaceTextFile(
+        'local-device',
+        '/Users/me/project/README.md',
+        '/Users/me/project'
+      )
     ).resolves.toEqual({
       path: '/Users/me/project/README.md',
       name: 'README.md',
@@ -3145,7 +3217,8 @@ describe('createLocalAppServices', () => {
       services.deviceApi.readWorkspaceFileChunk?.(
         'local-device',
         '/Users/me/.alias/project/image.png',
-        0
+        0,
+        '/Users/me/.alias/project'
       )
     ).resolves.toEqual({
       path: '/Users/me/.alias/project/image.png',
@@ -3157,21 +3230,11 @@ describe('createLocalAppServices', () => {
       modifiedAt: '2026-06-20T01:02:00Z',
     })
 
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
-      deviceId: 'device-uuid',
-      command_key: 'workspace_tree',
-      path: '/Users/me/project',
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 512,
-    })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
-      deviceId: 'device-uuid',
-      command_key: 'workspace_read_text_file',
-      path: '/Users/me/project',
-      args: ['README.md'],
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 1024 * 2,
-    })
+    expect(listWorkspaceEntries).toHaveBeenCalledWith('/Users/me/project', '/Users/me/project')
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      '/Users/me/project',
+      '/Users/me/project/README.md'
+    )
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'workspace_write_text_file',
@@ -3181,14 +3244,17 @@ describe('createLocalAppServices', () => {
       timeout_seconds: 15,
       max_output_bytes: 1024 * 1024 * 2,
     })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
-      deviceId: 'device-uuid',
-      command_key: 'workspace_read_file_chunk',
-      path: '/Users/me/.alias/project',
-      args: ['image.png', '0'],
-      timeout_seconds: 30,
-      max_output_bytes: 1024 * 1024 * 2,
-    })
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      '/Users/me/.alias/project',
+      '/Users/me/.alias/project/image.png',
+      0
+    )
+    expect(request).not.toHaveBeenCalledWith(
+      'device.execute_command',
+      expect.objectContaining({
+        command_key: expect.stringMatching(/^workspace_read_/),
+      })
+    )
   })
 
   test('reverts local runtime file changes through the owning device command', async () => {

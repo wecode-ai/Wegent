@@ -1072,6 +1072,42 @@ class SqlAlchemySubtaskStore:
             flag_modified(subtask, "result")
         return subtask
 
+    def transition_status(
+        self,
+        db: Session,
+        *,
+        subtask_id: int,
+        task_id: int,
+        owner_user_id: int,
+        role: SubtaskRole,
+        from_status: SubtaskStatus,
+        to_status: SubtaskStatus,
+        progress: Optional[int] = None,
+        completed_at: Optional[datetime] = None,
+    ) -> bool:
+        """Atomically transition one exact subtask from its expected status."""
+
+        fields: dict[Any, Any] = {
+            Subtask.status: to_status,
+            Subtask.updated_at: datetime.now(),
+        }
+        if progress is not None:
+            fields[Subtask.progress] = progress
+        if completed_at is not None:
+            fields[Subtask.completed_at] = completed_at
+        updated = (
+            db.query(Subtask)
+            .filter(
+                Subtask.id == subtask_id,
+                Subtask.task_id == task_id,
+                Subtask.user_id == owner_user_id,
+                Subtask.role == role,
+                Subtask.status == from_status,
+            )
+            .update(fields, synchronize_session=False)
+        )
+        return updated == 1
+
     def has_running_assistant(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> bool:

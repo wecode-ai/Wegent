@@ -354,7 +354,7 @@ function ContinueInImDialogContent({
           <button
             type="button"
             data-testid="continue-im-submit-button"
-            className="h-11 min-w-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-11 min-w-[44px] rounded-lg bg-primary px-4 text-sm font-medium text-primary-contrast disabled:cursor-not-allowed disabled:opacity-60"
             onClick={handleSubmit}
             disabled={loading || submitting || selectedKeys.length === 0}
           >

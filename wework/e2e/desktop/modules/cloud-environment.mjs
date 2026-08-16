@@ -28,6 +28,7 @@ import {
   spawn,
   stopProcess,
   stopProcessGroup,
+  waitForLogPattern,
   waitForUrl,
   weworkDir,
   writeFile,
@@ -142,7 +143,14 @@ class LocalPluginObjectStorage {
 }
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
+  constructor({
+    claudeBinary,
+    codexBinary,
+    modelServerUrl,
+    scenarioConfigToml = '',
+    workspacePath,
+  }) {
+    this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
@@ -150,10 +158,6 @@ class RealCloudEnvironment {
   }
 
   async startBackend() {
-    this.redisPort = await reservePort()
-    this.backendPort = await reservePort()
-    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
-    this.socketUrl = `http://localhost:${this.backendPort}`
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
@@ -161,6 +165,7 @@ class RealCloudEnvironment {
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
 
+    this.redisPort = await reservePort()
     this.redis = spawn(
       'redis-server',
       ['--port', String(this.redisPort), '--save', '', '--appendonly', 'no'],
@@ -170,6 +175,11 @@ class RealCloudEnvironment {
       appendProcessOutput(this.redis.stdout, this.redisLogPath),
       appendProcessOutput(this.redis.stderr, this.redisLogPath),
     ])
+    await waitForLogPattern(this.redisLogPath, /Ready to accept connections/)
+
+    this.backendPort = await reservePort()
+    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.socketUrl = `http://localhost:${this.backendPort}`
 
     const backendEnv = {
       ...process.env,
@@ -320,6 +330,7 @@ class RealCloudEnvironment {
     await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     const remoteEnv = {
       ...process.env,
+      ...(this.claudeBinary ? { CLAUDE_BINARY_PATH: this.claudeBinary } : {}),
       CODEX_BIN: this.codexBinary,
       CODEX_HOME: this.remoteCodexHome,
       HOME: remoteHome,

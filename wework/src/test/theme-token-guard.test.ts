@@ -5,6 +5,22 @@ import { describe, expect, test } from 'vitest'
 const sourceRoot = resolve(process.cwd(), 'src')
 
 const guardedFiles = [
+  'components/chat/AssistantMarkdown.tsx',
+  'components/chat/CodexTurnArtifacts.tsx',
+  'components/chat/composer/CompactChatComposer.tsx',
+  'components/chat/composer/ComposerToolbar.tsx',
+  'components/chat/composer/ContextUsageIndicator.tsx',
+  'components/chat/composer/ModelAutomaticReasoningOption.tsx',
+  'components/chat/composer/ModelSelector.tsx',
+  'components/common/ActionMenu.tsx',
+  'components/layout/DesktopAppSwitcher.tsx',
+  'components/layout/workspace-panels/FileWorkspacePanel.tsx',
+  'components/plugins/PluginCatalogSections.tsx',
+  'components/projects/DeviceFolderPicker.tsx',
+  'components/projects/ProjectCreateDialog.tsx',
+  'features/todo/TodoCreateDialog.tsx',
+  'features/todo/TodoDetailPanel.tsx',
+  'features/todo/TodoWorkItems.tsx',
   'components/layout/DesktopSidebar.tsx',
   'components/layout/DesktopSettingsMenu.tsx',
   'components/layout/EnvironmentInfoPopover.tsx',

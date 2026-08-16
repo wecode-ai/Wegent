@@ -238,6 +238,77 @@ def test_git_hosting_cli_status_reports_timeout(tmp_path: Path) -> None:
     }
 
 
+def test_gitlab_cli_status_accepts_any_authenticated_host(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "glab"
+    executable.write_text(
+        """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "glab 1.113.0"
+  exit 0
+fi
+printf '%s\\n' \\
+  'gitlab.com' \\
+  '  x gitlab.com: API call failed: 401 Unauthorized' \\
+  'internal.example.com' \\
+  '  ✓ Logged in to internal.example.com as user (keyring)' >&2
+exit 1
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "glab",
+        "installed": True,
+        "authenticated": True,
+        "executablePath": str(executable),
+        "version": "glab 1.113.0",
+        "detectionError": None,
+    }
+
+
+def test_gitlab_cli_status_rejects_when_every_host_fails(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "glab"
+    executable.write_text(
+        """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "glab 1.113.0"
+  exit 0
+fi
+printf '%s\\n' \\
+  'gitlab.com' \\
+  '  x gitlab.com: API call failed: 401 Unauthorized' >&2
+exit 1
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout)["authenticated"] is False
+
+
 @pytest.mark.parametrize(
     "artifact_id",
     [

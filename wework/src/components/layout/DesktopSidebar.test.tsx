@@ -1906,6 +1906,65 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('hides project automation manager sessions from standalone tasks', () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-14/automation'
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'automation-manager',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Automation manager',
+                runtime: 'codex',
+                runtimeHandle: {
+                  origin: {
+                    type: 'project_automation',
+                    automationRole: 'manager',
+                    run_id: 'run-1',
+                  },
+                },
+              },
+              {
+                taskId: 'project-robot',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Project robot',
+                runtime: 'codex',
+                runtimeHandle: {
+                  origin: {
+                    type: 'project_automation',
+                    run_id: 'run-1',
+                  },
+                },
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+      onOpenRuntimeTask: vi.fn(),
+    })
+
+    expect(
+      screen.queryByTestId('runtime-local-task-row-automation-manager')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-project-robot')).toHaveTextContent(
+      'Project robot'
+    )
+  })
+
   test('sweeps a runtime task title after it is updated', async () => {
     const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-06/title-update'
     const runtimeWork = (title: string) => ({
@@ -1966,6 +2025,77 @@ describe('DesktopSidebar', () => {
     expect(
       screen.getByTestId('runtime-local-task-title-shimmer-friendly-title-task')
     ).toBeInTheDocument()
+  })
+
+  test('marks every active split group member and distinguishes the focused member', () => {
+    const chatPath = '/Users/alice/.wework/workspace/chats/2026-08-14/split-group'
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: chatPath,
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'split-one',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Split one',
+                runtime: 'codex',
+              },
+              {
+                taskId: 'split-two',
+                workspacePath: chatPath,
+                workspaceKind: 'chat',
+                title: 'Split two',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+      currentRuntimeTask: {
+        deviceId: 'local-device',
+        taskId: 'split-one',
+        workspacePath: chatPath,
+      },
+      splitGroupMemberships: {
+        'runtime:local-device:split-one': {
+          groupId: 'group-one',
+          displayNumber: 1,
+          active: true,
+          focused: true,
+        },
+        'runtime:local-device:split-two': {
+          groupId: 'group-one',
+          displayNumber: 1,
+          active: true,
+          focused: false,
+        },
+      },
+      onOpenRuntimeTask: vi.fn(),
+    })
+
+    const firstRow = screen.getByTestId('runtime-local-task-row-split-one')
+    const secondRow = screen.getByTestId('runtime-local-task-row-split-two')
+    expect(firstRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
+    expect(secondRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
+    expect(firstRow).toHaveAttribute('aria-current', 'page')
+    expect(secondRow).not.toHaveAttribute('aria-current')
+    expect(screen.getByTestId('runtime-local-task-split-group-split-one')).toHaveAccessibleName(
+      '分屏 1'
+    )
+    expect(screen.getByTestId('runtime-local-task-split-group-split-two')).toHaveAttribute(
+      'data-split-group',
+      'group-one'
+    )
   })
 
   test('removes pinned chat tasks from the task section without highlighted styling', () => {
@@ -3648,7 +3778,7 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('show-project-in-finder-7'))
 
     expect(openLocalWorkspace).toHaveBeenCalledWith({
-      opener: 'finder',
+      opener: 'file-manager',
       path: '/Users/alice/dev/Wegent',
     })
   })

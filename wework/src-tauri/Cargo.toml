@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.16"
+version = "0.1.17"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -74,6 +74,9 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 webview2-com = "0.38.2"
 windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
 # over a browser download. Keep application debug assertions enabled while

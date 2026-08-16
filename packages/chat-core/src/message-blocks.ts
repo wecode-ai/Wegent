@@ -76,6 +76,7 @@ export interface VideoBlock extends BaseBlock {
   type: "video";
   video_url: string;
   video_thumbnail?: string | null;
+  cover_url?: string | null;
   video_duration?: number | null;
   video_attachment_id?: number | null;
   video_progress?: number;

@@ -31,7 +31,7 @@ Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when
 
 The desktop sidebar provides two cloud entry points with distinct responsibilities:
 
-- The workspace entry shows cloud connection status. It says "Connect cloud" while disconnected and "Cloud connection expired" after login expiry; clicking it can restore the connection directly.
+- The workspace entry shows cloud connection status. It says "Connect cloud" while disconnected and "Cloud connection expired" after login expiry; clicking it allows the user to reconnect or select "Disconnect" to clear a failed or expired state and return to the disconnected state.
 - The account area always opens the account menu and does not change its click behavior with login state. While signed out, "Sign in to Wegent" appears at the top of the menu, and Settings, Check for updates, and Remaining usage stay accessible.
 - After connection, the account area shows the cloud username and email, while the workspace entry shows the cloud host, cloud user, and online cloud device count.
 - Expired or failed cloud connections do not block local features.

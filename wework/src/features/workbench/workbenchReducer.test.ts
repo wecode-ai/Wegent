@@ -373,7 +373,7 @@ describe('workbenchReducer', () => {
       runtimeWork,
     })
 
-    expect(state.runtimeWork).toBe(runtimeWork)
+    expect(state.runtimeWork).toEqual(runtimeWork)
     expect(state.projects[0].tasks).toEqual([])
   })
 
@@ -1138,6 +1138,75 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('accepts a completed executor snapshot over a fresh optimistic runtime task', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_task_optimistic_upserted',
+      project: { id: 7, name: 'Repo', tasks: [] },
+      workspace: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/repo',
+        projectId: 7,
+        available: true,
+        mapped: true,
+        tasks: [],
+      },
+      task: {
+        taskId: 'claude-task',
+        workspacePath: '/workspace/repo',
+        title: 'Claude task',
+        runtime: 'claude_code',
+        running: true,
+        status: 'running',
+        optimistic: true,
+        updatedAt: new Date().toISOString(),
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'cloud-device',
+                workspacePath: '/workspace/repo',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'claude-task',
+                    workspacePath: '/workspace/repo',
+                    title: 'Claude task',
+                    runtime: 'claude_code',
+                    running: false,
+                    status: 'active',
+                    completedAt: 1_786_686_568_931,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      taskId: 'claude-task',
+      running: false,
+      status: 'done',
+      turnStatus: 'completed',
+      completedAt: 1_786_686_568_931,
+    })
+    expect(
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].optimistic
+    ).toBeUndefined()
+  })
+
   test('drops an optimistic runtime task when refresh returns it in a different workspace kind', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
@@ -1349,6 +1418,44 @@ describe('workbenchReducer', () => {
       refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)
     ).toEqual(['attachment-only-new', 'attachment-only-existing'])
     expect(refreshed.runtimeWork?.totalTasks).toBe(2)
+  })
+
+  test('normalizes completed task projections when the current work list is empty', () => {
+    const refreshed = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/repo',
+            available: true,
+            tasks: [
+              {
+                taskId: 'completed-task',
+                workspacePath: '/workspace/repo',
+                title: 'Completed task',
+                runtime: 'claude_code',
+                running: false,
+                status: 'active',
+                completedAt: 1_786_686_568_931,
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.chats[0].tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'completed-task',
+        running: false,
+        status: 'done',
+        turnStatus: 'completed',
+        completedAt: 1_786_686_568_931,
+      }),
+    ])
   })
 
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {

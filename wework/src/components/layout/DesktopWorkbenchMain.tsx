@@ -77,6 +77,7 @@ import {
   type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
+  type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import {
@@ -155,6 +156,8 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
+import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
   useWorkbenchPaneActive,
   useWorkbenchPaneId,
@@ -244,6 +247,7 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  temporaryChatAddresses?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
@@ -342,8 +346,8 @@ function rightPanelTabType(
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
-  if (isRightWorkspaceHarnessTab(tab)) return 'terminal'
-  if (tab === 'review' || tab === 'terminal' || tab === 'files') return tab
+  if (isRightWorkspaceHarnessTab(tab) || isRightWorkspaceTerminalTab(tab)) return 'terminal'
+  if (tab === 'review' || tab === 'files') return tab
   return 'other'
 }
 
@@ -353,6 +357,31 @@ function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightW
 
 function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
   return tab.startsWith('harness:')
+}
+
+function isRightWorkspaceTerminalTab(
+  tab: RightWorkspacePanelView
+): tab is RightWorkspaceTerminalTab {
+  return tab.startsWith('terminal:')
+}
+
+function getRightWorkspaceTerminalNumericSuffix(tab: RightWorkspaceTerminalTab): number {
+  const parsed = Number.parseInt(tab.slice('terminal:'.length), 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeRightWorkspacePanelTab(
+  tab: RightWorkspacePanelTab | 'browser' | 'terminal'
+): RightWorkspacePanelTab {
+  if (tab === 'browser') return 'browser:1'
+  if (tab === 'terminal') return 'terminal:1'
+  return tab
+}
+
+function normalizeRightWorkspacePanelView(
+  view: RightWorkspacePanelView | 'browser' | 'terminal'
+): RightWorkspacePanelView {
+  return view === 'launcher' ? view : normalizeRightWorkspacePanelTab(view)
 }
 
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
@@ -437,6 +466,7 @@ function createInitialBrowserWorkspaceState({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  splitGroups: WorkbenchSplitGroupsController
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   visible?: boolean
@@ -500,7 +530,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
-  const { services, workspaceTabId, openRuntimeTask } = useWorkbench()
+  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const {
     onLocalHarnessSessionStarted,
@@ -512,7 +542,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
-  const [splitMode, setSplitMode] = useState(false)
+  const splitMode = props.splitGroups.splitMode
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
@@ -721,19 +751,37 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       updateHarnessSessionTitle,
     ]
   )
+  const {
+    focusPane: focusSplitGroupPane,
+    closePane: closeSplitGroupPane,
+    splitPane: splitSplitGroupPane,
+    placeTask: placeSplitGroupTask,
+    updateSizes: updateSplitGroupSizes,
+  } = props.splitGroups
+  const focusSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(focusSplitGroupPane(paneId)),
+    [focusSplitGroupPane]
+  )
+  const closeSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(closeSplitGroupPane(paneId)),
+    [closeSplitGroupPane]
+  )
   const paneStack = (
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
-      storageKey={`wework:workbench-split-layout:v2:${workspaceTabId ?? 'popout'}`}
+      layout={props.splitGroups.activeLayout}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
-      runtimeKeysReady={state.runtimeWork !== null}
       activeTestId="desktop-workbench-main"
       workbenchVisible={props.visible ?? true}
       resolvePane={resolvePane}
       getPaneTitle={getPaneTitle}
       onPaneFocus={focusPane}
-      onSplitModeChange={setSplitMode}
+      onLayoutFocus={focusSplitPane}
+      onLayoutClose={closeSplitPane}
+      onLayoutSplit={splitSplitGroupPane}
+      onLayoutPlace={placeSplitGroupTask}
+      onLayoutSizesChange={updateSplitGroupSizes}
       renderPane={renderWorkbenchPane}
     />
   )
@@ -860,7 +908,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const paneSession = useWorkbenchPaneSession({
+    currentRuntimeTask,
+    debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
+  })
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -939,6 +990,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const currentRuntimeConversationSource: RuntimeTaskAddress | null =
+    currentRuntimeTask && runtimeTaskSummary
+      ? {
+          ...currentRuntimeTask,
+          runtime: runtimeTaskSummary.runtime,
+          workspacePath: runtimeTaskSummary.workspacePath || currentRuntimeTask.workspacePath,
+          threadId: runtimeTaskSummary.threadId ?? currentRuntimeTask.threadId,
+          runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
+        }
+      : currentRuntimeTask
   const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
@@ -1002,14 +1063,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services?.runtimeWorkApi &&
     (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
-  const supervisorModels = projectChat.models.filter(
-    model =>
-      model.isActive !== false &&
-      ['public', 'user', 'group'].includes(model.type) &&
-      Boolean(model.namespace) &&
-      model.resourceUserId !== undefined
-  )
-
   const runtimeWorkApi = services?.runtimeWorkApi
   const setSupervisorForAddress = useCallback(
     async (address: RuntimeTaskAddress, config: TaskSupervisorConfig) => {
@@ -1236,17 +1289,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       initialBlankBrowserMigration?.rightPanelView ??
       initialWorkspaceState?.rightPanelView ??
       'launcher'
-    return (restoredView as RightWorkspacePanelView | 'browser') === 'browser'
-      ? 'browser:1'
-      : restoredView
+    return normalizeRightWorkspacePanelView(
+      restoredView as RightWorkspacePanelView | 'browser' | 'terminal'
+    )
   })
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(() => {
     const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
       initialWorkspaceState?.rightPanelTabs ??
-      []) as Array<RightWorkspacePanelTab | 'browser'>
-    return restoredTabs.map(tab => (tab === 'browser' ? 'browser:1' : tab))
+      []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
+    return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const terminalTabSequence = useRef(
+    Math.max(
+      0,
+      ...rightPanelTabs
+        .filter(isRightWorkspaceTerminalTab)
+        .map(getRightWorkspaceTerminalNumericSuffix),
+      isRightWorkspaceTerminalTab(rightPanelView)
+        ? getRightWorkspaceTerminalNumericSuffix(rightPanelView)
+        : 0
+    )
+  )
   const [rightPanelImmediateLayout, setRightPanelImmediateLayout] = useState(false)
+  const [temporaryChatAddresses, setTemporaryChatAddresses] = useState<
+    Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
+  >(() => initialWorkspaceState?.temporaryChatAddresses ?? {})
   const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
     string | null
   >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
@@ -1294,6 +1361,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     browserTabSequence.current += 1
     return `browser:${browserTabSequence.current}` as RightWorkspaceBrowserTab
   }, [])
+  const allocateTerminalTab = useCallback((): RightWorkspaceTerminalTab => {
+    terminalTabSequence.current += 1
+    return `terminal:${terminalTabSequence.current}` as RightWorkspaceTerminalTab
+  }, [])
   const createBrowserTabState = useCallback(
     (
       tab: RightWorkspaceBrowserTab,
@@ -1339,6 +1410,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      temporaryChatAddresses,
       browserStates,
       reviewState,
       selectedFileWorkspaceTargetKey,
@@ -1351,6 +1423,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    temporaryChatAddresses,
     browserStates,
     reviewState,
     selectedFileWorkspaceTargetKey,
@@ -1515,7 +1588,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     fileWorkspaceDirty ||
     rightPanelTabs.some(
       tab =>
-        tab === 'terminal' || isRightWorkspaceBrowserTab(tab) || isRightWorkspaceHarnessTab(tab)
+        isRightWorkspaceTerminalTab(tab) ||
+        isRightWorkspaceBrowserTab(tab) ||
+        isRightWorkspaceHarnessTab(tab)
     )
   useEffect(() => {
     onPaneResourceRetained(paneKey, 'right-panel', hasPersistentRightPanelResource)
@@ -2775,6 +2850,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
     if (tab.startsWith('chat:')) {
       temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+      setTemporaryChatAddresses(current => {
+        if (!current[tab as RightWorkspaceChatTab]) return current
+        const next = { ...current }
+        delete next[tab as RightWorkspaceChatTab]
+        return next
+      })
     }
     if (isRightWorkspaceHarnessTab(tab)) {
       void onLocalHarnessSessionClose(getRightWorkspaceHarnessSessionId(tab))
@@ -2947,8 +3028,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     openBrowserTab()
   }, [openBrowserTab])
   const selectTerminalView = useCallback(() => {
-    openRightPanelTab('terminal')
-  }, [openRightPanelTab])
+    openRightPanelTab(allocateTerminalTab())
+  }, [allocateTerminalTab, openRightPanelTab])
   const selectChatView = useCallback(() => {
     openTemporaryChatTab()
   }, [openTemporaryChatTab])
@@ -4174,7 +4255,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               allowTemporaryChat={temporaryChatAvailable}
               currentProject={workspaceProject}
               canBrowseFiles={canBrowseFiles}
-              currentRuntimeTask={currentRuntimeTask}
+              currentRuntimeTask={currentRuntimeConversationSource}
               devices={devices}
               workspaceTarget={workspacePanelTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}
@@ -4216,6 +4297,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
+              getChatInitialAddress={tab => temporaryChatAddresses[tab]}
+              onChatAddressChange={(tab, address) => {
+                setTemporaryChatAddresses(current => {
+                  if (!address) {
+                    if (!current[tab]) return current
+                    const next = { ...current }
+                    delete next[tab]
+                    return next
+                  }
+                  if (
+                    current[tab]?.taskId === address.taskId &&
+                    current[tab]?.deviceId === address.deviceId
+                  ) {
+                    return current
+                  }
+                  return { ...current, [tab]: address }
+                })
+              }}
             />
           )}
         </div>
@@ -4319,7 +4418,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
           defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
-          models={supervisorModels}
+          models={projectChat.models}
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}

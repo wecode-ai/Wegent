@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -113,6 +114,9 @@ export interface CreateTemporaryRuntimeTaskOptions {
 
 export interface CreateProjectRuntimeTaskOptions {
   project?: ProjectWithTasks | null
+  /** Project-space entry points can pin the shell independently from the
+   * globally selected model. */
+  runtime?: RuntimeName
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
@@ -145,6 +149,7 @@ export interface CreateProjectRuntimeTaskOptions {
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  silentBusyRetry?: boolean
 }
 
 export interface RuntimePaneGuidanceResult {
@@ -275,7 +280,6 @@ export interface WorkbenchContextValue {
   unsubscribeRuntimeTaskNotifications: (
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
-  rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
@@ -424,7 +428,9 @@ export interface WorkbenchProviderProps {
   children: ReactNode
   user: User
   services?: WorkbenchServices
+  lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
   syncRemoteProjects?: boolean
+  syncRuntimeTaskLifecycle?: boolean
 }

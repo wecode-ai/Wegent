@@ -618,6 +618,7 @@ async fn zip_directory(path: &Path) -> Result<Vec<u8>, HttpError> {
     })?;
 
     let mut command = Command::new("zip");
+    crate::process::hide_windows_console(&mut command);
     command
         .arg("-r")
         .arg("-q")
@@ -1406,6 +1407,7 @@ async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
         .collect::<Vec<_>>();
     let process_environment = process_environment::process_env(&requested_environment);
     let mut command = Command::new(&request.process.cmd);
+    crate::process::hide_windows_console(&mut command);
     command
         .args(&request.process.args)
         .env_clear()

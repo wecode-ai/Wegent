@@ -6,6 +6,7 @@ import {
   Bell,
   ChevronDown,
   ChevronRight,
+  Columns2,
   Download,
   Edit3,
   FolderOpen,
@@ -73,6 +74,7 @@ import {
   isClaudeCodeDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
+import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -162,14 +164,12 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
-import {
-  debugRuntimeSidebarState,
-  warnRuntimeSidebarMismatch,
-} from '@/features/workbench/runtimeSidebarDiagnostics'
+import { debugRuntimeSidebarState } from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import type { LocalHarnessWorkbenchSession } from './localHarnessWorkbench'
+import type { WorkbenchSplitGroupMembership } from './workbenchSplitGroups'
 
 interface DesktopSidebarProps {
   user: UserProfile | null
@@ -178,6 +178,7 @@ interface DesktopSidebarProps {
   cloudWorkStatus?: CloudWorkStatus
   runtimeWork?: RuntimeWorkListResponse | null
   currentRuntimeTask?: RuntimeTaskAddress | null
+  splitGroupMemberships?: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   standaloneDeviceId?: string | null
   standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
@@ -318,6 +319,7 @@ interface ArchiveConversationsConfirmDialogProps {
 
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
 const EMPTY_RUNTIME_TASK_KEYS: ReadonlySet<string> = new Set()
+const EMPTY_SPLIT_GROUP_MEMBERSHIPS: Readonly<Record<string, WorkbenchSplitGroupMembership>> = {}
 const PROJECT_APPEARANCE_COLORS = [
   'blue',
   'green',
@@ -784,6 +786,19 @@ function getRuntimeTaskPriorityRank(reason: RuntimeTaskPriorityReason): number {
     case 'active':
       return 2
   }
+}
+
+function getRuntimeTaskSplitGroup(
+  memberships: Readonly<Record<string, WorkbenchSplitGroupMembership>>,
+  workspace: RuntimeDeviceWorkspace,
+  task: RuntimeTaskSummary
+): WorkbenchSplitGroupMembership | undefined {
+  return memberships[
+    getWorkbenchPaneKey({
+      currentRuntimeTask: getRuntimeTaskAddress(workspace, task),
+      currentProject: null,
+    })
+  ]
 }
 
 function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
@@ -1474,6 +1489,7 @@ function RuntimeTaskRow({
   onToggleRuntimeTaskNotification,
   priorityReason,
   priorityLayout = false,
+  splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
   task: RuntimeTaskSummary
@@ -1499,6 +1515,7 @@ function RuntimeTaskRow({
   ) => Promise<void> | void
   priorityReason?: RuntimeTaskPriorityReason
   priorityLayout?: boolean
+  splitGroup?: WorkbenchSplitGroupMembership
 }) {
   const { t } = useTranslation('common')
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
@@ -1535,6 +1552,11 @@ function RuntimeTaskRow({
     (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
   const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
   const disabled = !workspace.available || !onOpenRuntimeTask
+  const splitGroupLabel = splitGroup
+    ? t('workbench.split_group_badge', '分屏 {{number}}', {
+        number: splitGroup.displayNumber,
+      })
+    : null
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
@@ -1731,7 +1753,15 @@ function RuntimeTaskRow({
           role="button"
           tabIndex={disabled ? -1 : 0}
           aria-disabled={disabled}
-          aria-current={selected ? 'page' : undefined}
+          aria-current={
+            splitGroup?.active
+              ? splitGroup.focused
+                ? 'page'
+                : undefined
+              : selected
+                ? 'page'
+                : undefined
+          }
           onClick={handleOpen}
           onContextMenu={event => {
             event.preventDefault()
@@ -1753,6 +1783,7 @@ function RuntimeTaskRow({
             selected
               ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
               : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
+            splitGroup?.focused && 'shadow-[inset_2px_0_0_hsl(var(--primary))]',
             (archivePending || archiving) && 'hidden'
           )}
         >
@@ -1830,6 +1861,19 @@ function RuntimeTaskRow({
               </span>
             </span>
           )}
+          {splitGroup && splitGroupLabel ? (
+            <span
+              data-testid={`runtime-local-task-split-group-${task.taskId}`}
+              data-split-group={splitGroup.groupId}
+              data-split-group-active={splitGroup.active ? 'true' : undefined}
+              title={splitGroupLabel}
+              aria-label={splitGroupLabel}
+              className="ml-1 inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-[rgb(var(--color-sidebar-hover))] px-1.5 text-xs font-medium leading-none text-[rgb(var(--color-sidebar-text-secondary))]"
+            >
+              <Columns2 className="h-3 w-3" aria-hidden="true" />
+              <span>{splitGroup.displayNumber}</span>
+            </span>
+          ) : null}
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className={cn(
@@ -2271,6 +2315,7 @@ function ProjectItem({
   devices,
   runtimeProjectWork,
   currentRuntimeTask,
+  splitGroupMemberships,
   unreadTaskKeys,
   imNotificationSettings,
   showDeviceMarker,
@@ -2300,6 +2345,7 @@ function ProjectItem({
   devices: DeviceInfo[]
   runtimeProjectWork?: RuntimeProjectWork
   currentRuntimeTask?: RuntimeTaskAddress | null
+  splitGroupMemberships: Readonly<Record<string, WorkbenchSplitGroupMembership>>
   unreadTaskKeys: ReadonlySet<string>
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
@@ -2364,8 +2410,22 @@ function ProjectItem({
   )
   const prioritizedRuntimeTaskItems = runtimeTaskItems
   const visibleRuntimeTaskItems = useMemo(
-    () => getVisibleRuntimeSidebarTaskItems(prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit),
-    [prioritizedRuntimeTaskItems, runtimeTaskVisibleLimit]
+    () =>
+      getVisibleRuntimeSidebarTaskItems(
+        prioritizedRuntimeTaskItems,
+        runtimeTaskVisibleLimit,
+        currentRuntimeTask?.taskId,
+        ({ workspace, task }) =>
+          lifecycleSnapshot.runningTaskKeys.has(
+            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+          )
+      ),
+    [
+      currentRuntimeTask?.taskId,
+      lifecycleSnapshot.runningTaskKeys,
+      prioritizedRuntimeTaskItems,
+      runtimeTaskVisibleLimit,
+    ]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
     prioritizedRuntimeTaskItems,
@@ -2383,19 +2443,15 @@ function ProjectItem({
       allTaskIds: prioritizedRuntimeTaskItems.map(item => item.task.taskId),
       visibleTaskIds: visibleRuntimeTaskItems.map(item => item.task.taskId),
       hiddenTaskIds: prioritizedRuntimeTaskItems
-        .slice(visibleRuntimeTaskItems.length)
+        .filter(
+          item =>
+            !visibleRuntimeTaskItems.some(
+              visibleItem => visibleItem.task.taskId === item.task.taskId
+            )
+        )
         .map(item => item.task.taskId),
     }
     debugRuntimeSidebarState('project-visible-items', details)
-
-    const currentTaskId = currentRuntimeTask?.taskId
-    if (
-      currentTaskId &&
-      prioritizedRuntimeTaskItems.some(item => item.task.taskId === currentTaskId) &&
-      !visibleRuntimeTaskItems.some(item => item.task.taskId === currentTaskId)
-    ) {
-      warnRuntimeSidebarMismatch(details)
-    }
   }, [
     currentRuntimeTask?.taskId,
     prioritizedRuntimeTaskItems,
@@ -2449,7 +2505,7 @@ function ProjectItem({
     runtimeProjectWork,
     finderWorkspacePath,
     path => {
-      void openLocalWorkspace({ opener: 'finder', path })
+      void openLocalWorkspace({ opener: 'file-manager', path })
     },
     path =>
       formatSidebarTemplate(t('workbench.open_project_source'), {
@@ -2689,12 +2745,12 @@ function ProjectItem({
                 ...(finderWorkspacePath
                   ? [
                       {
-                        label: t('workbench.show_in_finder', '在 Finder 中显示'),
+                        label: fileManagerRevealLabel(t),
                         icon: FolderOpen,
                         testId: `show-project-in-finder-${project.id}`,
                         onSelect: () =>
                           openLocalWorkspace({
-                            opener: 'finder',
+                            opener: 'file-manager',
                             path: finderWorkspacePath,
                           }),
                       },
@@ -2832,7 +2888,11 @@ function ProjectItem({
                       workspace={workspace}
                       task={task}
                       projectName={runtimeProjectWork?.project.name ?? project.name}
-                      selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                      selected={
+                        getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)?.active ||
+                        isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+                      }
+                      splitGroup={getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)}
                       unread={unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))}
                       marked={task.pinned}
                       indentClassName="pl-9"
@@ -2950,6 +3010,7 @@ export function DesktopSidebar({
   cloudWorkStatus,
   runtimeWork,
   currentRuntimeTask,
+  splitGroupMemberships = EMPTY_SPLIT_GROUP_MEMBERSHIPS,
   standaloneDeviceId,
   standaloneWorkspacePath,
   imNotificationSettings,
@@ -3899,7 +3960,16 @@ export function DesktopSidebar({
                     workspace={item.workspace}
                     task={item.task}
                     projectName={item.projectName}
-                    selected={isRuntimeTaskSelected(currentRuntimeTask, item.workspace, item.task)}
+                    selected={
+                      getRuntimeTaskSplitGroup(splitGroupMemberships, item.workspace, item.task)
+                        ?.active ||
+                      isRuntimeTaskSelected(currentRuntimeTask, item.workspace, item.task)
+                    }
+                    splitGroup={getRuntimeTaskSplitGroup(
+                      splitGroupMemberships,
+                      item.workspace,
+                      item.task
+                    )}
                     unread={visibleUnreadRuntimeTaskKeys.has(
                       getRuntimeTaskReminderItemKey(item.workspace, item.task)
                     )}
@@ -3982,7 +4052,16 @@ export function DesktopSidebar({
                             workspace={workspace}
                             task={task}
                             projectName={projectWork?.project.name}
-                            selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                            selected={
+                              getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)
+                                ?.active ||
+                              isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+                            }
+                            splitGroup={getRuntimeTaskSplitGroup(
+                              splitGroupMemberships,
+                              workspace,
+                              task
+                            )}
                             unread={visibleUnreadRuntimeTaskKeys.has(
                               getRuntimeTaskReminderItemKey(workspace, task)
                             )}
@@ -4047,6 +4126,7 @@ export function DesktopSidebar({
                             devices={devices}
                             runtimeProjectWork={runtimeProjectWork}
                             currentRuntimeTask={currentRuntimeTask}
+                            splitGroupMemberships={splitGroupMemberships}
                             unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                             imNotificationSettings={imNotificationSettings}
                             showDeviceMarker={false}
@@ -4251,6 +4331,7 @@ export function DesktopSidebar({
                           devices={devices}
                           runtimeProjectWork={runtimeProjectWork}
                           currentRuntimeTask={currentRuntimeTask}
+                          splitGroupMemberships={splitGroupMemberships}
                           unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                           imNotificationSettings={imNotificationSettings}
                           showDeviceMarker={false}
@@ -4380,7 +4461,16 @@ export function DesktopSidebar({
                               workspace={workspace}
                               task={task}
                               projectName={null}
-                              selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
+                              selected={
+                                getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)
+                                  ?.active ||
+                                isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+                              }
+                              splitGroup={getRuntimeTaskSplitGroup(
+                                splitGroupMemberships,
+                                workspace,
+                                task
+                              )}
                               unread={visibleUnreadRuntimeTaskKeys.has(
                                 getRuntimeTaskReminderItemKey(workspace, task)
                               )}

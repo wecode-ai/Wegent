@@ -7,6 +7,9 @@ import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
+import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
@@ -19,31 +22,33 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
     --diffs-line-height: calc(var(--text-code) * 1.8);
     --diffs-font-family: var(--font-code);
     --diffs-header-font-family: var(--font-ui);
-    --diffs-light-bg: rgb(255 255 255);
-    --diffs-light: rgb(26 26 26);
-    --diffs-fg-number-override: rgb(140 140 140);
-    --diffs-bg-context-override: rgb(255 255 255);
-    --diffs-bg-context-gutter-override: rgb(247 247 248);
-    --diffs-bg-hover-override: rgb(247 247 248);
+    --diffs-light-bg: rgb(var(--color-bg-base));
+    --diffs-light: rgb(var(--color-text-primary));
+    --diffs-dark-bg: rgb(var(--color-bg-base));
+    --diffs-dark: rgb(var(--color-text-primary));
+    --diffs-fg-number-override: rgb(var(--color-text-muted));
+    --diffs-bg-context-override: rgb(var(--color-bg-base));
+    --diffs-bg-context-gutter-override: rgb(var(--color-bg-surface));
+    --diffs-bg-hover-override: rgb(var(--color-muted));
     --diffs-scrollbar-gutter-override: 5px;
     --diffs-min-number-column-width: 3ch;
-    background: rgb(255 255 255) !important;
+    background: rgb(var(--color-bg-base)) !important;
   }
   [data-diffs-header],
   [data-diffs-header="default"] {
     min-height: 36px;
     padding-inline: 12px;
-    border-bottom: 1px solid rgb(224 224 224);
+    border-bottom: 1px solid rgb(var(--color-border));
     font-size: var(--text-sm);
   }
   [data-file],
   pre,
   [data-code] {
-    background: rgb(255 255 255);
+    background: rgb(var(--color-bg-base));
   }
   [data-code] {
     scrollbar-width: thin;
-    scrollbar-color: rgb(170 170 170 / 0.85) transparent;
+    scrollbar-color: rgb(var(--color-text-muted) / 0.85) transparent;
     scrollbar-gutter: stable;
   }
   [data-code]::-webkit-scrollbar {
@@ -54,15 +59,15 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
     background: transparent;
   }
   [data-code]::-webkit-scrollbar-thumb {
-    background-color: rgb(170 170 170 / 0.85);
+    background-color: rgb(var(--color-text-muted) / 0.85);
     border-radius: 999px;
   }
   [data-code]::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(140 140 140 / 0.95);
+    background-color: rgb(var(--color-text-secondary) / 0.95);
   }
   [data-gutter] {
-    border-right: 1px solid rgb(224 224 224);
-    background: rgb(247 247 248);
+    border-right: 1px solid rgb(var(--color-border));
+    background: rgb(var(--color-bg-surface));
   }
   [data-column-number] {
     min-width: 2.75rem;
@@ -78,7 +83,7 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   }
   [data-line][data-hovered],
   [data-column-number][data-hovered] {
-    background: rgb(247 247 248);
+    background: rgb(var(--color-muted));
   }
 `
 
@@ -128,21 +133,42 @@ const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
   'text/csv': 'csv',
 }
 
-function fileViewerTypeFromMime(mimeType: string): string | undefined {
-  return FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
+const DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION: Record<string, string> = {
+  mermaid: 'mermaid',
+  mmd: 'mermaid',
+  plantuml: 'plantuml',
+  puml: 'plantuml',
 }
 
-const WORKSPACE_FILE_VIEWER_OPTIONS = {
-  preset: [officeRenderers, liteRenderers, engineeringRenderers],
-  spreadsheet: { worker: false },
-  theme: 'light' as const,
+function workspaceFileViewerType(name: string, mimeType: string): string | undefined {
+  const extension = name.split('.').pop()?.toLowerCase() ?? ''
+  return (
+    DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION[extension] ??
+    FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
+  )
 }
 
 const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   file,
+  themeType,
 }: {
   file: NonNullable<WorkspaceFilePreviewProps['binaryFile']>
+  themeType: 'light' | 'dark'
 }) {
+  const containerRef = useRef<HTMLElement>(null)
+  const viewerType = workspaceFileViewerType(file.name, file.file.type)
+  const isDiagram = viewerType === 'mermaid' || viewerType === 'plantuml'
+  const diagramFilename = `${file.name.replace(/\.[^.]+$/, '')}.png`
+  const viewerOptions = useMemo(
+    () => ({
+      preset: [officeRenderers, liteRenderers, engineeringRenderers],
+      drawing: { plantumlServerUrl: getRuntimeConfig().plantumlServerUrl },
+      spreadsheet: { worker: false },
+      theme: themeType,
+    }),
+    [themeType]
+  )
+
   if (/\.xmind$/i.test(file.name)) {
     return (
       <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
@@ -152,17 +178,26 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   return (
     <section
       data-testid="workspace-binary-file-preview"
-      className="min-w-0 flex-1 overflow-hidden bg-background"
+      ref={containerRef}
+      className="wework-diagram-preview relative min-w-0 flex-1 overflow-hidden bg-background"
     >
       <FileViewer
         key={`${file.path}:${file.size}`}
         file={file.file}
         filename={file.name}
-        type={fileViewerTypeFromMime(file.file.type)}
+        type={viewerType}
         size={file.size}
-        className="h-full w-full"
-        options={WORKSPACE_FILE_VIEWER_OPTIONS}
+        data-viewer-theme={themeType}
+        className="wework-workspace-file-viewer h-full w-full"
+        options={viewerOptions}
       />
+      {isDiagram ? (
+        <DiagramImageActions
+          containerRef={containerRef}
+          filename={diagramFilename}
+          theme={themeType}
+        />
+      ) : null}
     </section>
   )
 })
@@ -190,6 +225,7 @@ interface WorkspaceCodeViewLineSelection {
 
 interface WorkspaceFilePreviewContentProps {
   file: WorkspaceTextFileResponse
+  themeType: 'light' | 'dark'
   targetLineStart?: number
   targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
@@ -252,6 +288,7 @@ function normalizeTargetLineRange(
 
 function WorkspaceFilePreviewContent({
   file,
+  themeType,
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
@@ -362,10 +399,13 @@ function WorkspaceFilePreviewContent({
       data-testid="workspace-file-preview"
       className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
-      <div data-testid="workspace-file-preview-code-view" className="min-h-0 flex-1 bg-background">
+      <div
+        data-testid="workspace-file-preview-code-view"
+        data-theme={themeType}
+        className="min-h-0 flex-1 bg-background"
+      >
         <CodeView
           ref={codeViewRef}
-          key={file.path}
           items={codeViewItems}
           selectedLines={selectedLines}
           onSelectedLinesChange={captureLineSelection}
@@ -377,7 +417,7 @@ function WorkspaceFilePreviewContent({
             stickyHeaders: false,
             layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
             theme: { dark: 'pierre-dark', light: 'pierre-light' },
-            themeType: 'light',
+            themeType,
             unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
           }}
           className="h-full min-h-0 w-full scrollbar-soft"
@@ -422,7 +462,7 @@ function WorkspaceFilePreviewContent({
             <button
               type="button"
               data-testid="workspace-file-add-comment-button"
-              className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-white disabled:opacity-50"
+              className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
               disabled={!comment.trim()}
               onClick={addComment}
             >
@@ -452,8 +492,14 @@ export function WorkspaceFilePreview({
   markdownMode = 'preview',
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
+  const appearance = useOptionalAppearance()
+  const themeType =
+    appearance?.resolvedMode ??
+    (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
+      ? 'dark'
+      : 'light')
 
-  if (loading) {
+  if (loading && !file && !binaryFile) {
     const progress =
       loadingProgress?.totalBytes && loadingProgress.totalBytes > 0
         ? Math.min(
@@ -501,7 +547,7 @@ export function WorkspaceFilePreview({
 
   if (!file) {
     if (binaryFile) {
-      return <WorkspaceBinaryFilePreview file={binaryFile} />
+      return <WorkspaceBinaryFilePreview file={binaryFile} themeType={themeType} />
     }
     return (
       <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-muted">
@@ -517,6 +563,7 @@ export function WorkspaceFilePreview({
           key={file.path}
           path={file.path}
           value={editedContent}
+          themeType={themeType}
           onChange={onEditedContentChange}
           onSave={onSave}
         />
@@ -534,8 +581,8 @@ export function WorkspaceFilePreview({
 
   return (
     <WorkspaceFilePreviewContent
-      key={file.path}
       file={file}
+      themeType={themeType}
       targetLineStart={targetLineStart}
       targetLineEnd={targetLineEnd}
       onAddCodeComment={onAddCodeComment}

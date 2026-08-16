@@ -164,6 +164,48 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('clears the live composer when preserving a paused queue', async () => {
+    const onResumeQueueWithInput = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <BufferedChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          queuedMessages={[
+            {
+              id: 'queued-paused-send',
+              content: 'queued message',
+              status: 'queued',
+              createdAt: '2026-08-14T10:00:00.000Z',
+            },
+          ]}
+          guidanceMessages={[]}
+          queuePaused
+          onResumeQueue={vi.fn()}
+          onResumeQueueWithInput={onResumeQueueWithInput}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'manual message')
+    await userEvent.keyboard('{Enter}')
+    await userEvent.click(screen.getByTestId('paused-queue-send-cancel-button'))
+    expect(input).toHaveValue('manual message')
+
+    await userEvent.click(input)
+    await userEvent.keyboard('{Enter}')
+    await userEvent.click(screen.getByTestId('paused-queue-send-preserve-button'))
+
+    expect(onResumeQueueWithInput).toHaveBeenCalledWith('manual message', undefined)
+    expect(input).toHaveValue('')
+  })
+
   test('syncs a programmatic clear into the composer immediately', async () => {
     const { rerender } = render(
       <BufferedChatInput

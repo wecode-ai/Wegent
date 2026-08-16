@@ -136,6 +136,7 @@ def start_run(
     head_commit: str = "",
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
+    force_full: bool = False,
 ) -> StartedRun:
     """Start a run for ``knowledge_base`` and hand its instructions to a task.
 
@@ -149,6 +150,7 @@ def start_run(
         changed_paths: Diff since the published commit. ``None`` asks for it to be
             read from the provider alongside the commit.
         total_source_files: Repository size, used by the change-ratio threshold.
+        force_full: Whether an explicit caller requested a fresh full rebuild.
 
     Returns:
         The started run, or a reason why none was needed.
@@ -200,6 +202,7 @@ def start_run(
         head_commit=head_commit,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        force_full=force_full,
         # A real foreign key on wiki_generations. Resolved here rather than defaulted
         # to zero: MySQL rejects the insert outright, and SQLite does not enforce it,
         # so a zero passes every test and fails every deployment.

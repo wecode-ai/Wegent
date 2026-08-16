@@ -618,6 +618,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useImperativeHandle(
     ref,
     () => ({
+      focus: () => composerRef.current?.focus(),
       getValue: () => composerRef.current?.getValue() ?? value,
       setValue: (nextValue, selectionOffset) =>
         composerRef.current?.setValue(nextValue, selectionOffset),
@@ -631,6 +632,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     const next = buildRefinedPluginPrompt(composerRef.current?.getValue() ?? value, prompt)
     composerRef.current?.setValue(next)
     onChange(next)
+  }
+
+  const handleEditQueuedMessage = (id: string) => {
+    onEditQueuedMessage?.(id)
+    composerRef.current?.focus()
   }
 
   const displayedGoal = visibleRuntimeGoal(goal)
@@ -756,6 +762,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       return
     }
     if (onResumeQueueWithInput) {
+      composerRef.current?.setValue('', 0)
       onChange('')
       void onResumeQueueWithInput(valueOverride, options)
       return
@@ -803,7 +810,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       onCancelQueuedMessage={onCancelQueuedMessage}
       onSendQueuedAsGuidance={onSendQueuedAsGuidance}
       onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
-      onEditQueuedMessage={onEditQueuedMessage}
+      onEditQueuedMessage={onEditQueuedMessage ? handleEditQueuedMessage : undefined}
       onReorderQueuedMessages={onReorderQueuedMessages}
       queuePaused={queuePaused}
       onResumeQueue={onResumeQueue}

@@ -163,7 +163,6 @@ describe('ProjectCreateDialog', () => {
   })
 
   test('create flow disables unavailable device tabs and starts on an available device', async () => {
-    const onSelectDevicePreference = vi.fn()
     const offlineDevices: DeviceInfo[] = [
       {
         ...devices[1],
@@ -183,7 +182,6 @@ describe('ProjectCreateDialog', () => {
         onCreateProject={vi.fn()}
         onPrepareDeviceWorkspace={vi.fn()}
         onDeleteDeviceWorkspace={vi.fn()}
-        onSelectDevicePreference={onSelectDevicePreference}
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
@@ -200,7 +198,6 @@ describe('ProjectCreateDialog', () => {
     await userEvent.click(offlineTab)
 
     expect(screen.getByTestId('project-device-tab-cloud-device')).toHaveClass('bg-text-primary')
-    expect(onSelectDevicePreference).not.toHaveBeenCalledWith('local-device')
   })
 
   test('creates a project from the selected current-device folder name', async () => {

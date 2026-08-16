@@ -57,7 +57,6 @@ async def upload_video_attachment(
         context.type_data = {
             **(context.type_data or {}),
             "video_metadata": {
-                "video_url": video_url,
                 "thumbnail": thumbnail,
                 "duration": duration,
             },

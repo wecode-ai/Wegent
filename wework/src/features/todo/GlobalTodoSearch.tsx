@@ -2,24 +2,18 @@ import { Cloud, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { columns } from './todoShared'
+import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
 import { emptyTaskSearchFilters, searchTasks } from './taskSearch'
 
-interface SearchProject {
-  id: string
-  name: string
-  project_key: string
-  description: string
-}
-
 interface GlobalTodoSearchProps {
-  projects: SearchProject[]
+  projects: LocatedProjectSpace[]
   projectItems: Record<string, CloudLoopItem[]>
   projectMembers: Record<string, CloudProjectMember[]>
   query: string
   onQueryChange: (query: string) => void
   onClose: () => void
-  onSelectProject: (projectId: string) => void
-  onSelectItem: (projectId: string, item: CloudLoopItem) => void
+  onSelectProject: (project: LocatedProjectSpace) => void
+  onSelectItem: (project: LocatedProjectSpace, item: CloudLoopItem) => void
 }
 
 export function GlobalTodoSearch({
@@ -44,10 +38,10 @@ export function GlobalTodoSearch({
   const taskResults = normalizedQuery
     ? projects.flatMap(project =>
         searchTasks(
-          projectItems[project.id] ?? [],
+          projectItems[projectKey(project)] ?? [],
           normalizedQuery,
           emptyTaskSearchFilters,
-          projectMembers[project.id] ?? []
+          projectMembers[projectKey(project)] ?? []
         )
           .slice(0, 20)
           .map(result => ({ ...result, project }))
@@ -99,9 +93,9 @@ export function GlobalTodoSearch({
                   </h3>
                   {matchingProjects.map(project => (
                     <button
-                      key={project.id}
+                      key={projectKey(project)}
                       type="button"
-                      onClick={() => onSelectProject(project.id)}
+                      onClick={() => onSelectProject(project)}
                       className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted/60"
                     >
                       <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
@@ -120,11 +114,11 @@ export function GlobalTodoSearch({
                   </h3>
                   {taskResults.slice(0, 50).map(({ item, parentPath, project }) => (
                     <button
-                      key={`${project.id}:${item.id}`}
+                      key={`${projectKey(project)}:${item.id}`}
                       type="button"
                       data-testid={`cloud-global-search-result-${item.id}`}
                       disabled={item.can_view_detail === false}
-                      onClick={() => onSelectItem(project.id, item)}
+                      onClick={() => onSelectItem(project, item)}
                       className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted/60 disabled:cursor-default disabled:opacity-60"
                     >
                       <span className="w-40 shrink-0 truncate font-mono text-xs leading-5 text-text-muted">

@@ -18,7 +18,7 @@ To create a Git project, select a device, repository, default branch, and destin
 
 ## View pull request and merge request status
 
-For tasks using a GitHub or GitLab workspace, the environment panel looks up the pull request (PR) or merge request (MR) associated with the current branch. It shows the request number, title, open/draft/closed/merged state, and pipeline check result. Select the entry to open the PR or MR in your browser.
+For tasks using a GitHub or GitLab workspace, the environment panel looks up the pull request (PR) or merge request (MR) associated with the current branch. The request number and title stay on one line. The main icon color communicates the open, closed, or other request state, while a small lower-right icon shows checks pending, passed, or failed. A red merge-conflict icon takes priority over the check result when conflicts exist. When a GitHub workflow check has multiple runs, Wework uses the latest result so a superseded cancelled or failed run does not override the current status. Select the entry to open the PR or MR in your browser.
 
 The lookup runs in the task's actual workspace on its execution device: GitHub uses `gh`, and GitLab uses `glab`. In a single-machine Wework setup, the local executor runs the command directly, so a separate cloud Git service connection is not required. Install and authenticate the corresponding CLI on that machine:
 
@@ -28,6 +28,8 @@ glab auth login
 ```
 
 Open **Settings → Git hosting** to inspect whether local `gh` and `glab` are installed and authenticated, open their installation guides, or copy the login commands. The page also provides a **Show PR / MR status** switch. Turning it off stops status lookup commands while keeping the create PR/MR action available. Wework reads CLI status only and does not store access tokens.
+
+When `glab` has multiple GitLab instances configured, the settings page reports the GitLab CLI as **Ready** if at least one instance authenticates successfully; an expired or unauthenticated instance does not hide another usable instance. MR lookup for a specific repository still selects the GitLab instance from that workspace's Git remote, so the repository's own instance must also remain authenticated.
 
 If the current branch has no PR or MR, the environment panel continues to show the create action. The create action also remains available when the CLI is missing, unauthenticated, or temporarily fails, together with a relevant recovery hint. Wework refreshes the environment after commit-and-push or push, and reopening the environment panel queries the latest status again.
 
@@ -56,15 +58,20 @@ The execution queue shows waiting and running tasks in columns:
 
 The queue can be filtered by execution state (pending approval, queued, claimed, running, failed) and searched by title; running tasks show a spinning status icon. Robots configured for manual approval put their tasks into the pending approval state until a member approves them.
 
-### Scheduled rules
+### Automation rules and AI management
 
-Create a scheduled rule from the Automation tab to let a project robot execute the configured prompt on the selected days, time, and time zone. Rules can be enabled or disabled, run immediately, inspected through their run history, and cancelled while unfinished. Scheduling runs on the server, so the Wework client does not need to remain online.
+Automation rules can run on a schedule or be triggered by project events such as task creation and by webhooks. Rules can be enabled or disabled, run immediately, inspected through their run history, and cancelled while unfinished. Scheduling runs on the server, so the Wework client does not need to remain online.
 
-- Cloud robots create and execute the task as soon as the rule is due.
-- Local robots execute immediately while online. While offline, the run shows **Waiting for local device** and can be claimed if the device returns before the next scheduled occurrence.
-- If the local device remains offline until the next occurrence, the old scheduled run is skipped instead of being accumulated for catch-up. A waiting manual **Run now** invocation does not expire on the schedule.
+Each rule selects one assignment strategy:
 
-Each effective run creates an independent board task whose description is the rule's configured prompt. Progress, results, and failures are written back to the task comments and still require human acceptance. The run uses the selected robot's model, execution device, and bound code workspace. Every run has its own execution session, which can be continued from the task comments.
+- **Manual selection** fixes one project robot. When the rule fires, the original board task is assigned directly to that robot through the same execution flow used by an ordinary human assignment.
+- **AI managed** lets an AI manager use a restricted MCP to read the original task and the capability descriptions of currently available project members and project robots, then directly assign the best candidate. If none is suitable, the task stays unassigned. The manager never executes or owns the original task; its final text is an audit record and is never parsed as an assignment.
+
+AI management supports two manager sources. **Custom AI** selects a model and a local or cloud Wework device and uses the existing Wework runtime transport with exactly three MCP operations: read the task, list assignment candidates, and assign the task. **Wegent agent** uses an accessible, fully configured Wegent agent; the Backend creates a standard Task/Subtask and provides an equivalent MCP scoped to the current project, task, and automation run. If a project robot is selected, that robot is the business-task executor; if a project member is selected, automation only changes the assignee.
+
+After a robot is selected, automation calls the same board-assignment path as a person. The robot keeps its current model, device, code workspace, and execution mode. Local work stays **Queued** while its device is unavailable and is claimed when Wework reconnects; the Backend dispatches cloud work. Execution records do not store model credentials; runtime configuration is resolved when execution starts.
+
+The manager's decision is shown in its own parent comment. When the selected project robot starts, it creates a separate execution comment. Only the project robot's completion can move the original task to review; completing the manager decision does not complete the task.
 
 The Automation tab is available for local, GitHub, and GitLab project spaces. DingTalk AI Table project spaces keep their data in the external table and do not show the tab.
 

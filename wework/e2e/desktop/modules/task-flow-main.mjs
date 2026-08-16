@@ -26,6 +26,7 @@ import {
   verifyBackgroundTaskPlanRestoration,
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
+  verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
   verifyStandaloneViewImageTask,
@@ -155,6 +156,7 @@ import {
   LOCAL_VISION_SIDECAR_CASE,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
+  MESSAGE_EDIT_ONLY,
   MESSAGE_RESTORATION_ONLY,
   MIXED_TOOL_TURNS_ONLY,
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
@@ -235,6 +237,7 @@ import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyPriorityFilter,
+  verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
 
@@ -257,6 +260,7 @@ import {
   waitForFolderPickerInitialized,
   waitForPersistedComposerInput,
   waitForWorkbenchDebugState,
+  waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
 async function verifyLocalModelRouting({
@@ -506,16 +510,27 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    if (CLOUD_ONLY || CLOUD_FEATURES_ONLY || CLOUD_VISION_ONLY) {
+    const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
+    if (
+      CLOUD_ONLY ||
+      CLOUD_FEATURES_ONLY ||
+      CLOUD_VISION_ONLY ||
+      scenarioRequiresCloudEnvironment
+    ) {
       cloudEnvironment = new RealCloudEnvironment({
+        claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         modelServerUrl: control.url,
         scenarioConfigToml:
           SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
-        workspacePath,
+        workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
       executorBinary = builtExecutor
+      await desktopScenario?.prepareCloud?.({
+        authToken: cloudEnvironment.authToken,
+        backendUrl: cloudEnvironment.backendUrl,
+      })
     } else {
       executorBinary = await buildExecutor()
     }
@@ -535,6 +550,7 @@ async function main() {
           ])
         )[0]
       : await desktopAppPromise
+    desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
@@ -590,6 +606,9 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      ...(DESKTOP_SEGMENT === 'local-file-preview'
+        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
+        : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
@@ -1046,6 +1065,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (MESSAGE_EDIT_ONLY) {
+      phase = 'edit-last-user-message'
+      await verifyLastUserMessageEdit({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      console.log(`Wework desktop message-edit E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'automation-lifecycle' || AUTOMATION_ONLY) {
       phase = 'automation-lifecycle'
       await verifyAutomationLifecycle(control, executorHome, homePath)
@@ -1230,6 +1259,12 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'runtime-task-order-unread'
+      await verifyRuntimeTaskOrderAndUnreadVisibility({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -2286,6 +2321,18 @@ last_updated = "2026-07-30T00:00:00Z"`
         composerSelector,
         control,
       })
+
+      phase = 'edit-last-user-message'
+      await verifyLastUserMessageEdit({ composerSelector, control })
+      await ensureTaskRowVisible(control, secondTaskRowTestId)
+      await control.command('clickWhenEnabled', `[data-testid="${secondTaskRowTestId}"]`, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await waitForWorkbenchTask(
+        control,
+        secondTaskRowTestId.replace('runtime-local-task-row-', ''),
+        'The edit-message scenario did not restore the previous conversation'
+      )
 
       phase = 'task-draft-isolation'
       await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })

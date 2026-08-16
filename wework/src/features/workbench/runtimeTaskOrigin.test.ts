@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runtimeTaskBoardOrigin } from './runtimeTaskOrigin'
+import { isProjectAutomationManagerRuntimeTask, runtimeTaskBoardOrigin } from './runtimeTaskOrigin'
 
 describe('runtimeTaskBoardOrigin', () => {
   it('recognizes persisted board comment origin metadata', () => {
@@ -24,5 +24,32 @@ describe('runtimeTaskBoardOrigin', () => {
 
   it('does not classify ordinary runtime tasks as board work', () => {
     expect(runtimeTaskBoardOrigin({ runtimeHandle: { threadId: 'thread-1' } })).toBeNull()
+  })
+
+  it('recognizes project automation manager sessions', () => {
+    expect(
+      isProjectAutomationManagerRuntimeTask({
+        runtimeHandle: {
+          origin: {
+            type: 'project_automation',
+            automationRole: 'manager',
+            run_id: 'run-1',
+          },
+        },
+      })
+    ).toBe(true)
+  })
+
+  it('does not treat project robot executions as automation manager sessions', () => {
+    expect(
+      isProjectAutomationManagerRuntimeTask({
+        runtimeHandle: {
+          origin: {
+            type: 'project_automation',
+            run_id: 'run-1',
+          },
+        },
+      })
+    ).toBe(false)
   })
 })

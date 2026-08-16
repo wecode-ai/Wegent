@@ -159,6 +159,41 @@ class TestDeviceSelectionManager:
         assert selection.device_name == "My Mac"
 
     @pytest.mark.asyncio
+    async def test_get_selection_preserves_offline_preference_target(
+        self,
+        test_db,
+        test_user,
+        monkeypatch,
+    ):
+        """An unavailable default remains selected instead of becoming chat mode."""
+        test_user.preferences = json.dumps(
+            {"default_execution_target": "offline-device"}
+        )
+        test_db.commit()
+
+        class SessionProxy:
+            def query(self, *args, **kwargs):
+                return test_db.query(*args, **kwargs)
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("app.db.session.SessionLocal", lambda: SessionProxy())
+        monkeypatch.setattr(
+            "app.services.device_service.device_service.get_device_online_info",
+            AsyncMock(return_value=None),
+        )
+
+        selection = await DeviceSelectionManager.get_selection_from_user_preference(
+            test_user.id
+        )
+
+        assert selection == DeviceSelection(
+            device_type=DeviceType.LOCAL,
+            device_id="offline-device",
+        )
+
+    @pytest.mark.asyncio
     async def test_set_selection(self):
         """Test setting device selection."""
         selection = DeviceSelection(

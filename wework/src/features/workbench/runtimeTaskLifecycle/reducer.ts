@@ -1,3 +1,4 @@
+import { isRuntimeTaskAuthoritativeCompletion, isRuntimeTaskConfirmedActive } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
 export function reduceRuntimeTaskLifecycle(
@@ -11,22 +12,21 @@ export function reduceRuntimeTaskLifecycle(
       const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const terminalStatus = isTerminalTaskStatus(event.task.status)
       const queuedStatus = isQueuedTaskStatus(event.task.status)
-      const snapshotConfirmsActiveTurn =
-        snapshotRunning === true &&
-        (isRunningTaskStatus(event.task.threadStatus) || isRunningTaskStatus(event.task.turnStatus))
-      const settledLocalHarness =
-        snapshotRunning === false &&
-        state.turnPhase !== 'streaming' &&
-        isLocalHarnessRuntime(event.task.runtime)
-      const shouldIgnoreStaleSnapshot =
-        snapshotRunning !== null &&
-        expectedRunning !== null &&
-        snapshotRunning !== expectedRunning &&
+      const completionAdvanced =
+        isRuntimeTaskAuthoritativeCompletion(event.task) &&
+        event.task.completedAt !== state.task?.completedAt
+      const snapshotConfirmsSettlement =
+        terminalStatus && (!hasIdentifiedActiveTurn || completionAdvanced)
+      const transitionMismatch =
+        snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
+      if (
+        transitionMismatch &&
         !queuedStatus &&
-        (!terminalStatus || hasIdentifiedActiveTurn) &&
-        !snapshotConfirmsActiveTurn &&
-        !settledLocalHarness
-      if (shouldIgnoreStaleSnapshot) return state
+        !isRuntimeTaskConfirmedActive(event.task) &&
+        !snapshotConfirmsSettlement
+      ) {
+        return state
+      }
 
       const executionPhase = queuedStatus
         ? 'queued'
@@ -50,12 +50,7 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
-          queuedStatus ||
-          (snapshotRunning !== null &&
-            event.task.optimistic !== true &&
-            (snapshotRunning === expectedRunning || terminalStatus))
-            ? null
-            : expectedRunning,
+          snapshotRunning !== null && event.task.optimistic !== true ? null : expectedRunning,
       }
     }
 
@@ -203,15 +198,6 @@ function isTerminalTaskStatus(status: string | null | undefined): boolean {
       normalized
     )
   )
-}
-
-function isRunningTaskStatus(status: string | null | undefined): boolean {
-  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
-  return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
-}
-
-function isLocalHarnessRuntime(runtime: string | null | undefined): boolean {
-  return runtime === 'opencode' || runtime === 'claude_code' || runtime === 'kimi_code'
 }
 
 function mergeAddress(

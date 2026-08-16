@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -6,7 +7,7 @@ interface CloudTodoModalProps {
   title: string
   children: ReactNode
   onClose: () => void
-  width?: 'default' | 'wide'
+  width?: 'default' | 'wide' | 'workspace'
 }
 
 export function CloudTodoModal({
@@ -15,15 +16,22 @@ export function CloudTodoModal({
   onClose,
   width = 'default',
 }: CloudTodoModalProps) {
-  return (
+  const modal = (
     <div
-      className="absolute inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm"
+      className={cn(
+        'inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm',
+        width === 'workspace' ? 'fixed' : 'absolute'
+      )}
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
       <section
         className={cn(
           'flex max-h-[calc(100vh-96px)] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
-          width === 'wide' ? 'w-[560px]' : 'w-[480px]'
+          width === 'workspace'
+            ? 'h-[calc(100vh-72px)] w-[calc(100vw-48px)]'
+            : width === 'wide'
+              ? 'w-[560px]'
+              : 'w-[480px]'
         )}
       >
         <header className="flex items-center gap-3 px-5 pt-4">
@@ -42,4 +50,6 @@ export function CloudTodoModal({
       </section>
     </div>
   )
+
+  return width === 'workspace' ? createPortal(modal, document.body) : modal
 }

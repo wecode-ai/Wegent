@@ -911,6 +911,25 @@ async def _create_streaming_response_unified(
             pass
         db.close()
 
+    if not execution_dispatcher.supports_streaming(execution_request):
+        error_message = "Streaming is only supported for Chat Shell type teams"
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=error_message,
+            error_code="streaming_not_supported",
+        )
+        logger.warning(
+            "[OPENAPI] Streaming rejected for non-SSE task: "
+            "task_id=%d, subtask_id=%d",
+            task_kind_id,
+            assistant_subtask_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
     @trace_async_generator(
         span_name="openapi.raw_chat_stream",
         tracer_name="backend.openapi",

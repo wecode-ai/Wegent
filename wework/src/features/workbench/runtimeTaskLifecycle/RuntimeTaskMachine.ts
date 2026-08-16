@@ -65,6 +65,7 @@ export class RuntimeTaskMachine {
       turn: {
         phase: turnPhase,
         active: isTurnActive,
+        id: this.state.activeTurnId,
         outcome: turnOutcome,
       },
       goalStatus,

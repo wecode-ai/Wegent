@@ -92,6 +92,7 @@ print(json.dumps(result, ensure_ascii=False))
 "#;
 const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -120,6 +121,15 @@ def run(*args):
         check=False,
     )
 
+def is_authenticated(auth_result):
+    if auth_result.returncode == 0:
+        return True
+    if tool != "glab":
+        return False
+
+    output = "\n".join((auth_result.stdout, auth_result.stderr))
+    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
+
 try:
     version_result = run("--version")
     version = next(
@@ -141,7 +151,7 @@ except subprocess.TimeoutExpired:
 print(json.dumps({
     "tool": tool,
     "installed": True,
-    "authenticated": auth_result.returncode == 0,
+    "authenticated": is_authenticated(auth_result),
     "executablePath": executable,
     "version": version,
     "detectionError": None,
@@ -271,6 +281,7 @@ pub trait RuntimeWorkHandler: Send + Sync {
 
 pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,6 +450,16 @@ impl AppIpcServer {
                 ));
             };
             return handler.configure_backend(params).await;
+        }
+
+        if method == "executor.backend.status" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.backend_status().await;
         }
 
         if method == "device.execute_command" {
@@ -1689,14 +1710,15 @@ fn git_is_worktree(path: &str) -> bool {
 
 #[cfg(windows)]
 fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    command
         .arg("-C")
         .arg(path)
         .args(args)
         .env_clear()
-        .envs(build_env(&HashMap::new()))
-        .output()
-        .ok()?;
+        .envs(build_env(&HashMap::new()));
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1941,7 +1963,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--limit",
                 "20",
                 "--json",
-                "number,url,title,state,isDraft,statusCheckRollup",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
                 "--head",
             ],
             Some(PostProcessor::Json),

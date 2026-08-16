@@ -115,10 +115,14 @@ The main desktop flow's short-conversation layout regression stores `short-conve
 
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `workspace-tabs`, `priority-filter`, `telemetry-consent`,
-`automation-lifecycle`, `model-routing`, `core-task-flow`, `window-lifecycle`,
-`goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
-`workspace-attachments`, `rendering-extensions`, `browser-multi-tabs`, and
-`embedded-browser`. `--segment <checkpoint>` performs common startup and project
+`automation-lifecycle`, `project-automation`, `plugin-auto-update`,
+`model-routing`, `permission-modes`, `core-task-flow`, `runtime-task-queue`,
+`split-workbench`, `window-lifecycle`, `goal-lifecycle`,
+`supervisor-lifecycle`, `resilience`, `conversation-state`, `temporary-chat`,
+`workspace-attachments`, `rendering-extensions`, `change-request-status`,
+`claude-runtime`, `local-file-preview`, `local-harness`, `browser-multi-tabs`,
+and `embedded-browser`.
+`--segment <checkpoint>` performs common startup and project
 initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
@@ -146,7 +150,9 @@ pnpm --filter wework e2e:desktop -- --segment local-harness
 pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --segment temporary-chat
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
+pnpm --filter wework e2e:desktop -- --segment claude-runtime
 ```
 
 `automation-lifecycle` independently covers automation creation, immediate
@@ -157,6 +163,20 @@ Both checkpoints establish their own minimal fixtures, so they no longer extend
 the critical path for task creation, follow-up, and background plans in
 `core-task-flow`. An unsegmented complete desktop run still executes these
 scenarios, so splitting them does not reduce coverage.
+
+`temporary-chat` creates an independent local project and real Codex ephemeral
+thread, holds a follow-up response open, verifies that the user message appears
+above the Thinking indicator, and confirms that the temporary-chat content is
+restored from the runtime conversation cache after switching the main
+conversation away and back.
+
+`claude-runtime` uses the real Tauri Wework application, Backend, local
+executor, and remote executor to verify Claude Code creation, follow-up, and
+cancellation on both local and remote devices. It also confirms that remote
+execution uses the target device's own Claude Code binary and checks visible
+DOM state so the sidebar and composer stop showing running after completion;
+the hidden sidebar preview retained by the layout is excluded from visible
+state assertions.
 
 `local-harness` uses the real OpenCode, Claude Code, and Kimi Code CLIs pinned
 by `.github/claude-code-cli/package-lock.json`; argument-recording shell

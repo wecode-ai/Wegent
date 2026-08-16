@@ -9,12 +9,17 @@ import {
 } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
-import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
+import {
+  applyRuntimeConversationAction,
+  getRuntimeConversationMessages,
+  removeRuntimeConversationTurn,
+  subscribeRuntimeConversation,
+} from '@/features/workbench/runtimeConversationCache'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -27,19 +32,15 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
   Attachment,
+  ModelOptions,
+  ModelType,
   ProjectWithTasks,
   RuntimeTaskAddress,
-  TurnFileChangesSummary,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
-import { reduceWorkbenchMessages } from '@wegent/chat-core'
 
 const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
 const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
-
-function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): boolean {
-  return action.type === 'assistant_chunk' || action.type === 'block_updated'
-}
 
 function createUserMessage(content: string, id = `side-user-${Date.now()}`): WorkbenchMessage {
   const createdAt = new Date().toISOString()
@@ -63,6 +64,11 @@ interface TemporaryChatPanelProps {
     message: string,
     options: {
       attachments: Attachment[]
+      executionModel: {
+        modelId?: string
+        modelType?: ModelType | null
+        modelOptions?: ModelOptions
+      }
       onError: (message: string) => void
       onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
     }
@@ -122,7 +128,9 @@ export function TemporaryChatPanel({
     [attachmentSelection, projectChat]
   )
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
-  const [messages, setMessages] = useState<WorkbenchMessage[]>([])
+  const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
+    initialAddress ? getRuntimeConversationMessages(initialAddress) : []
+  )
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
@@ -140,10 +148,9 @@ export function TemporaryChatPanel({
     [address, messages, taskLifecycle]
   )
   const busy = sending || paneStatus.isBusy
-  const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
-  const messageActionFrameRef = useRef<number | null>(null)
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const queuedMessagesRef = useRef(queuedMessages)
+  const createdAddressKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
@@ -169,64 +176,15 @@ export function TemporaryChatPanel({
     return () => cancelAnimationFrame(frame)
   }, [initialInput, testId])
 
-  const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
-    if (actions.length === 0) return
-    setMessages(current => {
-      let nextMessages = current
-      for (const action of actions) {
-        nextMessages = reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(
-          nextMessages,
-          action
-        )
-      }
-      return nextMessages
-    })
-  }, [])
-
-  const flushPendingMessageActions = useCallback(() => {
-    if (messageActionFrameRef.current !== null) {
-      cancelAnimationFrame(messageActionFrameRef.current)
-      messageActionFrameRef.current = null
-    }
-    const pendingActions = pendingMessageActionsRef.current
-    if (pendingActions.length === 0) return
-    pendingMessageActionsRef.current = []
-    applyMessageActions(pendingActions)
-  }, [applyMessageActions])
-
-  const dispatchMessages = useCallback(
-    (action: RuntimePaneMessageAction) => {
-      if (!isBatchableRuntimePaneMessageAction(action)) {
-        flushPendingMessageActions()
-        applyMessageActions([action])
-        return
-      }
-
-      pendingMessageActionsRef.current.push(action)
-      if (messageActionFrameRef.current !== null) return
-      messageActionFrameRef.current = requestAnimationFrame(() => {
-        messageActionFrameRef.current = null
-        const pendingActions = pendingMessageActionsRef.current
-        if (pendingActions.length === 0) return
-        pendingMessageActionsRef.current = []
-        applyMessageActions(pendingActions)
-      })
-    },
-    [applyMessageActions, flushPendingMessageActions]
-  )
-
-  useEffect(() => {
-    return () => {
-      if (messageActionFrameRef.current !== null) {
-        cancelAnimationFrame(messageActionFrameRef.current)
-        messageActionFrameRef.current = null
-      }
-      pendingMessageActionsRef.current = []
-    }
-  }, [])
-
   useEffect(() => {
     if (!address) return
+    const syncMessages = () => setMessages(getRuntimeConversationMessages(address))
+    return subscribeRuntimeConversation(address, syncMessages)
+  }, [address])
+
+  useEffect(() => {
+    if (!address || sendEphemeral) return
+    if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
@@ -244,7 +202,7 @@ export function TemporaryChatPanel({
     return () => {
       cancelled = true
     }
-  }, [address, lifecycleStore, loadRuntimeTranscriptForPane])
+  }, [address, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
 
   const loadFullTranscript = useCallback(async () => {
     if (!address || loadingFullTranscript) return
@@ -270,7 +228,7 @@ export function TemporaryChatPanel({
   useEffect(() => {
     if (!address) return
     return subscribeRuntimeTaskStream(address, {
-      onMessageAction: dispatchMessages,
+      onMessageAction: () => undefined,
       onAssistantStart: () => setSending(false),
       onAssistantSettled: () => setSending(false),
       onGuidanceApplied: payload => {
@@ -293,7 +251,7 @@ export function TemporaryChatPanel({
         ])
       },
     })
-  }, [address, dispatchMessages, subscribeRuntimeTaskStream])
+  }, [address, subscribeRuntimeTaskStream])
 
   const selectedModelFields = useMemo(() => {
     const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
@@ -341,10 +299,12 @@ export function TemporaryChatPanel({
             }
           )
           if (sent) {
-            setMessages(current => [
-              ...current,
-              createUserMessage(queuedMessage.content, queuedMessage.id),
-            ])
+            setMessages(
+              applyRuntimeConversationAction(address, {
+                type: 'user_added',
+                message: createUserMessage(queuedMessage.content, queuedMessage.id),
+              })
+            )
             setQueuedMessages(messages =>
               messages.filter(message => message.id !== queuedMessage.id)
             )
@@ -465,26 +425,44 @@ export function TemporaryChatPanel({
       }
 
       let targetAddress: RuntimeTaskAddress | false | null = address
+      let optimisticAddress: RuntimeTaskAddress | null = null
       if (!targetAddress) {
-        setMessages(current => [...current, createUserMessage(message, queuedMessage.id)])
+        const optimisticUserMessage = createUserMessage(message, queuedMessage.id)
+        setMessages(current => [...current, optimisticUserMessage])
+        const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
+          optimisticAddress = nextAddress
+          createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
+          setMessages(
+            applyRuntimeConversationAction(nextAddress, {
+              type: 'user_added',
+              message: optimisticUserMessage,
+            })
+          )
+          updateAddress(nextAddress)
+        }
         targetAddress = createTask
           ? await createTask(message, {
               attachments: currentAttachments,
+              executionModel: selectedModelFields,
               onError: handleError,
-              onRuntimeTaskOptimisticOpen: updateAddress,
+              onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })
           : await createTemporaryRuntimeTask(message, {
               project: currentProject,
               source,
               attachments: currentAttachments,
               onError: handleError,
-              onRuntimeTaskOptimisticOpen: updateAddress,
+              onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })
       }
 
       if (!targetAddress) {
-        setMessages(current =>
-          current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
+        setMessages(
+          optimisticAddress
+            ? removeRuntimeConversationTurn(optimisticAddress, {
+                clientUserMessageId: queuedMessage.id,
+              })
+            : current => current.filter(currentMessage => currentMessage.id !== queuedMessage.id)
         )
         setInput(current => current || message)
         updateAddress(null)
@@ -492,11 +470,23 @@ export function TemporaryChatPanel({
         return false
       }
       if (!address) {
+        setMessages(
+          applyRuntimeConversationAction(targetAddress, {
+            type: 'user_added',
+            message: createUserMessage(message, queuedMessage.id),
+          })
+        )
         updateAddress(targetAddress)
         sideChatProjectChat.resetAttachments()
         return true
       }
 
+      setMessages(
+        applyRuntimeConversationAction(targetAddress, {
+          type: 'user_added',
+          message: createUserMessage(message, queuedMessage.id),
+        })
+      )
       let sendError: string | null = null
       const sent = await sendRuntimePaneMessage(
         {
@@ -515,10 +505,14 @@ export function TemporaryChatPanel({
         }
       )
       if (sent) {
-        setMessages(current => [...current, createUserMessage(message, queuedMessage.id)])
         sideChatProjectChat.resetAttachments()
         return true
       }
+      setMessages(
+        removeRuntimeConversationTurn(targetAddress, {
+          clientUserMessageId: queuedMessage.id,
+        })
+      )
       if (isRuntimeTaskBusyError(sendError)) {
         const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
         queuedMessagesRef.current = pendingMessages

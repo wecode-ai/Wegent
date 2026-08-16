@@ -32,7 +32,7 @@ export interface ProjectChatMessage {
   rootMessageId?: string | null
   agentId?: string | null
   runtimeAddress?: RuntimeTaskAddress | null
-  status: 'streaming' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'streaming' | 'completed' | 'failed' | 'cancelled'
   createdAt: string
   updatedAt: string
 }

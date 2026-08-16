@@ -6,6 +6,7 @@ import { useAuth } from '@/features/auth/useAuth'
 import type {
   IMPrivateSession,
   ProjectWithTasks,
+  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
@@ -51,6 +52,12 @@ import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
 } from './localHarnessWorkbench'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
+import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -84,6 +91,13 @@ function boardRouteParam(contentRoute: string, name: string): string | null {
   return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get(name)
 }
 
+function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | null {
+  const projectId = boardRouteParam(contentRoute, 'projectId')
+  const projectStore = boardRouteParam(contentRoute, 'projectStore')
+  if (!projectId || (projectStore !== 'local' && projectStore !== 'backend')) return null
+  return { projectId, projectStore }
+}
+
 interface DesktopWorkbenchLayoutProps {
   routeActive?: boolean
 }
@@ -108,7 +122,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
-    rememberExecutionDevice: onRememberExecutionDevice,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
@@ -138,6 +151,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     runtimeTaskReminders,
     services,
     refreshWorkLists,
+    workspaceTabId,
   } = useWorkbench()
   const localTodoProjects = useMemo(
     () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
@@ -145,6 +159,26 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
+  const activePane = useMemo<WorkbenchPaneIdentity>(
+    () => ({
+      currentRuntimeTask: state.currentRuntimeTask,
+      currentProject: state.currentProject,
+      standaloneChatKey: state.standaloneChatKey,
+    }),
+    [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
+  )
+  const activePaneKey = getWorkbenchPaneKey(activePane)
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const splitGroups = useWorkbenchSplitGroups({
+    ...workbenchSplitStorageKeys(workspaceTabId ?? 'main'),
+    activePaneKey,
+    validRuntimeKeys: runtimePaneKeys,
+    runtimeKeysReady: state.runtimeWork !== null,
+  })
+  const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
@@ -232,10 +266,16 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
+      activateSplitPane(
+        getWorkbenchPaneKey({
+          currentRuntimeTask: address,
+          currentProject: null,
+        })
+      )
       if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
       await onOpenRuntimeTask(address)
     },
-    [currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
+    [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
   const registerLocalHarnessSession = useCallback(
     (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
@@ -754,6 +794,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
+      splitGroupMemberships={splitGroups.memberships}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
@@ -890,9 +931,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                activeProjectId={
+                activeProjectRef={
                   workspaceTabs?.activeTab.kind === 'board'
-                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'projectId')
+                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                     : undefined
                 }
                 focusedItemId={
@@ -902,12 +943,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 }
                 onFocusedItemHandled={() => {
                   if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
-                  const projectId = boardRouteParam(
-                    workspaceTabs.activeTab.contentRoute,
-                    'projectId'
-                  )
+                  const projectRef = boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                   const params = new URLSearchParams()
-                  if (projectId) params.set('projectId', projectId)
+                  if (projectRef) {
+                    params.set('projectStore', projectRef.projectStore)
+                    params.set('projectId', projectRef.projectId)
+                  }
                   workspaceTabs.updateActiveTab({
                     contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
                   })
@@ -922,6 +963,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                     return
                   }
                   const params = new URLSearchParams()
+                  params.set('projectStore', project.project_store)
                   params.set('projectId', project.id)
                   workspaceTabs.updateActiveTab({
                     title: project.name,
@@ -943,11 +985,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}
-              activePane={{
-                currentRuntimeTask: state.currentRuntimeTask,
-                currentProject: state.currentProject,
-                standaloneChatKey: state.standaloneChatKey,
-              }}
+              activePane={activePane}
+              splitGroups={splitGroups}
               localHarnessSessions={localHarnessSessions}
               activeLocalHarnessSessionId={activeLocalHarnessSessionId}
               onLocalHarnessSessionStarted={registerLocalHarnessSession}
@@ -1007,7 +1046,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
-        onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}
         onUpgradeDevice={onUpgradeDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}

@@ -4,6 +4,7 @@
 
 """Tests for the Wework runtime IPC relay namespace."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -63,6 +64,62 @@ async def test_device_runtime_event_persists_project_chat_before_browser_relay(
 
 
 @pytest.mark.asyncio
+async def test_device_runtime_events_preserve_socket_order(monkeypatch):
+    namespace = DeviceNamespace()
+    calls: list[str] = []
+    first_persist_started = asyncio.Event()
+    release_first_persist = asyncio.Event()
+    sio = AsyncMock()
+
+    async def project_event(_func, _device_id, payload):
+        event_name = payload["event"]
+        calls.append(f"persist:{event_name}")
+        if event_name == "response.block.created":
+            first_persist_started.set()
+            await release_first_persist.wait()
+        return None
+
+    async def emit(_event_name, payload, **_kwargs):
+        calls.append(f"emit:{payload['event']}")
+
+    sio.emit.side_effect = emit
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", project_event)
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
+
+    created = asyncio.create_task(
+        namespace.on_runtime_event(
+            "device-sid",
+            {"event": "response.block.created", "payload": {}},
+        )
+    )
+    await first_persist_started.wait()
+    updated = asyncio.create_task(
+        namespace.on_runtime_event(
+            "device-sid",
+            {"event": "response.block.updated", "payload": {}},
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert calls == ["persist:response.block.created"]
+
+    release_first_persist.set()
+    assert await created == {"success": True}
+    assert await updated == {"success": True}
+    assert calls == [
+        "persist:response.block.created",
+        "emit:response.block.created",
+        "persist:response.block.updated",
+        "emit:response.block.updated",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
     namespace = WeworkRuntimeNamespace()
     runtime_rpc = AsyncMock(return_value={"accepted": True})
@@ -95,6 +152,45 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
         payload={"message": "hello"},
         timeout_seconds=75,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_rejects_executor_failure_envelope(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        AsyncMock(
+            return_value={
+                "success": False,
+                "error": {"message": "Codex app server restart failed"},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.codex.app_server.restart",
+            "params": {"ifIdle": True},
+        },
+    )
+
+    assert response == {
+        "id": "req-1",
+        "ok": False,
+        "error": {
+            "code": "runtime_rpc_failed",
+            "message": "Codex app server restart failed",
+        },
+    }
 
 
 @pytest.mark.asyncio
