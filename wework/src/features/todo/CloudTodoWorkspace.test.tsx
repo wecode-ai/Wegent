@@ -473,6 +473,17 @@ describe('CloudTodoWorkspace', () => {
         user={user}
         localProjects={[]}
         services={workbenchServices}
+        activeProjectRef={{ projectStore: 'backend', projectId: controlledProject.id }}
+      />
+    )
+
+    expect(screen.getByText('管理项目')).toBeInTheDocument()
+
+    view.rerender(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
         activeProjectRef={null}
       />
     )

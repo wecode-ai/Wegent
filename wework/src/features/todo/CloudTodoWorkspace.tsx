@@ -833,6 +833,12 @@ export function CloudTodoWorkspace({
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
+  const activeProjectRefKey =
+    activeProjectRef === undefined
+      ? undefined
+      : activeProjectRef === null
+        ? null
+        : projectSpaceKey(activeProjectRef)
 
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
@@ -845,13 +851,20 @@ export function CloudTodoWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeProjectRef === undefined) return
-    if (sameProjectSpace(locallyRequestedProjectRef.current, activeProjectRef)) {
+    if (activeProjectRefKey === undefined) return
+    const locallyRequestedRef = locallyRequestedProjectRef.current
+    const locallyRequestedKey =
+      locallyRequestedRef === undefined
+        ? undefined
+        : locallyRequestedRef === null
+          ? null
+          : projectSpaceKey(locallyRequestedRef)
+    if (locallyRequestedKey === activeProjectRefKey) {
       locallyRequestedProjectRef.current = undefined
       return
     }
     resetProjectViewState()
-  }, [activeProjectRef, resetProjectViewState])
+  }, [activeProjectRefKey, resetProjectViewState])
 
   useLayoutEffect(() => {
     const header = projectHeaderRef.current
