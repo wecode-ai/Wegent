@@ -3614,7 +3614,7 @@ describe('ChatInput', () => {
     expect(removeButtons).toHaveLength(2)
     removeButtons.forEach(button => {
       expect(button).toHaveClass('absolute', '-right-1.5', '-top-1.5')
-      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-white')
+      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-background')
     })
   })
 

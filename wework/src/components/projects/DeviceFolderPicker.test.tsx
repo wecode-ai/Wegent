@@ -131,7 +131,7 @@ describe('DeviceFolderPicker', () => {
       <DeviceFolderPicker
         device={{ ...device, device_type: 'remote' }}
         mode="select"
-        variant="remoteDark"
+        variant="remote"
         onGetDeviceHomeDirectory={vi.fn().mockRejectedValue(new Error('home unavailable'))}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={vi.fn()}
@@ -152,7 +152,7 @@ describe('DeviceFolderPicker', () => {
       <DeviceFolderPicker
         device={{ ...device, device_type: 'remote' }}
         mode="select"
-        variant="remoteDark"
+        variant="remote"
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
         onListDeviceDirectories={vi.fn().mockResolvedValue(['repo'])}
         onCreateDeviceDirectory={vi.fn()}

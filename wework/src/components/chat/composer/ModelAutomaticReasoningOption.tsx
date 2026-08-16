@@ -13,7 +13,7 @@ export function ModelAutomaticReasoningOption() {
         type="button"
         data-testid="model-control-reasoning-auto"
         disabled
-        className="flex h-11 min-w-[44px] items-center gap-2 rounded-full border border-[#1f2933] bg-[#1f2933] px-4 text-sm font-medium text-white disabled:cursor-default"
+        className="flex h-11 min-w-[44px] items-center gap-2 rounded-full border border-text-primary bg-text-primary px-4 text-sm font-medium text-background disabled:cursor-default"
       >
         <span>{t('workbench.reasoning_auto')}</span>
         <Check className="h-4 w-4" />
