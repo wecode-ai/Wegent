@@ -287,6 +287,74 @@ async function verifyDefaultWorkspaceStartupTab(control) {
   await captureVerificationScreenshot(control, 'workspace-startup-tab-03-task-restored.png')
 }
 
+async function verifyWorkspaceIssueCreation(control) {
+  const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
+  assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
+  const boardTabSuffix = boardTabs[0].slice('workspace-tab-board-'.length)
+  const boardTabSelector = `[data-testid="workspace-tab-select-board-${boardTabSuffix}"]`
+  const boardContentSelector = `[data-testid="workspace-tab-content-board-${boardTabSuffix}"]`
+
+  await control.command('click', boardTabSelector)
+  await control.command('waitFor', `${boardTabSelector}[aria-selected="true"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-workspace"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-create-issue"]`)
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="workspace-issue-composer"]`,
+    {
+      text: '新建 Issue',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('fill', `${boardContentSelector} [data-testid="workspace-issue-input"]`, {
+    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace issue creation verified',
+  })
+  await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png', boardContentSelector)
+  await control.command('click', `${boardContentSelector} [data-testid="workspace-issue-submit"]`)
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_ISSUE',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-02-created.png',
+    boardContentSelector
+  )
+
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-detail-close"]`)
+  await control.command('click', boardTabSelector)
+  await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-workspace"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="cloud-todo-column-inbox"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_ISSUE',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-issue-03-on-board.png',
+    boardContentSelector
+  )
+}
+
 async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
   await ensureExperimentalFeaturesEnabled(control)
   await control.command(
@@ -358,12 +426,38 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-05-completed-on-board.png')
+  const focusedDetailSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.some(testId => testId.startsWith('cloud-todo-open-task-conversation-')),
+    'The focused work-item drawer did not render its linked task conversation'
+  )
+  const conversationTestId = focusedDetailSnapshot.testIds.find(testId =>
+    testId.startsWith('cloud-todo-open-task-conversation-')
+  )
+  assert.ok(conversationTestId, 'The linked task conversation control was not rendered')
+  await control.command('click', `[data-testid="${conversationTestId}"]`)
+  await control.command('waitFor', '[data-testid="work-item-task-context"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="work-item-task-chat-panel"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-06-task-quick-conversation.png')
+  await control.command('click', '[data-testid="ai-chat-modal-close"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="cloud-todo-detail-close"]')
   await control.command('waitFor', '[data-testid="cloud-todo-workspace"][data-embedded="false"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'workspace-06-independent-tab.png')
+  await captureVerificationScreenshot(control, 'workspace-07-independent-tab.png')
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -687,14 +781,16 @@ async function verifyWorkspaceTabIsolation(control) {
     'The task sidebar still exposed the removed Work items destination'
   )
   const tabCountBeforeOrdinaryNavigation = allWorkspaceTabIds(
-    JSON.parse(await control.command('snapshot', 'body'))
+    JSON.parse(await control.command('snapshot', '[data-testid="workspace-tab-strip-container"]'))
   ).length
   await control.command('click', `${thirdTaskContent} [data-testid="plugins-button"]`)
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const afterOrdinaryNavigation = JSON.parse(await control.command('snapshot', 'body'))
+  const afterOrdinaryNavigation = JSON.parse(
+    await control.command('snapshot', '[data-testid="workspace-tab-strip-container"]')
+  )
   assert.equal(
     allWorkspaceTabIds(afterOrdinaryNavigation).length,
     tabCountBeforeOrdinaryNavigation,
@@ -794,7 +890,8 @@ async function verifyWorkspaceTabIsolation(control) {
   )
   await captureVerificationScreenshot(
     detachedControl,
-    'workspace-tabs-isolation-05-detached-window.png'
+    'workspace-tabs-isolation-05-detached-window.png',
+    `[data-testid="workspace-tab-content-${secondTaskId}"]`
   )
 
   const sourceStorageKey = 'wework.workspaceTabs.v3:main'
@@ -829,6 +926,7 @@ export {
   captureVerificationScreenshot,
   verifyWorkspaceDocumentTabs,
   verifyDefaultWorkspaceStartupTab,
+  verifyWorkspaceIssueCreation,
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   workspaceTabIds,

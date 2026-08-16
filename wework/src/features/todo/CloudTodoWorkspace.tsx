@@ -84,6 +84,7 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
+import { IssueComposer } from './IssueComposer'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 import { AiChatModal } from './AiChatModal'
@@ -222,6 +223,7 @@ type LocatedMyWorkItem = CloudMyWorkItem & {
   project_store: RuntimeProjectSpaceRef['projectStore']
 }
 type LoopItemTaskBinding = Awaited<ReturnType<DeliveryApi['listTaskBindings']>>[number]
+type SelectedTaskBinding = Pick<LoopItemTaskBinding, 'id' | 'device_id' | 'task_id' | 'task_title'>
 
 interface AvailableProjectSpaceApi {
   api: DeliveryApi
@@ -247,6 +249,14 @@ const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
   in_progress: '拖拽任务到这里开始处理',
   in_review: '等待确认的任务会显示在这里',
   completed: '已完成的任务会归档在这里',
+}
+
+const issueColumnEmptyHints: Record<CloudLoopItem['status'], string> = {
+  inbox: '新建或拖拽 Issue 到这里收集',
+  pending: '拖拽 Issue 到这里等待开始',
+  in_progress: '拖拽 Issue 到这里开始推进',
+  in_review: '等待确认的 Issue 会显示在这里',
+  completed: '已完成的 Issue 会归档在这里',
 }
 
 function boardStatusFromDropId(id: string | number | undefined): string | null {
@@ -711,6 +721,7 @@ export function CloudTodoWorkspace({
   focusedItemId,
   onFocusedItemHandled,
   onActiveProjectChange,
+  onOpenRuntimeTask,
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
@@ -775,6 +786,12 @@ export function CloudTodoWorkspace({
   const selectedProjectRef =
     activeProjectRef === undefined ? internalSelectedProjectRef : activeProjectRef
   const selectedProjectId = selectedProjectRef?.projectId ?? null
+  const activeProjectKey =
+    activeProjectRef === undefined
+      ? undefined
+      : activeProjectRef
+        ? projectSpaceKey(activeProjectRef)
+        : null
   const [items, setItems] = useState<LocatedLoopItem[]>([])
   const [itemTaskBindings, setItemTaskBindings] = useState<Record<string, LoopItemTaskBinding[]>>(
     {}
@@ -796,10 +813,14 @@ export function CloudTodoWorkspace({
   const [createTodoOpen, setCreateTodoOpen] = useState(false)
   const [createTodoParent, setCreateTodoParent] = useState<LocatedLoopItem | null>(null)
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
+  const [issueComposerOpen, setIssueComposerOpen] = useState(false)
+  const [issueComposerBoardKey, setIssueComposerBoardKey] = useState('')
+  const [issueComposerStatus, setIssueComposerStatus] = useState<CloudLoopItem['status']>('inbox')
+  const [issueComposerBusy, setIssueComposerBusy] = useState(false)
+  const [issueComposerError, setIssueComposerError] = useState<string | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
-  const [aiChatOpen, setAiChatOpen] = useState(false)
-  const [aiChatEverOpened, setAiChatEverOpened] = useState(false)
+  const [selectedTaskBinding, setSelectedTaskBinding] = useState<SelectedTaskBinding | null>(null)
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
   const [aitableGroupFilter, setAitableGroupFilter] = useState('')
@@ -848,13 +869,20 @@ export function CloudTodoWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeProjectRef === undefined) return
-    if (sameProjectSpace(locallyRequestedProjectRef.current, activeProjectRef)) {
+    if (activeProjectKey === undefined) return
+    const locallyRequestedProject = locallyRequestedProjectRef.current
+    const locallyRequestedProjectKey =
+      locallyRequestedProject === undefined
+        ? undefined
+        : locallyRequestedProject
+          ? projectSpaceKey(locallyRequestedProject)
+          : null
+    if (locallyRequestedProjectKey === activeProjectKey) {
       locallyRequestedProjectRef.current = undefined
       return
     }
     resetProjectViewState()
-  }, [activeProjectRef, resetProjectViewState])
+  }, [activeProjectKey, resetProjectViewState])
 
   useLayoutEffect(() => {
     const header = projectHeaderRef.current
@@ -1922,6 +1950,71 @@ export function CloudTodoWorkspace({
 
   const aiChatProject = selectedItemProject
 
+  function openIssueCreation(status: CloudLoopItem['status'] = 'inbox') {
+    const targetProject = selectedProject ?? projects[0]
+    if (!targetProject) {
+      setCreateProjectOpen(true)
+      return
+    }
+    setIssueComposerBoardKey(projectSpaceKey(projectSpaceRef(targetProject)))
+    setIssueComposerStatus(status)
+    setIssueComposerError(null)
+    setIssueComposerOpen(true)
+    setRootView('projects')
+    setSelectedItem(null)
+  }
+
+  async function createIssue(input: { boardKey: string; title: string; description: string }) {
+    const targetProject = projects.find(
+      project => projectSpaceKey(projectSpaceRef(project)) === input.boardKey
+    )
+    const targetApi = apiForProject(targetProject)
+    if (!targetProject || !targetApi || issueComposerBusy) return
+    setIssueComposerBusy(true)
+    setIssueComposerError(null)
+    try {
+      const created = await targetApi.createLoopItem(targetProject.id, {
+        title: input.title,
+        description: input.description,
+        status: issueComposerStatus,
+        parent_id: null,
+      })
+      const locatedItem: LocatedLoopItem = {
+        ...created,
+        project_store: targetProject.project_store,
+      }
+      const targetProjectKey = projectSpaceKey(projectSpaceRef(targetProject))
+      setProjectCounts(current => ({
+        ...current,
+        [targetProjectKey]: (current[targetProjectKey] ?? 0) + 1,
+      }))
+      setProjectItems(current => ({
+        ...current,
+        [targetProjectKey]: [...(current[targetProjectKey] ?? []), locatedItem],
+      }))
+      if (
+        selectedProject &&
+        sameProjectSpace(projectSpaceRef(targetProject), projectSpaceRef(selectedProject))
+      ) {
+        setItems(current => [...current, locatedItem])
+      }
+      selectProject(targetProject)
+      setRootView('projects')
+      setProjectView('board')
+      setBoardParentId(null)
+      setIssueComposerOpen(false)
+      setSelectedItem(locatedItem)
+      track('board_item_created', {
+        has_parent: false,
+        source: targetProject.location,
+      })
+    } catch (cause) {
+      setIssueComposerError(cause instanceof Error ? cause.message : '创建 Issue 失败')
+    } finally {
+      setIssueComposerBusy(false)
+    }
+  }
+
   return (
     <div
       className={cn(
@@ -1967,25 +2060,26 @@ export function CloudTodoWorkspace({
               />
               <nav className="space-y-0.5">
                 <DesktopSidebarNavItem
-                  icon={Cloud}
-                  label="项目空间"
-                  selected={rootView === 'projects'}
-                  onClick={() => {
-                    setRootView('projects')
-                    selectProject(null)
-                    setSelectedItem(null)
-                  }}
+                  icon={Plus}
+                  label={t('todo.new_issue', '新建 Issue')}
+                  testId="cloud-create-issue"
+                  selected={issueComposerOpen}
+                  onClick={() => openIssueCreation()}
                 />
                 <DesktopSidebarNavItem
                   icon={CircleUserRound}
                   label="我的工作"
                   testId="cloud-my-work"
                   selected={rootView === 'my-work'}
-                  onClick={() => setRootView('my-work')}
+                  onClick={() => {
+                    setIssueComposerOpen(false)
+                    setRootView('my-work')
+                    selectProject(null)
+                  }}
                 />
               </nav>
               <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
-                项目空间
+                {t('todo.boards', '看板')}
                 <Tooltip
                   label={t('todo.new_project_space', '新建项目空间')}
                   side="bottom"
@@ -2023,6 +2117,7 @@ export function CloudTodoWorkspace({
                         type="button"
                         data-testid={`cloud-sidebar-project-${project.id}`}
                         onClick={() => {
+                          setIssueComposerOpen(false)
                           selectProject(project)
                           setRootView('projects')
                           setProjectView('board')
@@ -2167,7 +2262,20 @@ export function CloudTodoWorkspace({
               </button>
             </div>
           ) : null}
-          {rootView === 'my-work' ? (
+          {issueComposerOpen ? (
+            <IssueComposer
+              key={issueComposerBoardKey}
+              boards={projects.map(project => ({
+                key: projectSpaceKey(projectSpaceRef(project)),
+                name: project.name,
+              }))}
+              initialBoardKey={issueComposerBoardKey}
+              busy={issueComposerBusy}
+              error={issueComposerError}
+              onCancel={() => setIssueComposerOpen(false)}
+              onCreate={createIssue}
+            />
+          ) : rootView === 'my-work' ? (
             <CloudMyWorkView
               items={myWork}
               // Open the detail drawer in place instead of jumping to the board.
@@ -2404,17 +2512,33 @@ export function CloudTodoWorkspace({
                 ) : null}
                 {projectView === 'board' && (
                   <>
-                    <Tooltip label={t('todo.search_tasks', '搜索任务')} side="bottom" align="end">
+                    <Tooltip
+                      label={
+                        boardParent
+                          ? t('todo.search_tasks', '搜索任务')
+                          : t('todo.search_issues', '搜索 Issue')
+                      }
+                      side="bottom"
+                      align="end"
+                    >
                       <button
                         ref={projectHeaderSearchRef}
                         type="button"
                         data-testid="cloud-project-task-search-toggle"
-                        aria-label={t('todo.search_tasks', '搜索任务')}
+                        aria-label={
+                          boardParent
+                            ? t('todo.search_tasks', '搜索任务')
+                            : t('todo.search_issues', '搜索 Issue')
+                        }
                         onClick={() => setProjectSearchOpen(current => !current)}
                         className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
                       >
                         <Search className="h-3.5 w-3.5" />
-                        {projectHeaderLevel < 1 ? t('todo.search_tasks', '搜索任务') : null}
+                        {projectHeaderLevel < 1
+                          ? boardParent
+                            ? t('todo.search_tasks', '搜索任务')
+                            : t('todo.search_issues', '搜索 Issue')
+                          : null}
                       </button>
                     </Tooltip>
                     {projectSearchOpen && (
@@ -2436,19 +2560,35 @@ export function CloudTodoWorkspace({
                       />
                     )}
                     {canCreateBoardTask && (
-                      <Tooltip label={t('todo.new_task', '新建任务')} side="bottom" align="end">
+                      <Tooltip
+                        label={
+                          boardParent
+                            ? t('todo.new_task', '新建任务')
+                            : t('todo.new_issue', '新建 Issue')
+                        }
+                        side="bottom"
+                        align="end"
+                      >
                         <button
                           ref={projectHeaderAddRef}
                           type="button"
                           data-testid="cloud-todo-add"
-                          aria-label={t('todo.new_task', '新建任务')}
+                          aria-label={
+                            boardParent
+                              ? t('todo.new_task', '新建任务')
+                              : t('todo.new_issue', '新建 Issue')
+                          }
                           onClick={() =>
-                            openTodoCreation(projectView === 'board' ? boardParent : null)
+                            boardParent ? openTodoCreation(boardParent) : openIssueCreation()
                           }
                           className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
-                          {projectHeaderLevel < 1 ? t('todo.new_task', '新建任务') : null}
+                          {projectHeaderLevel < 1
+                            ? boardParent
+                              ? t('todo.new_task', '新建任务')
+                              : t('todo.new_issue', '新建 Issue')
+                            : null}
                         </button>
                       </Tooltip>
                     )}
@@ -2614,7 +2754,11 @@ export function CloudTodoWorkspace({
                           data-testid="cloud-board-search"
                           value={nativeBoardQuery}
                           onChange={event => setNativeBoardQuery(event.target.value)}
-                          placeholder="搜索任务"
+                          placeholder={
+                            boardParent
+                              ? t('todo.search_tasks', '搜索任务')
+                              : t('todo.search_issues', '搜索 Issue')
+                          }
                           className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
                         />
                       </label>
@@ -2649,7 +2793,7 @@ export function CloudTodoWorkspace({
                             onClick={() => setBoardParentId(null)}
                             className="rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
                           >
-                            顶层任务
+                            Issue
                           </button>
                           {boardBreadcrumb.map(parent => (
                             <span key={parent.id} className="flex min-w-0 items-center gap-1">
@@ -2678,10 +2822,10 @@ export function CloudTodoWorkspace({
                     ) : (
                       <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
                         <h1 className="text-heading-sm font-semibold">
-                          {isAITableProject ? '父任务' : '顶层任务'}
+                          {isAITableProject ? '父任务' : 'Issue'}
                         </h1>
                         <span className="text-xs text-text-muted">
-                          {boardLayerCount} {isAITableProject ? '条记录' : '个任务'}
+                          {boardLayerCount} {isAITableProject ? '条记录' : '个 Issue'}
                         </span>
                       </div>
                     )}
@@ -2784,8 +2928,12 @@ export function CloudTodoWorkspace({
                                     nativeGroupBy === 'status' && (
                                       <Tooltip
                                         label={t(
-                                          'todo.new_task_in_column',
-                                          '在{{column}}中新建任务',
+                                          boardParent
+                                            ? 'todo.new_task_in_column'
+                                            : 'todo.new_issue_in_column',
+                                          boardParent
+                                            ? '在{{column}}中新建任务'
+                                            : '在{{column}}中新建 Issue',
                                           { column: column.label }
                                         )}
                                         side="bottom"
@@ -2795,12 +2943,16 @@ export function CloudTodoWorkspace({
                                           type="button"
                                           data-testid={`cloud-todo-column-add-${column.key}`}
                                           onClick={() =>
-                                            openTodoCreation(boardParent, column.status)
+                                            boardParent
+                                              ? openTodoCreation(boardParent, column.status)
+                                              : openIssueCreation(column.status)
                                           }
                                           className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
                                           aria-label={t(
                                             'todo.new_task_in_column',
-                                            '在{{column}}中新建任务',
+                                            boardParent
+                                              ? '在{{column}}中新建任务'
+                                              : '在{{column}}中新建 Issue',
                                             { column: column.label }
                                           )}
                                         >
@@ -2843,11 +2995,16 @@ export function CloudTodoWorkspace({
                                       archiveDisabled={selectedProject.task_provider !== 'local'}
                                     />
                                   ))}
-                                  {columnItems.length === 0 && columnEmptyHints[column.status] && (
-                                    <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
-                                      {columnEmptyHints[column.status]}
-                                    </div>
-                                  )}
+                                  {columnItems.length === 0 &&
+                                    (boardParent
+                                      ? columnEmptyHints[column.status]
+                                      : issueColumnEmptyHints[column.status]) && (
+                                      <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                                        {boardParent
+                                          ? columnEmptyHints[column.status]
+                                          : issueColumnEmptyHints[column.status]}
+                                      </div>
+                                    )}
                                 </TodoColumnDropzone>
                                 {canCreateBoardTask &&
                                   !isAITableProject &&
@@ -2856,12 +3013,20 @@ export function CloudTodoWorkspace({
                                       <button
                                         type="button"
                                         data-testid={`cloud-todo-column-bottom-add-${column.key}`}
-                                        onClick={() => openTodoCreation(boardParent, column.status)}
+                                        onClick={() =>
+                                          boardParent
+                                            ? openTodoCreation(boardParent, column.status)
+                                            : openIssueCreation(column.status)
+                                        }
                                         className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
-                                        aria-label={`在${column.label}中新建任务`}
+                                        aria-label={`在${column.label}中新建${
+                                          boardParent ? '任务' : ' Issue'
+                                        }`}
                                       >
                                         <Plus className="h-4 w-4" />
-                                        新建任务
+                                        {boardParent
+                                          ? t('todo.new_task', '新建任务')
+                                          : t('todo.new_issue', '新建 Issue')}
                                       </button>
                                     </div>
                                   )}
@@ -2945,12 +3110,13 @@ export function CloudTodoWorkspace({
           allItems={detailAllItems}
           onClose={() => {
             setSelectedItem(null)
-            setAiChatOpen(false)
+            setSelectedTaskBinding(null)
           }}
-          onOpenAiChat={() => {
-            setAiChatEverOpened(true)
-            setAiChatOpen(true)
-          }}
+          onOpenTaskConversation={task =>
+            setSelectedTaskBinding({
+              ...task,
+            })
+          }
           onAddChild={() => openTodoCreation(selectedItem)}
           onUpdated={updated => {
             const locatedUpdated = {
@@ -2969,14 +3135,20 @@ export function CloudTodoWorkspace({
           }}
         />
       )}
-      {selectedItem && aiChatProject && (aiChatEverOpened || aiChatOpen) ? (
+      {selectedItem && aiChatProject && selectedTaskBinding ? (
         <AiChatModal
-          key={`ai-chat-${selectedItem.id}`}
+          key={`ai-chat-${selectedItem.id}:${selectedTaskBinding.device_id}:${selectedTaskBinding.task_id}`}
           project={aiChatProject}
           localProjects={localProjects}
           task={selectedItem ?? undefined}
-          open={aiChatOpen}
-          onClose={() => setAiChatOpen(false)}
+          initialAddress={{
+            deviceId: selectedTaskBinding.device_id,
+            taskId: selectedTaskBinding.task_id,
+          }}
+          taskTitle={selectedTaskBinding.task_title}
+          open
+          onClose={() => setSelectedTaskBinding(null)}
+          onOpenRuntimeTask={onOpenRuntimeTask}
         />
       ) : null}
       {createProjectOpen && (

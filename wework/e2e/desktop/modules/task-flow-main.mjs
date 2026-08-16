@@ -252,6 +252,7 @@ import {
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   verifyDefaultWorkspaceStartupTab,
+  verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
   verifyWorkspaceTabIsolation,
   waitForControlSelectionOffset,
@@ -1248,6 +1249,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('workspace-tabs')) {
       phase = 'workspace-startup-tab'
       await verifyDefaultWorkspaceStartupTab(control)
+      phase = 'workspace-issue-creation'
+      await verifyWorkspaceIssueCreation(control)
       phase = 'workspace-tab-isolation'
       await verifyWorkspaceTabIsolation(control)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
@@ -1601,10 +1604,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     let associatedTaskTabTestId = null
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       phase = 'project-space-default-association-setup'
-      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(
-        control,
-        projectRowSelector
-      )
+      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {

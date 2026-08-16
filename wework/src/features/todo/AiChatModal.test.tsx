@@ -27,6 +27,8 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     createTask,
     initialAddress,
     onAddressChange,
+    sendEphemeral,
+    testId,
   }: {
     currentProject: ProjectWithTasks | null
     createTask?: (
@@ -44,6 +46,8 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     ) => Promise<RuntimeTaskAddress | false>
     initialAddress?: RuntimeTaskAddress | null
     onAddressChange?: (address: RuntimeTaskAddress | null) => void
+    sendEphemeral?: boolean
+    testId?: string
   }) => {
     const mountId = useRef(++mocks.chatPanelMounts).current
     mocks.lastOnAddressChange = onAddressChange ?? null
@@ -72,6 +76,8 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           data-project-id={currentProject?.id ?? ''}
           data-mount-id={mountId}
           data-has-initial-address={initialAddress ? 'yes' : 'no'}
+          data-send-ephemeral={sendEphemeral === false ? 'no' : 'yes'}
+          data-panel-testid={testId}
         />
       </>
     )
@@ -282,5 +288,34 @@ describe('AiChatModal', () => {
     )
     expect(screen.getByTestId('ai-chat-modal-backdrop')).not.toHaveClass('hidden')
     expect(Number(panel().getAttribute('data-mount-id'))).toBe(firstMount)
+  })
+
+  it('opens a focused bound task as a split detail and persistent conversation', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const address = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        taskTitle="实现云端交付"
+        initialAddress={address}
+        open
+        onClose={vi.fn()}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    expect(screen.getByTestId('work-item-task-context')).toHaveTextContent('WEG-1')
+    expect(screen.getByTestId('work-item-task-context')).toHaveTextContent('Implement cloud MCP')
+    expect(screen.getByTestId('work-item-task-context')).toHaveTextContent('实现云端交付')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-panel-testid',
+      'work-item-task-chat-panel'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-send-ephemeral', 'no')
+    await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
   })
 })

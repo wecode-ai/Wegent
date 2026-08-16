@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, Plus, Undo2, X } from 'lucide-react'
+import { ArrowUpRight, Bot, ChevronDown, MessageSquare, Plus, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -24,6 +24,9 @@ interface AiChatModalProps {
    * even while the temporary task is still executing. */
   open: boolean
   onClose: () => void
+  initialAddress?: RuntimeTaskAddress | null
+  taskTitle?: string | null
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
 function lastAddressStorageKey(projectId: string | number, taskId?: string): string {
@@ -39,12 +42,21 @@ function storedLastAddress(key: string): RuntimeTaskAddress | null {
   }
 }
 
-export function AiChatModal({ project, localProjects, task, open, onClose }: AiChatModalProps) {
+export function AiChatModal({
+  project,
+  localProjects,
+  task,
+  open,
+  onClose,
+  initialAddress = null,
+  taskTitle,
+  onOpenRuntimeTask,
+}: AiChatModalProps) {
   const { t } = useTranslation('common')
   const { createProjectRuntimeTask } = useWorkbenchPaneContext()
   const storageKey = lastAddressStorageKey(project.id, task?.id)
-  const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(() =>
-    storedLastAddress(storageKey)
+  const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
+    () => initialAddress ?? storedLastAddress(storageKey)
   )
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
@@ -139,6 +151,106 @@ export function AiChatModal({ project, localProjects, task, open, onClose }: AiC
     setComposeNew(current => !current)
     setSessionKey(key => key + 1)
   }, [])
+
+  if (initialAddress) {
+    const statusLabel = {
+      inbox: t('workbench.work_item_status_inbox', '收集箱'),
+      pending: t('workbench.work_item_status_pending', '待开始'),
+      in_progress: t('workbench.work_item_status_in_progress', '进行中'),
+      in_review: t('workbench.work_item_status_in_review', '待确认'),
+      completed: t('workbench.work_item_status_completed', '已完成'),
+    }[task?.status ?? 'pending']
+
+    return (
+      <div
+        data-testid="ai-chat-modal-backdrop"
+        className={cn(
+          'fixed inset-x-0 bottom-0 top-[38px] z-critical bg-background',
+          !open && 'hidden'
+        )}
+      >
+        <section
+          data-testid="ai-chat-modal"
+          className="grid h-full min-h-0 grid-cols-[minmax(320px,38%)_minmax(0,1fr)]"
+        >
+          <aside
+            data-testid="work-item-task-context"
+            className="flex min-h-0 flex-col border-r border-border bg-background"
+          >
+            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+              <button
+                type="button"
+                data-testid="ai-chat-modal-close"
+                onClick={onClose}
+                aria-label={t('workbench.back_to_work_item', '返回工作项')}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                {t('workbench.work_item_detail', '工作项详情')}
+              </span>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              <div className="flex items-center gap-2 text-xs text-text-muted">
+                <span>{project.name}</span>
+                <span>·</span>
+                <span>{task?.id}</span>
+                <span>·</span>
+                <span>{statusLabel}</span>
+              </div>
+              <h2 className="mt-3 text-heading-md font-medium leading-tight text-text-primary">
+                {task?.title}
+              </h2>
+              {task?.description ? (
+                <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-text-secondary">
+                  {task.description}
+                </p>
+              ) : null}
+              <dl className="mt-6 grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-3 border-t border-border pt-5 text-sm">
+                <dt className="text-text-muted">{t('workbench.runtime_task', '执行任务')}</dt>
+                <dd className="truncate text-text-primary">{taskTitle || initialAddress.taskId}</dd>
+                <dt className="text-text-muted">{t('workbench.device', '设备')}</dt>
+                <dd className="truncate text-text-primary">{initialAddress.deviceId}</dd>
+              </dl>
+            </div>
+          </aside>
+
+          <div className="flex min-h-0 min-w-0 flex-col bg-background">
+            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+              <MessageSquare className="h-4 w-4 text-text-secondary" />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                {taskTitle || t('workbench.task_conversation', '任务对话')}
+              </span>
+              {onOpenRuntimeTask ? (
+                <button
+                  type="button"
+                  data-testid="ai-chat-open-runtime-task"
+                  onClick={() => void onOpenRuntimeTask(initialAddress)}
+                  className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary transition hover:bg-muted"
+                >
+                  {t('workbench.open_full_task', '打开完整任务')}
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </header>
+            <TemporaryChatPanel
+              currentProject={selectedLocalProject}
+              source={initialAddress}
+              instanceId={`work-item-task:${project.id}:${task?.id ?? 'project'}:${initialAddress.deviceId}:${initialAddress.taskId}`}
+              testId="work-item-task-chat-panel"
+              initialAddress={currentAddress}
+              onAddressChange={rememberAddress}
+              sendEphemeral={false}
+              emptyStateText={t('workbench.task_conversation_empty', '该任务还没有对话记录。')}
+              placeholder={t('workbench.quick_reply_task', '快速回复这个任务')}
+              expanded
+            />
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div

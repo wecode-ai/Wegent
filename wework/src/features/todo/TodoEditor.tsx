@@ -495,8 +495,12 @@ export type TodoEditorProps = {
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
-  /** Opens the project AI chat (私信 AI) from the task detail. */
-  onOpenAiChat?: () => void
+  onOpenTaskConversation?: (task: {
+    id: number
+    device_id: string
+    task_id: string
+    task_title: string | null
+  }) => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
@@ -1430,12 +1434,12 @@ export function TodoEditor(props: TodoEditorProps) {
   return (
     <div
       className={cn(
-        'fixed z-modal flex items-start justify-center bg-black/35 backdrop-blur-sm',
+        'fixed z-modal flex items-start justify-center',
         fullScreen
-          ? 'inset-0 p-3'
+          ? 'inset-0 bg-black/35 p-3 backdrop-blur-sm'
           : twoColumn
-            ? 'inset-x-0 bottom-0 top-[38px] p-3'
-            : 'inset-0 px-6 pb-6 pt-[6vh]'
+            ? 'bottom-0 right-0 top-[38px] w-[min(760px,calc(100vw-48px))]'
+            : 'inset-0 bg-black/35 px-6 pb-6 pt-[6vh] backdrop-blur-sm'
       )}
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
@@ -1448,7 +1452,7 @@ export function TodoEditor(props: TodoEditorProps) {
             : cn(
                 'max-w-[calc(100vw-48px)]',
                 twoColumn
-                  ? 'h-full w-full max-w-none'
+                  ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-xl'
                   : cn('max-h-[88vh]', isAITableEdit ? 'w-[1080px]' : 'w-[760px]')
               )
         )}
@@ -1485,17 +1489,6 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           {twoColumn && !isCreate ? (
             <>
-              {props.onOpenAiChat ? (
-                <button
-                  type="button"
-                  data-testid="cloud-todo-open-ai-chat"
-                  onClick={props.onOpenAiChat}
-                  className="mr-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
-                >
-                  <Bot className="h-3.5 w-3.5 text-violet-600" />
-                  {t('workbench.project_chat')}
-                </button>
-              ) : null}
               {dirty || saving ? (
                 <button
                   type="button"
@@ -2051,7 +2044,13 @@ export function TodoEditor(props: TodoEditorProps) {
                           )}
                         >
                           {visibleRailTasks.map(task => (
-                            <div key={task.id} className="task-detail-rail-execution">
+                            <button
+                              key={task.id}
+                              type="button"
+                              data-testid={`cloud-todo-open-task-conversation-${task.id}`}
+                              onClick={() => props.onOpenTaskConversation?.(task)}
+                              className="task-detail-rail-execution w-full text-left transition hover:bg-muted"
+                            >
                               <span className="task-detail-rail-icon">
                                 <Link2 className="icon" />
                               </span>
@@ -2068,10 +2067,12 @@ export function TodoEditor(props: TodoEditorProps) {
                                 </span>
                               </span>
                               <span className="task-detail-rail-badges">
-                                <span className="task-detail-mini-badge human">人类</span>
-                                <span className="task-detail-mini-badge">手动</span>
+                                <span className="task-detail-mini-badge">
+                                  {t('workbench.quick_view_conversation', '查看对话')}
+                                </span>
+                                <ChevronRight className="h-3.5 w-3.5 text-text-muted" />
                               </span>
-                            </div>
+                            </button>
                           ))}
                         </div>
                         {tasks.length > 2 && (
