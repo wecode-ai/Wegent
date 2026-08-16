@@ -216,14 +216,14 @@ export function ComposerToolbar({
               data-composer-primary-action="true"
               data-testid="pause-response-button"
               onClick={onPause}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
               aria-label={t('workbench.pause_response', '暂停回复')}
             >
               <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
             </button>
           </Tooltip>
         ) : isStreaming && canSend ? (
-          <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
+          <div className="flex items-center rounded-full bg-text-primary text-background">
             <Tooltip
               label={t('workbench.send_after_turn', '当前回复结束后发送')}
               align="end"
@@ -233,7 +233,7 @@ export function ComposerToolbar({
                 type="submit"
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
-                className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
+                className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
                 aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
               >
                 <ArrowUp className="h-4 w-4" />
@@ -243,7 +243,7 @@ export function ComposerToolbar({
               ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
               testId="send-mode-menu-button"
               icon={ChevronDown}
-              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-white/20 hover:bg-[#333]"
+              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
               items={[
                 {
                   label: t('workbench.send_after_turn', '当前回复结束后发送'),
@@ -298,7 +298,7 @@ export function ComposerToolbar({
               data-composer-primary-action="true"
               data-testid={sendButtonTestId}
               disabled={!canSend}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background disabled:cursor-not-allowed disabled:bg-text-muted/45"
               aria-label={t('workbench.send_message', '发送消息')}
             >
               <ArrowUp className="h-4 w-4" />

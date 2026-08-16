@@ -288,11 +288,11 @@ export function TodoDetailPanel({
   return (
     <aside
       data-testid="todo-detail-panel"
-      className={`absolute bottom-0 right-0 z-30 flex flex-col border-l border-[#D8DCE0] bg-white shadow-[-8px_0_22px_rgba(17,24,39,0.14)] transition-[left,width,top] dark:border-border dark:bg-background ${
+      className={`absolute bottom-0 right-0 z-30 flex flex-col border-l border-border bg-background text-text-primary shadow-[-8px_0_22px_rgba(17,24,39,0.14)] transition-[left,width,top] ${
         fullScreen ? 'left-0 top-0 w-full min-w-0' : 'top-[38px] w-1/2 min-w-[480px]'
       }`}
     >
-      <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-[#E4E7E9] px-4 dark:border-border">
+      <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-3.5">
           <IconButton
             testId="todo-detail-close"
@@ -316,7 +316,7 @@ export function TodoDetailPanel({
           />
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-[#8A9299]">
+          <span className="text-xs text-text-muted">
             {copied ? t('todo.copied', '已复制') : t('todo.saved', '已保存')}
           </span>
           <IconButton
@@ -337,7 +337,7 @@ export function TodoDetailPanel({
             {moreOpen && (
               <div
                 data-testid="todo-detail-more-menu"
-                className="absolute right-0 top-9 z-20 w-44 rounded-md border border-[#DDE1E4] bg-white p-1 shadow-lg dark:border-border dark:bg-background"
+                className="absolute right-0 top-9 z-20 w-44 rounded-md border border-border bg-popover p-1 shadow-lg"
               >
                 <DetailMenuButton
                   testId="todo-detail-menu-copy"
@@ -383,13 +383,13 @@ export function TodoDetailPanel({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="h-3 w-3 rounded-full" style={{ backgroundColor: state.color }} />
-            <span className="font-mono text-xs font-semibold text-[#7F8890]">{item.code}</span>
-            <span className="text-xs text-[#7F8890]">·</span>
-            <span className="text-xs font-medium text-[#68717A]">
+            <span className="font-mono text-xs font-semibold text-text-muted">{item.code}</span>
+            <span className="text-xs text-text-muted">·</span>
+            <span className="text-xs font-medium text-text-secondary">
               {t(state.labelKey, state.fallback)}
             </span>
           </div>
-          <span className="text-xs text-[#929AA1]">
+          <span className="text-xs text-text-muted">
             {t('todo.created_by', {
               defaultValue: '由 {{name}} 创建',
               name: userName || 'Wework',
@@ -398,7 +398,7 @@ export function TodoDetailPanel({
           </span>
         </div>
 
-        <h2 className="mt-4 text-heading-lg font-semibold leading-[1.25] text-[#202428] dark:text-text-primary">
+        <h2 className="mt-4 text-heading-lg font-semibold leading-[1.25] text-text-primary">
           {item.title}
         </h2>
 
@@ -436,8 +436,8 @@ export function TodoDetailPanel({
         )}
 
         <section className="mt-[18px]">
-          <h3 className="text-xs font-semibold text-[#8A9299]">{t('todo.description', '描述')}</h3>
-          <p className="mt-2 text-xs leading-6 text-[#4E565E] dark:text-text-secondary">
+          <h3 className="text-xs font-semibold text-text-muted">{t('todo.description', '描述')}</h3>
+          <p className="mt-2 text-xs leading-6 text-text-secondary">
             {item.description ||
               item.task?.error ||
               t(
@@ -448,9 +448,9 @@ export function TodoDetailPanel({
         </section>
 
         {(item.objective || goal?.objective) && (
-          <section className="mt-[18px] flex gap-2 rounded-lg border border-[#CFECE7] bg-[#F2FAF8] p-3 dark:border-primary/20 dark:bg-primary/5">
-            <Target className="mt-0.5 h-4 w-4 shrink-0 text-[#0F8F82]" />
-            <p className="text-xs font-medium leading-[1.4] text-[#356A64] dark:text-primary">
+          <section className="mt-[18px] flex gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+            <Target className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <p className="text-xs font-medium leading-[1.4] text-primary">
               {t('todo.objective_prefix', '目标：')} {item.objective || goal?.objective}
             </p>
           </section>
@@ -712,9 +712,7 @@ export function TodoDetailPanel({
         )}
 
         <section className="mt-[18px]">
-          <h3 className="mb-2 text-sm font-semibold text-[#343A40] dark:text-text-primary">
-            Properties
-          </h3>
+          <h3 className="mb-2 text-sm font-semibold text-text-primary">Properties</h3>
           <div className="space-y-1.5">
             <PropertyRow>
               {onUpdateItem ? (
@@ -792,7 +790,7 @@ export function TodoDetailPanel({
 
         <section className="mt-[18px]">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-[#41474D] dark:text-text-primary">
+            <h3 className="text-xs font-semibold text-text-primary">
               {t('todo.attachments', '附件')}
             </h3>
             <button
@@ -800,7 +798,7 @@ export function TodoDetailPanel({
               data-testid="todo-detail-add-attachment"
               onClick={() => fileInputRef.current?.click()}
               disabled={!onAttachmentsChange || uploading}
-              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-[#68717A] hover:bg-[#F2F4F5] dark:hover:bg-muted"
+              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
             >
               <Paperclip className="h-3.5 w-3.5" />
               {uploading ? t('todo.uploading', '上传中…') : t('todo.add_attachment', '添加附件')}
@@ -821,7 +819,7 @@ export function TodoDetailPanel({
               {item.attachments.map(attachment => (
                 <div
                   key={attachment.id}
-                  className="flex h-9 items-center gap-2 rounded-md border border-[#DDE1E4] px-3 text-xs text-[#68717A] dark:border-border"
+                  className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-xs text-text-secondary"
                 >
                   <Paperclip className="h-3.5 w-3.5" />
                   <span className="min-w-0 flex-1 truncate">{attachment.filename}</span>
@@ -830,7 +828,7 @@ export function TodoDetailPanel({
                       type="button"
                       data-testid={`todo-detail-remove-attachment-${attachment.id}`}
                       onClick={() => void removeAttachment(attachment)}
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-[#F2F4F5] dark:hover:bg-muted"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-muted"
                       aria-label={t('todo.remove_attachment', '移除附件')}
                     >
                       <X className="h-3 w-3" />
@@ -840,7 +838,7 @@ export function TodoDetailPanel({
               ))}
             </div>
           ) : (
-            <div className="mt-2 flex h-10 items-center gap-2 rounded-md border border-dashed border-[#DDE1E4] px-3 text-xs text-[#929AA1] dark:border-border">
+            <div className="mt-2 flex h-10 items-center gap-2 rounded-md border border-dashed border-border px-3 text-xs text-text-muted">
               <Paperclip className="h-3.5 w-3.5" />
               {t('todo.no_attachments', '暂无附件')}
             </div>
@@ -853,7 +851,7 @@ export function TodoDetailPanel({
         </section>
 
         <section className="mt-[18px]">
-          <h3 className="text-xs font-semibold text-[#41474D] dark:text-text-primary">Activity</h3>
+          <h3 className="text-xs font-semibold text-text-primary">Activity</h3>
           <div className="mt-2 space-y-2">
             {(item.events?.length
               ? [...item.events].reverse()
@@ -866,10 +864,12 @@ export function TodoDetailPanel({
                 ]
             ).map(event => (
               <div key={event.id} className="flex items-start gap-2">
-                <span className="mt-1.5 h-2 w-2 rounded-full bg-[#14B8A6]" />
+                <span className="mt-1.5 h-2 w-2 rounded-full bg-primary" />
                 <div>
-                  <p className="text-xs text-[#596169] dark:text-text-secondary">{event.summary}</p>
-                  <p className="mt-1 text-xs text-[#929AA1]">{formatDetailDate(event.createdAt)}</p>
+                  <p className="text-xs text-text-secondary">{event.summary}</p>
+                  <p className="mt-1 text-xs text-text-muted">
+                    {formatDetailDate(event.createdAt)}
+                  </p>
                 </div>
               </div>
             ))}
@@ -877,12 +877,12 @@ export function TodoDetailPanel({
         </section>
       </div>
 
-      <footer className="flex min-h-[62px] shrink-0 items-center justify-between gap-3 border-t border-[#E1E4E7] px-4 py-2 dark:border-border">
+      <footer className="flex min-h-[62px] shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-2">
         <div className="min-w-0 flex-1">
           {runError && (
             <div
               data-testid="todo-detail-run-error"
-              className="flex min-w-0 items-start gap-2 rounded-md border border-[#F1D49D] bg-[#FFF7E8] px-2.5 py-2 text-xs text-[#8A5410]"
+              className="flex min-w-0 items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300"
             >
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="min-w-0">{runError}</span>
@@ -895,7 +895,7 @@ export function TodoDetailPanel({
               type="button"
               data-testid="todo-detail-open-execution"
               onClick={() => void onOpenRuntimeTask(item.address!)}
-              className="flex h-[34px] items-center gap-1.5 rounded-md border border-[#D8DCE0] bg-white px-3 text-xs font-semibold text-[#4F575F] hover:bg-[#F7F8F9] dark:border-border dark:bg-background dark:text-text-secondary dark:hover:bg-muted"
+              className="flex h-[34px] items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-semibold text-text-secondary hover:bg-muted"
             >
               {t('todo.open_execution', '打开原任务页')}
               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -907,7 +907,7 @@ export function TodoDetailPanel({
               data-testid="todo-detail-run"
               onClick={() => void runTodo()}
               disabled={running}
-              className="flex h-[34px] items-center gap-1.5 rounded-md bg-[#14B8A6] px-3.5 text-xs font-bold text-white hover:bg-[#0FA797]"
+              className="flex h-[34px] items-center gap-1.5 rounded-md bg-primary px-3.5 text-xs font-bold text-primary-contrast hover:bg-primary/90"
             >
               <Play className="h-3.5 w-3.5 fill-current" />
               {running
@@ -952,8 +952,8 @@ function DetailMenuButton({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className={`flex h-8 w-full items-center gap-2 rounded px-2 text-xs hover:bg-[#F2F4F5] dark:hover:bg-muted ${
-        destructive ? 'text-destructive' : 'text-[#4F575F] dark:text-text-secondary'
+      className={`flex h-8 w-full items-center gap-2 rounded px-2 text-xs hover:bg-muted ${
+        destructive ? 'text-destructive' : 'text-text-secondary'
       }`}
     >
       <Icon className="h-3.5 w-3.5" />
@@ -982,8 +982,8 @@ function IconButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex h-7 w-7 items-center justify-center rounded-md text-[#68717A] hover:bg-[#F2F4F5] dark:hover:bg-muted ${
-        bordered ? 'border border-[#E1E4E7] dark:border-border' : ''
+      className={`flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted ${
+        bordered ? 'border border-border' : ''
       }`}
     >
       <Icon className="h-3.5 w-3.5" />
@@ -1005,8 +1005,8 @@ function EditableProperty({
   children: ReactNode
 }) {
   return (
-    <label className="flex min-w-0 items-center gap-2 rounded-md bg-[#F7F8F9] px-2.5 dark:bg-muted">
-      <span className="flex shrink-0 items-center gap-1.5 text-xs text-[#7A838B]">
+    <label className="flex min-w-0 items-center gap-2 rounded-md bg-muted px-2.5">
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
         <Icon className="h-3.5 w-3.5" />
         {label}
       </span>
@@ -1027,12 +1027,12 @@ function Property({
   valueColor?: string
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between rounded-md bg-[#F7F8F9] px-2.5 dark:bg-muted">
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-[#7A838B]">
+    <div className="flex min-w-0 items-center justify-between rounded-md bg-muted px-2.5">
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
         <Icon className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{label}</span>
       </span>
-      <span className="ml-2 truncate text-xs font-medium text-[#4F575F] dark:text-text-secondary">
+      <span className="ml-2 truncate text-xs font-medium text-text-secondary">
         {valueColor && (
           <span
             className="mr-1.5 inline-block h-2 w-2 rounded-full"

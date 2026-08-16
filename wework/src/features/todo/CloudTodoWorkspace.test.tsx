@@ -1967,17 +1967,17 @@ describe('CloudTodoWorkspace', () => {
       tagHeading.compareDocumentPosition(providerHeading) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(screen.getByTestId('cloud-project-provider-manage-save')).toHaveClass(
-      'bg-black',
-      'text-white',
-      'disabled:bg-black',
-      'disabled:text-white'
+      'bg-text-primary',
+      'text-background',
+      'disabled:bg-text-primary',
+      'disabled:text-background'
     )
     await userEvent.click(screen.getByRole('button', { name: '＋ 新建标签' }))
     expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
-      'bg-black',
-      'text-white',
-      'disabled:bg-black',
-      'disabled:text-white'
+      'bg-text-primary',
+      'text-background',
+      'disabled:bg-text-primary',
+      'disabled:text-background'
     )
     expect(screen.getByTestId('cloud-project-tag-create-confirm')).not.toHaveClass(
       'disabled:opacity-50'

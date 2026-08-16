@@ -109,4 +109,34 @@ describe('LocalConnectorAuthDialog browser oauth', () => {
     expect(onCancel).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(authMocks.cancel).toHaveBeenCalledWith(executorTarget, 'session-2'))
   })
+
+  test('keeps the executor session alive when the dialog is remounted by its host', async () => {
+    authMocks.start.mockResolvedValue({
+      status: 'waiting_browser',
+      sessionId: 'session-remount',
+    })
+    authMocks.poll.mockImplementation(() => new Promise(() => undefined))
+
+    const view = render(
+      <LocalConnectorAuthDialog open target={target} onSuccess={vi.fn()} onCancel={vi.fn()} />
+    )
+
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalled())
+    view.unmount()
+    render(<LocalConnectorAuthDialog open target={target} onSuccess={vi.fn()} onCancel={vi.fn()} />)
+
+    await waitFor(() => expect(authMocks.start).toHaveBeenCalledTimes(2))
+    expect(authMocks.cancel).not.toHaveBeenCalled()
+  })
+
+  test('shows a string executor error once', async () => {
+    authMocks.start.mockRejectedValue('internal_error: HOME is not set')
+
+    render(<LocalConnectorAuthDialog open target={target} onSuccess={vi.fn()} onCancel={vi.fn()} />)
+
+    await screen.findByTestId('local-connector-auth-retry')
+    expect(screen.getAllByText('internal_error: HOME is not set')).toHaveLength(1)
+    expect(screen.getByTestId('local-connector-auth-browser-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-connector-auth-browser-loading')).not.toBeInTheDocument()
+  })
 })

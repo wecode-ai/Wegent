@@ -691,6 +691,15 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', actionsSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`) &&
+      snapshot.testIds.some(
+        testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
+      ),
+    'The installed marketplace card and installed strip became inconsistent'
+  )
   await control.command('click', actionsSelector)
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   await control.command('waitFor', trySelector, {

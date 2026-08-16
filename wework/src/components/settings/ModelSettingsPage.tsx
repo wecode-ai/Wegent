@@ -2731,7 +2731,7 @@ export function ModelSettingsPage({
                         className={[
                           'inline-flex h-6 items-center justify-center gap-1 rounded-full px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50',
                           config?.use_user_config
-                            ? 'bg-primary text-white'
+                            ? 'bg-primary text-primary-contrast'
                             : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
                         ].join(' ')}
                       >

@@ -446,7 +446,16 @@
   --plugin-source-external-accent: 202 208 219;
 }
 
-/* Keep embedded diagram renderers aligned with Wework theme and available space. */
+/* Keep embedded file renderers aligned with Wework theme and available space. */
+.wework-workspace-file-viewer[data-viewer-theme] .image-viewer {
+  background: rgb(var(--color-bg-base));
+}
+
+.wework-workspace-file-viewer .image-stage img,
+.wework-workspace-file-viewer .image-lightbox img {
+  background: transparent;
+}
+
 .wework-diagram-preview .drawing-scroll,
 .wework-diagram-preview .drawing-canvas,
 .wework-diagram-preview .drawing-diagram-shell {
@@ -1937,11 +1946,11 @@ button.plugin-installed-strip-item::after {
   z-index: 20;
   min-width: max-content;
   border-radius: 6px;
-  background: #242424;
+  background: rgb(var(--color-popover));
   padding: 4px 7px;
   font-size: var(--text-2xs);
   line-height: 1.2;
-  color: #fff;
+  color: rgb(var(--color-text-primary));
   content: attr(data-tooltip);
   opacity: 0;
   pointer-events: none;
