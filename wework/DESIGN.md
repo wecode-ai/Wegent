@@ -539,6 +539,8 @@ recipe closely:
   shadow;
 - do not add a dark visible border in the normal state; forced-color mode may
   add an explicit outline;
+- the default desktop input starts at two text lines; compact composers start
+  at one line and grow only when content requires it;
 - multiline input horizontal inset is `12px`;
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
