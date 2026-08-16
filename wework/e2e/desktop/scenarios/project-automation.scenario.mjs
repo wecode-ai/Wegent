@@ -945,7 +945,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
             .find(
               name =>
                 name === 'assign_board_item' ||
-                name?.endsWith('__assign_board_item') ||
+                name?.endsWith('_assign_board_item') ||
                 name === 'assign_task' ||
                 name?.endsWith('_assign_task')
             )
