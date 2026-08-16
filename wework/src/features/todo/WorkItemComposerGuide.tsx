@@ -1,17 +1,7 @@
-import {
-  ArrowUpRight,
-  Check,
-  ChevronDown,
-  LayoutDashboard,
-  Link2,
-  ListChecks,
-  ListTodo,
-  Plus,
-  X,
-} from 'lucide-react'
+import { ArrowUpRight, Check, ChevronDown, LayoutDashboard, ListChecks, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { CloudLoopItem } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { useAnchoredPortalMenu } from '@/components/chat/composer/useAnchoredPortalMenu'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
@@ -21,18 +11,20 @@ import type { RuntimeTaskAddress } from '@/types/api'
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
 interface WorkItemComposerGuideProps {
+  project?: CloudProject | null
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
   currentTask?: RuntimeTaskAddress | null
   bindingPending?: boolean
   goalPresent?: boolean
   integrated?: boolean
+  toolbar?: boolean
   refreshKey?: unknown
-  onJoinExisting?: () => void
+  projects?: CloudProject[]
+  onSelectProject?: (project: CloudProject) => void
+  onRemoveProject?: () => void
   onOpen?: () => void
   onOpenBoard?: () => void
-  onOpenTask?: (task: RuntimeTaskAddress) => void | Promise<void>
-  onCancel?: () => void
 }
 
 const itemStatusLabels: Record<CloudLoopItem['status'], string> = {
@@ -52,18 +44,20 @@ function isCurrentBinding(binding: TaskBinding, currentTask?: RuntimeTaskAddress
 }
 
 export function WorkItemComposerGuide({
+  project,
   item,
   api,
   currentTask,
   bindingPending = false,
   goalPresent = false,
   integrated = false,
+  toolbar = false,
   refreshKey,
-  onJoinExisting,
+  projects = [],
+  onSelectProject,
+  onRemoveProject,
   onOpen,
   onOpenBoard,
-  onOpenTask,
-  onCancel,
 }: WorkItemComposerGuideProps) {
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -134,63 +128,121 @@ export function WorkItemComposerGuide({
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
         : null
 
-  const title = resolvedItem
-    ? `${resolvedItem.title} · ${statusLabel}${taskSummary ? ` · ${taskSummary}` : ''}`
-    : t('workbench.work_item_create_title', '工作空间：新建')
+  const title = bindingPending
+    ? t('workbench.work_item_label', '工作空间')
+    : resolvedItem
+      ? `${resolvedItem.title} · ${statusLabel}${taskSummary ? ` · ${taskSummary}` : ''}`
+      : (project?.name ?? t('workbench.default_work_item_board', '我的任务'))
+
+  if (resolvedItem) {
+    return (
+      <div
+        ref={containerRef}
+        className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}
+      >
+        <div
+          data-testid="project-space-context-pill"
+          title={title}
+          className={[
+            'flex w-full min-w-0 items-center gap-2 overflow-hidden text-sm text-text-secondary',
+            toolbar ? 'h-8 rounded-lg px-2' : 'h-9 px-2',
+          ].join(' ')}
+        >
+          <LayoutDashboard
+            className={toolbar ? 'h-4 w-4 shrink-0' : 'h-4 w-4 shrink-0 text-primary'}
+            aria-hidden="true"
+          />
+          {!goalPresent ? (
+            <span
+              data-testid="work-item-guide-summary-title"
+              className="min-w-0 truncate font-medium text-text-primary"
+            >
+              {resolvedItem.title}
+            </span>
+          ) : (
+            <span className="shrink-0 font-medium text-text-primary">
+              {t('workbench.linked_work_item_short', '工作空间')}
+            </span>
+          )}
+          <span
+            data-testid="work-item-guide-summary-status"
+            className="shrink-0 text-xs text-text-muted"
+          >
+            · {statusLabel}
+          </span>
+          {taskSummary ? (
+            <span
+              data-testid="work-item-guide-summary-details"
+              className="min-w-0 truncate text-xs text-text-muted"
+            >
+              · {taskSummary}
+            </span>
+          ) : null}
+          <span className="min-w-1 flex-1" />
+          {onOpen ? (
+            <button
+              type="button"
+              data-testid="work-item-open-details"
+              onClick={onOpen}
+              title={t('workbench.view_work_item_details', '查看 Issue 详情')}
+              aria-label={t('workbench.view_work_item_details', '查看 Issue 详情')}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {onOpenBoard ? (
+            <button
+              type="button"
+              data-testid="work-item-open-board-menu"
+              onClick={onOpenBoard}
+              title={t('workbench.open_in_work_item_board', '在工作空间中打开')}
+              aria-label={t('workbench.open_in_work_item_board', '在工作空间中打开')}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
+            >
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div ref={containerRef} className="relative min-w-0 flex-1">
+    <div
+      ref={containerRef}
+      className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}
+    >
       <button
         ref={triggerRef}
         type="button"
         data-testid="project-space-context-pill"
         onClick={() => setOpen(current => !current)}
         className={[
-          'group flex h-9 w-full min-w-[44px] items-center gap-2 overflow-hidden px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-          integrated
+          'group flex w-full min-w-[44px] items-center overflow-hidden text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+          toolbar ? 'h-8 gap-1.5 rounded-lg px-2 hover:bg-background/70' : 'h-9 gap-2 px-2',
+          integrated && !toolbar
             ? 'hover:bg-background/55'
-            : 'max-w-[48rem] rounded-xl hover:bg-background/70 hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
+            : !toolbar
+              ? 'max-w-[48rem] rounded-xl hover:bg-background/70 hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
+              : '',
           open
-            ? integrated
+            ? integrated && !toolbar
               ? 'bg-background/55 text-text-primary'
-              : 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
+              : toolbar
+                ? 'bg-background/70 text-text-primary'
+                : 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
             : '',
         ].join(' ')}
         aria-expanded={open}
         aria-haspopup="menu"
         title={title}
       >
-        <LayoutDashboard className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-        {resolvedItem ? (
-          <>
-            {!goalPresent ? (
-              <span
-                data-testid="work-item-guide-summary-title"
-                className="min-w-0 truncate font-medium text-text-primary"
-              >
-                {resolvedItem.title}
-              </span>
-            ) : (
-              <span className="shrink-0 font-medium text-text-primary">
-                {t('workbench.work_item_label', '工作空间')}
-              </span>
-            )}
-            <span
-              data-testid="work-item-guide-summary-status"
-              className="shrink-0 text-xs text-text-muted"
-            >
-              · {statusLabel}
-            </span>
-            {taskSummary ? (
-              <span
-                data-testid="work-item-guide-summary-details"
-                className="min-w-0 truncate text-xs text-text-muted"
-              >
-                · {taskSummary}
-              </span>
-            ) : null}
-          </>
-        ) : bindingPending ? (
+        <LayoutDashboard
+          className={toolbar ? 'h-4 w-4 shrink-0' : 'h-4 w-4 shrink-0 text-primary'}
+          aria-hidden="true"
+        />
+        {bindingPending ? (
           <>
             <span className="shrink-0 font-medium text-text-primary">
               {t('workbench.work_item_label', '工作空间')}
@@ -203,11 +255,14 @@ export function WorkItemComposerGuide({
             </span>
           </>
         ) : (
-          <span className="min-w-0 truncate font-medium text-text-primary">
-            {t('workbench.work_item_create_title', '工作空间：新建')}
+          <span className={toolbar ? 'min-w-0 truncate' : 'min-w-0 truncate font-medium'}>
+            {project?.name ?? t('workbench.default_work_item_board', '我的任务')}
           </span>
         )}
-        <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+        <ChevronDown
+          className={toolbar ? 'h-4 w-4 shrink-0' : 'ml-auto h-4 w-4 shrink-0 text-text-muted'}
+          aria-hidden="true"
+        />
       </button>
 
       {open &&
@@ -223,160 +278,55 @@ export function WorkItemComposerGuide({
               top: menuLayout?.top ?? 0,
               visibility: menuLayout ? 'visible' : 'hidden',
             }}
-            className="fixed z-system-popover w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            className={[
+              'fixed z-system-popover max-w-[calc(100vw-2rem)] overflow-y-auto border border-border bg-background shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              toolbar ? 'w-64 rounded-xl p-1.5' : 'w-[22rem] rounded-2xl p-2',
+            ].join(' ')}
           >
-            {resolvedItem ? (
+            {projects.length > 0 && onSelectProject ? (
               <>
-                <div className="px-2 pb-2 pt-1">
-                  <div className="truncate text-sm font-semibold text-text-primary">
-                    {resolvedItem.title}
-                  </div>
-                  <div className="mt-1 text-xs text-text-muted">
-                    {statusLabel}
-                    {taskCount != null ? ` · ${taskCount} 个任务` : ''}
-                  </div>
+                <div className="px-2 pb-1 pt-1 text-xs font-medium text-text-muted">
+                  {t('workbench.workspace_label', '工作空间')}
                 </div>
-
-                {taskBindings && taskBindings.length > 0 ? (
-                  <>
-                    <div className="my-1 h-px bg-border" />
-                    <div className="px-2 pb-1 pt-1 text-xs font-medium text-text-muted">
-                      {t('workbench.tasks_in_work_item', '同一工作空间中的任务')}
-                    </div>
-                    {taskBindings.map(binding => {
-                      const current = isCurrentBinding(binding, currentTask)
-                      return (
-                        <button
-                          key={binding.id}
-                          type="button"
-                          role="menuitem"
-                          data-testid={`work-item-task-${binding.id}`}
-                          disabled={current || !onOpenTask}
-                          onClick={() => {
-                            closeMenu()
-                            void onOpenTask?.({
-                              deviceId: binding.device_id,
-                              taskId: binding.task_id,
-                            })
-                          }}
-                          className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left text-sm text-text-primary hover:bg-muted disabled:cursor-default disabled:opacity-100"
-                        >
-                          <ListTodo className="h-4 w-4 shrink-0 text-text-secondary" />
-                          <span className="min-w-0 flex-1 truncate">
-                            {binding.task_title || t('workbench.untitled_task', '未命名任务')}
-                          </span>
-                          {current ? (
-                            <span className="shrink-0 text-xs text-primary">
-                              {t('workbench.current_task', '当前任务')}
-                            </span>
-                          ) : null}
-                        </button>
-                      )
-                    })}
-                  </>
-                ) : null}
-
-                {onOpen || onOpenBoard ? (
-                  <>
-                    <div className="my-1 h-px bg-border" />
-                    {onOpen ? (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        data-testid="work-item-open-details"
-                        onClick={() => {
-                          closeMenu()
-                          onOpen()
-                        }}
-                        className="flex h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left text-sm text-text-primary hover:bg-muted"
-                      >
-                        <ListChecks className="h-4 w-4 shrink-0 text-text-secondary" />
-                        <span className="min-w-0 flex-1">
-                          {t('workbench.view_work_item_details', '查看工作空间详情')}
-                        </span>
-                      </button>
-                    ) : null}
-                    {onOpenBoard ? (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        data-testid="work-item-open-board-menu"
-                        onClick={() => {
-                          closeMenu()
-                          onOpenBoard()
-                        }}
-                        className="flex h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left text-sm text-text-primary hover:bg-muted"
-                      >
-                        <ArrowUpRight className="h-4 w-4 shrink-0 text-text-secondary" />
-                        <span className="min-w-0 flex-1">
-                          {t('workbench.open_in_work_item_board', '在工作空间中查看')}
-                        </span>
-                      </button>
-                    ) : null}
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <div className="px-2 pb-2 pt-1">
-                  <div className="text-sm font-semibold text-text-primary">
-                    {t('workbench.work_item_for_new_task', '新任务的工作空间')}
-                  </div>
-                  <div className="mt-1 text-xs leading-5 text-text-muted">
-                    {t(
-                      'workbench.work_item_new_explanation',
-                      '发送后创建一个工作空间，用来汇总后续关联的任务。'
-                    )}
-                  </div>
-                </div>
-                <div className="my-1 h-px bg-border" />
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked="true"
-                  data-testid="work-item-create-option"
-                  className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left text-sm text-text-primary hover:bg-muted"
-                >
-                  <Plus className="h-4 w-4 shrink-0 text-text-secondary" />
-                  <span className="min-w-0 flex-1">
-                    {t('workbench.create_new_work_item', '新建工作空间')}
-                  </span>
-                  <Check className="h-4 w-4 shrink-0" />
-                </button>
-                {onJoinExisting ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    data-testid="work-item-join-existing-option"
-                    onClick={() => {
-                      closeMenu()
-                      onJoinExisting()
-                    }}
-                    className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left text-sm text-text-primary hover:bg-muted"
-                  >
-                    <Link2 className="h-4 w-4 shrink-0 text-text-secondary" />
-                    <span className="min-w-0 flex-1">
-                      {t('workbench.join_existing_work_item', '加入已有工作空间')}
-                    </span>
-                  </button>
-                ) : null}
-                {onCancel ? (
+                {projects.map(option => {
+                  const selected =
+                    option.id === project?.id && option.project_store === project.project_store
+                  return (
+                    <button
+                      key={`${option.project_store}:${option.id}`}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      data-testid={`work-item-workspace-option-${String(option.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+                      onClick={() => {
+                        closeMenu()
+                        if (!selected) onSelectProject(option)
+                      }}
+                      className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
+                    >
+                      <LayoutDashboard className="h-4 w-4 shrink-0 text-text-secondary" />
+                      <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                      {selected ? <Check className="h-4 w-4 shrink-0" /> : null}
+                    </button>
+                  )
+                })}
+                {onRemoveProject ? (
                   <button
                     type="button"
                     role="menuitem"
                     data-testid="clear-project-space-context-button"
                     onClick={() => {
                       closeMenu()
-                      onCancel()
+                      onRemoveProject()
                     }}
-                    className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left text-sm text-text-muted hover:bg-muted hover:text-text-primary"
+                    className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left text-sm text-text-muted hover:bg-muted hover:text-text-primary"
                   >
                     <X className="h-4 w-4 shrink-0" />
                     <span>{t('workbench.disable_work_item', '不使用工作空间')}</span>
                   </button>
                 ) : null}
               </>
-            )}
+            ) : null}
           </div>,
           document.body
         )}

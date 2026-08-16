@@ -1,7 +1,12 @@
-import { ArrowUp, CircleDot } from 'lucide-react'
-import { useMemo, useState, type KeyboardEvent } from 'react'
+import { CircleDot, Play } from 'lucide-react'
+import { useContext, useEffect, useRef, useState } from 'react'
+import type { CloudLoopItem } from '@/api/deliveries'
+import { type ProjectChatControls } from '@/components/chat/ChatInput'
+import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { Attachment } from '@/types/api'
+import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { issueDraftFromText } from './issueComposerDraft'
 
 export interface IssueComposerBoard {
@@ -12,6 +17,8 @@ export interface IssueComposerBoard {
 interface IssueComposerProps {
   boards: IssueComposerBoard[]
   initialBoardKey: string
+  initialStatus?: CloudLoopItem['status']
+  initialStartExecution?: boolean
   busy?: boolean
   error?: string | null
   onCancel: () => void
@@ -19,46 +26,112 @@ interface IssueComposerProps {
     boardKey: string
     title: string
     description: string
-  }) => Promise<void> | void
+    files: File[]
+    startExecution: boolean
+  }) => Promise<boolean | void> | boolean | void
+}
+
+interface StagedIssueAttachment {
+  attachment: Attachment
+  file: File
+}
+
+function attachmentFromFile(file: File, id: number): Attachment {
+  const extension = file.name.includes('.') ? (file.name.split('.').pop() ?? '') : ''
+  return {
+    id,
+    filename: file.name,
+    file_size: file.size,
+    mime_type: file.type || 'application/octet-stream',
+    status: 'ready',
+    file_extension: extension,
+    created_at: new Date().toISOString(),
+  }
 }
 
 export function IssueComposer({
   boards,
   initialBoardKey,
+  initialStatus = 'inbox',
+  initialStartExecution = false,
   busy = false,
   error,
   onCancel,
   onCreate,
 }: IssueComposerProps) {
   const { t } = useTranslation()
+  const workbench = useContext(WorkbenchPaneContext)
   const [boardKey, setBoardKey] = useState(initialBoardKey)
   const [content, setContent] = useState('')
-  const draft = useMemo(() => issueDraftFromText(content), [content])
-  const canCreate = Boolean(boardKey && draft.title && !busy)
+  const [startExecution, setStartExecution] = useState(initialStartExecution)
+  const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>([])
+  const nextAttachmentId = useRef(-1)
 
-  const submit = () => {
-    if (!canCreate) return
-    void onCreate({ boardKey, ...draft })
-  }
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Escape') {
+  useEffect(() => {
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return
       event.preventDefault()
       onCancel()
-      return
     }
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-      event.preventDefault()
-      submit()
-    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [onCancel])
+
+  const projectChat: ProjectChatControls | undefined = workbench?.projectChat
+    ? {
+        ...workbench.projectChat,
+        scopeKey: `issue-composer:${boardKey}`,
+        attachments: stagedAttachments.map(item => item.attachment),
+        uploadingFiles: new Map(),
+        errors: new Map(),
+        handleFileSelect: async files => {
+          const selectedFiles = Array.isArray(files) ? files : [files]
+          setStagedAttachments(current => [
+            ...current,
+            ...selectedFiles.map(file => {
+              const id = nextAttachmentId.current
+              nextAttachmentId.current -= 1
+              return { attachment: attachmentFromFile(file, id), file }
+            }),
+          ])
+        },
+        removeAttachment: async attachmentId => {
+          setStagedAttachments(current =>
+            current.filter(item => item.attachment.id !== attachmentId)
+          )
+        },
+      }
+    : undefined
+
+  const submit = async (submittedContent?: string) => {
+    const submittedDraft = issueDraftFromText(submittedContent ?? content)
+    if (!boardKey || !submittedDraft.title || busy) return false
+    return onCreate({
+      boardKey,
+      ...submittedDraft,
+      files: stagedAttachments.map(item => item.file),
+      startExecution,
+    })
   }
+
+  const destinationLabel = startExecution
+    ? t('todo.issue_execution_destination', '创建后进入「进行中」并开始执行')
+    : t('todo.issue_status_destination', '创建到「{{status}}」', {
+        status: {
+          inbox: t('todo.status_inbox', '收集箱'),
+          pending: t('todo.status_pending', '待开始'),
+          in_progress: t('todo.status_in_progress', '进行中'),
+          in_review: t('todo.status_in_review', '待确认'),
+          completed: t('todo.status_completed', '已完成'),
+        }[initialStatus],
+      })
 
   return (
     <div
       data-testid="workspace-issue-composer"
       className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 pb-16 pt-8"
     >
-      <section className="w-full max-w-[720px]">
+      <section className="w-full max-w-[760px]">
         <header className="mb-5">
           <h1 className="text-heading-md font-medium text-text-primary">
             {t('todo.new_issue', '新建 Issue')}
@@ -68,74 +141,81 @@ export function IssueComposer({
           </p>
         </header>
 
-        <div className="overflow-visible rounded-[20px] border border-border bg-background shadow-lg">
-          <div className="flex min-h-[52px] items-center gap-2 border-b border-border px-4">
-            <span className="text-sm text-text-muted">{t('todo.issue_board_label', '放入')}</span>
-            <span className="relative inline-flex items-center">
-              <CircleDot className="pointer-events-none absolute left-3 h-3.5 w-3.5 text-blue-500" />
-              <select
-                data-testid="workspace-issue-board"
-                aria-label={t('todo.issue_board_aria', '选择 Issue 看板')}
-                value={boardKey}
-                onChange={event => setBoardKey(event.target.value)}
-                className="h-9 max-w-72 cursor-pointer appearance-none rounded-xl bg-muted py-0 pl-9 pr-8 text-sm font-medium text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
-              >
-                {boards.map(board => (
-                  <option key={board.key} value={board.key}>
-                    {board.name}
-                  </option>
-                ))}
-              </select>
-              <span className="pointer-events-none absolute right-3 text-xs text-text-muted">
-                ⌄
+        <BufferedChatInput
+          value={content}
+          onChange={setContent}
+          onSubmit={submit}
+          disabled={busy}
+          submitDisabled={busy || !boardKey}
+          error={error}
+          placeholder={t('todo.issue_placeholder', '描述你想推进的事情…')}
+          inputTestId="workspace-issue-input"
+          submitButtonTestId="workspace-issue-submit"
+          variant="desktop"
+          projectChat={projectChat}
+          showProjectWorkBar={false}
+          showWorkspaceMenu={false}
+          contextHeader={
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5">
+              <span className="shrink-0 text-xs text-text-muted">
+                {t('todo.issue_board_label', '放入')}
               </span>
-            </span>
-            <span className="ml-auto text-xs text-text-muted">
-              {t('todo.issue_inbox_destination', '创建到「收集箱」')}
-            </span>
-          </div>
+              <span className="relative inline-flex min-w-0 items-center">
+                <CircleDot className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-blue-500" />
+                <select
+                  data-testid="workspace-issue-board"
+                  aria-label={t('todo.issue_board_aria', '选择 Issue 看板')}
+                  value={boardKey}
+                  onChange={event => setBoardKey(event.target.value)}
+                  className="h-8 max-w-64 cursor-pointer appearance-none rounded-lg bg-transparent py-0 pl-8 pr-7 text-sm font-medium text-text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus/30"
+                >
+                  {boards.map(board => (
+                    <option key={board.key} value={board.key}>
+                      {board.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="pointer-events-none absolute right-2 text-xs text-text-muted">
+                  ⌄
+                </span>
+              </span>
+              <span className="ml-auto min-w-0 truncate text-xs text-text-muted">
+                {destinationLabel}
+              </span>
+            </div>
+          }
+          toolbarLeadingContext={
+            <label className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary">
+              <input
+                type="checkbox"
+                data-testid="workspace-issue-start-execution"
+                checked={startExecution}
+                onChange={event => setStartExecution(event.target.checked)}
+                className="sr-only"
+              />
+              <span
+                className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-md border',
+                  startExecution
+                    ? 'border-text-primary bg-text-primary text-background'
+                    : 'border-border text-transparent'
+                )}
+              >
+                <Play className="h-3 w-3 fill-current" />
+              </span>
+              {t('todo.issue_start_execution', '创建后开始执行')}
+            </label>
+          }
+        />
 
-          <textarea
-            data-testid="workspace-issue-input"
-            value={content}
-            autoFocus
-            onChange={event => setContent(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('todo.issue_placeholder', '描述你想推进的事情…')}
-            className="block min-h-[168px] w-full resize-none bg-transparent px-5 py-5 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted/70"
-          />
-
-          <footer className="flex min-h-[56px] items-center gap-2 px-3 pb-3">
-            <span className="px-2 text-xs text-text-muted">
-              {t('todo.issue_followup_hint', '标题、参与者和执行步骤可在创建后补充')}
-            </span>
-            <button
-              type="button"
-              data-testid="workspace-issue-submit"
-              aria-label={t('todo.create_issue', '创建 Issue')}
-              disabled={!canCreate}
-              onClick={submit}
-              className={cn(
-                'ml-auto flex h-10 w-10 items-center justify-center rounded-xl transition',
-                canCreate
-                  ? 'bg-text-primary text-background hover:opacity-90'
-                  : 'cursor-not-allowed bg-muted text-text-muted'
-              )}
-            >
-              <ArrowUp className="h-5 w-5" />
-            </button>
-          </footer>
-        </div>
-
-        {error ? (
-          <p data-testid="workspace-issue-error" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        ) : (
+        {!error ? (
           <p className="mt-3 text-center text-xs text-text-muted">
-            {t('todo.issue_create_shortcut', '⌘ Enter 创建 Issue')}
+            {t(
+              'todo.issue_composer_hint',
+              '第一行作为 Issue 标题；附件、插件和模型与新建任务保持一致'
+            )}
           </p>
-        )}
+        ) : null}
       </section>
     </div>
   )

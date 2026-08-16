@@ -228,6 +228,18 @@ class ProjectAutomationRun(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "automation_run"}
 
 
+class ProjectIncomingHook(LoopNode):
+    """An opaque project endpoint that turns external events into loop items."""
+
+    __mapper_args__ = {"polymorphic_identity": "incoming_hook"}
+
+
+class ProjectIncomingEvent(LoopNode):
+    """One deduplicated delivery received by a project incoming hook."""
+
+    __mapper_args__ = {"polymorphic_identity": "incoming_event"}
+
+
 class CloudProjectLocalBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "local_binding"}
 

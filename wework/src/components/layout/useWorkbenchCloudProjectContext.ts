@@ -263,8 +263,6 @@ export function useWorkbenchCloudProjectContext({
   const [boundCloudItem, setBoundCloudItem] = useState<CloudLoopItem | null>(null)
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false)
-  const [todoBindingPickerOpen, setTodoBindingPickerOpen] = useState(false)
-  const [deliverAfterBinding, setDeliverAfterBinding] = useState(false)
   const [pendingTodoItem, setPendingTodoItem] = useState<CloudLoopItem | null>(() =>
     pendingTodoForTask(contextRuntimeTask)
   )
@@ -869,27 +867,8 @@ export function useWorkbenchCloudProjectContext({
   }, [defaultCloudProjectSelectionKey, setPendingCloudContext])
 
   const openDelivery = useCallback(() => {
-    if (activeDeliveryItem) {
-      setDeliveryDialogOpen(true)
-      return
-    }
-    setDeliverAfterBinding(true)
-    setTodoBindingPickerOpen(true)
+    if (activeDeliveryItem) setDeliveryDialogOpen(true)
   }, [activeDeliveryItem])
-
-  const openTodoManager = useCallback(() => {
-    if (boundCloudItem) {
-      openBoundProjectSpaceTask()
-      return
-    }
-    setDeliverAfterBinding(false)
-    setTodoBindingPickerOpen(true)
-  }, [boundCloudItem, openBoundProjectSpaceTask])
-
-  const closeTodoBindingPicker = useCallback(() => {
-    setTodoBindingPickerOpen(false)
-    setDeliverAfterBinding(false)
-  }, [])
 
   const clearCloudActionNotice = useCallback(() => setCloudActionNotice(null), [])
   const clearTodoBindingError = useCallback(() => setTodoBindingError(null), [])
@@ -899,18 +878,38 @@ export function useWorkbenchCloudProjectContext({
     (project: CloudProject | null, item: CloudLoopItem | null) => {
       if (!contextRuntimeTask) {
         setPendingCloudContext(project, item)
-        setTodoBindingPickerOpen(false)
         return
       }
       setBoundCloudProject(project)
       setBoundCloudItem(item)
       setDeliveryItem(item ? cloudItemAsLocalWorkItem(item, contextRuntimeTask) : null)
-      setTodoBindingPickerOpen(false)
-      if (item && deliverAfterBinding) setDeliveryDialogOpen(true)
-      setDeliverAfterBinding(false)
     },
-    [contextRuntimeTask, deliverAfterBinding, setPendingCloudContext]
+    [contextRuntimeTask, setPendingCloudContext]
   )
+
+  const removeCloudProjectContext = useCallback(() => {
+    if (!contextRuntimeTask) {
+      clearPendingProjectContext()
+      return
+    }
+    if (!boundCloudProject) return
+    const api = projectSpaceApiFor(boundCloudProject)
+    if (!api) return
+    void api
+      .unbindCloudContext(contextRuntimeTask)
+      .then(() => {
+        setBoundCloudProject(null)
+        setBoundCloudItem(null)
+        setDeliveryItem(null)
+      })
+      .catch(cause => {
+        setTodoBindingError(
+          cause instanceof Error
+            ? cause.message
+            : t('workbench.cloud_project_unbind_failed', '从工作空间移除失败')
+        )
+      })
+  }, [boundCloudProject, clearPendingProjectContext, contextRuntimeTask, projectSpaceApiFor, t])
 
   return {
     activeDeliveryItem,
@@ -921,8 +920,8 @@ export function useWorkbenchCloudProjectContext({
     clearPendingProjectContext,
     clearTodoBindingError,
     closeDeliveryDialog,
-    closeTodoBindingPicker,
     cloudActionNotice,
+    cloudProjects,
     cloudProjectMentionCandidates,
     composerCloudProject,
     defaultProject,
@@ -932,13 +931,11 @@ export function useWorkbenchCloudProjectContext({
     handleTodoBound,
     openDelivery,
     openBoundProjectSpaceTask,
-    openTodoManager,
     pendingCloudProject,
     pendingTodoItem,
     prepareSubmission,
-    todoBindingApis,
+    removeCloudProjectContext,
     todoBindingError,
-    todoBindingPickerOpen,
     visibleCloudMentionCandidates,
   }
 }

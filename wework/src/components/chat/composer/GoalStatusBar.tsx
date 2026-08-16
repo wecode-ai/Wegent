@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
+import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeGoal, RuntimeGoalStatus } from '@/types/api'
 
@@ -37,6 +37,7 @@ export function GoalStatusBar({
     : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const timerKey = goalTimerKey(goal)
   const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
+  const [actionsRevealed, setActionsRevealed] = useState(false)
   const elapsedSeconds = useMemo(
     () => getLiveElapsedSeconds(goal, timerState, timerKey),
     [goal, timerKey, timerState]
@@ -46,7 +47,7 @@ export function GoalStatusBar({
   const canToggle = goal.status === 'active' || resumable
   const ToggleIcon = resumable ? Play : Pause
   const toggleLabel = resumable
-    ? t('workbench.goal_resume', '继续目标')
+    ? t('workbench.goal_start', '开始目标')
     : t('workbench.goal_pause', '暂停目标')
   const toggleAction = resumable ? onResumeGoal : onPauseGoal
 
@@ -65,6 +66,12 @@ export function GoalStatusBar({
   return (
     <div
       data-testid="goal-status-bar"
+      onMouseEnter={() => setActionsRevealed(true)}
+      onMouseLeave={() => setActionsRevealed(false)}
+      onFocus={() => setActionsRevealed(true)}
+      onBlur={event => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setActionsRevealed(false)
+      }}
       className={[
         'group flex h-8 min-w-0 items-center gap-1.5 overflow-hidden px-2.5 text-xs text-text-secondary',
         integrated
@@ -79,7 +86,9 @@ export function GoalStatusBar({
         </span>
         <span className="ml-1 min-w-0 truncate text-text-secondary">· {goal.objective}</span>
       </div>
-      <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
+      {!canToggle && (
+        <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
+      )}
       {elapsed && <span className="shrink-0 text-text-muted">{elapsed}</span>}
       <div
         id="goal-status-details"
@@ -97,19 +106,6 @@ export function GoalStatusBar({
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
-        {canToggle && (
-          <button
-            type="button"
-            data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
-            onClick={toggleAction}
-            disabled={!toggleAction}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={toggleLabel}
-            title={toggleLabel}
-          >
-            <ToggleIcon className="h-3.5 w-3.5" />
-          </button>
-        )}
         <button
           type="button"
           data-testid="clear-goal-button"
@@ -122,6 +118,38 @@ export function GoalStatusBar({
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
+      {canToggle && (
+        <button
+          type="button"
+          data-testid={resumable ? 'resume-goal-button' : 'pause-goal-button'}
+          onClick={toggleAction}
+          disabled={!toggleAction}
+          className="group/goal-toggle flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background/70 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={toggleLabel}
+          title={toggleLabel}
+        >
+          {resumable ? (
+            <ToggleIcon className="h-3.5 w-3.5" />
+          ) : (
+            <span className="relative inline-flex h-3.5 w-3.5">
+              <CircleDot
+                data-testid="goal-running-icon"
+                className={[
+                  'absolute inset-0 h-3.5 w-3.5 text-primary transition-opacity',
+                  actionsRevealed ? 'opacity-0' : 'opacity-100',
+                ].join(' ')}
+              />
+              <Pause
+                data-testid="goal-pause-icon"
+                className={[
+                  'absolute inset-0 h-3.5 w-3.5 transition-opacity',
+                  actionsRevealed ? 'opacity-100' : 'opacity-0',
+                ].join(' ')}
+              />
+            </span>
+          )}
+        </button>
+      )}
     </div>
   )
 }

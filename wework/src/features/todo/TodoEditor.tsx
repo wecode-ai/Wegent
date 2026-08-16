@@ -482,7 +482,7 @@ export interface TodoEditorEditProps {
   item: CloudLoopItem
   project?: CloudProject
   onUpdated: (item: CloudLoopItem) => void
-  onAddChild: () => void
+  onAddChild?: () => void
 }
 
 export type TodoEditorProps = {
@@ -495,6 +495,12 @@ export type TodoEditorProps = {
   localProjects?: ProjectWithTasks[]
   allItems: CloudLoopItem[]
   onClose: () => void
+  presentation?: 'modal' | 'workspace-panel'
+  workspacePanelFill?: boolean
+  showPanelControls?: boolean
+  headerActions?: ReactNode
+  selectedTaskId?: string | null
+  onCreateTask?: () => void
   onOpenTaskConversation?: (task: {
     id: number
     device_id: string
@@ -513,6 +519,8 @@ export function TodoEditor(props: TodoEditorProps) {
   const createProps = props.mode === 'create' ? props : null
   const editProps = props.mode === 'edit' ? props : null
   const isCreate = createProps !== null
+  const workspacePanel = props.presentation === 'workspace-panel'
+  const showPanelControls = props.showPanelControls !== false
   const item = editProps?.item ?? null
   const isAITableEdit = item !== null && editProps?.project?.task_provider === 'dingtalk_aitable'
   const project = createProps?.project ?? editProps?.project
@@ -1434,14 +1442,21 @@ export function TodoEditor(props: TodoEditorProps) {
   return (
     <div
       className={cn(
-        'fixed z-modal flex items-start justify-center',
+        'flex items-start justify-center',
         fullScreen
-          ? 'inset-0 bg-black/35 p-3 backdrop-blur-sm'
-          : twoColumn
-            ? 'bottom-0 right-0 top-[38px] w-[min(760px,calc(100vw-48px))]'
-            : 'inset-0 bg-black/35 px-6 pb-6 pt-[6vh] backdrop-blur-sm'
+          ? 'fixed inset-0 z-modal bg-black/35 p-3 backdrop-blur-sm'
+          : workspacePanel
+            ? cn(
+                'task-detail-workspace-panel-shell relative z-10 h-full min-h-0 shrink-0',
+                props.workspacePanelFill ? 'w-full min-w-0' : 'w-[min(480px,32vw)] min-w-[380px]'
+              )
+            : twoColumn
+              ? 'fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))]'
+              : 'fixed inset-0 z-modal bg-black/35 px-6 pb-6 pt-[6vh] backdrop-blur-sm'
       )}
-      onMouseDown={event => event.currentTarget === event.target && onClose()}
+      onMouseDown={event => {
+        if (!workspacePanel && event.currentTarget === event.target) onClose()
+      }}
     >
       <section
         data-testid={isCreate ? 'cloud-todo-create-panel' : 'cloud-todo-detail'}
@@ -1449,12 +1464,14 @@ export function TodoEditor(props: TodoEditorProps) {
           'flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
           fullScreen
             ? 'h-full w-full'
-            : cn(
-                'max-w-[calc(100vw-48px)]',
-                twoColumn
-                  ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-xl'
-                  : cn('max-h-[88vh]', isAITableEdit ? 'w-[1080px]' : 'w-[760px]')
-              )
+            : workspacePanel
+              ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-none'
+              : cn(
+                  'max-w-[calc(100vw-48px)]',
+                  twoColumn
+                    ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-xl'
+                    : cn('max-h-[88vh]', isAITableEdit ? 'w-[1080px]' : 'w-[760px]')
+                )
         )}
         onKeyDown={handleKeyDown}
         onDragOver={event => event.preventDefault()}
@@ -1487,6 +1504,7 @@ export function TodoEditor(props: TodoEditorProps) {
             </button>
           )}
           <span className="flex-1" />
+          {props.headerActions}
           {twoColumn && !isCreate ? (
             <>
               {dirty || saving ? (
@@ -1502,37 +1520,49 @@ export function TodoEditor(props: TodoEditorProps) {
               ) : null}
             </>
           ) : null}
-          <button
-            type="button"
-            data-testid={isCreate ? 'cloud-todo-create-fullscreen' : 'cloud-todo-detail-fullscreen'}
-            onClick={() => setFullScreen(current => !current)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            aria-label={fullScreen ? '退出全屏' : '全屏显示'}
-          >
-            {fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </button>
-          <button
-            type="button"
-            data-testid={isCreate ? 'cloud-todo-modal-close' : 'cloud-todo-detail-close'}
-            onClick={onClose}
-            className="-mr-1 flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            aria-label={isCreate ? '关闭' : '关闭任务详情'}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {showPanelControls ? (
+            <>
+              <button
+                type="button"
+                data-testid={
+                  isCreate ? 'cloud-todo-create-fullscreen' : 'cloud-todo-detail-fullscreen'
+                }
+                onClick={() => setFullScreen(current => !current)}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                aria-label={fullScreen ? '退出全屏' : '全屏显示'}
+              >
+                {fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </button>
+              <button
+                type="button"
+                data-testid={isCreate ? 'cloud-todo-modal-close' : 'cloud-todo-detail-close'}
+                onClick={onClose}
+                className="-mr-1 flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                aria-label={isCreate ? '关闭' : '关闭任务详情'}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </>
+          ) : null}
         </header>
 
         <div
           className={cn(
             'min-h-0 flex-1',
             twoColumn
-              ? 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-visible'
+              ? workspacePanel
+                ? 'grid grid-cols-1 overflow-hidden bg-background'
+                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-visible'
               : 'overflow-y-auto'
           )}
         >
           <div
             ref={twoColumn ? detailScrollRef : undefined}
-            className={cn('pb-6 pt-2.5', twoColumn ? 'task-detail-left md:min-h-0' : 'px-14')}
+            className={cn(
+              'pb-6 pt-2.5',
+              twoColumn ? 'task-detail-left md:min-h-0' : 'px-14',
+              workspacePanel && 'task-detail-workspace-panel'
+            )}
           >
             <div className={cn(twoColumn && 'task-detail-left-inner')}>
               {twoColumn && item ? (
@@ -1691,6 +1721,168 @@ export function TodoEditor(props: TodoEditorProps) {
               ) : null}
               {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
 
+              {workspacePanel && item ? (
+                <>
+                  <section className="mt-6" data-testid="cloud-todo-tasks">
+                    <div className="flex h-8 items-center gap-2">
+                      <h3 className="text-sm font-semibold text-text-primary">任务</h3>
+                      <span className="text-xs text-text-muted">{tasks.length}</span>
+                      {props.onCreateTask ? (
+                        <button
+                          type="button"
+                          data-testid="cloud-todo-create-task"
+                          onClick={props.onCreateTask}
+                          className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          新建任务
+                        </button>
+                      ) : null}
+                    </div>
+                    {tasks.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                        尚未关联任务
+                      </p>
+                    ) : (
+                      <div className="mt-1 space-y-1">
+                        {tasks.map(task => {
+                          const selected = props.selectedTaskId === task.task_id
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              data-testid={`cloud-todo-open-task-conversation-${task.id}`}
+                              data-selected={selected ? 'true' : 'false'}
+                              onClick={() => props.onOpenTaskConversation?.(task)}
+                              className={cn(
+                                'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition',
+                                selected
+                                  ? 'border-blue-500/50 bg-blue-500/5'
+                                  : 'border-transparent hover:bg-muted'
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  'h-2 w-2 shrink-0 rounded-full',
+                                  selected ? 'bg-blue-500' : 'bg-text-muted'
+                                )}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span
+                                  className="block truncate text-sm font-medium text-text-primary"
+                                  title={task.task_title || task.task_id}
+                                >
+                                  {task.task_title || task.task_id}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                  {task.device_id} · {selected ? '当前会话' : '点击展开会话'}
+                                </span>
+                              </span>
+                              <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="mt-6" data-testid="cloud-todo-children">
+                    <div className="flex h-8 items-center gap-2">
+                      <h3 className="text-sm font-semibold text-text-primary">子 Issue</h3>
+                      <span className="text-xs text-text-muted">
+                        {childItems.length > 0
+                          ? `${completedChildCount}/${childItems.length}`
+                          : childItems.length}
+                      </span>
+                      {editProps?.onAddChild ? (
+                        <button
+                          type="button"
+                          data-testid="cloud-todo-detail-add-child"
+                          onClick={editProps.onAddChild}
+                          className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          添加
+                        </button>
+                      ) : null}
+                    </div>
+                    {childItems.length > 0 ? (
+                      <div className="mt-1 space-y-1">
+                        {childItems.map(child => (
+                          <div
+                            key={child.id}
+                            className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm hover:bg-muted"
+                          >
+                            <span
+                              className={cn(
+                                'h-2 w-2 shrink-0 rounded-full',
+                                columnDotClasses[child.status]
+                              )}
+                            />
+                            <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                            <span className="shrink-0 text-xs text-text-muted">
+                              {columns.find(column => column.status === child.status)?.label}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <details className="mt-6 border-t border-border pt-3">
+                    <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary">
+                      更多属性
+                      <ChevronDown className="ml-auto h-4 w-4" />
+                    </summary>
+                    <div className="mt-1 grid grid-cols-1 gap-0.5 px-1">{railProps}</div>
+                  </details>
+
+                  <div className="mt-4">
+                    <TodoAttachmentSection
+                      attachments={visibleAttachments}
+                      busy={attachmentBusy}
+                      error={attachmentError}
+                      editable
+                      compactRail
+                      onAdd={addAttachments}
+                      onOpen={openAttachment}
+                      onRemove={removeAttachment}
+                    />
+                  </div>
+
+                  {deliveries.length > 0 ? (
+                    <section className="mt-4 border-t border-border pt-3">
+                      <div className="flex h-8 items-center gap-2">
+                        <h3 className="text-sm font-semibold text-text-primary">交付</h3>
+                        <span className="text-xs text-text-muted">{deliveries.length}</span>
+                      </div>
+                      <div className="space-y-1">
+                        {deliveries.map(delivery => (
+                          <button
+                            key={delivery.id}
+                            type="button"
+                            onClick={() =>
+                              void api.getDelivery(delivery.id).then(setSelectedDelivery)
+                            }
+                            className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted"
+                          >
+                            <FileText className="h-4 w-4 shrink-0 text-text-muted" />
+                            <span className="min-w-0 flex-1 truncate">
+                              {delivery.assets.length > 0
+                                ? `${delivery.assets.length} 个附件`
+                                : '交付结果'}
+                            </span>
+                            <span className="shrink-0 text-xs text-text-muted">
+                              {delivery.delivered_at?.slice(0, 10)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                </>
+              ) : null}
+
               {twoColumn && item && editProps?.project?.task_provider !== 'dingtalk_aitable'
                 ? (activityView ?? (
                     <section
@@ -1738,14 +1930,16 @@ export function TodoEditor(props: TodoEditorProps) {
                             ? `${completedChildCount}/${childItems.length}`
                             : childItems.length}
                         </span>
-                        <button
-                          type="button"
-                          data-testid="cloud-todo-detail-add-child"
-                          onClick={() => editProps?.onAddChild()}
-                          className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary"
-                        >
-                          <Plus className="h-3 w-3" /> 新建子任务
-                        </button>
+                        {editProps?.onAddChild ? (
+                          <button
+                            type="button"
+                            data-testid="cloud-todo-detail-add-child"
+                            onClick={editProps.onAddChild}
+                            className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary"
+                          >
+                            <Plus className="h-3 w-3" /> 新建子任务
+                          </button>
+                        ) : null}
                       </div>
                       {twoColumn && childItems.length > 0 ? (
                         <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -1936,7 +2130,7 @@ export function TodoEditor(props: TodoEditorProps) {
               )}
             </div>
           </div>
-          {twoColumn ? (
+          {twoColumn && !workspacePanel ? (
             <aside
               data-testid="cloud-todo-detail-activity-rail"
               className="task-detail-slim-rail flex min-h-0 flex-col border-t border-border bg-muted/40 md:border-l md:border-t-0"
@@ -1957,14 +2151,16 @@ export function TodoEditor(props: TodoEditorProps) {
                           ? `${completedChildCount}/${childItems.length}`
                           : childItems.length}
                       </span>
-                      <button
-                        type="button"
-                        data-testid="cloud-todo-detail-add-child"
-                        onClick={() => editProps?.onAddChild()}
-                        className="add"
-                      >
-                        ＋ 添加
-                      </button>
+                      {editProps?.onAddChild ? (
+                        <button
+                          type="button"
+                          data-testid="cloud-todo-detail-add-child"
+                          onClick={editProps.onAddChild}
+                          className="add"
+                        >
+                          ＋ 添加
+                        </button>
+                      ) : null}
                     </div>
                     {childItems.length > 0 ? (
                       <div className="progress-track">

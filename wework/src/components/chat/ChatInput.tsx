@@ -186,6 +186,7 @@ export interface ChatInputProps {
   inputLeadingContext?: ReactNode
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
   projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
@@ -588,6 +589,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     inputLeadingContext,
     onDismissInputLeadingContext,
     toolbarLeadingContext,
+    projectWorkBarMiddleContext,
     projectWorkBarTrailingContext,
     projectWorkBarEndContext,
     modelSelectorOverride,
@@ -948,6 +950,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
             }
           }
           showProjectWorkBar={showProjectWorkBar}
+          projectWorkBarMiddleContext={projectWorkBarMiddleContext}
           projectWorkBarTrailingContext={projectWorkBarTrailingContext}
           projectWorkBarEndContext={projectWorkBarEndContext}
           modelSelectorOverride={modelSelectorOverride}

@@ -3085,12 +3085,25 @@ describe('ChatInput', () => {
     )
 
     const bar = screen.getByTestId('goal-status-bar')
-    expect(bar).toHaveTextContent('进行中')
+    const details = screen.getByTestId('goal-status-details')
+    const pauseButton = screen.getByTestId('pause-goal-button')
+    expect(bar).not.toHaveTextContent('进行中')
     expect(bar).toHaveTextContent('实现 plan 里的功能')
     expect(bar).toHaveTextContent('2m 58s')
+    expect(pauseButton).toHaveAccessibleName('暂停目标')
+    expect(details).not.toContainElement(pauseButton)
+    expect(details).toContainElement(screen.getByTestId('edit-goal-button'))
+    expect(details).toContainElement(screen.getByTestId('clear-goal-button'))
+    expect(details.compareDocumentPosition(pauseButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getByTestId('goal-running-icon')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('goal-pause-icon')).toHaveClass('absolute', 'inset-0', 'opacity-0')
+
+    fireEvent.mouseEnter(bar)
+    expect(screen.getByTestId('goal-running-icon')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('goal-pause-icon')).toHaveClass('opacity-100')
 
     await userEvent.click(screen.getByTestId('edit-goal-button'))
-    await userEvent.click(screen.getByTestId('pause-goal-button'))
+    await userEvent.click(pauseButton)
     await userEvent.click(screen.getByTestId('clear-goal-button'))
 
     expect(onEditGoal).toHaveBeenCalledTimes(1)
@@ -3183,8 +3196,45 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('继续执行中')
+    expect(screen.getByTestId('goal-status-bar')).not.toHaveTextContent('继续执行中')
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
+  })
+
+  test('replaces the paused status text with an always-visible start action', async () => {
+    const onResumeGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={{
+          threadId: 'thread-1',
+          objective: '继续完成目标',
+          status: 'paused',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 12,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+        onResumeGoal={onResumeGoal}
+      />
+    )
+
+    const bar = screen.getByTestId('goal-status-bar')
+    const details = screen.getByTestId('goal-status-details')
+    const startButton = screen.getByTestId('resume-goal-button')
+    expect(bar).not.toHaveTextContent('已暂停')
+    expect(startButton).toHaveAccessibleName('开始目标')
+    expect(details).not.toContainElement(startButton)
+    expect(screen.queryByTestId('goal-running-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('goal-pause-icon')).not.toBeInTheDocument()
+
+    await userEvent.click(startButton)
+    expect(onResumeGoal).toHaveBeenCalledOnce()
   })
 
   test('offers the resume action for a blocked goal', async () => {

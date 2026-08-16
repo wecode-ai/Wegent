@@ -112,6 +112,34 @@ const runtimeWork: RuntimeWorkListResponse = {
 }
 
 describe('ProjectWorkBar', () => {
+  test('orders project, workspace, and execution context by user decision flow', () => {
+    render(
+      <ProjectWorkBar
+        devices={[localDevice]}
+        currentProject={null}
+        executionMode="current_workspace"
+        isGitProject={false}
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        middleContext={<button data-testid="workspace-context">我的任务</button>}
+        trailingContext={<button data-testid="execution-context">Codex</button>}
+      />
+    )
+
+    const bar = screen.getByTestId('project-work-bar')
+    const orderedControls = Array.from(
+      bar.querySelectorAll(
+        '[data-testid="workspace-context"], [data-testid="project-work-button"], [data-testid="execution-context"]'
+      )
+    ).map(element => element.getAttribute('data-testid'))
+
+    expect(orderedControls).toEqual([
+      'project-work-button',
+      'workspace-context',
+      'execution-context',
+    ])
+  })
+
   test('renders the work-item dropdown after execution mode and branch controls', () => {
     render(
       <ProjectWorkBar

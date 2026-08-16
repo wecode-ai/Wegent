@@ -313,6 +313,30 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="workspace-issue-composer"] [data-testid="project-chat-composer"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="workspace-issue-composer"] [data-testid="attachment-file-input"]`,
+    {
+      visible: false,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="workspace-issue-start-execution"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await control.command('fill', `${boardContentSelector} [data-testid="workspace-issue-input"]`, {
     value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace issue creation verified',
   })
@@ -373,7 +397,7 @@ async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
   assert.ok(taskTabTestId, 'The active task tab identity was unavailable before association setup')
 
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
-    text: '工作空间：新建',
+    text: '我的任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-01-new-task.png')

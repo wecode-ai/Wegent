@@ -108,6 +108,7 @@ interface ProjectWorkBarProps {
   projectMenuOpenSignal?: number
   externalMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
+  middleContext?: ReactNode
   trailingContext?: ReactNode
   endContext?: ReactNode
 }
@@ -144,6 +145,7 @@ export function ProjectWorkBar({
   projectMenuOpenSignal,
   externalMenuOpenSignal,
   projectMenuAnchorElement = null,
+  middleContext,
   trailingContext,
   endContext,
 }: ProjectWorkBarProps) {
@@ -998,6 +1000,7 @@ export function ProjectWorkBar({
           </button>
         )}
       </div>
+      {middleContext}
       {trailingContext}
       {projectExecutionUi.canShowModeControl && (
         <div

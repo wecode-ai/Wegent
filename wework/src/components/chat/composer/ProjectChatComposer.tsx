@@ -110,6 +110,7 @@ interface ProjectChatComposerProps {
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
   projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
@@ -183,6 +184,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
+      projectWorkBarMiddleContext,
       projectWorkBarTrailingContext,
       projectWorkBarEndContext,
       modelSelectorOverride,
@@ -344,6 +346,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            middleContext={projectWorkBarMiddleContext}
             trailingContext={projectWorkBarTrailingContext}
             endContext={projectWorkBarEndContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"

@@ -25,12 +25,16 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   TemporaryChatPanel: ({
     currentProject,
     createTask,
+    initialInput,
+    autoSubmitInitialInput,
     initialAddress,
     onAddressChange,
     sendEphemeral,
     testId,
   }: {
     currentProject: ProjectWithTasks | null
+    initialInput?: string
+    autoSubmitInitialInput?: boolean
     createTask?: (
       message: string,
       options: {
@@ -74,6 +78,8 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
         <div
           data-testid="mock-chat-panel"
           data-project-id={currentProject?.id ?? ''}
+          data-initial-input={initialInput ?? ''}
+          data-auto-submit={autoSubmitInitialInput ? 'yes' : 'no'}
           data-mount-id={mountId}
           data-has-initial-address={initialAddress ? 'yes' : 'no'}
           data-send-ephemeral={sendEphemeral === false ? 'no' : 'yes'}
@@ -126,6 +132,47 @@ const task = {
 }
 
 describe('AiChatModal', () => {
+  it('keeps the original title as an unsent draft when a work item moves to pending', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskInput="Implement cloud MCP"
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-input',
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'no')
+  })
+
+  it('submits the original title immediately when a work item moves to in progress', () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskInput="Implement cloud MCP"
+        autoSubmitInitialTaskInput
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
+      'data-initial-input',
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'yes')
+  })
+
   it('always creates private AI conversations with the Codex runtime', async () => {
     render(
       <AiChatModal

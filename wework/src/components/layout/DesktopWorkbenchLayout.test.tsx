@@ -2180,7 +2180,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
-      '工作空间：新建'
+      'Task Follow-up Board'
     )
   })
 
@@ -2241,7 +2241,7 @@ describe('DesktopWorkbenchLayout', () => {
     const workItemGuide = await screen.findByTestId('project-space-context-pill')
     const composerInput = screen.getByTestId('chat-message-input')
     expect(workItemGuide).toHaveTextContent('工作空间')
-    expect(workItemGuide).toHaveAttribute('title', '工作空间：新建')
+    expect(workItemGuide).toHaveAttribute('title', '工作空间')
     expect(workItemGuide.compareDocumentPosition(composerInput)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )

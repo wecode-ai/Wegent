@@ -920,7 +920,7 @@ function getRightWorkspaceTabLabel(
     )
   }
   if (tab === 'plan') return t('workbench.workspace_tab_plan', '计划')
-  if (tab === 'work-item') return t('workbench.work_item', '工作空间')
+  if (tab === 'work-item') return t('workbench.work_item_detail', 'Issue 详情')
   return t('workbench.workspace_tab_files', '文件')
 }
 

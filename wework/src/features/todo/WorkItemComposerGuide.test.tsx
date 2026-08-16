@@ -13,6 +13,13 @@ const project = {
   project_store: 'local',
 } as CloudProject
 
+const teamProject = {
+  ...project,
+  id: 'team-work',
+  project_key: 'TEAM',
+  name: '团队研发',
+} as CloudProject
+
 const item = {
   id: 'WORK-1',
   title: '完成默认工作项流程',
@@ -46,22 +53,40 @@ const taskBindings = [
 ]
 
 describe('WorkItemComposerGuide', () => {
-  test('shows a meaningful new-work-item choice without exposing the board name', async () => {
+  test('shows the default workspace as the selected destination for a new task', async () => {
     const user = userEvent.setup()
-    const onJoinExisting = vi.fn()
-    render(<WorkItemComposerGuide onJoinExisting={onJoinExisting} />)
-
-    expect(screen.getByTestId('project-space-context-pill')).toHaveTextContent('工作空间：新建')
-    expect(screen.getByTestId('project-space-context-pill')).not.toHaveTextContent('我的任务')
-
-    await user.click(screen.getByTestId('project-space-context-pill'))
-    expect(screen.getByTestId('work-item-context-menu')).toHaveTextContent(
-      '发送后创建一个工作空间，用来汇总后续关联的任务。'
+    const onSelectProject = vi.fn()
+    render(
+      <WorkItemComposerGuide
+        project={project}
+        projects={[project, teamProject]}
+        toolbar
+        onSelectProject={onSelectProject}
+      />
     )
-    expect(screen.getByTestId('work-item-create-option')).toHaveAttribute('aria-checked', 'true')
 
-    await user.click(screen.getByTestId('work-item-join-existing-option'))
-    expect(onJoinExisting).toHaveBeenCalledOnce()
+    const trigger = screen.getByTestId('project-space-context-pill')
+    expect(trigger).toHaveTextContent('我的任务')
+    expect(trigger).toHaveClass(
+      'h-8',
+      'gap-1.5',
+      'rounded-lg',
+      'px-2',
+      'text-sm',
+      'font-normal',
+      'text-text-secondary'
+    )
+    expect(trigger).not.toHaveClass('text-primary', 'font-medium')
+
+    await user.click(trigger)
+    expect(screen.getByTestId('work-item-workspace-option-work-items')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(screen.getByTestId('work-item-workspace-option-team-work')).toHaveTextContent('团队研发')
+
+    await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+    expect(onSelectProject).toHaveBeenCalledWith(teamProject)
   })
 
   test('uses the goal as primary context and only shows work-item status plus sibling tasks', async () => {
@@ -117,9 +142,7 @@ describe('WorkItemComposerGuide', () => {
     expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('等待确认')
   })
 
-  test('lists sibling tasks, marks the current task, and opens another task', async () => {
-    const user = userEvent.setup()
-    const onOpenTask = vi.fn()
+  test('summarizes sibling tasks without opening a second menu', async () => {
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
       findCloudContextForTask: vi.fn().mockResolvedValue(null),
@@ -130,31 +153,36 @@ describe('WorkItemComposerGuide', () => {
         item={item}
         api={api}
         currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        onOpenTask={onOpenTask}
       />
     )
 
-    await waitFor(() => expect(api.listTaskBindings).toHaveBeenCalledWith('WORK-1'))
-    await user.click(screen.getByTestId('project-space-context-pill'))
-
-    expect(screen.getByTestId('work-item-task-1')).toHaveTextContent('当前任务')
-    expect(screen.getByTestId('work-item-task-1')).toBeDisabled()
-    await user.click(screen.getByTestId('work-item-task-2'))
-
-    expect(onOpenTask).toHaveBeenCalledWith({
-      deviceId: 'local-device',
-      taskId: 'runtime-2',
-    })
+    await waitFor(() =>
+      expect(screen.getByTestId('work-item-guide-summary-details')).toHaveTextContent(
+        '2 个任务，还有 1 个'
+      )
+    )
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('work-item-task-1')).not.toBeInTheDocument()
   })
 
-  test('opens the work-item context from its dropdown action', async () => {
+  test('exposes direct actions for details and the full workspace', async () => {
     const user = userEvent.setup()
     const onOpen = vi.fn()
-    render(<WorkItemComposerGuide item={item} onOpen={onOpen} />)
+    const onOpenBoard = vi.fn()
+    render(<WorkItemComposerGuide item={item} onOpen={onOpen} onOpenBoard={onOpenBoard} />)
 
-    await user.click(screen.getByTestId('project-space-context-pill'))
-    await user.click(screen.getByTestId('work-item-open-details'))
+    const detailsButton = screen.getByTestId('work-item-open-details')
+    const workspaceButton = screen.getByTestId('work-item-open-board-menu')
+    expect(detailsButton).toHaveAccessibleName('查看 Issue 详情')
+    expect(workspaceButton).toHaveAccessibleName('在工作空间中打开')
+    expect(detailsButton).toHaveTextContent('')
+    expect(workspaceButton).toHaveTextContent('')
 
+    await user.click(detailsButton)
     expect(onOpen).toHaveBeenCalledOnce()
+
+    await user.click(workspaceButton)
+    expect(onOpenBoard).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
   })
 })

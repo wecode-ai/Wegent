@@ -1,10 +1,73 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
+
 import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectSpaceApi } from './projectSpaceSelection'
 import { WorkItemContextPanel } from './WorkItemContextPanel'
+
+vi.mock('./TodoEditor', () => ({
+  TodoEditor: ({
+    item,
+    allItems,
+    presentation,
+    workspacePanelFill,
+    showPanelControls,
+    headerActions,
+    selectedTaskId,
+    onUpdated,
+    onOpenTaskConversation,
+  }: {
+    item: CloudLoopItem
+    allItems: CloudLoopItem[]
+    presentation?: string
+    workspacePanelFill?: boolean
+    showPanelControls?: boolean
+    headerActions?: React.ReactNode
+    selectedTaskId?: string | null
+    onUpdated: (item: CloudLoopItem) => void
+    onOpenTaskConversation?: (task: {
+      id: number
+      device_id: string
+      task_id: string
+      task_title: string | null
+    }) => void
+  }) => (
+    <div
+      data-testid="mock-todo-editor"
+      data-presentation={presentation}
+      data-fill={workspacePanelFill ? 'yes' : 'no'}
+      data-controls={showPanelControls === false ? 'no' : 'yes'}
+      data-selected-task={selectedTaskId}
+      data-item-count={allItems.length}
+    >
+      {headerActions}
+      <span>{item.title}</span>
+      <button
+        type="button"
+        data-testid="mock-related-task"
+        onClick={() =>
+          onOpenTaskConversation?.({
+            id: 2,
+            device_id: 'local-device',
+            task_id: 'runtime-2',
+            task_title: '第二个任务',
+          })
+        }
+      >
+        打开相关任务
+      </button>
+      <button
+        type="button"
+        data-testid="mock-update-item"
+        onClick={() => onUpdated({ ...item, title: '更新后的工作项', version: item.version + 1 })}
+      >
+        更新
+      </button>
+    </div>
+  ),
+}))
 
 const project: CloudProject = {
   id: 'default-work-items',
@@ -45,23 +108,13 @@ const item: CloudLoopItem = {
 }
 
 describe('WorkItemContextPanel', () => {
-  test('shows the work item and opens a related task execution', async () => {
+  test('reuses the workspace work-item editor and opens related tasks', async () => {
     const user = userEvent.setup()
     const onOpenTask = vi.fn()
     const onOpenBoard = vi.fn()
+    const child = { ...item, id: 'WORK-2', parent_id: item.id, title: '子工作项' }
     const api = {
-      listTaskBindings: vi.fn().mockResolvedValue([
-        {
-          id: 7,
-          loop_item_id: item.id,
-          task_user_id: 0,
-          device_id: 'local-device',
-          task_id: 'runtime-1',
-          task_title: '第一次执行',
-          backend_task_id: null,
-          linked_at: '2026-08-15T00:00:00Z',
-        },
-      ]),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item, child] }),
     } as unknown as ProjectSpaceApi
 
     render(
@@ -75,57 +128,26 @@ describe('WorkItemContextPanel', () => {
       />
     )
 
-    expect(screen.getByTestId('work-item-context-panel')).toHaveTextContent(
-      'WORK-1 · 验证工作项与任务执行关系'
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('work-item-execution-7')).toHaveTextContent('当前')
-    )
+    const editor = screen.getByTestId('mock-todo-editor')
+    expect(editor).toHaveAttribute('data-presentation', 'workspace-panel')
+    expect(editor).toHaveAttribute('data-fill', 'yes')
+    expect(editor).toHaveAttribute('data-controls', 'no')
+    expect(editor).toHaveAttribute('data-selected-task', 'runtime-1')
+    await waitFor(() => expect(editor).toHaveAttribute('data-item-count', '2'))
 
-    await user.click(screen.getByTestId('work-item-execution-7'))
+    await user.click(screen.getByTestId('mock-related-task'))
     expect(onOpenTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
-      taskId: 'runtime-1',
+      taskId: 'runtime-2',
     })
 
     await user.click(screen.getByTestId('work-item-open-board'))
     expect(onOpenBoard).toHaveBeenCalledOnce()
   })
 
-  test('shows a human-readable label when priority is unset', async () => {
+  test('keeps edits in the shared detail component', async () => {
     const api = {
-      listTaskBindings: vi.fn().mockResolvedValue([]),
-    } as unknown as ProjectSpaceApi
-
-    render(
-      <WorkItemContextPanel
-        api={api}
-        project={project}
-        item={{ ...item, priority: 'none' }}
-        currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
-        onOpenBoard={vi.fn()}
-        onOpenTask={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('work-item-context-panel')).toHaveTextContent('优先级未设置')
-    expect(screen.getByTestId('work-item-context-panel')).not.toHaveTextContent('none')
-  })
-
-  test('shows an error when opening a related task fails', async () => {
-    const api = {
-      listTaskBindings: vi.fn().mockResolvedValue([
-        {
-          id: 7,
-          loop_item_id: item.id,
-          task_user_id: 0,
-          device_id: 'local-device',
-          task_id: 'runtime-1',
-          task_title: '第一次执行',
-          backend_task_id: null,
-          linked_at: '2026-08-15T00:00:00Z',
-        },
-      ]),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
     } as unknown as ProjectSpaceApi
 
     render(
@@ -135,11 +157,11 @@ describe('WorkItemContextPanel', () => {
         item={item}
         currentTask={{ deviceId: 'local-device', taskId: 'runtime-1' }}
         onOpenBoard={vi.fn()}
-        onOpenTask={vi.fn().mockRejectedValue(new Error('任务不存在'))}
+        onOpenTask={vi.fn()}
       />
     )
 
-    await userEvent.click(await screen.findByTestId('work-item-execution-7'))
-    expect(await screen.findByTestId('work-item-executions-error')).toHaveTextContent('任务不存在')
+    await userEvent.click(screen.getByTestId('mock-update-item'))
+    expect(screen.getByTestId('mock-todo-editor')).toHaveTextContent('更新后的工作项')
   })
 })
