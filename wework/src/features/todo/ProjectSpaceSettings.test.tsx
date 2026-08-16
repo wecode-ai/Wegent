@@ -164,7 +164,7 @@ describe('ProjectSpaceSettings', () => {
     expect(screen.queryByText('Insufficient permission')).not.toBeInTheDocument()
   })
 
-  it('orders enabled automations first inside a bounded scroll area', async () => {
+  it('orders automations with the enable action first inside a bounded scroll area', async () => {
     const list = vi.fn().mockResolvedValue([
       { id: 'disabled', name: 'A disabled', enabled: false, version: 1 },
       { id: 'enabled', name: 'Z enabled', enabled: true, version: 1 },
@@ -184,8 +184,8 @@ describe('ProjectSpaceSettings', () => {
     expect(
       screen.getAllByTestId(/project-settings-toggle-automation-/).map(node => node.dataset.testid)
     ).toEqual([
-      'project-settings-toggle-automation-enabled',
       'project-settings-toggle-automation-disabled',
+      'project-settings-toggle-automation-enabled',
     ])
   })
 })

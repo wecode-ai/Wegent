@@ -217,7 +217,7 @@ export function ProjectSpaceSettings({
   const orderedAutomations = useMemo(
     () =>
       [...automations].sort((left, right) => {
-        const enabledOrder = Number(right.rule.enabled) - Number(left.rule.enabled)
+        const enabledOrder = Number(left.rule.enabled) - Number(right.rule.enabled)
         if (enabledOrder !== 0) return enabledOrder
         const projectOrder = left.project.name.localeCompare(right.project.name)
         return projectOrder || left.rule.name.localeCompare(right.rule.name)
