@@ -248,7 +248,7 @@ async function verifyDefaultWorkspaceStartupTab(control) {
     'The Wework WebView did not reconnect after selecting Work items as the startup tab'
   )
   await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    text: '工作项',
+    text: '工作空间',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
@@ -305,10 +305,10 @@ async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
   assert.ok(taskTabTestId, 'The active task tab identity was unavailable before association setup')
 
   await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
-    text: '我的任务',
+    text: '工作空间：新建',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'default-work-item-selected.png')
+  await captureVerificationScreenshot(control, 'workspace-01-new-task.png')
   return taskTabTestId
 }
 
@@ -317,26 +317,28 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-next-step"]', {
-    text: '下一步',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-details"]', {
-    text: '1 个任务',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="work-item-guide-summary-participants"]', {
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'work-item-persistent-summary.png')
+  await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
   await control.command('click', '[data-testid="project-space-context-pill"]')
-  await control.command('click', '[data-testid="work-item-open-details"]')
-  await control.command('waitFor', '[data-testid="work-item-context-panel"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
+  await control.command('waitFor', '[data-testid^="work-item-task-"]', {
+    text: '当前任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'work-item-context-and-executions.png')
+  await captureVerificationScreenshot(control, 'workspace-03-related-tasks.png')
+  await control.command('click', '[data-testid="work-item-open-details"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]',
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
   const contextSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.some(testId => testId.startsWith('work-item-execution-')),
@@ -355,7 +357,13 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'default-work-item-task-completed.png')
+  await captureVerificationScreenshot(control, 'workspace-05-completed-on-board.png')
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"][data-embedded="false"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-06-independent-tab.png')
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -672,11 +680,12 @@ async function verifyWorkspaceTabIsolation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${thirdTaskContent} [data-testid="work-items-button"]`)
-  await control.command('waitFor', '[data-testid="cloud-todo-workspace"][data-embedded="true"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const thirdTaskSnapshot = JSON.parse(await control.command('snapshot', thirdTaskContent))
+  assert.equal(
+    thirdTaskSnapshot.testIds.includes('work-items-button'),
+    false,
+    'The task sidebar still exposed the removed Work items destination'
+  )
   const tabCountBeforeOrdinaryNavigation = allWorkspaceTabIds(
     JSON.parse(await control.command('snapshot', 'body'))
   ).length
@@ -720,12 +729,7 @@ async function verifyWorkspaceTabIsolation(control) {
   assert.ok(fourthTaskTestId, 'The fourth task tab identity was not observable')
   const fourthTaskId = fourthTaskTestId.slice('workspace-tab-'.length)
   const fourthTaskContent = `[data-testid="workspace-tab-content-${fourthTaskId}"]`
-  await control.command('waitFor', `${fourthTaskContent} [data-testid="work-items-button"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', `${fourthTaskContent} [data-testid="work-items-button"]`)
-  await control.command('waitFor', '[data-testid="cloud-todo-workspace"][data-embedded="true"]', {
+  await control.command('waitFor', `${fourthTaskContent} [data-testid="automation-button"]`, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

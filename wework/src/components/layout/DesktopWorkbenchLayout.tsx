@@ -10,7 +10,6 @@ import type {
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
-import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import { stripAppBasePath } from '@/config/runtime'
 import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
@@ -182,7 +181,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
-  const [embeddedWorkItemsOpen, setEmbeddedWorkItemsOpen] = useState(false)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
     []
   )
@@ -241,41 +239,33 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     }
   }, [loadLocalHarnessSessions])
   const routeWorkItemsOpen = currentPath === '/todo'
-  const todoOpen = routeWorkItemsOpen || embeddedWorkItemsOpen
-  const activeItem = todoOpen ? 'todo' : 'chat'
-  const showChatContent = useCallback(() => {
-    setEmbeddedWorkItemsOpen(false)
-  }, [])
+  const todoOpen = routeWorkItemsOpen
+  const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
-    showChatContent()
     setActiveLocalHarnessSessionId(null)
     onNewChat()
-  }, [onNewChat, showChatContent])
+  }, [onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
-    showChatContent()
     setActiveLocalHarnessSessionId(null)
     onStartStandaloneChat()
-  }, [onStartStandaloneChat, showChatContent])
+  }, [onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
-      showChatContent()
       setActiveLocalHarnessSessionId(null)
       onSelectProject(projectId)
     },
-    [onSelectProject, showChatContent]
+    [onSelectProject]
   )
   const startNewProjectChatOutsideHarness = useCallback(
     (projectId: number) => {
-      showChatContent()
       setActiveLocalHarnessSessionId(null)
       onStartNewProjectChat(projectId)
     },
-    [onStartNewProjectChat, showChatContent]
+    [onStartNewProjectChat]
   )
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
-      showChatContent()
       setActiveLocalHarnessSessionId(null)
       activateSplitPane(
         getWorkbenchPaneKey({
@@ -286,7 +276,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
       await onOpenRuntimeTask(address)
     },
-    [activateSplitPane, currentPath, onOpenRuntimeTask, showChatContent, state.currentRuntimeTask]
+    [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
   const registerLocalHarnessSession = useCallback(
     (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
@@ -314,14 +304,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       console.warn('Failed to persist local Harness session title:', error)
     })
   }, [])
-  const openLocalHarnessSession = useCallback(
-    (sessionId: string) => {
-      showChatContent()
-      setActiveLocalHarnessSessionId(sessionId)
-      navigateTo('/')
-    },
-    [showChatContent]
-  )
+  const openLocalHarnessSession = useCallback((sessionId: string) => {
+    setActiveLocalHarnessSessionId(sessionId)
+    navigateTo('/')
+  }, [])
   const removeLocalHarnessSession = useCallback(
     (sessionId: string) => {
       const proxyToken = localHarnessSessions.find(
@@ -425,7 +411,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const openProjectSpaceRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       await openRuntimeTaskOutsideHarness(address)
-      if (embeddedWorkItemsOpen) return
       if (!workspaceTabs) return
       const contentRoute = buildRuntimeTaskRoute(address)
       const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
@@ -435,11 +420,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       }
       workspaceTabs.openTab('task', { contentRoute })
     },
-    [embeddedWorkItemsOpen, openRuntimeTaskOutsideHarness, workspaceTabs]
+    [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
-  const openWorkItems = useCallback(() => {
-    setEmbeddedWorkItemsOpen(true)
-  }, [])
   const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
     useState<ImNotificationDialogMode | null>(null)
@@ -559,11 +541,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
 
   const openCloudDeviceSettings = useCallback(() => {
-    showChatContent()
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
     navigateTo('/settings/connections')
-  }, [showChatContent])
+  }, [])
 
   const openSidebarPreview = useCallback(() => {
     if (!effectiveSidebarCollapsed) return
@@ -858,12 +839,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => {
-        showChatContent()
         navigateTo('/plugins')
       }}
-      onOpenWorkItems={openWorkItems}
       onOpenAutomation={() => {
-        showChatContent()
         navigateTo('/automations')
       }}
       onRefreshDevices={onRefreshDevices}
@@ -883,7 +861,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onCreateDeviceDirectory={onCreateDeviceDirectory}
       projectSpaceApis={availableProjectSpaceApis}
       onOpenSettings={options => {
-        showChatContent()
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)
         navigateTo(
@@ -958,17 +935,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
                 services={services}
-                embedded={embeddedWorkItemsOpen}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 activeProjectRef={
-                  embeddedWorkItemsOpen
-                    ? {
-                        projectStore: 'local',
-                        projectId: DEFAULT_WORK_ITEM_PROJECT_ID,
-                      }
-                    : workspaceTabs?.activeTab.kind === 'board'
-                      ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
-                      : undefined
+                  workspaceTabs?.activeTab.kind === 'board'
+                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
+                    : undefined
                 }
                 focusedItemId={
                   workspaceTabs?.activeTab.kind === 'board'
@@ -988,12 +959,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                   })
                 }}
                 onActiveProjectChange={project => {
-                  if (
-                    embeddedWorkItemsOpen ||
-                    !workspaceTabs ||
-                    workspaceTabs.activeTab.kind !== 'board'
-                  )
-                    return
+                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
                   if (!project) {
                     workspaceTabs.updateActiveTab({
                       title: t('workbench.workspace_tab_board', '项目空间'),

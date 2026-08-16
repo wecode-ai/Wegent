@@ -6,7 +6,6 @@ import {
   Bell,
   ChevronDown,
   ChevronRight,
-  ClipboardList,
   Columns2,
   Download,
   Edit3,
@@ -185,7 +184,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   collapsed?: boolean
@@ -232,7 +231,6 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
-  onOpenWorkItems?: () => void
   onOpenCloudWork?: () => void
   onOpenSites?: () => void
   onOpenAutomation?: () => void
@@ -3038,7 +3036,6 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
-  onOpenWorkItems,
   onOpenCloudWork,
   onOpenSites,
   onOpenAutomation,
@@ -3898,13 +3895,6 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              <DesktopSidebarNavItem
-                icon={ClipboardList}
-                label={t('workbench.work_items', '工作项')}
-                testId="work-items-button"
-                selected={activeItem === 'todo'}
-                onClick={onOpenWorkItems ?? (() => navigateTo('/todo'))}
-              />
               <DesktopSidebarNavItem
                 icon={AlarmClock}
                 label={t('workbench.automation', '已安排')}

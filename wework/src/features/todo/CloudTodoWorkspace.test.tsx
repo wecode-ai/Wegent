@@ -314,6 +314,123 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
   })
 
+  it('switches between every available board from the embedded work-items view', async () => {
+    const defaultProject = {
+      ...project,
+      id: '11',
+    }
+    const otherProject = {
+      ...project,
+      id: '12',
+      project_key: 'TEAM',
+      name: '团队协作',
+    }
+    const otherItem = {
+      ...item,
+      id: 'TEAM-1',
+      cloud_project_id: '12',
+      title: '团队发布计划',
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [defaultProject, otherProject],
+    }))
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async projectId => ({
+      items: String(projectId) === '12' ? [otherItem] : [item],
+    }))
+    const onActiveProjectChange = vi.fn()
+    const props = {
+      user: { id: 1, user_name: 'local', email: 'local@example.com' } as User,
+      localProjects: [],
+      services: workbenchServices,
+      embedded: true,
+      onActiveProjectChange,
+    }
+    const { rerender } = render(
+      <CloudTodoWorkspace
+        {...props}
+        activeProjectRef={{ projectStore: 'backend', projectId: defaultProject.id }}
+      />
+    )
+
+    expect(await screen.findByTestId('work-item-board-switcher')).toBeInTheDocument()
+    expect(screen.getByTestId('work-item-board-option-backend-11')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await userEvent.click(screen.getByTestId('work-item-board-option-backend-12'))
+    expect(onActiveProjectChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '12', name: '团队协作' })
+    )
+
+    rerender(
+      <CloudTodoWorkspace
+        {...props}
+        activeProjectRef={{ projectStore: 'backend', projectId: '12' }}
+      />
+    )
+    expect(await screen.findByTestId('cloud-todo-card-TEAM-1')).toHaveTextContent('团队发布计划')
+    expect(screen.getByTestId('work-item-board-option-backend-12')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
+  it('shows related runtime tasks and child tasks directly inside a work-item card', async () => {
+    const child = {
+      ...item,
+      id: 'WEG-2',
+      sequence_number: 2,
+      parent_id: item.id,
+      title: '补充回归截图',
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [item, child],
+    }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async itemId =>
+      itemId === item.id
+        ? [
+            {
+              id: 1,
+              loop_item_id: item.id,
+              task_user_id: 1,
+              device_id: 'local-device',
+              task_id: 'runtime-1',
+              task_title: '分析创建任务交互',
+              backend_task_id: null,
+              linked_at: '2026-08-16T00:00:00Z',
+            },
+            {
+              id: 2,
+              loop_item_id: item.id,
+              task_user_id: 1,
+              device_id: 'local-device',
+              task_id: 'runtime-2',
+              task_title: '验证完整工作流',
+              backend_task_id: null,
+              linked_at: '2026-08-16T00:01:00Z',
+            },
+          ]
+        : []
+    )
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent(
+      '分析创建任务交互'
+    )
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent('验证完整工作流')
+    expect(screen.getByTestId('cloud-todo-card-child-WEG-2')).toHaveTextContent('补充回归截图')
+  })
+
   it('reports the concrete project name for the active document tab', async () => {
     const onActiveProjectChange = vi.fn()
 
@@ -875,7 +992,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-column-field-field-status-待处理')).toBeInTheDocument()
     expect(screen.queryByText('aitable:base-1:record-1')).not.toBeInTheDocument()
     expect(screen.getByText('修复发布流程')).toBeInTheDocument()
-    expect(screen.queryByText('补齐测试')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-child-aitable:base-1:record-2')).toHaveTextContent(
+      '补齐测试'
+    )
+    expect(screen.queryByTestId('cloud-todo-card-aitable:base-1:record-2')).not.toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-board-group-by')).toHaveTextContent('天河状态')
     expect(screen.getByTestId('dingtalk-board-assignee-filter').parentElement).toHaveTextContent(
       '全部天河状态'
@@ -1150,7 +1270,7 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByText('任务详情')).toBeInTheDocument()
     expect(screen.getAllByText('Implement cloud MCP').length).toBeGreaterThan(0)
-    expect(screen.getByText('Implement cloud delivery')).toBeInTheDocument()
+    expect(screen.getAllByText('Implement cloud delivery').length).toBeGreaterThan(0)
     expect(screen.getAllByText('local').length).toBeGreaterThan(0)
     expect(screen.getByText('参与者')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeInTheDocument()

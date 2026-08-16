@@ -221,6 +221,7 @@ type LocatedLoopItem = CloudLoopItem & {
 type LocatedMyWorkItem = CloudMyWorkItem & {
   project_store: RuntimeProjectSpaceRef['projectStore']
 }
+type LoopItemTaskBinding = Awaited<ReturnType<DeliveryApi['listTaskBindings']>>[number]
 
 interface AvailableProjectSpaceApi {
   api: DeliveryApi
@@ -775,6 +776,10 @@ export function CloudTodoWorkspace({
     activeProjectRef === undefined ? internalSelectedProjectRef : activeProjectRef
   const selectedProjectId = selectedProjectRef?.projectId ?? null
   const [items, setItems] = useState<LocatedLoopItem[]>([])
+  const [itemTaskBindings, setItemTaskBindings] = useState<Record<string, LoopItemTaskBinding[]>>(
+    {}
+  )
+  const [itemTaskBindingsProjectKey, setItemTaskBindingsProjectKey] = useState<string | null>(null)
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
@@ -1609,6 +1614,36 @@ export function CloudTodoWorkspace({
     services.dwsApi,
   ])
   useEffect(() => {
+    if (
+      !selectedProjectApi ||
+      !selectedProjectKey ||
+      itemsProjectKey !== selectedProjectKey ||
+      items.length === 0
+    ) {
+      return
+    }
+    let active = true
+    void Promise.allSettled(
+      items.map(async item => ({
+        itemId: item.id,
+        bindings: await selectedProjectApi.listTaskBindings(item.id),
+      }))
+    ).then(results => {
+      if (!active) return
+      const next: Record<string, LoopItemTaskBinding[]> = {}
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          next[result.value.itemId] = result.value.bindings
+        }
+      }
+      setItemTaskBindings(next)
+      setItemTaskBindingsProjectKey(selectedProjectKey)
+    })
+    return () => {
+      active = false
+    }
+  }, [items, itemsProjectKey, selectedProjectApi, selectedProjectKey])
+  useEffect(() => {
     if (!selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
     let active = true
     void selectedProjectApi
@@ -2224,17 +2259,21 @@ export function CloudTodoWorkspace({
                   ref={projectHeaderContentRef}
                   className="relative z-10 flex min-w-0 items-center"
                 >
-                  {selectedProject.location === 'local' ? (
+                  {embedded ? (
+                    <Grid3X3 className="h-4 w-4 shrink-0 text-text-muted" />
+                  ) : selectedProject.location === 'local' ? (
                     <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
                   ) : (
                     <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
                   )}
                   <span className="ml-2 min-w-0 truncate text-base font-semibold">
-                    {selectedProject.name}
+                    {embedded ? t('workbench.work_items', '工作空间') : selectedProject.name}
                   </span>
-                  <span className="ml-2 shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
-                    {selectedProject.location === 'local' ? '本地' : '云端'}
-                  </span>
+                  {!embedded ? (
+                    <span className="ml-2 shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                      {selectedProject.location === 'local' ? '本地' : '云端'}
+                    </span>
+                  ) : null}
                 </div>
                 {projectHeaderLevel < 2 ? (
                   <nav
@@ -2416,6 +2455,44 @@ export function CloudTodoWorkspace({
                   </>
                 )}
               </header>
+              <nav
+                data-testid="work-item-board-switcher"
+                aria-label={t('workbench.select_work_item_board', '选择工作空间看板')}
+                className="flex h-[48px] shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-background px-6"
+              >
+                {projects.map(project => {
+                  const ref = projectSpaceRef(project)
+                  const active = sameProjectSpace(selectedProjectRef, ref)
+                  const count = projectCounts[projectSpaceKey(ref)] ?? 0
+                  return (
+                    <button
+                      key={projectSpaceKey(ref)}
+                      type="button"
+                      data-testid={`work-item-board-option-${project.project_store}-${project.id}`}
+                      aria-pressed={active}
+                      onClick={() => {
+                        selectProject(project)
+                        setRootView('projects')
+                        setSelectedItem(null)
+                      }}
+                      className={cn(
+                        'flex h-8 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors',
+                        active
+                          ? 'bg-muted text-text-primary'
+                          : 'text-text-secondary hover:bg-muted/70 hover:text-text-primary'
+                      )}
+                    >
+                      {project.location === 'local' ? (
+                        <HardDrive className="h-3.5 w-3.5" />
+                      ) : (
+                        <Cloud className="h-3.5 w-3.5" />
+                      )}
+                      <span className="max-w-48 truncate">{project.name}</span>
+                      <span className="text-xs font-normal text-text-muted">{count}</span>
+                    </button>
+                  )
+                })}
+              </nav>
               {projectView === 'files' && selectedProjectApi ? (
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
               ) : projectView === 'table' && isAITableProject && aitableApi ? (
@@ -2737,8 +2814,11 @@ export function CloudTodoWorkspace({
                                     <CloudTodoBoardCard
                                       key={item.id}
                                       item={item}
-                                      childCount={
-                                        items.filter(child => child.parent_id === item.id).length
+                                      children={items.filter(child => child.parent_id === item.id)}
+                                      taskBindings={
+                                        itemTaskBindingsProjectKey === selectedProjectKey
+                                          ? (itemTaskBindings[item.id] ?? [])
+                                          : []
                                       }
                                       onClick={() => {
                                         if (item.can_view_detail !== false) setSelectedItem(item)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
+import { Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeGoal, RuntimeGoalStatus } from '@/types/api'
 
@@ -10,15 +10,16 @@ interface GoalStatusBarProps {
   onPauseGoal?: () => void
   onResumeGoal?: () => void
   onClearGoal?: () => void
+  integrated?: boolean
 }
 
 const goalStatusLabelKeys: Record<RuntimeGoalStatus, { key: string; fallback: string }> = {
-  active: { key: 'workbench.goal_status_active', fallback: '进行中的目标' },
-  paused: { key: 'workbench.goal_status_paused', fallback: '已暂停的目标' },
-  blocked: { key: 'workbench.goal_status_blocked', fallback: '受阻的目标' },
-  complete: { key: 'workbench.goal_status_complete', fallback: '已完成的目标' },
-  usageLimited: { key: 'workbench.goal_status_usage_limited', fallback: '用量受限的目标' },
-  budgetLimited: { key: 'workbench.goal_status_budget_limited', fallback: '预算受限的目标' },
+  active: { key: 'workbench.goal_status_compact_active', fallback: '进行中' },
+  paused: { key: 'workbench.goal_status_compact_paused', fallback: '已暂停' },
+  blocked: { key: 'workbench.goal_status_compact_blocked', fallback: '受阻' },
+  complete: { key: 'workbench.goal_status_compact_complete', fallback: '已完成' },
+  usageLimited: { key: 'workbench.goal_status_compact_usage_limited', fallback: '用量受限' },
+  budgetLimited: { key: 'workbench.goal_status_compact_budget_limited', fallback: '预算受限' },
 }
 
 export function GoalStatusBar({
@@ -28,14 +29,14 @@ export function GoalStatusBar({
   onPauseGoal,
   onResumeGoal,
   onClearGoal,
+  integrated = false,
 }: GoalStatusBarProps) {
   const { t } = useTranslation('common')
   const statusLabel = continuing
-    ? { key: 'workbench.goal_status_continuing', fallback: '目标继续执行中' }
+    ? { key: 'workbench.goal_status_compact_continuing', fallback: '继续执行中' }
     : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const timerKey = goalTimerKey(goal)
   const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
-  const [actionsExpanded, setActionsExpanded] = useState(false)
   const elapsedSeconds = useMemo(
     () => getLiveElapsedSeconds(goal, timerState, timerKey),
     [goal, timerKey, timerState]
@@ -64,24 +65,26 @@ export function GoalStatusBar({
   return (
     <div
       data-testid="goal-status-bar"
-      className="group flex h-8 min-w-0 shrink items-center gap-1.5 overflow-hidden rounded-xl border border-border/60 bg-muted/55 px-2.5 text-xs text-text-secondary transition-[max-width,background-color] duration-200 hover:max-w-[560px] hover:bg-muted focus-within:max-w-[560px] focus-within:bg-muted"
+      className={[
+        'group flex h-8 min-w-0 items-center gap-1.5 overflow-hidden px-2.5 text-xs text-text-secondary',
+        integrated
+          ? 'w-full max-w-none transition-colors hover:bg-background/55 focus-within:bg-background/55'
+          : 'shrink rounded-xl border border-border/60 bg-muted/55 transition-[max-width,background-color] duration-200 hover:max-w-[560px] hover:bg-muted focus-within:max-w-[560px] focus-within:bg-muted',
+      ].join(' ')}
     >
       <Target className="h-4 w-4 shrink-0 text-primary" />
-      <div className="flex min-w-0 items-center">
+      <div className="flex min-w-0 flex-1 items-center">
         <span className="shrink-0 font-semibold text-text-primary">
           {t('workbench.goal_chip', '目标')}
         </span>
-        <span className="ml-1 max-w-52 truncate text-text-secondary">· {goal.objective}</span>
+        <span className="ml-1 min-w-0 truncate text-text-secondary">· {goal.objective}</span>
       </div>
       <span className="shrink-0 text-text-muted">{t(statusLabel.key, statusLabel.fallback)}</span>
       {elapsed && <span className="shrink-0 text-text-muted">{elapsed}</span>}
       <div
         id="goal-status-details"
         data-testid="goal-status-details"
-        className={[
-          'flex shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 group-hover:max-w-80 group-hover:opacity-100 group-focus-within:max-w-80 group-focus-within:opacity-100',
-          actionsExpanded ? 'max-w-80 opacity-100' : 'max-w-0 opacity-0',
-        ].join(' ')}
+        className="flex max-w-0 shrink-0 items-center gap-1 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-80 group-hover:opacity-100 group-focus-within:max-w-80 group-focus-within:opacity-100"
       >
         <button
           type="button"
@@ -119,22 +122,6 @@ export function GoalStatusBar({
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
-      <button
-        type="button"
-        data-testid="goal-status-actions-toggle"
-        onClick={() => setActionsExpanded(current => !current)}
-        aria-expanded={actionsExpanded}
-        aria-controls="goal-status-details"
-        aria-label={t('workbench.goal_actions_toggle', '展开目标操作')}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-      >
-        <ChevronRight
-          className={[
-            'h-3.5 w-3.5 transition-transform duration-200 group-hover:rotate-90 group-focus-within:rotate-90',
-            actionsExpanded ? 'rotate-90' : '',
-          ].join(' ')}
-        />
-      </button>
     </div>
   )
 }

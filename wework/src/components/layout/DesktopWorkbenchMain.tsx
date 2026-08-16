@@ -81,6 +81,11 @@ import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  DEFAULT_WORK_ITEM_PROJECT_KEY,
+  type CloudProject,
+} from '@/api/deliveries'
+import {
   RIGHT_SPLIT_PANEL_MIN_WIDTH,
   useResizableRightSplitChat,
 } from './workspace-panels/useResizableWorkspacePanel'
@@ -1040,18 +1045,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
-  const currentWorkItemContextKey = currentRuntimeTask
-    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
-    : null
-  const [openWorkItemContextKey, setOpenWorkItemContextKey] = useState<string | null>(null)
-  const workItemContextOpen =
-    currentWorkItemContextKey !== null && openWorkItemContextKey === currentWorkItemContextKey
   const workItemContextAvailable = Boolean(
-    workItemContextOpen &&
-    currentProjectSpaceRuntimeTask &&
-    boundCloudProject &&
-    boundCloudItem &&
-    boundProjectSpaceApi
+    currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
@@ -2605,6 +2600,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [paneSession]
   )
+  const defaultWorkItemPreviewProject = useMemo<CloudProject>(
+    () => ({
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      public_id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: t('workbench.default_work_item_board', '我的任务'),
+      description: '',
+      project_store: 'local',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: state.user?.id ?? 0,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '',
+      updated_at: '',
+      metadata: { system_kind: 'default_work_items' },
+    }),
+    [state.user?.id, t]
+  )
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
       if (options?.immediateLayout) setRightPanelImmediateLayout(true)
@@ -2614,38 +2629,33 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
-  const currentWorkItemGuideProject = boundCloudProject ?? pendingCloudProject ?? defaultProject
-  const workItemProjectOptions = cloudProjectMentionCandidates.flatMap(candidate =>
-    candidate.enabled && candidate.project ? [candidate.project] : []
-  )
+  const currentWorkItemGuideProject =
+    boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
   const projectSpaceContext =
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (
       <WorkItemComposerGuide
-        project={boundCloudProject}
-        projects={workItemProjectOptions}
+        integrated
         item={boundCloudItem}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
-        currentUserName={state.user?.user_name}
+        goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
         refreshKey={`${runtimeTaskSummary?.running ?? false}:${runtimeTaskSummary?.turnStatus ?? ''}`}
-        onOpen={() => {
-          setOpenWorkItemContextKey(currentWorkItemContextKey)
-          openRightPanelTab('work-item')
-        }}
+        onOpen={() => openRightPanelTab('work-item')}
         onOpenBoard={openBoundProjectSpaceTask}
+        onOpenTask={openRuntimeTask}
       />
     ) : currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
       <WorkItemComposerGuide
-        project={currentWorkItemGuideProject}
-        projects={workItemProjectOptions}
+        integrated
         bindingPending
+        goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
+        onJoinExisting={openTodoManager}
       />
-    ) : !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
+    ) : !currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
       <WorkItemComposerGuide
-        project={pendingCloudProject}
-        projects={workItemProjectOptions}
-        onSelectProject={handleSelectCloudProject}
-        onCancel={clearPendingProjectContext}
+        integrated
+        onJoinExisting={openTodoManager}
+        onCancel={pendingCloudProject ? clearPendingProjectContext : undefined}
       />
     ) : null
   useEffect(() => {
@@ -2903,9 +2913,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
     if (tab === 'files') {
       setOpenFileRequest(null)
-    }
-    if (tab === 'work-item') {
-      setOpenWorkItemContextKey(null)
     }
     if (browserState?.label) {
       void closeEmbeddedBrowsers([browserState.label]).catch(error => {
@@ -4320,7 +4327,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 boundCloudItem &&
                 boundProjectSpaceApi ? (
                   <WorkItemContextPanel
-                    key={`${boundCloudProject.id}:${boundCloudItem.id}:${currentWorkItemContextKey}`}
+                    key={`${boundCloudProject.id}:${boundCloudItem.id}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
                     api={boundProjectSpaceApi}
                     project={boundCloudProject}
                     item={boundCloudItem}

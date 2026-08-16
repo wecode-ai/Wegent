@@ -1500,7 +1500,7 @@ describe('DesktopWorkbenchLayout', () => {
     ).toHaveStyle({ display: 'none' })
   })
 
-  test('switches only the middle content from the sidebar and keeps workspace tabs unchanged', () => {
+  test('uses the independent board tab instead of a work-items sidebar destination', () => {
     const taskTab = {
       id: 'task-existing',
       kind: 'task' as const,
@@ -1534,23 +1534,12 @@ describe('DesktopWorkbenchLayout', () => {
       </WorkspaceTabsContext.Provider>
     )
 
-    fireEvent.click(screen.getByTestId('work-items-button'))
-
-    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
-    expect(screen.getByTestId('work-items-button')).toHaveAttribute('aria-current', 'page')
-    expect(
-      screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
-    ).toHaveStyle({ display: 'none' })
-    expect(selectTab).not.toHaveBeenCalled()
-    expect(openTab).not.toHaveBeenCalled()
-    expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
-
-    fireEvent.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
-
+    expect(screen.queryByTestId('work-items-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-board-loading')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-workbench-content')).toBeVisible()
     expect(selectTab).not.toHaveBeenCalled()
     expect(openTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
 
   test('submits implementation plan confirmation as a user message response', async () => {
@@ -2191,7 +2180,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
-      'Task Follow-up Board'
+      '工作空间：新建'
     )
   })
 
@@ -2251,8 +2240,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     const workItemGuide = await screen.findByTestId('project-space-context-pill')
     const composerInput = screen.getByTestId('chat-message-input')
-    expect(workItemGuide).toHaveTextContent('工作项')
-    expect(workItemGuide).toHaveAttribute('title', '当前任务会自动同步到工作项')
+    expect(workItemGuide).toHaveTextContent('工作空间')
+    expect(workItemGuide).toHaveAttribute('title', '工作空间：新建')
     expect(workItemGuide.compareDocumentPosition(composerInput)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )

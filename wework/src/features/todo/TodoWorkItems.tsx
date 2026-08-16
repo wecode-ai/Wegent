@@ -612,7 +612,7 @@ function TodoColumn({
           className="flex h-[34px] w-full items-center gap-2 rounded-md px-2 text-xs text-[#7B848C] hover:bg-[#ECEEEF] hover:text-[#4E565E]"
         >
           <Plus className="h-3.5 w-3.5" />
-          {t('todo.add_work_item', '添加工作项')}
+          {t('todo.add_work_item', '添加工作空间')}
         </button>
       </div>
     </section>

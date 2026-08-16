@@ -109,7 +109,7 @@ export function WorkItemContextPanel({
     >
       <header className="flex min-h-14 shrink-0 items-center border-b border-border px-4 py-2">
         <div className="min-w-0">
-          <div className="text-xs text-text-muted">{t('workbench.work_item', '工作项')}</div>
+          <div className="text-xs text-text-muted">{t('workbench.work_item', '工作空间')}</div>
           <div className="truncate text-sm font-semibold text-text-primary">
             {item.id} · {item.title}
           </div>
@@ -209,7 +209,7 @@ export function WorkItemContextPanel({
           onClick={onOpenBoard}
           className="flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
         >
-          {t('workbench.open_in_work_item_board', '在工作项看板中查看')}
+          {t('workbench.open_in_work_item_board', '在工作空间中查看')}
           <ArrowUpRight className="h-4 w-4" />
         </button>
       </footer>

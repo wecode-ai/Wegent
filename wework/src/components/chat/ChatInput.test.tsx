@@ -3085,19 +3085,10 @@ describe('ChatInput', () => {
     )
 
     const bar = screen.getByTestId('goal-status-bar')
-    expect(bar).toHaveTextContent('进行中的目标')
+    expect(bar).toHaveTextContent('进行中')
     expect(bar).toHaveTextContent('实现 plan 里的功能')
     expect(bar).toHaveTextContent('2m 58s')
 
-    expect(screen.getByTestId('goal-status-actions-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    await userEvent.click(screen.getByTestId('goal-status-actions-toggle'))
-    expect(screen.getByTestId('goal-status-actions-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
     await userEvent.click(screen.getByTestId('edit-goal-button'))
     await userEvent.click(screen.getByTestId('pause-goal-button'))
     await userEvent.click(screen.getByTestId('clear-goal-button'))
@@ -3135,6 +3126,11 @@ describe('ChatInput', () => {
     const composer = screen.getByTestId('project-chat-composer-form')
     expect(rail).toContainElement(screen.getByTestId('work-item-context-summary'))
     expect(rail).toContainElement(screen.getByTestId('goal-status-bar'))
+    expect(
+      screen
+        .getByTestId('goal-status-bar')
+        .compareDocumentPosition(screen.getByTestId('work-item-context-summary'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(rail.compareDocumentPosition(composer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
@@ -3187,7 +3183,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('目标继续执行中')
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('继续执行中')
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
   })
 
