@@ -1506,22 +1506,26 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const handleDebugPanelVisibility = (event: Event) => {
       const expanded = Boolean((event as CustomEvent<{ expanded?: boolean }>).detail?.expanded)
+      if (!activeRef.current && expanded) return
       dispatchBrowserOcclusion({
         id: 'debug-panel',
         occluded: expanded,
         type: 'overlay',
       })
+      if (!expanded) setOcclusionSnapshot(null)
     }
 
     const handleBrowserOcclusion = (event: Event) => {
       const detail = (event as CustomEvent<EmbeddedBrowserOcclusionChange>).detail
       if (!detail?.id) return
+      if (!activeRef.current && detail.occluded) return
 
       dispatchBrowserOcclusion({
         id: detail.id,
         occluded: detail.occluded,
         type: 'overlay',
       })
+      if (!detail.occluded) setOcclusionSnapshot(null)
     }
 
     window.addEventListener(
@@ -1539,6 +1543,15 @@ export function WorkspaceBrowserTabPanel({
   }, [label])
 
   useEffect(() => {
+    if (active) return
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      setOcclusionSnapshot(null)
+    })
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [active])
+
+  useEffect(() => {
     if (!active || !embeddedBrowserAvailable || !currentUrl) return
 
     let animationFrame: number | null = null
@@ -1547,6 +1560,7 @@ export function WorkspaceBrowserTabPanel({
       const host = browserHostRef.current
       const occluded = Boolean(host && hasEmbeddedBrowserOverlayConflict(host))
       dispatchBrowserOcclusion({ occluded, type: 'document' })
+      if (!occluded) setOcclusionSnapshot(null)
     }
     const scheduleOverlayOcclusionUpdate = () => {
       if (animationFrame !== null) return
@@ -1600,26 +1614,29 @@ export function WorkspaceBrowserTabPanel({
 
   const syncOcclusionState = useCallback(
     async (generation: number) => {
-      if (!embeddedBrowserOccludedRef.current) {
+      if (!activeRef.current || !embeddedBrowserOccludedRef.current) {
         await syncEmbeddedBrowserBounds(active)
         return
       }
       if (occlusionSnapshotInFlightRef.current || !nativeBrowserOpenRef.current) return
 
       occlusionSnapshotInFlightRef.current = true
+      let fallbackTimeoutId: number | null = null
       try {
-        let timeoutId: number | null = null
-        const snapshotUrl = await Promise.race([
-          captureEmbeddedBrowserSnapshot(label),
-          new Promise<string>((_, reject) => {
-            timeoutId = window.setTimeout(
-              () => reject(new Error('Embedded browser snapshot capture timed out')),
-              2000
-            )
-          }),
-        ])
-        if (timeoutId !== null) window.clearTimeout(timeoutId)
+        fallbackTimeoutId = window.setTimeout(() => {
+          if (
+            activeRef.current &&
+            embeddedBrowserOccludedRef.current &&
+            generation === occlusionSnapshotGenerationRef.current
+          ) {
+            // A stuck native capture must not prevent the menu from becoming usable.
+            occlusionSnapshotReadyRef.current = true
+            void syncEmbeddedBrowserBounds(active)
+          }
+        }, 2000)
+        const snapshotUrl = await captureEmbeddedBrowserSnapshot(label)
         if (
+          activeRef.current &&
           embeddedBrowserOccludedRef.current &&
           generation === occlusionSnapshotGenerationRef.current
         ) {
@@ -1637,6 +1654,7 @@ export function WorkspaceBrowserTabPanel({
           await syncEmbeddedBrowserBounds(active)
         }
       } finally {
+        if (fallbackTimeoutId !== null) window.clearTimeout(fallbackTimeoutId)
         occlusionSnapshotInFlightRef.current = false
         if (
           embeddedBrowserOccludedRef.current &&
@@ -2360,7 +2378,8 @@ export function WorkspaceBrowserTabPanel({
             className="relative h-full min-h-0 w-full bg-background"
             aria-label={t('workbench.browser')}
           >
-            {embeddedBrowserOccluded &&
+            {active &&
+            embeddedBrowserOccluded &&
             occlusionSnapshot?.generation === browserOcclusion.generation ? (
               <img
                 data-testid="workspace-browser-occlusion-snapshot"

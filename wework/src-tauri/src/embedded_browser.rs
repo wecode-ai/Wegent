@@ -118,6 +118,7 @@ pub struct EmbeddedBrowserState {
     active_tabs: Arc<Mutex<HashMap<String, String>>>,
     agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
     lifecycle: Arc<AsyncMutex<()>>,
+    snapshot_capture: Arc<AsyncMutex<()>>,
 }
 
 #[derive(Clone)]
@@ -2252,6 +2253,10 @@ pub async fn embedded_browser_capture_snapshot(
     state: tauri::State<'_, EmbeddedBrowserState>,
     label: Option<String>,
 ) -> Result<String, String> {
+    let _capture_guard = state
+        .snapshot_capture
+        .try_lock()
+        .map_err(|_| "An embedded browser snapshot is already in progress".to_string())?;
     let label = browser_label(label);
     let webview = get_entry(&state, &label)?.ready_webview()?;
     screenshot::capture_webview_snapshot_base64(webview).await

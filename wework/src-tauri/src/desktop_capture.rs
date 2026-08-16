@@ -52,7 +52,6 @@ pub async fn capture_workspace_webview(app: tauri::AppHandle) -> Result<String, 
 #[cfg(target_os = "macos")]
 pub(crate) async fn capture_embedded_webview_png(
     webview: tauri::Webview<tauri::Wry>,
-    timeout: std::time::Duration,
 ) -> Result<Vec<u8>, String> {
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
     webview
@@ -71,9 +70,9 @@ pub(crate) async fn capture_embedded_webview_png(
             }
         })
         .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
-    tokio::time::timeout(timeout, receiver.recv())
+    receiver
+        .recv()
         .await
-        .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())?
         .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())?
 }
 

@@ -127,11 +127,7 @@ pub(super) async fn capture_webview_snapshot_base64(
 ) -> Result<String, String> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-    let bytes = crate::desktop_capture::capture_embedded_webview_png(
-        webview,
-        Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS),
-    )
-    .await?;
+    let bytes = crate::desktop_capture::capture_embedded_webview_png(webview).await?;
     Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
 }
 

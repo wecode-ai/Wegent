@@ -1618,6 +1618,32 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('does not capture a snapshot for an inactive browser tab', async () => {
+    mockBrowserHostRect()
+    const { rerender } = render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    rerender(<WorkspaceBrowserPanel active={false} />)
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockClear()
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: true },
+      })
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).not.toHaveBeenCalled()
+  })
+
   test('uses a fresh snapshot for every occlusion', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
