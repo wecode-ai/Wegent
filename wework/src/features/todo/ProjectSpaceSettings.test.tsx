@@ -163,4 +163,29 @@ describe('ProjectSpaceSettings', () => {
     expect(list).not.toHaveBeenCalled()
     expect(screen.queryByText('Insufficient permission')).not.toBeInTheDocument()
   })
+
+  it('orders enabled automations first inside a bounded scroll area', async () => {
+    const list = vi.fn().mockResolvedValue([
+      { id: 'disabled', name: 'A disabled', enabled: false, version: 1 },
+      { id: 'enabled', name: 'Z enabled', enabled: true, version: 1 },
+    ])
+    const automationApi = { list, listRuns: vi.fn().mockResolvedValue([]) }
+    render(
+      <ProjectSpaceSettings
+        projects={
+          [{ id: 'project-1', name: 'Board', location: 'cloud', access_role: 'Owner' }] as never
+        }
+        projectServices={{ cloud: { projectAutomationApi: automationApi } } as never}
+      />
+    )
+
+    const scrollArea = await screen.findByTestId('project-settings-automation-scroll-area')
+    expect(scrollArea).toHaveClass('max-h-80', 'overflow-y-auto')
+    expect(
+      screen.getAllByTestId(/project-settings-toggle-automation-/).map(node => node.dataset.testid)
+    ).toEqual([
+      'project-settings-toggle-automation-enabled',
+      'project-settings-toggle-automation-disabled',
+    ])
+  })
 })

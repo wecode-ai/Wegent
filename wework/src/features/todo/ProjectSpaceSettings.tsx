@@ -214,6 +214,16 @@ export function ProjectSpaceSettings({
       device.status === 'offline' ? total : total + Math.max(1, device.slot_max ?? 1),
     0
   )
+  const orderedAutomations = useMemo(
+    () =>
+      [...automations].sort((left, right) => {
+        const enabledOrder = Number(right.rule.enabled) - Number(left.rule.enabled)
+        if (enabledOrder !== 0) return enabledOrder
+        const projectOrder = left.project.name.localeCompare(right.project.name)
+        return projectOrder || left.rule.name.localeCompare(right.rule.name)
+      }),
+    [automations]
+  )
 
   async function updateLimit(device: DeviceInfo, maxConcurrentTasks: number) {
     if (!deviceApi) return
@@ -363,13 +373,16 @@ export function ProjectSpaceSettings({
             {t('workbench.project_settings_automation_description')}
           </p>
           <div className="mt-4 overflow-hidden rounded-xl border border-border bg-background">
-            {automations.length === 0 ? (
+            {orderedAutomations.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-text-muted">
                 {t('workbench.project_settings_no_automations')}
               </div>
             ) : (
-              <div className="divide-y divide-border">
-                {automations.map(row => {
+              <div
+                data-testid="project-settings-automation-scroll-area"
+                className="max-h-80 divide-y divide-border overflow-y-auto overscroll-contain"
+              >
+                {orderedAutomations.map(row => {
                   const activeRun = row.runs.find(run => isExecutionActive(run.status))
                   const roleLevel = projectRoleLevel(row.project)
                   return (
