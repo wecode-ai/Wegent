@@ -356,6 +356,7 @@ export function WorkspaceBrowserTabPanel({
   const occlusionSnapshotInFlightRef = useRef(false)
   const occlusionSnapshotGenerationRef = useRef(0)
   const occlusionSnapshotReadyRef = useRef(true)
+  const occlusionSnapshotFallbackTimerRef = useRef<number | null>(null)
   const embeddedBrowserOccludedRef = useRef(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
@@ -443,6 +444,10 @@ export function WorkspaceBrowserTabPanel({
       mountedRef.current = false
       pageStateRequestGenerationRef.current += 1
       annotationRequestGenerationRef.current += 1
+      if (occlusionSnapshotFallbackTimerRef.current !== null) {
+        window.clearTimeout(occlusionSnapshotFallbackTimerRef.current)
+        occlusionSnapshotFallbackTimerRef.current = null
+      }
     }
   }, [])
 
@@ -1280,6 +1285,7 @@ export function WorkspaceBrowserTabPanel({
     if (!embeddedBrowserAvailable) return
 
     const handlePageHide = () => {
+      setOriginalViewHeld(false)
       void hideEmbeddedBrowser().catch(error => {
         console.error('Failed to hide embedded browser before page unload:', error)
       })
@@ -1295,6 +1301,27 @@ export function WorkspaceBrowserTabPanel({
       window.removeEventListener('pageshow', handlePageShow)
     }
   }, [embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
+
+  useEffect(() => {
+    const resetOriginalView = () => setOriginalViewHeld(false)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') resetOriginalView()
+    }
+    const animationFrame = !active ? window.requestAnimationFrame(resetOriginalView) : null
+    window.addEventListener('blur', resetOriginalView)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+      window.removeEventListener('blur', resetOriginalView)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (hasQueuedTweaks || !originalViewHeld) return
+    const animationFrame = window.requestAnimationFrame(() => setOriginalViewHeld(false))
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [hasQueuedTweaks, originalViewHeld])
 
   useEffect(() => {
     if (!embeddedBrowserAvailable || !currentUrl) return
@@ -1614,6 +1641,7 @@ export function WorkspaceBrowserTabPanel({
 
   const syncOcclusionState = useCallback(
     async (generation: number) => {
+      if (!mountedRef.current) return
       if (!activeRef.current || !embeddedBrowserOccludedRef.current) {
         await syncEmbeddedBrowserBounds(active)
         return
@@ -1621,10 +1649,10 @@ export function WorkspaceBrowserTabPanel({
       if (occlusionSnapshotInFlightRef.current || !nativeBrowserOpenRef.current) return
 
       occlusionSnapshotInFlightRef.current = true
-      let fallbackTimeoutId: number | null = null
       try {
-        fallbackTimeoutId = window.setTimeout(() => {
+        const fallbackTimeoutId = window.setTimeout(() => {
           if (
+            mountedRef.current &&
             activeRef.current &&
             embeddedBrowserOccludedRef.current &&
             generation === occlusionSnapshotGenerationRef.current
@@ -1634,8 +1662,10 @@ export function WorkspaceBrowserTabPanel({
             void syncEmbeddedBrowserBounds(active)
           }
         }, 2000)
+        occlusionSnapshotFallbackTimerRef.current = fallbackTimeoutId
         const snapshotUrl = await captureEmbeddedBrowserSnapshot(label)
         if (
+          mountedRef.current &&
           activeRef.current &&
           embeddedBrowserOccludedRef.current &&
           generation === occlusionSnapshotGenerationRef.current
@@ -1645,6 +1675,7 @@ export function WorkspaceBrowserTabPanel({
       } catch (error) {
         console.error('Failed to capture embedded browser occlusion snapshot:', error)
         if (
+          mountedRef.current &&
           embeddedBrowserOccludedRef.current &&
           generation === occlusionSnapshotGenerationRef.current
         ) {
@@ -1654,9 +1685,13 @@ export function WorkspaceBrowserTabPanel({
           await syncEmbeddedBrowserBounds(active)
         }
       } finally {
-        if (fallbackTimeoutId !== null) window.clearTimeout(fallbackTimeoutId)
+        if (occlusionSnapshotFallbackTimerRef.current !== null) {
+          window.clearTimeout(occlusionSnapshotFallbackTimerRef.current)
+          occlusionSnapshotFallbackTimerRef.current = null
+        }
         occlusionSnapshotInFlightRef.current = false
         if (
+          mountedRef.current &&
           embeddedBrowserOccludedRef.current &&
           generation !== occlusionSnapshotGenerationRef.current
         ) {

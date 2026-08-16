@@ -1051,11 +1051,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'false',
         'Hold-to-view-original button should start unpressed'
       )
-      // The desktop control harness dispatches pointerdown+pointerup together, so a
-      // pressed state cannot be held across separate commands. This asserts the
-      // hold-to-view lifecycle is wired: a press must leave no stuck original view and
-      // the saved adjustment must stay applied afterwards.
-      await control.command('pointerDown', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+      await control.command('pointerDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
       const originalViewPressedDuring = await control.command(
         'getAttribute',
         BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
@@ -1063,8 +1059,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.equal(
         originalViewPressedDuring,
-        'false',
-        'Hold-to-view-original button stayed pressed after release'
+        'true',
+        'Hold-to-view-original button did not stay pressed while held'
       )
       const originalViewTargetColor = await bridgeCall({
         action: 'evaluate',
@@ -1078,9 +1074,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.equal(
         originalViewTargetColor.value,
-        'rgb(239, 68, 68)',
-        'Hold-to-view-original released unexpectedly or left the adjustment applied'
+        '',
+        'Hold-to-view-original did not restore the original target style'
       )
+      await control.command('pointerUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
       await control.command('click', BROWSER_ANNOTATION_COUNT_SELECTOR)
       const originalViewPressedAfter = await control.command(
         'getAttribute',
