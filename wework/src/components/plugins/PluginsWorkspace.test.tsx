@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -403,6 +403,7 @@ function mockSystemSkillsFetch(
     marketplaceUpdateAvailable: boolean
     marketplaceUpdatePolicy: 'manual' | 'auto'
     autoUpdateBatchSizes: number[]
+    deviceAutoSyncGate: Promise<void>
   }> = {}
 ) {
   let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
@@ -892,10 +893,7 @@ function mockSystemSkillsFetch(
       }
       if (requestUrl.pathname === '/api/plugins/installed/sync-device') {
         syncDeviceCalls += 1
-        if (deviceAutoSyncSucceeds) {
-          marketplaceDeviceState = 'installed'
-        }
-        return Promise.resolve({
+        const response = {
           ok: true,
           status: 200,
           json: () =>
@@ -923,7 +921,16 @@ function mockSystemSkillsFetch(
                 ],
               },
             }),
-        })
+        }
+        const completeSync = () => {
+          if (deviceAutoSyncSucceeds) {
+            marketplaceDeviceState = 'installed'
+          }
+          return response
+        }
+        return overrides.deviceAutoSyncGate
+          ? overrides.deviceAutoSyncGate.then(completeSync)
+          : Promise.resolve(completeSync())
       }
       if (requestUrl.pathname === '/api/plugins/installed/auto-update-batch') {
         autoUpdateBatchCalls += 1
@@ -2215,6 +2222,71 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
     expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
     expect(marketplaceMock.getSyncDeviceCalls()).toBe(1)
+  })
+
+  test('waits for the live socket connection before auto-syncing account installs', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: true,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
+    )
+    expect(marketplaceMock.getSyncDeviceCalls()).toBe(0)
+
+    act(() => {
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    })
+
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    )
+  })
+
+  test('stops showing syncing when the socket disconnects during auto-sync', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    let releaseDeviceSync: (() => void) | null = null
+    const deviceAutoSyncGate = new Promise<void>(resolve => {
+      releaseDeviceSync = resolve
+    })
+    const marketplaceMock = mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'pending',
+      deviceAutoSyncSucceeds: false,
+      deviceAutoSyncGate,
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await waitFor(() => expect(marketplaceMock.getSyncDeviceCalls()).toBe(1))
+    expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('同步中')
+
+    act(() => {
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
+    )
+
+    act(() => releaseDeviceSync?.())
   })
 
   test('does not auto-sync an account install before same-device local state resolves', async () => {
