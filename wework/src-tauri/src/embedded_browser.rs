@@ -2248,13 +2248,13 @@ pub fn embedded_browser_set_bounds(
 
 #[tauri::command]
 #[cfg(target_os = "macos")]
-pub fn embedded_browser_capture_snapshot(
+pub async fn embedded_browser_capture_snapshot(
     state: tauri::State<'_, EmbeddedBrowserState>,
     label: Option<String>,
 ) -> Result<String, String> {
     let label = browser_label(label);
     let webview = get_entry(&state, &label)?.ready_webview()?;
-    screenshot::capture_webview_snapshot_base64(&webview)
+    screenshot::capture_webview_snapshot_base64(webview).await
 }
 
 #[cfg(target_os = "macos")]

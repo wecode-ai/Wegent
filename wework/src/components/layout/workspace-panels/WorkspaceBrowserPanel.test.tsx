@@ -120,6 +120,14 @@ function mockBrowserHostRect() {
   })
 }
 
+function createDeferred<T>() {
+  let resolve: (value: T) => void = () => undefined
+  const promise = new Promise<T>(nextResolve => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
 describe('WorkspaceBrowserPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -1544,7 +1552,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
-  test('hides the native browser while a main webview overlay occludes it', async () => {
+  test('hides the native browser after the occlusion snapshot loads', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
@@ -1563,6 +1571,19 @@ describe('WorkspaceBrowserPanel', () => {
       })
     )
 
+    const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).not.toHaveBeenCalledWith(
+      {
+        x: 500,
+        y: 120,
+        width: 400,
+        height: 300,
+      },
+      false,
+      'workspace-browser'
+    )
+
+    fireEvent.load(snapshot)
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
         {
@@ -1597,7 +1618,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
-  test('shows a static snapshot while the native browser is occluded and clears it on release', async () => {
+  test('uses a fresh snapshot for every occlusion', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
@@ -1620,6 +1641,7 @@ describe('WorkspaceBrowserPanel', () => {
       'workspace-browser'
     )
     expect(snapshot).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    fireEvent.load(snapshot)
 
     window.dispatchEvent(
       new CustomEvent('wework:embedded-browser-occlusion-change', {
@@ -1630,6 +1652,90 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('workspace-browser-occlusion-snapshot')).not.toBeInTheDocument()
     })
+
+    const nextSnapshot = createDeferred<string>()
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockImplementationOnce(
+      () => nextSnapshot.promise
+    )
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: true },
+      })
+    )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalledTimes(2)
+    })
+    expect(screen.queryByTestId('workspace-browser-occlusion-snapshot')).not.toBeInTheDocument()
+
+    await act(async () => {
+      nextSnapshot.resolve('data:image/png;base64,bmV3LWltYWdl')
+    })
+
+    const freshSnapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    expect(freshSnapshot).toHaveAttribute('src', 'data:image/png;base64,bmV3LWltYWdl')
+  })
+
+  test('does not hide the browser after an in-flight occlusion capture is released', async () => {
+    mockBrowserHostRect()
+    const pendingSnapshot = createDeferred<string>()
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockImplementationOnce(
+      () => pendingSnapshot.promise
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: true },
+      })
+    )
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalled()
+    })
+
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: false },
+      })
+    )
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        true,
+        'workspace-browser'
+      )
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    await act(async () => {
+      pendingSnapshot.resolve('data:image/png;base64,bGF0ZS1pbWFnZQ==')
+    })
+
+    await Promise.resolve()
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).not.toHaveBeenCalledWith(
+      {
+        x: 500,
+        y: 120,
+        width: 400,
+        height: 300,
+      },
+      false,
+      'workspace-browser'
+    )
   })
 
   test('automatically hides the native browser while an intersecting dialog is open', async () => {
@@ -1649,6 +1755,8 @@ describe('WorkspaceBrowserPanel', () => {
     dialogOverlay.className = 'fixed inset-0 z-modal'
     document.body.append(dialogOverlay)
 
+    const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    fireEvent.load(snapshot)
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
         {

@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -97,6 +97,53 @@ const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
   return true;
 })()`
+
+interface BrowserOcclusionState {
+  documentOverlayOccluded: boolean
+  generation: number
+  overlayIds: Set<string>
+}
+
+type BrowserOcclusionAction =
+  | { id: string; occluded: boolean; type: 'overlay' }
+  | { occluded: boolean; type: 'document' }
+
+function isBrowserOccluded(state: BrowserOcclusionState): boolean {
+  return state.overlayIds.size > 0 || state.documentOverlayOccluded
+}
+
+function browserOcclusionReducer(
+  state: BrowserOcclusionState,
+  action: BrowserOcclusionAction
+): BrowserOcclusionState {
+  const next =
+    action.type === 'overlay'
+      ? (() => {
+          const overlayIds = new Set(state.overlayIds)
+          if (action.occluded) {
+            overlayIds.add(action.id)
+          } else {
+            overlayIds.delete(action.id)
+          }
+          return { ...state, overlayIds }
+        })()
+      : { ...state, documentOverlayOccluded: action.occluded }
+
+  if (
+    next.documentOverlayOccluded === state.documentOverlayOccluded &&
+    next.overlayIds.size === state.overlayIds.size &&
+    [...next.overlayIds].every(id => state.overlayIds.has(id))
+  ) {
+    return state
+  }
+  return {
+    ...next,
+    generation:
+      !isBrowserOccluded(state) && isBrowserOccluded(next)
+        ? state.generation + 1
+        : state.generation,
+  }
+}
 
 export interface WorkspaceBrowserPanelProps {
   active: boolean
@@ -296,10 +343,19 @@ export function WorkspaceBrowserTabPanel({
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
   const annotationEmptyPollLogCountRef = useRef(0)
-  const [occludingOverlayIds, setOccludingOverlayIds] = useState<Set<string>>(() => new Set())
-  const [documentOverlayOccluded, setDocumentOverlayOccluded] = useState(false)
-  const [occlusionSnapshotUrl, setOcclusionSnapshotUrl] = useState<string | null>(null)
+  const [browserOcclusion, dispatchBrowserOcclusion] = useReducer(browserOcclusionReducer, {
+    documentOverlayOccluded: false,
+    generation: 0,
+    overlayIds: new Set(),
+  })
+  const [occlusionSnapshot, setOcclusionSnapshot] = useState<{
+    generation: number
+    url: string
+  } | null>(null)
+  const [occlusionCaptureRetry, setOcclusionCaptureRetry] = useState(0)
   const occlusionSnapshotInFlightRef = useRef(false)
+  const occlusionSnapshotGenerationRef = useRef(0)
+  const occlusionSnapshotReadyRef = useRef(true)
   const embeddedBrowserOccludedRef = useRef(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
@@ -334,7 +390,8 @@ export function WorkspaceBrowserTabPanel({
     activePageUrl && cloudDesktopExtension.isInternalPageUrl(activePageUrl)
   )
   const embeddedBrowserOccluded =
-    occludingOverlayIds.size > 0 || (active && Boolean(currentUrl) && documentOverlayOccluded)
+    browserOcclusion.overlayIds.size > 0 ||
+    (active && Boolean(currentUrl) && browserOcclusion.documentOverlayOccluded)
   const pendingCommentContextCount = Math.max(codeCommentCount, codeCommentContexts.length)
   const hasQueuedTweaks = annotations.some(annotation => annotation.adjustments.length > 0)
   const originalViewEnabled = annotationMode && hasQueuedTweaks && originalViewHeld
@@ -656,9 +713,11 @@ export function WorkspaceBrowserTabPanel({
         }
         return
       }
-      await setEmbeddedBrowserBounds(bounds, visible && !embeddedBrowserOccluded, label)
+      const nativeVisible =
+        visible && (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
+      await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
     },
-    [active, embeddedBrowserAvailable, embeddedBrowserOccluded, label]
+    [active, embeddedBrowserAvailable, label]
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
@@ -1447,14 +1506,10 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const handleDebugPanelVisibility = (event: Event) => {
       const expanded = Boolean((event as CustomEvent<{ expanded?: boolean }>).detail?.expanded)
-      setOccludingOverlayIds(current => {
-        const next = new Set(current)
-        if (expanded) {
-          next.add('debug-panel')
-        } else {
-          next.delete('debug-panel')
-        }
-        return next
+      dispatchBrowserOcclusion({
+        id: 'debug-panel',
+        occluded: expanded,
+        type: 'overlay',
       })
     }
 
@@ -1462,14 +1517,10 @@ export function WorkspaceBrowserTabPanel({
       const detail = (event as CustomEvent<EmbeddedBrowserOcclusionChange>).detail
       if (!detail?.id) return
 
-      setOccludingOverlayIds(current => {
-        const next = new Set(current)
-        if (detail.occluded) {
-          next.add(detail.id)
-        } else {
-          next.delete(detail.id)
-        }
-        return next
+      dispatchBrowserOcclusion({
+        id: detail.id,
+        occluded: detail.occluded,
+        type: 'overlay',
       })
     }
 
@@ -1495,7 +1546,7 @@ export function WorkspaceBrowserTabPanel({
       animationFrame = null
       const host = browserHostRef.current
       const occluded = Boolean(host && hasEmbeddedBrowserOverlayConflict(host))
-      setDocumentOverlayOccluded(occluded)
+      dispatchBrowserOcclusion({ occluded, type: 'document' })
     }
     const scheduleOverlayOcclusionUpdate = () => {
       if (animationFrame !== null) return
@@ -1541,43 +1592,90 @@ export function WorkspaceBrowserTabPanel({
     }
   }, [active, currentUrl, embeddedBrowserAvailable])
 
-  const syncOcclusionState = useCallback(async () => {
-    if (embeddedBrowserOccluded) {
-      if (!occlusionSnapshotInFlightRef.current && nativeBrowserOpenRef.current) {
-        occlusionSnapshotInFlightRef.current = true
-        try {
-          let timeoutId: number | null = null
-          const snapshotUrl = await Promise.race([
-            captureEmbeddedBrowserSnapshot(label),
-            new Promise<string>((_, reject) => {
-              timeoutId = window.setTimeout(
-                () => reject(new Error('Embedded browser snapshot capture timed out')),
-                2000
-              )
-            }),
-          ])
-          if (timeoutId !== null) window.clearTimeout(timeoutId)
-          if (embeddedBrowserOccludedRef.current) {
-            setOcclusionSnapshotUrl(snapshotUrl)
-          }
-        } catch (error) {
-          console.error('Failed to capture embedded browser occlusion snapshot:', error)
-        } finally {
-          occlusionSnapshotInFlightRef.current = false
+  useLayoutEffect(() => {
+    embeddedBrowserOccludedRef.current = embeddedBrowserOccluded
+    occlusionSnapshotGenerationRef.current = browserOcclusion.generation
+    occlusionSnapshotReadyRef.current = !embeddedBrowserOccluded
+  }, [browserOcclusion.generation, embeddedBrowserOccluded])
+
+  const syncOcclusionState = useCallback(
+    async (generation: number) => {
+      if (!embeddedBrowserOccludedRef.current) {
+        await syncEmbeddedBrowserBounds(active)
+        return
+      }
+      if (occlusionSnapshotInFlightRef.current || !nativeBrowserOpenRef.current) return
+
+      occlusionSnapshotInFlightRef.current = true
+      try {
+        let timeoutId: number | null = null
+        const snapshotUrl = await Promise.race([
+          captureEmbeddedBrowserSnapshot(label),
+          new Promise<string>((_, reject) => {
+            timeoutId = window.setTimeout(
+              () => reject(new Error('Embedded browser snapshot capture timed out')),
+              2000
+            )
+          }),
+        ])
+        if (timeoutId !== null) window.clearTimeout(timeoutId)
+        if (
+          embeddedBrowserOccludedRef.current &&
+          generation === occlusionSnapshotGenerationRef.current
+        ) {
+          setOcclusionSnapshot({ generation, url: snapshotUrl })
+        }
+      } catch (error) {
+        console.error('Failed to capture embedded browser occlusion snapshot:', error)
+        if (
+          embeddedBrowserOccludedRef.current &&
+          generation === occlusionSnapshotGenerationRef.current
+        ) {
+          // Keep menus usable if snapshot capture fails, even though the native
+          // browser cannot be visually preserved for this interaction.
+          occlusionSnapshotReadyRef.current = true
+          await syncEmbeddedBrowserBounds(active)
+        }
+      } finally {
+        occlusionSnapshotInFlightRef.current = false
+        if (
+          embeddedBrowserOccludedRef.current &&
+          generation !== occlusionSnapshotGenerationRef.current
+        ) {
+          setOcclusionCaptureRetry(current => current + 1)
         }
       }
-    }
-    await syncEmbeddedBrowserBounds(active)
-  }, [active, embeddedBrowserOccluded, label, syncEmbeddedBrowserBounds])
+    },
+    [active, label, syncEmbeddedBrowserBounds]
+  )
 
   useEffect(() => {
-    embeddedBrowserOccludedRef.current = embeddedBrowserOccluded
-    queueMicrotask(() => {
-      void syncOcclusionState().catch(error => {
-        console.error('Failed to sync embedded browser occlusion visibility:', error)
-      })
+    const generation = occlusionSnapshotGenerationRef.current
+    void syncOcclusionState(generation).catch(error => {
+      console.error('Failed to sync embedded browser occlusion visibility:', error)
     })
-  }, [embeddedBrowserOccluded, syncOcclusionState])
+  }, [
+    browserOcclusion.generation,
+    embeddedBrowserOccluded,
+    occlusionCaptureRetry,
+    syncOcclusionState,
+  ])
+
+  const handleOcclusionSnapshotLoad = useCallback(
+    (generation: number) => {
+      if (
+        !embeddedBrowserOccludedRef.current ||
+        generation !== occlusionSnapshotGenerationRef.current
+      ) {
+        return
+      }
+      occlusionSnapshotReadyRef.current = true
+      void syncEmbeddedBrowserBounds(active).catch(error => {
+        console.error('Failed to hide embedded browser behind occlusion snapshot:', error)
+      })
+    },
+    [active, syncEmbeddedBrowserBounds]
+  )
 
   const runBrowserCommand = useCallback(
     async (command: () => Promise<void>) => {
@@ -2262,11 +2360,13 @@ export function WorkspaceBrowserTabPanel({
             className="relative h-full min-h-0 w-full bg-background"
             aria-label={t('workbench.browser')}
           >
-            {embeddedBrowserOccluded && occlusionSnapshotUrl ? (
+            {embeddedBrowserOccluded &&
+            occlusionSnapshot?.generation === browserOcclusion.generation ? (
               <img
                 data-testid="workspace-browser-occlusion-snapshot"
-                src={occlusionSnapshotUrl}
+                src={occlusionSnapshot.url}
                 alt=""
+                onLoad={() => handleOcclusionSnapshotLoad(occlusionSnapshot.generation)}
                 className="pointer-events-none absolute inset-0 h-full w-full bg-background object-fill"
               />
             ) : null}

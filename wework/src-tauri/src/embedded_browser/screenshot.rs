@@ -122,10 +122,16 @@ fn capture_webview_to_png_bytes(webview: &Webview<Wry>) -> Result<Vec<u8>, Strin
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn capture_webview_snapshot_base64(webview: &Webview<Wry>) -> Result<String, String> {
+pub(super) async fn capture_webview_snapshot_base64(
+    webview: Webview<Wry>,
+) -> Result<String, String> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-    let bytes = capture_webview_to_png_bytes(webview)?;
+    let bytes = crate::desktop_capture::capture_embedded_webview_png(
+        webview,
+        Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS),
+    )
+    .await?;
     Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
 }
 

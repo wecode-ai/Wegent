@@ -50,7 +50,6 @@ pub async fn capture_workspace_webview(app: tauri::AppHandle) -> Result<String, 
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 pub(crate) async fn capture_embedded_webview_png(
     webview: tauri::Webview<tauri::Wry>,
     timeout: std::time::Duration,
@@ -79,7 +78,6 @@ pub(crate) async fn capture_embedded_webview_png(
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 unsafe fn encode_embedded_webview_snapshot(image: *mut NSImage) -> Result<Vec<u8>, String> {
     if image.is_null() {
         return Err("WebKit returned no embedded browser snapshot".to_string());
