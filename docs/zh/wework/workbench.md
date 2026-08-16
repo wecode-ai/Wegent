@@ -26,6 +26,29 @@ Wework 桌面版使用顶部标签页承载任务、项目空间、智能体和�
 
 本地项目不会各自创建看板。任务统一进入 **我的任务**，并携带项目字段；项目视图可以基于同一份工作项数据按项目筛选。
 
+## 从外部系统创建 Issue
+
+云端工作空间的维护者可以在 **管理 > 外部任务接入** 中生成 Hook 地址。将该地址配置到 GitHub、GitLab、Sentry、Grafana、告警平台或其他支持 HTTP 回调的系统后，外部事件会确定性地转换为当前工作空间收集箱中的未指派 Issue。创建成功后，现有的 `task.created` 自动化规则仍会继续执行。
+
+Hook 地址本身包含访问凭据，应按密钥管理，不要写入公开仓库或日志。地址泄露时选择 **轮换地址**，旧地址会立即失效；暂时停止接收时可以禁用 Hook。当前仅 Wework 托管任务的云端工作空间支持该能力。
+
+内置适配器直接识别 GitHub Issue 的 `opened`、`reopened` 事件，GitLab Issue 的 `open`、`reopen` 事件，以及 Sentry 和 Grafana 的未解决告警。关闭、解决或无法确定标题的事件不会创建 Issue，但会记录接收结果。相同的外部事件 ID、投递 ID 或请求正文只会处理一次。
+
+其他系统不需要实现 Wework 专用协议，可以直接发送 JSON、表单或纯文本。通用 JSON 至少提供 `title`、`subject`、`summary`、`name` 或 `message` 之一：
+
+```bash
+curl -X POST '<Hook 地址>' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: incident-2026-08-16-001' \
+  -d '{
+    "title": "生产环境支付失败",
+    "description": "错误率超过阈值，请排查并恢复服务",
+    "url": "https://monitor.example.com/incidents/001"
+  }'
+```
+
+纯文本请求会使用第一行作为标题、完整正文作为描述。单次请求正文不得超过 1 MiB。服务返回 HTTP `202`，响应中的 `status` 为 `created`、`duplicate`、`ignored` 或 `failed`；`created` 响应还会包含新建 Issue 的 `loop_item_id`。
+
 ## 在 Issue 和运行任务之间往返
 
 Issue 详情的“执行记录”区域会列出关联的 Wework 运行任务。点击其中一条记录会在统一工作区中并排显示 Issue 上下文和任务对话；需要完整执行界面时，再选择 **打开完整任务**。看板标签页与任务标签页分别保留自己的路由和界面状态。
