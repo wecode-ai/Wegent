@@ -238,6 +238,8 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
+      const current = this.getTask(address)
+      if (current && current.turn.outcome !== null && !current.derived.isRunning) return
       this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
