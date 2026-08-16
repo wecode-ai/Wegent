@@ -26,6 +26,7 @@ import {
   LockKeyhole,
   Plus,
   Search,
+  Settings,
 } from 'lucide-react'
 import type {
   CloudLoopItem,
@@ -71,6 +72,7 @@ import {
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
 import { ProjectAutomationView } from './ProjectAutomationView'
+import { ProjectSpaceSettings } from './ProjectSpaceSettings'
 import {
   type LocatedProjectSpace,
   projectSpaceKey,
@@ -90,7 +92,7 @@ import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } 
 import { AiChatModal } from './AiChatModal'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
-type RootView = 'projects' | 'my-work'
+type RootView = 'projects' | 'my-work' | 'settings'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
 type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
 
@@ -1988,6 +1990,17 @@ export function CloudTodoWorkspace({
                 selected={rootView === 'my-work'}
                 onClick={() => setRootView('my-work')}
               />
+              <DesktopSidebarNavItem
+                icon={Settings}
+                label={t('workbench.project_settings_title')}
+                testId="cloud-project-settings"
+                selected={rootView === 'settings'}
+                onClick={() => {
+                  setRootView('settings')
+                  selectProject(null)
+                  setSelectedItem(null)
+                }}
+              />
             </nav>
             <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
               项目空间
@@ -2169,7 +2182,9 @@ export function CloudTodoWorkspace({
               </button>
             </div>
           ) : null}
-          {rootView === 'my-work' ? (
+          {rootView === 'settings' ? (
+            <ProjectSpaceSettings deviceApi={services.deviceApi} />
+          ) : rootView === 'my-work' ? (
             <CloudMyWorkView
               items={myWork}
               // Open the detail drawer in place instead of jumping to the board.

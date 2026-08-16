@@ -1236,6 +1236,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-settings"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="project-space-settings"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', `${activeBoard} [data-testid="project-space-api-wiki"]`, {
+        text: 'POST /api/v1/cloud-projects',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="project-space-device-concurrency"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
       const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
       await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
       await control.command('click', projectSelector)

@@ -111,6 +111,9 @@ flowchart LR
     INPUT -.-> CONSUMER
     PULL --> RUNTIME[Wework Runtime]
     CONSUMER --> RUNTIME
+    SETTINGS[项目空间设置<br/>逐设备总并发] --> DEVICEAPI[Backend Device Runtime Settings API]
+    DEVICEAPI -->|Runtime RPC 设置并读取容量| RUNTIME
+    RUNTIME -.->|心跳投影 slot_used / slot_max| SETTINGS
 
     ROUTER -->|Wegent| JOB[持久提交后派发任务]
     INPUT -.-> JOB
@@ -154,6 +157,7 @@ flowchart LR
 | 指派 → 执行真值 | 取消旧尝试并创建新尝试 | `loop_item_executions/service.py` |
 | 自动化 → runtime 激活 | 在指派事务提交后激活新执行 | `project_automation_execution.py` |
 | Wework 激活 | 本地设备领取或云消费者 claim | `robot_queue_tasks.py`、Wework 本地 puller |
+| 设置 → 设备总并发 | 按设备通过已认证 Runtime RPC 持久化并立即应用 scheduler 上限；`slot_used/slot_max` 只做容量投影 | `devices.py`、`runtime_rpc_service.py`、Rust `runtime.settings.*` |
 | Wegent 激活 | 按 execution ID 创建 Task/Subtask 并入 Team 管线 | `board_team_execution.py`、`project_automation_tasks.py` |
 | Wegent 看板 MCP 注入 | Backend 从原生 Task 标签识别看板执行，为 ChatShell 与 Executor 的同一 `ExecutionRequest` 注入 Backend MCP URL 和任务级认证；不得依赖调用方临时布尔参数 | `execution/request_builder.py`、`mcp_server/server.py` |
 | Backend 看板 MCP → 领域服务 | 使用与本地 Space MCP 一致的规范工具名，通过 Backend 现有 CloudProject、LoopItem、文件、附件、交付和指派服务操作；不得转调 Wework 本地 stdio MCP | `mcp_server/tools/wework_space.py` 及对应领域服务 |
@@ -252,6 +256,7 @@ sequenceDiagram
 11. 只要原生 Wegent Task 的标签表明它来自看板执行或看板自动化，Backend 就必须在每一轮构建请求时注入看板 MCP；ChatShell 与 Executor 共用同一注入结果，续聊不得依赖上一轮容器内的 MCP 配置。
 12. Backend 看板 MCP 与 Wework 本地原生 Space MCP 是两个 runtime 边界。前者由 Backend 托管并使用 Task Token，后者由 Wework Runtime 本地启动；二者复用规范工具名和领域语义，但不得互相 fallback 或覆盖。
 13. Task Token 的 `task_id/subtask_id` 和原生 Task 标签共同限定当前看板空间。模型可以操作该空间内的其他任务，但当前任务、自动化 run 和 execution 身份必须由服务端解析，不能要求模型猜 ID，也不能用 Task Token 越过当前空间。
+14. 设备总并发属于各自 Runtime scheduler，不是机器人并发。设置页必须按设备调用已认证 Runtime RPC；离线设备不可伪造已保存结果，所有设备的 `slot_max` 之和只用于容量展示，不能成为新的执行状态真值。
 
 #### Wegent 看板评论续聊时序图
 

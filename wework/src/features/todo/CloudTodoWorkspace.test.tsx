@@ -492,6 +492,23 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-projects-home-manage')).toBeInTheDocument()
   })
 
+  it('opens project-space settings from the root navigation', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-settings'))
+
+    expect(await screen.findByTestId('project-space-settings')).toBeInTheDocument()
+    expect(screen.getByTestId('project-space-api-wiki')).toHaveTextContent(
+      'POST /api/v1/cloud-projects'
+    )
+  })
+
   it('renames and archives a project from the sidebar menu', async () => {
     const workbenchServices = services()
 

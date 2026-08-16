@@ -111,6 +111,9 @@ flowchart LR
     INPUT -.-> CONSUMER
     PULL --> RUNTIME[Wework Runtime]
     CONSUMER --> RUNTIME
+    SETTINGS[Project-space settings<br/>per-device total concurrency] --> DEVICEAPI[Backend Device Runtime Settings API]
+    DEVICEAPI -->|Set and read capacity through Runtime RPC| RUNTIME
+    RUNTIME -.->|Heartbeat projection: slot_used / slot_max| SETTINGS
 
     ROUTER -->|Wegent| JOB[Post-commit dispatch job]
     INPUT -.-> JOB
@@ -154,6 +157,7 @@ Every edge has one owner:
 | Assignment → execution truth | Cancel the old attempt and create a new one | `loop_item_executions/service.py` |
 | Automation → runtime activation | Activate the new execution after assignment commit | `project_automation_execution.py` |
 | Wework activation | Local device pull or cloud consumer claim | `robot_queue_tasks.py`, Wework local puller |
+| Settings → device total concurrency | Persist and immediately apply each scheduler limit through authenticated Runtime RPC; `slot_used/slot_max` are capacity projections only | `devices.py`, `runtime_rpc_service.py`, Rust `runtime.settings.*` |
 | Wegent activation | Create Task/Subtask by execution ID and enter Team pipeline | `board_team_execution.py`, `project_automation_tasks.py` |
 | Wegent board MCP injection | Backend detects board execution from native Task labels and injects the Backend MCP URL plus task-scoped authentication into the same `ExecutionRequest` used by ChatShell and Executor; it must not depend on a caller-owned temporary boolean | `execution/request_builder.py`, `mcp_server/server.py` |
 | Backend board MCP → domain services | Expose the canonical local-Space-MCP tool names and operate through existing Backend CloudProject, LoopItem, file, attachment, delivery, and assignment services; never invoke the Wework local stdio MCP | `mcp_server/tools/wework_space.py` and the corresponding domain services |
@@ -252,6 +256,7 @@ Review the sequence against these invariants, in order:
 11. Whenever native Wegent Task labels identify a board execution or board automation, Backend injects the board MCP on every request build. ChatShell and Executor consume the same injection result, and continuations never depend on MCP state left in a previous container.
 12. The Backend board MCP and Wework's native local Space MCP are separate runtime boundaries. Backend owns the former with Task Token authentication; Wework Runtime starts the latter locally. They share canonical tool names and domain semantics but never fall back to or overwrite each other.
 13. The Task Token's `task_id/subtask_id` and native Task labels jointly scope the current board space. The model may operate on other items inside that space, but the current item, automation run, and execution identities are resolved by the server and are never guessed, and a Task Token cannot cross the current space boundary.
+14. Device-wide concurrency belongs to each Runtime scheduler and is separate from Bot concurrency. Settings updates each device through authenticated Runtime RPC; an offline device cannot report a fabricated saved result. The sum of device `slot_max` values is capacity display only and never becomes execution-state truth.
 
 #### Wegent board comment continuation sequence
 
