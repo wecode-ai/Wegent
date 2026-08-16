@@ -187,7 +187,8 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
         filename={file.name}
         type={viewerType}
         size={file.size}
-        className="h-full w-full"
+        data-viewer-theme={themeType}
+        className="wework-workspace-file-viewer h-full w-full"
         options={viewerOptions}
       />
       {isDiagram ? (
