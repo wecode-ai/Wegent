@@ -1448,6 +1448,7 @@ export function PluginsWorkspace({
         ? marketplaceCacheKeyValue
         : null
   )
+  const marketplaceStateCacheKeyRef = useRef(marketplaceCacheKeyValue)
   const installedPluginsRef = useRef(installedPlugins)
   installedPluginsRef.current = installedPlugins
   const marketplacesRef = useRef(marketplaces)
@@ -1480,6 +1481,17 @@ export function PluginsWorkspace({
       cloudMarketplaceAvailable,
       t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
     )
+    const nextMarketplaceState: PluginMarketplaceState = {
+      items,
+      isLoading: items.length === 0,
+      error: null,
+    }
+    // Effects for the new account run in the same commit. Publish the rebuilt
+    // refs before marking them as owned by the new cache key so no async catalog
+    // merge can retain state from the previous account.
+    installedPluginsRef.current = nextInstalled
+    pluginMarketplaceStateRef.current = nextMarketplaceState
+    marketplaceStateCacheKeyRef.current = marketplaceCacheKeyValue
     setMarketplaces(nextMarketplaces)
     setSelectedMarketplaceKey(cached?.selectedMarketplaceKey || rememberedMarketplaceKey())
     setInstalledPlugins(nextInstalled)
@@ -1491,11 +1503,7 @@ export function PluginsWorkspace({
     setCanSharePersonalPlugins(cached?.canSharePersonalPlugins ?? true)
     setIsMarketplaceRefreshing(false)
     setIsOpenAiOfficialCatalogLoading(!hasOpenAiOfficialCatalog(items))
-    setPluginMarketplaceState({
-      items,
-      isLoading: items.length === 0,
-      error: null,
-    })
+    setPluginMarketplaceState(nextMarketplaceState)
     setSelectedPluginId(null)
     setSelectedMarketplacePluginId(null)
     setPluginShareState(null)
@@ -3330,6 +3338,7 @@ export function PluginsWorkspace({
         ),
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
+        previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3511,6 +3520,7 @@ export function PluginsWorkspace({
         ),
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
+        previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3605,6 +3615,7 @@ export function PluginsWorkspace({
         ),
         previousInstalled: installedPluginsRef.current,
         nextInstalled: nextInstalledRaw,
+        previousStateMatchesScope: marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
       })
       const heldBack = holdBackInFlightMarketplaceInstalls({
         items: retained.items,
@@ -3717,6 +3728,8 @@ export function PluginsWorkspace({
           ),
           previousInstalled: installedPluginsRef.current,
           nextInstalled: nextInstalledRaw,
+          previousStateMatchesScope:
+            marketplaceStateCacheKeyRef.current === marketplaceCacheKeyValue,
         })
         const heldBack = holdBackInFlightMarketplaceInstalls({
           items: retained.items,

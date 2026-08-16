@@ -47,7 +47,11 @@ export function retainMarketplaceInstalledState(input: {
   nextItems: PluginMarketplaceItem[]
   previousInstalled: InstalledPluginItem[]
   nextInstalled: InstalledPluginItem[]
+  previousStateMatchesScope: boolean
 }): { items: PluginMarketplaceItem[]; installed: InstalledPluginItem[] } {
+  if (!input.previousStateMatchesScope) {
+    return { items: input.nextItems, installed: input.nextInstalled }
+  }
   const hintedItems = retainMarketplaceInstallHints(input.previousItems, input.nextItems)
   const nextItemsById = new Map(input.nextItems.map(item => [String(item.id), item]))
   const retainedPluginIds = new Set(
