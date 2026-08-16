@@ -1260,9 +1260,10 @@ class ProjectChatService:
         if row.sender_type != "agent":
             return False
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        reconciled = self._reconcile_board_robot_sender(db, row=row, metadata=metadata)
         if row.status in {"completed", "failed"}:
             if metadata.get("run_status") == row.status:
-                return False
+                return reconciled
             row.metadata_json = {**metadata, "run_status": row.status}
             if row.task_id:
                 self._set_task_ai_state(
@@ -1282,7 +1283,7 @@ class ProjectChatService:
             )
             return True
         if row.status != "streaming" or not row.task_id:
-            return False
+            return reconciled
 
         task = db.get(LoopItem, row.task_id)
         task_metadata = (
@@ -1294,9 +1295,9 @@ class ProjectChatService:
         ai_state = ai_state if isinstance(ai_state, dict) else {}
         run_status = ai_state.get("status")
         if run_status not in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
-            return False
+            return reconciled
         if ai_state.get("project_chat_message_id") != row.message_id:
-            return False
+            return reconciled
 
         status_value = (
             "failed"
@@ -1317,6 +1318,89 @@ class ProjectChatService:
             run_status,
         )
         return True
+
+    @staticmethod
+    def _reconcile_board_robot_sender(
+        db: Session,
+        *,
+        row: ProjectChatMessage,
+        metadata: dict,
+    ) -> bool:
+        """Repair activity authors from their selected board robot."""
+
+        resolved = ProjectChatService._board_robot_for_activity(
+            db, row=row, metadata=metadata
+        )
+        if resolved is None:
+            return False
+        agent, manager_activity = resolved
+        sender_name = str(agent.title or agent.name or "AI")
+        if manager_activity:
+            if row.sender_name == sender_name:
+                return False
+            row.sender_name = sender_name
+            logger.warning(
+                "[ProjectChat] Reconciled manager activity display name to board robot: "
+                "project_id=%s task_id=%s message_id=%s agent_id=%s",
+                row.project_id,
+                row.task_id,
+                row.message_id,
+                agent.id,
+            )
+            return True
+        if (
+            row.sender_id == agent.id
+            and row.sender_name == sender_name
+            and row.agent_id == agent.id
+        ):
+            return False
+        row.sender_id = agent.id
+        row.sender_name = sender_name
+        row.agent_id = agent.id
+        logger.warning(
+            "[ProjectChat] Reconciled Wegent execution sender to board robot: "
+            "project_id=%s task_id=%s message_id=%s agent_id=%s",
+            row.project_id,
+            row.task_id,
+            row.message_id,
+            agent.id,
+        )
+        return True
+
+    @staticmethod
+    def _board_robot_for_activity(
+        db: Session,
+        *,
+        row: ProjectChatMessage,
+        metadata: dict,
+    ) -> tuple[ProjectChatAgent, bool] | None:
+        """Resolve the board robot represented by an activity projection."""
+
+        manager_activity = metadata.get("selected_assignee_type") == "agent"
+        agent_id = ""
+        if manager_activity:
+            agent_id = str(metadata.get("selected_assignee_id") or "")
+        elif metadata.get("executor_type") == "wegent_team":
+            try:
+                execution_id = int(metadata["execution_id"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            from app.models.loop_item_execution import LoopItemExecution
+
+            execution = db.get(LoopItemExecution, execution_id)
+            if (
+                execution is None
+                or execution.cloud_project_id != row.project_id
+                or execution.loop_item_id != row.task_id
+            ):
+                return None
+            agent_id = str(execution.agent_id or "")
+        if not agent_id:
+            return None
+        agent = db.get(ProjectChatAgent, agent_id)
+        if agent is None or agent.cloud_project_id != row.project_id:
+            return None
+        return agent, manager_activity
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:

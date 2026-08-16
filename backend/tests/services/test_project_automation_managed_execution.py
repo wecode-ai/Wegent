@@ -157,6 +157,7 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         id=61,
         loop_item_id="board-task-1",
         cloud_project_id="project-1",
+        agent_id="robot-9",
         team_id=8,
         executor_owner_user_id=7,
         backend_task_id=None,
@@ -166,11 +167,19 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         execution if model is LoopItemExecution and row_id == 61 else None
     )
     owner = SimpleNamespace(id=7)
+    agent = SimpleNamespace(
+        id="robot-9",
+        cloud_project_id="project-1",
+        title="Code Reviewer",
+        name="code-reviewer",
+        status="active",
+    )
     team = SimpleNamespace(id=8, kind="Team", name="Review Team", is_active=True)
 
     handle = await project_automation_managed_execution_service.dispatch_board_team(
         db=db,
         owner=owner,
+        agent=agent,
         team=team,
         prompt="  Review the task  ",
         title="Board review",
@@ -196,7 +205,9 @@ async def test_board_team_dispatch_uses_native_team_task_and_execution_identity(
         "weworkSpaceTaskId": "board-task-1",
     }
     activity = db.add.call_args.args[0]
-    assert activity.sender_id == "wegent_team:8"
+    assert activity.sender_id == "robot-9"
+    assert activity.sender_name == "Code Reviewer"
+    assert activity.agent_id == "robot-9"
     assert activity.metadata_json["execution_id"] == 61
     enqueue.assert_called_once_with(
         task_id=51,

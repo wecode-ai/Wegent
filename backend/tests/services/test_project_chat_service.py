@@ -2050,6 +2050,132 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].metadata["run_status"] == "completed"
 
 
+def test_subscribe_repairs_wegent_activity_sender_to_board_robot(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-ROBOT-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Run with Wegent",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    team = Kind(
+        kind="Team",
+        name="dev-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {}, "metadata": {"name": "dev-team"}},
+    )
+    test_db.add_all([task, team])
+    test_db.commit()
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        team_id=team.id,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="queued",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    message_id = str(uuid.uuid4())
+    message = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id=f"wegent_team:{team.id}",
+        sender_name="dev-team",
+        message_type="agent_status",
+        content="",
+        metadata_json={
+            "execution_id": execution.id,
+            "executor_type": "wegent_team",
+            "executor_ref": str(team.id),
+            "run_status": "queued",
+        },
+        agent_id="",
+        status="pending",
+    )
+    test_db.add(message)
+    test_db.commit()
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
+    )
+
+    assert messages[-1].sender["id"] == "12"
+    assert messages[-1].sender["name"] == "Code Reviewer"
+    assert messages[-1].agent_id == "12"
+    test_db.refresh(message)
+    assert message.sender_id == "12"
+    assert message.sender_name == "Code Reviewer"
+    assert message.agent_id == "12"
+
+
+def test_subscribe_repairs_manager_activity_sender_to_selected_board_robot(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-MANAGER-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Managed assignment",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    message_id = str(uuid.uuid4())
+    message = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="自定义 AI 调度员",
+        message_type="text",
+        content="AI 调度员已完成分派。",
+        metadata_json={
+            "kind": "project_automation_run",
+            "selected_assignee_type": "agent",
+            "selected_assignee_id": "12",
+            "run_status": "completed",
+        },
+        agent_id="",
+        status="completed",
+    )
+    test_db.add_all([task, message])
+    test_db.commit()
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
+    )
+
+    assert messages[-1].sender["id"] == "automation_manager:rule-1"
+    assert messages[-1].sender["name"] == "Code Reviewer"
+    assert messages[-1].agent_id is None
+    test_db.refresh(message)
+    assert message.sender_id == "automation_manager:rule-1"
+    assert message.sender_name == "Code Reviewer"
+    assert message.agent_id == ""
+
+
 def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(
     test_db: Session, test_user: User
 ) -> None:

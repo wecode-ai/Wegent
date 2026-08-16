@@ -3139,6 +3139,7 @@ async def test_wegent_runtime_activation_uses_exact_execution_and_is_idempotent(
     assert repeated.backend_task_id == 1234
     dispatch.assert_awaited_once()
     assert dispatch.await_args.kwargs["execution_id"] == execution.id
+    assert dispatch.await_args.kwargs["agent"].id == bot.id
     assert dispatch.await_args.kwargs["team"].id == team.id
     assert dispatch.await_args.kwargs["owner"].id == test_user.id
     prompt = dispatch.await_args.kwargs["prompt"]
@@ -3334,6 +3335,8 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     assert run.status == "succeeded"
     assert run.assignee_agent_id == agent.id
     assert activity.status == "completed"
+    assert activity.sender_id == f"automation_manager:{rule.id}"
+    assert activity.sender_name == "Execution Bot"
     assert activity.agent_id == ""
     assert activity.metadata_json["selected_assignee_type"] == "agent"
     assert activity.metadata_json["selected_assignee_id"] == agent.id

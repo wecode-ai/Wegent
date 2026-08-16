@@ -137,6 +137,7 @@ async def dispatch_board_robot_execution(
     await project_automation_managed_execution_service.dispatch_board_team(
         db=db,
         owner=owner,
+        agent=agent,
         team=team,
         prompt=prompt,
         title=title,

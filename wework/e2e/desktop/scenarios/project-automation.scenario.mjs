@@ -484,7 +484,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     await control.command(
       'waitFor',
       `[data-testid="cloud-task-activity-message-${rootMessageId}"]`,
-      { timeoutMs: uiTimeoutMs }
+      { text: wegentAgent.name, timeoutMs: uiTimeoutMs }
     )
     const replyComposer = `[data-testid="cloud-task-activity-card-composer-${rootMessageId}"]`
     await control.command('fill', replyComposer, { value: '确认继续执行' })

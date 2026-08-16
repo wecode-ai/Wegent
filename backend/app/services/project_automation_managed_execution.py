@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, make_transient
 
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.db.session import get_db_session
+from app.models.delivery import ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
@@ -149,6 +150,7 @@ class ProjectAutomationManagedExecutionService:
         *,
         db: Session,
         owner: User,
+        agent: ProjectChatAgent,
         team: Kind,
         prompt: str,
         title: str,
@@ -168,8 +170,11 @@ class ProjectAutomationManagedExecutionService:
             execution is None
             or execution.loop_item_id != loop_item_id
             or execution.cloud_project_id != project_id
+            or execution.agent_id != agent.id
             or execution.team_id != team.id
             or execution.executor_owner_user_id != owner.id
+            or agent.cloud_project_id != project_id
+            or agent.status != "active"
         ):
             raise ValueError("Board Team execution does not match its assignment")
 
@@ -219,8 +224,8 @@ class ProjectAutomationManagedExecutionService:
             project_id=project_id,
             task_id=loop_item_id,
             sender_type="agent",
-            sender_id=f"wegent_team:{team.id}",
-            sender_name=team.name or "Wegent Team",
+            sender_id=agent.id,
+            sender_name=agent.title or agent.name or "AI",
             message_type="agent_status",
             content="",
             metadata_json={
@@ -230,7 +235,7 @@ class ProjectAutomationManagedExecutionService:
                 "backend_task_id": result.task.id,
                 "run_status": "queued",
             },
-            agent_id="",
+            agent_id=agent.id,
             runtime_device_id="",
             runtime_task_id="",
             status="pending",
