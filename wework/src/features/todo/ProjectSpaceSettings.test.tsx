@@ -95,4 +95,49 @@ describe('ProjectSpaceSettings', () => {
       expect.stringContaining('/api/v1/cloud-projects/<project-id>/loop-items')
     )
   })
+
+  it('manages automations and active runs across project spaces', async () => {
+    const update = vi.fn().mockResolvedValue({})
+    const cancelRun = vi.fn().mockResolvedValue({})
+    const automationApi = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'rule-1',
+          name: 'Nightly review',
+          enabled: true,
+          version: 2,
+          lastRunStatus: 'running',
+        },
+      ]),
+      listRuns: vi.fn().mockResolvedValue([{ id: 'run-1', status: 'running' }]),
+      update,
+      cancelRun,
+    }
+    const project = {
+      id: 'project-1',
+      name: 'Product board',
+      location: 'cloud',
+    }
+    const projectServices = {
+      cloud: { projectAutomationApi: automationApi },
+    }
+
+    render(
+      <ProjectSpaceSettings
+        projects={[project] as never}
+        projectServices={projectServices as never}
+      />
+    )
+
+    expect(await screen.findByText('Nightly review')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-settings-cancel-run-run-1'))
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('project-1', 'run-1'))
+    await userEvent.click(screen.getByTestId('project-settings-toggle-automation-rule-1'))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith('project-1', 'rule-1', {
+        version: 2,
+        enabled: false,
+      })
+    )
+  })
 })

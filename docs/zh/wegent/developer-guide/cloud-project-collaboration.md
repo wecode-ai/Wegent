@@ -92,6 +92,8 @@ inbox → pending → in_progress → in_review → completed
 ```mermaid
 flowchart LR
     API[用户/API 创建或指派] --> ASSIGN[统一任务指派服务]
+    ARCHIVE[删除/归档项目空间] --> CLEAN[停用并软删除全部自动化规则]
+    CLEAN -.->|移出定时和事件候选集| TIMER
     TIMER[定时/事件自动化] --> MANAGER[自动化调度员执行]
     MCP[调度员 wework_space 工具] --> AUTO[自动化指派编排]
     MANAGER --> MCP
@@ -112,6 +114,8 @@ flowchart LR
     PULL --> RUNTIME[Wework Runtime]
     CONSUMER --> RUNTIME
     SETTINGS[项目空间设置<br/>逐设备总并发] --> DEVICEAPI[Backend Device Runtime Settings API]
+    SETTINGS --> GLOBALAUTO[跨项目自动化控制台<br/>停用规则 / 停止活动 run]
+    GLOBALAUTO -->|复用逐项目自动化 API| TIMER
     DEVICEAPI -->|Runtime RPC 设置并读取容量| RUNTIME
     RUNTIME -.->|心跳投影 slot_used / slot_max| SETTINGS
 
@@ -156,6 +160,7 @@ flowchart LR
 | 入口 → 指派 | 校验成员/机器人并写负责人 | `loop_items/service.py`、`external_provider.py` |
 | 指派 → 执行真值 | 取消旧尝试并创建新尝试 | `loop_item_executions/service.py` |
 | 自动化 → runtime 激活 | 在指派事务提交后激活新执行 | `project_automation_execution.py` |
+| 项目空间归档 → 自动化清理 | 在项目归档的同一事务内停用并软删除全部规则，清空下次触发时间 | `cloud_projects/service.py`、`project_automations.py` |
 | Wework 激活 | 本地设备领取或云消费者 claim | `robot_queue_tasks.py`、Wework 本地 puller |
 | 设置 → 设备总并发 | 按设备通过已认证 Runtime RPC 持久化并立即应用 scheduler 上限；`slot_used/slot_max` 只做容量投影 | `devices.py`、`runtime_rpc_service.py`、Rust `runtime.settings.*` |
 | Wegent 激活 | 按 execution ID 创建 Task/Subtask 并入 Team 管线 | `board_team_execution.py`、`project_automation_tasks.py` |
@@ -256,7 +261,8 @@ sequenceDiagram
 11. 只要原生 Wegent Task 的标签表明它来自看板执行或看板自动化，Backend 就必须在每一轮构建请求时注入看板 MCP；ChatShell 与 Executor 共用同一注入结果，续聊不得依赖上一轮容器内的 MCP 配置。
 12. Backend 看板 MCP 与 Wework 本地原生 Space MCP 是两个 runtime 边界。前者由 Backend 托管并使用 Task Token，后者由 Wework Runtime 本地启动；二者复用规范工具名和领域语义，但不得互相 fallback 或覆盖。
 13. Task Token 的 `task_id/subtask_id` 和原生 Task 标签共同限定当前看板空间。模型可以操作该空间内的其他任务，但当前任务、自动化 run 和 execution 身份必须由服务端解析，不能要求模型猜 ID，也不能用 Task Token 越过当前空间。
-14. 设备总并发属于各自 Runtime scheduler，不是机器人并发。设置页必须按设备调用已认证 Runtime RPC；离线设备不可伪造已保存结果，所有设备的 `slot_max` 之和只用于容量展示，不能成为新的执行状态真值。
+14. 项目空间归档前不得存在活动自动化 run；设置页提供跨项目停止入口。归档与规则清理必须在同一事务提交；所有规则都要停用、软删除并清空下次触发时间，调度扫描也只能选择父项目仍为 `active` 的规则。历史终态 run 作为审计记录保留，不得再产生新执行。
+15. 设备总并发属于各自 Runtime scheduler，不是机器人并发。设置页必须按设备调用已认证 Runtime RPC；离线设备不可伪造已保存结果，所有设备的 `slot_max` 之和只用于容量展示，不能成为新的执行状态真值。
 
 #### Wegent 看板评论续聊时序图
 

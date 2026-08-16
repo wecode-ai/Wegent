@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, Copy, RefreshCw, Server } from 'lucide-react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { ProjectSpaceDetailServiceMap } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { getLocalExecutorStatus } from '@/tauri/localExecutor'
 import type { DeviceInfo } from '@/types/devices'
+import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
+import type { LocatedProjectSpace } from './projectSpaceSelection'
+import { isExecutionActive, isExecutionCancellable } from './executionStatus'
 
 interface ProjectSpaceSettingsProps {
   deviceApi?: WorkbenchServices['deviceApi']
+  projects?: LocatedProjectSpace[]
+  projectServices?: ProjectSpaceDetailServiceMap
+}
+
+interface GlobalAutomationRow {
+  project: LocatedProjectSpace
+  rule: ProjectAutomationRule
+  runs: ProjectAutomationRun[]
 }
 
 const MAX_CONCURRENT_TASKS = 20
@@ -58,13 +70,38 @@ function CodeExample({ testId, value }: { testId: string; value: string }) {
   )
 }
 
-export function ProjectSpaceSettings({ deviceApi }: ProjectSpaceSettingsProps) {
+export function ProjectSpaceSettings({
+  deviceApi,
+  projects = [],
+  projectServices,
+}: ProjectSpaceSettingsProps) {
   const { t } = useTranslation('common')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [localDeviceId, setLocalDeviceId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [savingDeviceId, setSavingDeviceId] = useState<string | null>(null)
+  const [automations, setAutomations] = useState<GlobalAutomationRow[]>([])
+  const [automationBusy, setAutomationBusy] = useState<string | null>(null)
+  const [automationError, setAutomationError] = useState('')
+
+  const loadAutomations = useCallback(async () => {
+    const rows = await Promise.all(
+      projects.map(async project => {
+        const api = projectServices?.[project.location]?.projectAutomationApi
+        if (!api) return []
+        const rules = await api.list(String(project.id))
+        return Promise.all(
+          rules.map(async rule => ({
+            project,
+            rule,
+            runs: await api.listRuns(String(project.id), rule.id),
+          }))
+        )
+      })
+    )
+    setAutomations(rows.flat())
+  }, [projectServices, projects])
 
   const loadDevices = useCallback(async () => {
     if (!deviceApi) {
@@ -99,6 +136,48 @@ export function ProjectSpaceSettings({ deviceApi }: ProjectSpaceSettingsProps) {
       active = false
     }
   }, [loadDevices])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadAutomations().catch(cause =>
+        setAutomationError(cause instanceof Error ? cause.message : String(cause))
+      )
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadAutomations])
+
+  async function updateAutomation(row: GlobalAutomationRow, enabled: boolean) {
+    const api = projectServices?.[row.project.location]?.projectAutomationApi
+    if (!api) return
+    setAutomationBusy(row.rule.id)
+    try {
+      await api.update(String(row.project.id), row.rule.id, {
+        version: row.rule.version,
+        enabled,
+      })
+      await loadAutomations()
+      setAutomationError('')
+    } catch (cause) {
+      setAutomationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setAutomationBusy(null)
+    }
+  }
+
+  async function cancelAutomationRun(row: GlobalAutomationRow, run: ProjectAutomationRun) {
+    const api = projectServices?.[row.project.location]?.projectAutomationApi
+    if (!api) return
+    setAutomationBusy(run.id)
+    try {
+      await api.cancelRun(String(row.project.id), run.id)
+      await loadAutomations()
+      setAutomationError('')
+    } catch (cause) {
+      setAutomationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setAutomationBusy(null)
+    }
+  }
 
   const orderedDevices = useMemo(
     () =>
@@ -253,6 +332,67 @@ export function ProjectSpaceSettings({ deviceApi }: ProjectSpaceSettingsProps) {
             >
               {error}
             </p>
+          ) : null}
+        </section>
+
+        <section className="mt-12" data-testid="project-space-automation-management">
+          <h2 className="text-heading-sm font-medium text-text-primary">
+            {t('workbench.project_settings_automation_title')}
+          </h2>
+          <p className="mt-1 text-sm text-text-muted">
+            {t('workbench.project_settings_automation_description')}
+          </p>
+          <div className="mt-4 overflow-hidden rounded-xl border border-border bg-background">
+            {automations.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-text-muted">
+                {t('workbench.project_settings_no_automations')}
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {automations.map(row => {
+                  const activeRun = row.runs.find(run => isExecutionActive(run.status))
+                  return (
+                    <div
+                      key={`${row.project.location}:${row.rule.id}`}
+                      className="flex items-center gap-4 px-4 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{row.rule.name}</div>
+                        <div className="mt-0.5 text-xs text-text-muted">
+                          {row.project.name} ·{' '}
+                          {activeRun?.status ?? row.rule.lastRunStatus ?? 'idle'}
+                        </div>
+                      </div>
+                      {activeRun && isExecutionCancellable(activeRun.status) ? (
+                        <button
+                          type="button"
+                          data-testid={`project-settings-cancel-run-${activeRun.id}`}
+                          disabled={automationBusy === activeRun.id}
+                          onClick={() => void cancelAutomationRun(row, activeRun)}
+                          className="h-8 rounded-lg px-3 text-sm text-destructive hover:bg-muted disabled:opacity-40"
+                        >
+                          {t('workbench.project_settings_cancel_run')}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        data-testid={`project-settings-toggle-automation-${row.rule.id}`}
+                        disabled={automationBusy === row.rule.id}
+                        onClick={() => void updateAutomation(row, !row.rule.enabled)}
+                        className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
+                      >
+                        {row.rule.enabled
+                          ? t('workbench.project_settings_disable_automation')
+                          : t('workbench.project_settings_enable_automation')}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          {automationError ? (
+            <p className="mt-3 text-sm text-destructive">{automationError}</p>
           ) : null}
         </section>
 

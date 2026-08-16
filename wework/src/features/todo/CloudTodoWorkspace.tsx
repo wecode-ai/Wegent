@@ -2183,7 +2183,11 @@ export function CloudTodoWorkspace({
             </div>
           ) : null}
           {rootView === 'settings' ? (
-            <ProjectSpaceSettings deviceApi={services.deviceApi} />
+            <ProjectSpaceSettings
+              deviceApi={services.deviceApi}
+              projects={projects}
+              projectServices={services.projectSpaceDetailServices}
+            />
           ) : rootView === 'my-work' ? (
             <CloudMyWorkView
               items={myWork}

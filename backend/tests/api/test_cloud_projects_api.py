@@ -26,6 +26,7 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
@@ -398,6 +399,111 @@ def test_cloud_project_generates_key_when_omitted(
     assert isinstance(created.json()["id"], str)
     assert created.json()["project_key"].startswith("PRJ")
     assert 2 <= len(created.json()["project_key"]) <= 16
+
+
+def test_archiving_cloud_project_deletes_all_automation_rules(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "cleanup", "name": "Automation cleanup"},
+    ).json()
+    scheduled_rule = ProjectAutomationRule(
+        cloud_project_id=project["id"],
+        title="Scheduled rule",
+        status="enabled",
+        due_at=datetime(2020, 1, 1),
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "schedule",
+            "cron_expression": "0 3 * * *",
+            "timezone": "UTC",
+        },
+    )
+    event_rule = ProjectAutomationRule(
+        cloud_project_id=project["id"],
+        title="Event rule",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    test_db.add_all([scheduled_rule, event_rule])
+    test_db.commit()
+    rule_ids = [scheduled_rule.id, event_rule.id]
+
+    archived = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}",
+        params={"version": project["version"]},
+        headers=_auth(test_token),
+    )
+
+    assert archived.status_code == 204, archived.text
+    test_db.expire_all()
+    stored_project = test_db.get(CloudProject, project["id"])
+    assert stored_project is not None
+    assert stored_project.status == "archived"
+    stored_rules = (
+        test_db.query(ProjectAutomationRule)
+        .filter(ProjectAutomationRule.id.in_(rule_ids))
+        .all()
+    )
+    assert len(stored_rules) == 2
+    for rule in stored_rules:
+        assert rule.status == "disabled"
+        assert rule.deleted_at is not None
+        assert loop_datetime_value_is_unset(rule.due_at)
+        assert rule.updated_by_user_id == test_user.id
+        assert rule.version == 2
+
+
+def test_archiving_cloud_project_rejects_active_automation_run(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "running", "name": "Running automation"},
+    ).json()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project["id"],
+        title="Active rule",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger_type": "schedule", "timezone": "UTC"},
+    )
+    test_db.add(rule)
+    test_db.flush()
+    test_db.add(
+        ProjectAutomationRun(
+            cloud_project_id=project["id"],
+            parent_id=rule.id,
+            title="Active run",
+            status="running",
+            created_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+
+    archived = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}",
+        params={"version": project["version"]},
+        headers=_auth(test_token),
+    )
+
+    assert archived.status_code == 409
+    assert "Stop active automation runs" in archived.json()["detail"]
+    test_db.expire_all()
+    assert test_db.get(CloudProject, project["id"]).status == "active"
 
 
 def test_cloud_project_list_tolerates_unknown_task_provider(

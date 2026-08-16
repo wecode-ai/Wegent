@@ -92,6 +92,8 @@ A board assignee is either a project member or a project Bot (`ProjectChatAgent`
 ```mermaid
 flowchart LR
     API[User/API create or assign] --> ASSIGN[Unified task assignment service]
+    ARCHIVE[Delete/archive project space] --> CLEAN[Disable and soft-delete every automation rule]
+    CLEAN -.->|Remove from schedule and event candidates| TIMER
     TIMER[Scheduled/event automation] --> MANAGER[Automation manager execution]
     MCP[Manager wework_space tool] --> AUTO[Automation assignment orchestration]
     MANAGER --> MCP
@@ -112,6 +114,8 @@ flowchart LR
     PULL --> RUNTIME[Wework Runtime]
     CONSUMER --> RUNTIME
     SETTINGS[Project-space settings<br/>per-device total concurrency] --> DEVICEAPI[Backend Device Runtime Settings API]
+    SETTINGS --> GLOBALAUTO[Cross-project automation console<br/>disable rules / stop active runs]
+    GLOBALAUTO -->|Reuse per-project automation APIs| TIMER
     DEVICEAPI -->|Set and read capacity through Runtime RPC| RUNTIME
     RUNTIME -.->|Heartbeat projection: slot_used / slot_max| SETTINGS
 
@@ -156,6 +160,7 @@ Every edge has one owner:
 | Entry → assignment | Validate member/Bot and persist assignee | `loop_items/service.py`, `external_provider.py` |
 | Assignment → execution truth | Cancel the old attempt and create a new one | `loop_item_executions/service.py` |
 | Automation → runtime activation | Activate the new execution after assignment commit | `project_automation_execution.py` |
+| Project archive → automation cleanup | Disable and soft-delete every rule and clear its next trigger in the project-archive transaction | `cloud_projects/service.py`, `project_automations.py` |
 | Wework activation | Local device pull or cloud consumer claim | `robot_queue_tasks.py`, Wework local puller |
 | Settings → device total concurrency | Persist and immediately apply each scheduler limit through authenticated Runtime RPC; `slot_used/slot_max` are capacity projections only | `devices.py`, `runtime_rpc_service.py`, Rust `runtime.settings.*` |
 | Wegent activation | Create Task/Subtask by execution ID and enter Team pipeline | `board_team_execution.py`, `project_automation_tasks.py` |
@@ -256,7 +261,8 @@ Review the sequence against these invariants, in order:
 11. Whenever native Wegent Task labels identify a board execution or board automation, Backend injects the board MCP on every request build. ChatShell and Executor consume the same injection result, and continuations never depend on MCP state left in a previous container.
 12. The Backend board MCP and Wework's native local Space MCP are separate runtime boundaries. Backend owns the former with Task Token authentication; Wework Runtime starts the latter locally. They share canonical tool names and domain semantics but never fall back to or overwrite each other.
 13. The Task Token's `task_id/subtask_id` and native Task labels jointly scope the current board space. The model may operate on other items inside that space, but the current item, automation run, and execution identities are resolved by the server and are never guessed, and a Task Token cannot cross the current space boundary.
-14. Device-wide concurrency belongs to each Runtime scheduler and is separate from Bot concurrency. Settings updates each device through authenticated Runtime RPC; an offline device cannot report a fabricated saved result. The sum of device `slot_max` values is capacity display only and never becomes execution-state truth.
+14. A project cannot be archived while it has an active automation run; Settings provides the cross-project stop control. Project archival and rule cleanup then commit in one transaction. Every rule is disabled, soft-deleted, and stripped of its next trigger; schedule scans only select rules whose parent project remains `active`. Historical terminal runs remain as audit records and can never create new executions.
+15. Device-wide concurrency belongs to each Runtime scheduler and is separate from Bot concurrency. Settings updates each device through authenticated Runtime RPC; an offline device cannot report a fabricated saved result. The sum of device `slot_max` values is capacity display only and never becomes execution-state truth.
 
 #### Wegent board comment continuation sequence
 
