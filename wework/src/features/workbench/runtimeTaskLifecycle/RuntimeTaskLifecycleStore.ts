@@ -119,6 +119,8 @@ export class RuntimeTaskLifecycleStore {
     transcript: Pick<RuntimeTranscriptResponse, 'running' | 'turns'>
   ): void {
     if (transcript.running === true) {
+      const current = this.getTask(address)
+      if (current && current.turn.outcome !== null && !current.derived.isRunning) return
       this.executorStarted(address)
       return
     }
