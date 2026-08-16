@@ -1,10 +1,17 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
+
+const invokeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`,
+  invoke: invokeMock,
 }))
+
+beforeEach(() => {
+  invokeMock.mockReset()
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -12,7 +19,7 @@ afterEach(() => {
 
 describe('CodexInlineVisualizationHost', () => {
   test('loads an absolute ChatGPT visualize path without file change metadata', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<div>可视化内容</div>'))
+    invokeMock.mockResolvedValue('<div>可视化内容</div>')
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:absolute-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -29,15 +36,13 @@ describe('CodexInlineVisualizationHost', () => {
     expect(host).toHaveAttribute('data-visualization-mode', 'wide')
     expect(frame).toHaveAttribute('title', 'Latency')
     await waitFor(() => expect(frame).toHaveAttribute('src', 'blob:absolute-visualization'))
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      'asset://localhost/tmp/codex/visualizations/latency.html'
-    )
+    expect(invokeMock).toHaveBeenCalledWith('read_inline_visualization_html', {
+      path: '/tmp/codex/visualizations/latency.html',
+    })
   })
 
   test('loads the unique nested fragment as a UTF-8 sandbox document and resizes safely', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('<h2>月度趋势</h2><svg style="stroke:var(--viz-series-1)"></svg>')
-    )
+    invokeMock.mockResolvedValue('<h2>月度趋势</h2><svg style="stroke:var(--viz-series-1)"></svg>')
     let documentBlob: Blob | undefined
     vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
       documentBlob = blob

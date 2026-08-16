@@ -82,11 +82,31 @@ describe('stripCodexUiDirectives', () => {
     ])
   })
 
+  test('parses visualize references from any absolute HTML path', () => {
+    const content = [
+      'visualize{"path":"/Users/me/project/output/task-board.html","mode":"wide","title":"Task board"}',
+      'visualize{"path":"/tmp/private.html"}',
+    ].join('\n')
+
+    expect(splitCodexInlineVisualizations(content)).toEqual([
+      {
+        kind: 'visualization',
+        file: '/Users/me/project/output/task-board.html',
+        mode: 'wide',
+        title: 'Task board',
+      },
+      {
+        kind: 'visualization',
+        file: '/tmp/private.html',
+      },
+    ])
+  })
+
   test('preserves malformed, unsafe, and code-fenced visualization directives as markdown', () => {
     const content = [
       '::codex-inline-vis{file="../private.html"}',
-      'visualize{"path":"/tmp/private.html"}',
       'visualize{"path":"relative/visualizations/trend.html"}',
+      'visualize{"path":"/Users/me/project/../private.html"}',
       '```text',
       '::codex-inline-vis{file="trend.html"}',
       'visualize{"path":"/tmp/visualizations/trend.html"}',

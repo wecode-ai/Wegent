@@ -9,6 +9,7 @@ mod embedded_browser;
 mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
+mod inline_visualization;
 mod local_executor;
 mod local_terminal;
 mod local_workspace_files;
@@ -5104,6 +5105,7 @@ pub fn run() {
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            inline_visualization::read_inline_visualization_html,
             diagram_image::copy_diagram_png,
             diagram_image::save_diagram_png,
             get_local_executor_device_id,
