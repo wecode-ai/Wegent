@@ -3,11 +3,20 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
 export type ProjectSpaceApi = NonNullable<WorkbenchServices['deliveryApi']>
+export type LocatedProjectSpace = CloudProject & {
+  location: 'local' | 'cloud'
+}
 
 export interface ProjectSpaceOption {
   key: string
   project: CloudProject
   api: ProjectSpaceApi
+}
+
+export function projectStoreLocation(
+  projectStore: RuntimeProjectSpaceRef['projectStore']
+): 'local' | 'cloud' {
+  return projectStore === 'local' ? 'local' : 'cloud'
 }
 
 export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
@@ -19,6 +28,21 @@ export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
 
 export function projectSpaceKey(ref: RuntimeProjectSpaceRef): string {
   return `${ref.projectStore}:${ref.projectId}`
+}
+
+export function projectKey(project: Pick<CloudProject, 'id' | 'project_store'>): string {
+  return projectSpaceKey({
+    projectStore: project.project_store,
+    projectId: project.id,
+  })
+}
+
+export function sameProjectSpace(
+  left: RuntimeProjectSpaceRef | null | undefined,
+  right: RuntimeProjectSpaceRef | null | undefined
+): boolean {
+  if (!left || !right) return left === right
+  return left.projectStore === right.projectStore && left.projectId === right.projectId
 }
 
 export function runtimeCloudProjectId(project: CloudProject | null): string | undefined {

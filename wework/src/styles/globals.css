@@ -1946,11 +1946,11 @@ button.plugin-installed-strip-item::after {
   z-index: 20;
   min-width: max-content;
   border-radius: 6px;
-  background: #242424;
+  background: rgb(var(--color-popover));
   padding: 4px 7px;
   font-size: var(--text-2xs);
   line-height: 1.2;
-  color: #fff;
+  color: rgb(var(--color-text-primary));
   content: attr(data-tooltip);
   opacity: 0;
   pointer-events: none;

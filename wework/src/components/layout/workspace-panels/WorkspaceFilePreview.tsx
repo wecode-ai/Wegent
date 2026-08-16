@@ -462,7 +462,7 @@ function WorkspaceFilePreviewContent({
             <button
               type="button"
               data-testid="workspace-file-add-comment-button"
-              className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-white disabled:opacity-50"
+              className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
               disabled={!comment.trim()}
               onClick={addComment}
             >

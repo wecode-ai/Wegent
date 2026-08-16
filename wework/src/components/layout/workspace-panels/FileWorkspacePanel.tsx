@@ -889,7 +889,7 @@ export function FileWorkspacePanel({
                 data-testid="workspace-file-save-button"
                 disabled={!dirty || saving}
                 onClick={() => void saveFile()}
-                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-white disabled:opacity-50"
+                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-primary-contrast disabled:opacity-50"
               >
                 {saving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1089,7 +1089,7 @@ export function FileWorkspacePanel({
                 type="button"
                 data-testid="workspace-file-unsaved-save"
                 disabled={saving}
-                className="h-8 rounded-md bg-primary px-3 text-sm text-white disabled:opacity-50"
+                className="h-8 rounded-md bg-primary px-3 text-sm text-primary-contrast disabled:opacity-50"
                 onClick={() =>
                   void (async () => {
                     if (await saveFile()) {

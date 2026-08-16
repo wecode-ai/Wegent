@@ -271,6 +271,20 @@ Required semantic results:
 These are reference values. Product code must consume semantic Wework tokens,
 not scatter literals. Every reusable token must define both themes.
 
+Theme-aware application chrome must use semantic tokens even when a component
+has multiple layout variants. A prop such as compact, remote, mobile, or
+embedded may change spacing and composition, but it must not select a
+light-only or dark-only color recipe. Apply this rule to nested surfaces as
+well as their containers: dialogs, directory pickers, menus, inputs, list rows,
+tooltips, footers, and action groups must all inherit the active theme.
+
+Literal white, black, or neutral fills are allowed only when color is part of
+the content contract rather than application chrome. Examples include a QR
+code's required white quiet zone, an authored HTML document or image canvas, a
+syntax-highlighted code theme, a brand icon, and native window controls. Keep
+these exceptions narrow and visually contained; do not use them to justify a
+light-only panel or control.
+
 Surfaces should be separated in this order: spacing, a small neutral tone
 change, a hairline, then elevation. Do not jump directly to a bordered card.
 
