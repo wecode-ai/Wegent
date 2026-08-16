@@ -56,6 +56,8 @@ export function deriveRuntimePaneStatus({
   const isBusy = lifecycle?.derived.isBusy ?? false
   const running = lifecycle?.derived.isRunning ?? false
   const continuable = lifecycle?.continuable ?? false
+  const conversationWaitingForAssistant = isConversationWaitingForAssistant(messages)
+  const activeGoalRunning = running && lifecycle?.goalStatus === 'active'
 
   return {
     sendPhase,
@@ -72,7 +74,9 @@ export function deriveRuntimePaneStatus({
     isResponseActive,
     isBusy,
     isWaitingForAssistantIndicator:
-      isSubmitting || isAwaitingAssistant || (running && !isAssistantStreaming),
+      isSubmitting ||
+      isAwaitingAssistant ||
+      (running && !isAssistantStreaming && (conversationWaitingForAssistant || activeGoalRunning)),
     canSendQueuedMessage: Boolean(currentRuntimeTask) && continuable && !isBusy,
   }
 }
@@ -89,4 +93,9 @@ export function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolea
   return (
     messages.some(message => message.role === 'assistant') && !findActiveAssistantMessage(messages)
   )
+}
+
+function isConversationWaitingForAssistant(messages: WorkbenchMessage[]): boolean {
+  const lastMessage = messages.findLast(message => message.role !== 'system')
+  return !lastMessage || lastMessage.role === 'user' || lastMessage.status === 'failed'
 }
