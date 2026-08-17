@@ -14,8 +14,10 @@ const appearanceMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
-  AssistantMarkdown: ({ content }: { content: string }) => (
-    <div data-testid="assistant-markdown">{content}</div>
+  AssistantMarkdown: ({ content, variant }: { content: string; variant?: string }) => (
+    <div data-testid="assistant-markdown" data-variant={variant}>
+      {content}
+    </div>
   ),
 }))
 
@@ -93,6 +95,7 @@ test('renders Markdown files as a scrollable preview by default', () => {
     'scrollbar-soft'
   )
   expect(screen.getByTestId('assistant-markdown')).toHaveTextContent('# Project')
+  expect(screen.getByTestId('assistant-markdown')).toHaveAttribute('data-variant', 'document')
   expect(codeViewMocks.render).not.toHaveBeenCalled()
 })
 

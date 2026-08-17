@@ -60,6 +60,14 @@ function validTab(value: unknown): value is WorkspaceTab {
   )
 }
 
+function normalizePersistedTab(tab: WorkspaceTab, labels: WorkspaceTabLabels): WorkspaceTab {
+  const isLegacyDefaultBoard =
+    tab.kind === 'board' &&
+    tab.contentRoute === '/todo' &&
+    ['工作项', '项目空间', 'Work items', 'Project spaces'].includes(tab.title)
+  return isLegacyDefaultBoard ? { ...tab, title: labels.board } : tab
+}
+
 function loadPersistedTabs(
   scope: string,
   pathname: string,
@@ -72,7 +80,7 @@ function loadPersistedTabs(
       localStorage.getItem(workspaceTabsStorageKey(scope)) ?? 'null'
     ) as PersistedWorkspaceTabs | null
     if (parsed && Array.isArray(parsed.tabs)) {
-      const tabs = parsed.tabs.filter(validTab)
+      const tabs = parsed.tabs.filter(validTab).map(tab => normalizePersistedTab(tab, labels))
       if (tabs.length > 0) {
         const requested = location.tabId
           ? tabs.find(tab => tab.id === location.tabId)

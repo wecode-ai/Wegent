@@ -441,7 +441,25 @@ async function reconcilePendingLocalModelCatalog(
     const restart = await request<{
       restarted?: boolean
     }>('runtime.codex.app_server.restart', { ifIdle: true })
-    if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
+    if (restart.restarted) {
+      markLocalModelCatalogReady(pendingCatalogModels)
+      return
+    }
+    const models = await request<{
+      data?: Array<{ id?: string }>
+    }>('runtime.codex.models.list', { includeHidden: true })
+    const loadedModelIds = new Set(
+      (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
+    )
+    const loadedPendingModels = pendingCatalogModels.filter(model => {
+      const catalogModelId =
+        model.codexCatalogModelId ??
+        (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
+      return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
+    })
+    if (loadedPendingModels.length > 0) {
+      markLocalModelCatalogReady(loadedPendingModels)
+    }
   })()
   tracker.inFlight = reconciliation
   try {

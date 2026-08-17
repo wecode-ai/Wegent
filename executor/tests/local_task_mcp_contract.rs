@@ -96,8 +96,8 @@ fn space_mcp_runs_over_stdio_without_listening_on_a_port() {
         rusqlite::Connection::open(executor_home.path().join("data/tasks.sqlite")).unwrap();
     let metadata: String = connection
         .query_row(
-            "SELECT metadata FROM loop_items WHERE resource_type = 'project'",
-            [],
+            "SELECT metadata FROM loop_items WHERE resource_type = 'project' AND id = ?1",
+            [project["id"].as_str().unwrap()],
             |row| row.get(0),
         )
         .unwrap();
@@ -129,7 +129,10 @@ fn list_spaces_remains_available_locally_without_backend_connection() {
     let text = response["result"]["content"][0]["text"].as_str().unwrap();
 
     assert_eq!(response["result"]["isError"], false);
-    assert_eq!(serde_json::from_str::<Value>(text).unwrap(), json!([]));
+    let projects = serde_json::from_str::<Value>(text).unwrap();
+    assert_eq!(projects.as_array().unwrap().len(), 1);
+    assert_eq!(projects[0]["id"], "default-work-items");
+    assert_eq!(projects[0]["name"], "我的任务");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -191,7 +194,7 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
 
     assert_eq!(response["result"]["isError"], false);
-    assert_eq!(projects.as_array().unwrap().len(), 2);
+    assert_eq!(projects.as_array().unwrap().len(), 3);
     assert!(projects
         .as_array()
         .unwrap()
@@ -202,6 +205,11 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         .unwrap()
         .iter()
         .any(|item| item["name"] == "Local project"));
+    assert!(projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == "default-work-items" && item["name"] == "我的任务"));
     server.abort();
 }
 

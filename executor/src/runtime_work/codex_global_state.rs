@@ -261,6 +261,12 @@ impl CodexGlobalProjectIndex {
         self.project_thread_orders.contains_key(project_key)
     }
 
+    pub fn is_thread_in_manual_order(&self, project_key: &str, thread_id: &str) -> bool {
+        self.project_thread_orders
+            .get(project_key)
+            .is_some_and(|order| order.iter().any(|value| value == thread_id))
+    }
+
     pub fn thread_sort_order(&self, project_key: &str, thread_id: &str, fallback: usize) -> usize {
         let Some(order) = self.project_thread_orders.get(project_key) else {
             return fallback;

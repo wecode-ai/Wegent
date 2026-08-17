@@ -242,7 +242,16 @@ The sidebar running indicator, composer state, message state, and unread reminde
 
 A terminal task event must immediately mark the local task as `running: false` and refresh the work list. If a concurrent refresh returns an older `running: true` snapshot, the reducer must preserve the locally settled state until the same task receives a new start event; a stale response must not relight the spinner, pause button, or "Thinking". Execution identity is `deviceId + taskId`. `workspacePath` is routing metadata that may change between creation, refresh, and transcript recovery, so it must not participate in execution-state identity.
 
-Unread is created only when the current Wework renderer observes a `running: true -> false` edge. It must not infer execution history from free-form `status` text or persisted records; local persistence stores only unread results that were already created, never running state. A task whose persisted Goal remains `active` while the executor is no longer running is waiting for recovery and must not become completion-unread because the application or executor restarted. The current task and every running task must be excluded from visible unread state. Opening a task clears its unread state.
+Unread is created only from a running-state edge for the same task: it was
+`running: true`, it is now `running: false`, and it is not the currently open
+task. Browser storage keeps task keys for unread results and, separately, task
+keys that were last observed running so Wework can finish this edge comparison
+after an abnormal application exit. The latter set exists only for unread
+reminders and is not a source of current execution state; executor snapshots
+and live events remain authoritative. The current task and every running task
+must be excluded from visible unread state, and opening a task clears its unread
+state. The new storage namespace does not import legacy unread data, so existing
+tasks start read after the upgrade.
 
 The executor's `RuntimeTaskLink.running` field exists only in current-process
 memory and runtime API responses. `runtime-work/index.json` must not serialize

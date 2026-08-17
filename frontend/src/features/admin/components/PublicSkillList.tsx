@@ -439,8 +439,8 @@ const PublicSkillList: React.FC = () => {
                             </>
                           )}
                           <span>
-                            {t('admin:public_skills.columns.created_at')}:{' '}
-                            {formatDate(skill.created_at)}
+                            {t('admin:public_skills.columns.updated_at')}:{' '}
+                            {formatDate(skill.updated_at)}
                           </span>
                         </div>
                       </div>
