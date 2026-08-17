@@ -1211,7 +1211,9 @@ async fn download_skill(
 }
 
 fn safe_skill_deployment_reason(error: &str) -> String {
-    if error.starts_with("downloaded Skill ZIP is missing expected entry ") {
+    if error.starts_with("downloaded Skill ZIP is missing expected entry ")
+        || error.starts_with("downloaded Skill ZIP contains entries outside expected root ")
+    {
         return error.to_owned();
     }
     if let Some(status) = error.strip_prefix("backend download failed with HTTP ") {
@@ -1377,12 +1379,7 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
     let cursor = Cursor::new(content);
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|error| format!("invalid ZIP for skill {skill_name}: {error}"))?;
-    let expected_entry = format!("{skill_name}/SKILL.md");
-    if !archive.file_names().any(|name| name == expected_entry) {
-        return Err(format!(
-            "downloaded Skill ZIP is missing expected entry {expected_entry}"
-        ));
-    }
+    validate_skill_zip_entries(skill_name, &mut archive)?;
     for index in 0..archive.len() {
         let mut file = archive
             .by_index(index)
@@ -1413,6 +1410,40 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
             .map_err(|error| format!("failed to extract skill file: {error}"))?;
     }
     Ok(skills_dir.join(skill_name).is_dir())
+}
+
+fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
+    skill_name: &str,
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<(), String> {
+    let skill_root = Path::new(skill_name);
+    let expected_entry = skill_root.join("SKILL.md");
+    let mut has_expected_entry = false;
+    let mut has_outside_root = false;
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("failed to read ZIP entry: {error}"))?;
+        let Some(enclosed) = file.enclosed_name() else {
+            return Err(format!("unsafe ZIP path for skill {skill_name}"));
+        };
+        if !enclosed.starts_with(skill_root) {
+            has_outside_root = true;
+        }
+        has_expected_entry |= enclosed == expected_entry;
+    }
+    if !has_expected_entry {
+        return Err(format!(
+            "downloaded Skill ZIP is missing expected entry {}",
+            expected_entry.display()
+        ));
+    }
+    if has_outside_root {
+        return Err(format!(
+            "downloaded Skill ZIP contains entries outside expected root {skill_name}/"
+        ));
+    }
+    Ok(())
 }
 
 fn setup_coordinate_subagents(request: &ExecutionRequest, task_dir: &Path) {
@@ -2748,13 +2779,18 @@ mod tests {
     }
 
     fn skill_zip_bytes(skill_name: &str) -> Vec<u8> {
+        let entry = format!("{skill_name}/SKILL.md");
+        skill_zip_entries(&[(&entry, "# Skill")])
+    }
+
+    fn skill_zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         let cursor = Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(cursor);
         let options = zip::write::FileOptions::default();
-        writer
-            .start_file(format!("{skill_name}/SKILL.md"), options)
-            .unwrap();
-        writer.write_all(b"# Skill").unwrap();
+        for (path, content) in entries {
+            writer.start_file(*path, options).unwrap();
+            writer.write_all(content.as_bytes()).unwrap();
+        }
         writer.finish().unwrap().into_inner()
     }
 
@@ -2775,6 +2811,26 @@ mod tests {
             "downloaded Skill ZIP is missing expected entry requested-skill/SKILL.md"
         );
         assert!(!skills_dir.join("unexpected-root").exists());
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn extract_skill_zip_rejects_entries_outside_requested_root_before_writing() {
+        let temp = env::temp_dir().join(format!("skill-extra-root-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+        let archive = skill_zip_entries(&[
+            ("requested-skill/SKILL.md", "# Requested Skill"),
+            ("other-skill/SKILL.md", "# Other Skill"),
+        ]);
+
+        let error = extract_skill_zip("requested-skill", &archive, &skills_dir).unwrap_err();
+
+        assert_eq!(
+            error,
+            "downloaded Skill ZIP contains entries outside expected root requested-skill/"
+        );
+        assert!(!skills_dir.join("requested-skill").exists());
+        assert!(!skills_dir.join("other-skill").exists());
         let _ = fs::remove_dir_all(temp);
     }
 
