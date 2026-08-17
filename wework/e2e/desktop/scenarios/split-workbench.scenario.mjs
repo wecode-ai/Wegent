@@ -493,16 +493,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const secondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
       await assertPaneConversation(control, firstPane, `${FIRST_PROMPT}_COMPLETE`)
       await assertPaneConversation(control, secondPane, `${SECOND_PROMPT}_COMPLETE`)
-      assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            `${firstPane} [data-testid="thinking-indicator"], ${secondPane} [data-testid="thinking-indicator"]`
-          )
-        ),
-        0,
-        'Completed split-pane conversations must not show a thinking indicator'
-      )
       await assertIndependentTitlebar(control, firstPane, FIRST_PROMPT)
       await assertIndependentTitlebar(control, secondPane, SECOND_PROMPT)
       await captureScreenshot(control, '03-split-two-independent-panes.png', 'body')

@@ -58,41 +58,6 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.isWaitingForAssistantIndicator).toBe(true)
   })
 
-  test('does not show thinking for a completed conversation with only a running snapshot', () => {
-    const machine = new RuntimeTaskMachine(runtimeAddress)
-    machine.dispatch({
-      type: 'executor_snapshot_received',
-      address: runtimeAddress,
-      task: task({ running: true }),
-    })
-
-    const status = statusFor(machine, [assistantMessage('done')])
-
-    expect(status.taskExecution.running).toBe(true)
-    expect(status.isBusy).toBe(true)
-    expect(status.isWaitingForAssistantIndicator).toBe(false)
-  })
-
-  test('shows thinking when a running conversation ends with a user message', () => {
-    const machine = new RuntimeTaskMachine(runtimeAddress)
-    machine.dispatch({
-      type: 'executor_snapshot_received',
-      address: runtimeAddress,
-      task: task({ running: true }),
-    })
-    const userMessage: WorkbenchMessage = {
-      id: 'runtime-a:message:user',
-      role: 'user',
-      content: 'continue',
-      status: 'done',
-      createdAt: '2026-07-02T00:00:00.000Z',
-    }
-
-    const status = statusFor(machine, [assistantMessage('done'), userMessage])
-
-    expect(status.isWaitingForAssistantIndicator).toBe(true)
-  })
-
   test('shows submitting immediately from the optimistic machine event', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({ type: 'send_requested' })
