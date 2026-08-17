@@ -58,7 +58,10 @@ describe('dev executor reload', () => {
       executorTemplate,
       `#!/usr/bin/env node
 process.stdout.write(\`ready \${process.pid}\\n\`)
-process.stdin.on('data', chunk => process.stdout.write(\`echo:\${chunk}\`))
+process.stdin.on('data', chunk => {
+  if (chunk.toString().trim() === 'crash') process.exit(1)
+  process.stdout.write(\`echo:\${chunk}\`)
+})
 setInterval(() => {}, 1_000)
 `
     )
@@ -104,8 +107,24 @@ chmodSync(output, 0o755)
     watcher.stdin.write('ping\n')
     await expect(waitForOutput(watcher.stdout, /echo:ping\n/)).resolves.toBeTruthy()
 
+    const thirdReadyOutput = waitForOutput(watcher.stdout, /ready (\d+)\n/)
+    watcher.stdin.write('crash\n')
+    const thirdReady = await thirdReadyOutput
+    expect(thirdReady[1]).not.toBe(secondReady[1])
+    expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
+
     watcher.kill('SIGTERM')
     await new Promise(resolveExit => watcher.once('exit', resolveExit))
     processes.splice(processes.indexOf(watcher), 1)
+    await expect
+      .poll(() => {
+        try {
+          process.kill(Number(thirdReady[1]), 0)
+          return true
+        } catch {
+          return false
+        }
+      })
+      .toBe(false)
   })
 })

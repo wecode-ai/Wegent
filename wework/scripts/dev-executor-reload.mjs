@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 
 const DEBOUNCE_DELAY_MS = 350
 const EXIT_RESTART_DELAY_MS = 1000
+const EXIT_RESTART_MAX_DELAY_MS = 10_000
+const EXIT_RESTART_STABLE_MS = 10_000
 const PARENT_CHECK_INTERVAL_MS = 250
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -32,9 +34,11 @@ let child = null
 let buildProcess = null
 let debounceTimer = null
 let restartTimer = null
+let restartStabilityTimer = null
 let rebuilding = false
 let rebuildPending = false
 let shuttingDown = false
+let unexpectedExitCount = 0
 const pendingInput = []
 const watchers = []
 
@@ -77,6 +81,8 @@ function runBuild() {
 function stopChild() {
   const runningChild = child
   child = null
+  clearTimeout(restartStabilityTimer)
+  restartStabilityTimer = null
   if (!runningChild) return Promise.resolve()
   if (runningChild.exitCode !== null || runningChild.signalCode !== null) {
     return Promise.resolve()
@@ -105,6 +111,13 @@ function startChild() {
     stdio: ['pipe', 'pipe', 'inherit'],
   })
   child = nextChild
+  nextChild.once('spawn', () => {
+    clearTimeout(restartStabilityTimer)
+    restartStabilityTimer = setTimeout(() => {
+      restartStabilityTimer = null
+      unexpectedExitCount = 0
+    }, EXIT_RESTART_STABLE_MS)
+  })
   nextChild.stdout.pipe(process.stdout, { end: false })
   nextChild.stdin.on('error', () => {})
   for (const chunk of pendingInput.splice(0)) {
@@ -135,11 +148,23 @@ process.stdin.on('end', () => void shutdown())
 
 function scheduleUnexpectedExitRestart() {
   if (shuttingDown) return
+  clearTimeout(restartStabilityTimer)
+  restartStabilityTimer = null
   clearTimeout(restartTimer)
+  unexpectedExitCount += 1
+  const delay = Math.min(
+    EXIT_RESTART_DELAY_MS * 2 ** (unexpectedExitCount - 1),
+    EXIT_RESTART_MAX_DELAY_MS
+  )
   restartTimer = setTimeout(() => {
     restartTimer = null
-    runRebuild()
-  }, EXIT_RESTART_DELAY_MS)
+    try {
+      startChild()
+    } catch (error) {
+      log(`failed to restart executor: ${error instanceof Error ? error.message : error}`)
+      void shutdown(1)
+    }
+  }, delay)
 }
 
 async function rebuildAndRestart() {
@@ -150,22 +175,26 @@ async function rebuildAndRestart() {
   }
 
   rebuilding = true
-  do {
-    rebuildPending = false
-    clearTimeout(restartTimer)
-    restartTimer = null
-    await stopChild()
-    if (shuttingDown) break
+  try {
+    do {
+      rebuildPending = false
+      clearTimeout(restartTimer)
+      restartTimer = null
+      await stopChild()
+      if (shuttingDown) break
 
-    const built = await runBuild()
-    if (!built) {
-      log('executor build failed; waiting for the next source change')
-      if (rebuildPending) continue
-      break
-    }
-    if (!shuttingDown) startChild()
-  } while (rebuildPending && !shuttingDown)
-  rebuilding = false
+      const built = await runBuild()
+      if (!built) {
+        log('executor build failed; waiting for the next source change')
+        if (rebuildPending) continue
+        break
+      }
+      unexpectedExitCount = 0
+      if (!shuttingDown) startChild()
+    } while (rebuildPending && !shuttingDown)
+  } finally {
+    rebuilding = false
+  }
 }
 
 function scheduleSourceRestart() {
@@ -211,6 +240,7 @@ async function shutdown(exitCode = 0) {
   shuttingDown = true
   clearTimeout(debounceTimer)
   clearTimeout(restartTimer)
+  clearTimeout(restartStabilityTimer)
   for (const watcher of watchers) watcher.close()
   buildProcess?.kill('SIGTERM')
   await stopChild()
