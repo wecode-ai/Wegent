@@ -232,7 +232,7 @@
       "version": "版本",
       "author": "作者",
       "tags": "技能关键词",
-      "created_at": "创建时间",
+      "updated_at": "更新时间",
       "actions": "操作"
     },
     "confirm": {
