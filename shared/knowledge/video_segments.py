@@ -211,6 +211,9 @@ def extract_all_video_segments(
         key = (start_sec, end_sec)
         if key in seen:
             continue
+        if len(segments) >= max_segments:
+            truncated = True
+            break
         seen.add(key)
 
         title = _clean_heading_title(heading)
@@ -233,10 +236,6 @@ def extract_all_video_segments(
                 description=description,
             )
         )
-
-        if len(segments) >= max_segments:
-            truncated = True
-            break
 
     return VideoSegmentParseResult(
         segments=tuple(segments),

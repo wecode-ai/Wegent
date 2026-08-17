@@ -368,7 +368,7 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
             onChange={event => handleTimelineSeek(Number(event.target.value))}
             disabled={!currentBounds}
             className="h-1 flex-1 cursor-pointer accent-primary"
-            aria-label="Video chapters progress"
+            aria-label={t('sourceReferences.videoChaptersProgress')}
             data-testid={`video-chapters-progress-${source.index}`}
           />
           <span className="shrink-0 font-mono">

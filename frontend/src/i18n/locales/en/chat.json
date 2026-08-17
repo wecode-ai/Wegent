@@ -61,6 +61,7 @@
     "pauseVideoSegment": "Pause video segment",
     "invalidVideoSegmentRange": "This segment is outside the actual video duration.",
     "videoChapters": "Video chapters",
+    "videoChaptersProgress": "Video chapters progress",
     "videoChaptersCount_one": "{{count}} chapter",
     "videoChaptersCount_other": "{{count}} chapters",
     "videoChaptersTruncated": "Showing the first chapters; some were omitted.",

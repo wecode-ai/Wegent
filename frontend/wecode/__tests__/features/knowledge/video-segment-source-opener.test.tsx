@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import {
   resolveVideoSegmentBounds,
   VideoSegmentSource,
@@ -33,10 +33,18 @@ describe('resolveVideoSegmentBounds', () => {
   beforeEach(() => {
     mockHasError = false
     mockRetry.mockReset()
+    jest
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(() => new Promise<void>(() => {}))
+    jest.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
   })
 
-  afterEach(() => {
-    activatePlayer(null)
+  afterEach(async () => {
+    await act(async () => {
+      activatePlayer(null)
+      await Promise.resolve()
+    })
+    jest.restoreAllMocks()
   })
 
   it('clamps only a small encoding tail difference', () => {
@@ -160,7 +168,7 @@ describe('resolveVideoSegmentBounds', () => {
     expect(document.querySelectorAll('video')).toHaveLength(1)
   })
 
-  it('resumes from the paused position when reactivating a segment', () => {
+  it('resumes from the paused position when reactivating a segment', async () => {
     render(
       <VideoSegmentSource
         source={{
@@ -180,7 +188,10 @@ describe('resolveVideoSegmentBounds', () => {
     let video = screen.getByTestId('video-segment-player-0') as HTMLVideoElement
     video.play = jest.fn().mockResolvedValue(undefined)
     Object.defineProperty(video, 'duration', { configurable: true, value: 60 })
-    fireEvent.loadedMetadata(video)
+    await act(async () => {
+      fireEvent.loadedMetadata(video)
+      await Promise.resolve()
+    })
     expect(video.currentTime).toBe(0)
     video.currentTime = 6
     fireEvent.timeUpdate(video)
@@ -194,7 +205,10 @@ describe('resolveVideoSegmentBounds', () => {
     video = screen.getByTestId('video-segment-player-0') as HTMLVideoElement
     video.play = jest.fn().mockResolvedValue(undefined)
     Object.defineProperty(video, 'duration', { configurable: true, value: 60 })
-    fireEvent.loadedMetadata(video)
+    await act(async () => {
+      fireEvent.loadedMetadata(video)
+      await Promise.resolve()
+    })
     expect(video.currentTime).toBe(6)
   })
 })

@@ -61,6 +61,7 @@
     "pauseVideoSegment": "暂停视频片段",
     "invalidVideoSegmentRange": "该片段超出视频实际时长，无法播放",
     "videoChapters": "视频章节",
+    "videoChaptersProgress": "视频章节播放进度",
     "videoChaptersCount_one": "{{count}} 个章节",
     "videoChaptersCount_other": "{{count}} 个章节",
     "videoChaptersTruncated": "仅显示前部分章节，部分已省略。",

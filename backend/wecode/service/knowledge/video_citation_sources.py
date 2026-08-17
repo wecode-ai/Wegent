@@ -10,9 +10,12 @@ import json
 import logging
 from typing import Any
 
-from shared.knowledge.video_segments import extract_all_video_segments
+from shared.knowledge.video_segments import (
+    DEFAULT_MAX_SEGMENTS,
+    extract_all_video_segments,
+)
 
-MAX_VIDEO_SEGMENTS_PER_SOURCE = 100
+MAX_VIDEO_SEGMENTS_PER_SOURCE = DEFAULT_MAX_SEGMENTS
 VideoSourceMap = dict[tuple[int, int], dict[str, Any]]
 
 
@@ -262,7 +265,14 @@ def collect_and_log_knowledge_mcp_video_sources(
 
 def merge_video_sources(existing: Any, videos: VideoSourceMap) -> list[dict[str, Any]]:
     """Merge video citations into existing sources by KB and document ID."""
-    merged = [dict(source) for source in existing or [] if isinstance(source, dict)]
+    merged = []
+    for source in existing or []:
+        if not isinstance(source, dict):
+            continue
+        copied_source = dict(source)
+        if isinstance(source.get("segments"), list):
+            copied_source["segments"] = list(source["segments"])
+        merged.append(copied_source)
     by_key = {
         key: source for source in merged if (key := _source_key(source)) is not None
     }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { VideoChaptersCard } from '@wecode/features/knowledge/video-chapters-card'
 import { VideoSegmentSource } from '@wecode/features/knowledge/video-segment-source-opener'
 import { activatePlayer } from '@wecode/features/knowledge/active-video-store'
@@ -28,10 +28,18 @@ jest.mock('@wecode/features/knowledge/document-video-preview', () => ({
 describe('VideoChaptersCard', () => {
   beforeEach(() => {
     mockRetry.mockClear()
+    jest
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(() => new Promise<void>(() => {}))
+    jest.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
   })
 
-  afterEach(() => {
-    activatePlayer(null)
+  afterEach(async () => {
+    await act(async () => {
+      activatePlayer(null)
+      await Promise.resolve()
+    })
+    jest.restoreAllMocks()
   })
 
   it('rejects a chapter outside the actual media duration', () => {
@@ -119,7 +127,7 @@ describe('VideoChaptersCard', () => {
     expect(screen.getByTestId('video-chapter-item-1-1').className).toContain('bg-primary/10')
   })
 
-  it('plays directly when a chapter is clicked', () => {
+  it('plays directly when a chapter is clicked', async () => {
     render(
       <VideoChaptersCard
         source={{
@@ -143,7 +151,10 @@ describe('VideoChaptersCard', () => {
     video.play = playMock
     fireEvent.loadedMetadata(video)
 
-    fireEvent.click(screen.getByTestId('video-chapter-item-1-1'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('video-chapter-item-1-1'))
+      await Promise.resolve()
+    })
 
     expect(video.currentTime).toBe(20)
     expect(playMock).toHaveBeenCalledTimes(1)

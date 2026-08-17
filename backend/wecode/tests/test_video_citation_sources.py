@@ -5,6 +5,7 @@
 import json
 from unittest.mock import Mock
 
+from shared.knowledge.video_segments import extract_all_video_segments
 from wecode.service.knowledge.video_citation_sources import (
     MAX_VIDEO_SEGMENTS_PER_SOURCE,
     collect_and_log_knowledge_mcp_video_sources,
@@ -125,6 +126,52 @@ def test_merge_video_sources_enforces_segment_limit_on_existing_source() -> None
     assert merged[0]["segments_truncated"] is True
 
 
+def test_merge_video_sources_does_not_mutate_existing_segments() -> None:
+    original_segments = [{"start_sec": 0, "end_sec": 1}]
+    existing = [
+        {
+            "index": 1,
+            "title": "Video",
+            "kb_id": 211,
+            "document_id": 811,
+            "segments": original_segments,
+        }
+    ]
+    videos = {
+        (211, 811): {
+            "title": "811.video.md",
+            "kb_id": 211,
+            "document_id": 811,
+            "source_type": "wegent_video_segment",
+            "segments": [{"start_sec": 2, "end_sec": 3}],
+        }
+    }
+
+    merged = merge_video_sources(existing, videos)
+
+    assert existing[0]["segments"] == [{"start_sec": 0, "end_sec": 1}]
+    assert merged[0]["segments"] == [
+        {"start_sec": 0, "end_sec": 1},
+        {"start_sec": 2, "end_sec": 3},
+    ]
+
+
+def test_video_segment_parser_marks_truncation_only_when_content_is_omitted() -> None:
+    def content_with_chapters(count: int) -> str:
+        return "\n".join(
+            f"### Chapter {index} ([00:{index:02d}:00 - 00:{index:02d}:01])"
+            for index in range(count)
+        )
+
+    exact = extract_all_video_segments(content_with_chapters(3), max_segments=3)
+    overflowing = extract_all_video_segments(content_with_chapters(4), max_segments=3)
+
+    assert len(exact.segments) == 3
+    assert exact.truncated is False
+    assert len(overflowing.segments) == 3
+    assert overflowing.truncated is True
+
+
 def test_collect_and_log_skips_non_video_mcp_output() -> None:
     logger = Mock()
 
@@ -167,6 +214,36 @@ def test_collect_and_log_logs_when_video_segment_is_added() -> None:
 
     assert added == 1
     logger.info.assert_called_once()
+
+
+def test_collect_and_log_accepts_mcp_text_block_output_without_tool_context() -> None:
+    logger = Mock()
+    collected = {}
+    output = {
+        "mode": "rag_retrieval",
+        "chunks": [
+            {
+                "title": "825.video.md",
+                "knowledge_base_id": 212,
+                "document_id": 825,
+                "metadata": {
+                    "source_media_type": "video",
+                    "video_start_sec": 1,
+                    "video_end_sec": 2,
+                },
+            }
+        ],
+    }
+
+    added = collect_and_log_knowledge_mcp_video_sources(
+        collected,
+        [{"type": "text", "text": json.dumps(output), "id": "lc_test"}],
+        logger=logger,
+        context="test",
+    )
+
+    assert added == 1
+    assert list(collected) == [(212, 825)]
 
 
 def test_collect_document_content_builds_chapters_source() -> None:
