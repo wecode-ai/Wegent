@@ -133,12 +133,12 @@ def _format_ts(iso: str) -> str:
     return dt.astimezone(_CHINA_TZ).strftime("%m-%d %H:%M")
 
 
-def trace_tail(trace: str, limit_chars: int = 4000) -> str:
+def trace_tail(trace: str, limit_chars: int = 4000, limit_lines: int = 50) -> str:
     trace = _ANSI_ESCAPE_RE.sub("", trace or "")
     lines = [line.rstrip("\n") for line in trace.splitlines() if line.strip()]
     if not lines:
         return ""
-    tail = "\n".join(lines[-50:])
+    tail = "\n".join(lines[-limit_lines:])
     if len(tail) > limit_chars:
         tail = tail[-limit_chars:]
     return tail
@@ -168,9 +168,13 @@ def _task_instruction(project: CloudProject, record: MRRecord) -> str:
         "提交前请重新拉取该 MR 的最新评审意见（如 gitlab api "
         f"merge_requests/{record.mr_iid}/notes），确认没有新增遗漏后再 push。"
     )
-    reply_hint = (
-        "如需回复某条评审意见，请在它所在的 discussion 线程内回复（glab mr note 或 "
-        "GitLab API 回复到对应 discussion），不要新开独立评论，以免被当作新的待处理反馈。"
+    no_comment_hint = (
+        "禁止回复或新增任何评论（包括在原有 discussion 内回复）；所有回应一律通过"
+        "修改代码并 push 到源分支表达。"
+    )
+    ci_log_hint = (
+        "CI 失败详情请打开各失败 job 的日志链接（或调 GitLab API）查看完整 trace；"
+        "概述中的摘要是截断提示，不要当作完整日志。"
     )
     completion_condition = (
         "完成条件：push 后必须重新拉取该 MR 的最新评审意见（notes），确认所有评论/review "
@@ -183,21 +187,21 @@ def _task_instruction(project: CloudProject, record: MRRecord) -> str:
             return (
                 "CI 未通过且有新的评审意见需要处理。\n"
                 "请根据下方的评审意见和 CI 失败信息修复代码，提交并 push 到源分支 "
-                f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。\n"
-                f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
+                f"`{branch}`（push 后会触发 CI 重跑），处理完所有评审意见。\n"
+                f"{fetch_hint}\n{ci_log_hint}\n{precommit_hint}\n{no_comment_hint}\n{completion_condition}"
             )
         return (
             "这是一个 CI 未通过 / 有评审意见的 MR 修复任务。\n"
             "请根据下方的评审意见和 CI 失败信息修复代码，提交并 push 到源分支 "
-            f"`{branch}`（push 后会触发 CI 重跑），直到 CI 通过且评审意见得到回应。\n"
-            f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
+            f"`{branch}`（push 后会触发 CI 重跑），直到 CI 通过且评审意见全部处理完毕。\n"
+            f"{fetch_hint}\n{ci_log_hint}\n{precommit_hint}\n{no_comment_hint}\n{completion_condition}"
         )
     if has_pending_comments:
         return (
             "CI 已通过，但仍有新的评审意见需要处理。\n"
             "请根据下方或 MR 页面的评审意见修改代码，提交并 push 到源分支 "
-            f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。\n"
-            f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
+            f"`{branch}`（push 后会触发 CI 重跑），处理完所有评审意见。\n"
+            f"{fetch_hint}\n{precommit_hint}\n{no_comment_hint}\n{completion_condition}"
         )
     if pipeline_status == "success":
         return (
@@ -210,9 +214,9 @@ def _task_instruction(project: CloudProject, record: MRRecord) -> str:
 def render_card_description(project: CloudProject, record: MRRecord) -> str:
     """Render the fix-card description from the record's snapshot and rounds.
 
-    Current round renders the full CI failure summary and review comments; older
-    rounds collapse into one-line history entries so the description stays
-    bounded as an MR iterates.
+    Current round renders the CI failure excerpt (job title + short trace tail +
+    job URL) and review comments; older rounds collapse into one-line history
+    entries so the description stays bounded as an MR iterates.
     """
     snapshot = record.snapshot_json if isinstance(record.snapshot_json, dict) else {}
     rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
@@ -301,13 +305,19 @@ def render_card_description(project: CloudProject, record: MRRecord) -> str:
     for job in failed_jobs:
         name = str(job.get("name") or "")
         stage = str(job.get("stage") or "")
-        trace = str(job.get("trace_tail") or "").strip()
+        url = str(job.get("web_url") or "")
         ts = _format_ts(str(job.get("started_at") or ""))
         label = f"`{name}`（{stage}）@{ts}" if ts else f"`{name}`（{stage}）"
-        if trace:
-            lines.append(f"- {label}：\n```\n{trace}\n```")
+        # The card only carries a short trace excerpt; the model fetches the
+        # full log itself from the job URL when it needs more context.
+        summary = trace_tail(
+            str(job.get("trace_tail") or ""), limit_lines=8, limit_chars=600
+        ).strip()
+        link = f" · {url}" if url else ""
+        if summary:
+            lines.append(f"- {label}{link}\n```\n{summary}\n```")
         else:
-            lines.append(f"- {label}")
+            lines.append(f"- {label}{link}")
 
     # Per-round comment count is the number NEW in that round (notes not seen
     # in earlier rounds), matching the actionable semantics.

@@ -502,7 +502,9 @@ class MrService:
                                 self._api_path(client, f"/jobs/{job_id}/trace"),
                                 not_found_ok=True,
                             )
-                            trace_summary = trace_tail(trace or "")
+                            trace_summary = trace_tail(
+                                trace or "", limit_lines=8, limit_chars=600
+                            )
                         failed_jobs.append(
                             {
                                 "id": job_id,
