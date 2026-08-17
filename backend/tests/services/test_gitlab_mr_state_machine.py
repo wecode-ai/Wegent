@@ -459,6 +459,47 @@ def test_render_drops_previous_round_comments_after_new_commit(
     assert "暂无评审意见。" in desc
 
 
+def test_seen_comments_not_rendered_as_pending_on_in_review_card(
+    env: dict[str, Any],
+) -> None:
+    """A comment the run already saw (it won't re-pull and the card settles to
+    in_review) must neither show up as pending review feedback nor drive a
+    "keep fixing" instruction."""
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    record.state = "clean"
+    record.pipeline_status = "success"
+    record.seen_note_ids = [1]
+    record.rounds_json = [
+        {
+            "sha": SHA1,
+            "round_number": 1,
+            "pipeline_status": "success",
+            "pipeline_id": 0,
+            "failed_jobs": [],
+            "at": "",
+            "notes": [
+                {
+                    "id": 1,
+                    "discussion_id": "D1",
+                    "note": "rename this",
+                    "author": "bob",
+                    "created_at": "2026-08-17T08:00:00Z",
+                }
+            ],
+        }
+    ]
+    desc = render_card_description(env["project"], record)
+    assert "已提交修复且 CI 通过，等待人工/评审确认" in desc
+    assert "暂无评审意见。" in desc
+    assert "rename this" not in desc
+    assert "新的评审意见" not in desc
+
+
 def test_reply_to_review_is_ignored(env: dict[str, Any]) -> None:
     """A reply inside an existing discussion is part of that feedback, not new
     feedback: it must neither surface on the card nor pull it back."""

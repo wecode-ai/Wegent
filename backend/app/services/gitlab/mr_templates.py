@@ -116,6 +116,26 @@ def _unseen_note_ids(record: MRRecord) -> set[int]:
     return current_ids - seen
 
 
+def _pending_review_notes(record: MRRecord) -> list[dict[str, object]]:
+    """Current-round comments the latest run still needs to act on.
+
+    Empty ``seen_note_ids`` means no robot run has dispatched yet (a human-driven
+    MR): every current-round comment is pending. Once a run has dispatched, only
+    comments it has not seen are pending — the rest were addressed and settled the
+    card toward in_review without a re-pull, so they must not be shown as pending
+    feedback nor drive a "keep fixing" instruction.
+    """
+    rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+    current = rounds[-1] if rounds else {}
+    current_notes = (
+        current.get("notes") if isinstance(current.get("notes"), list) else []
+    )
+    if not record.seen_note_ids:
+        return list(current_notes)
+    unseen = _unseen_note_ids(record)
+    return [n for n in current_notes if int(n.get("id") or 0) in unseen]
+
+
 def _format_ts(iso: str) -> str:
     """Format a stored UTC ISO timestamp as ``MM-DD HH:mm`` China time."""
     if not iso:
@@ -154,12 +174,7 @@ def _task_instruction(project: CloudProject, record: MRRecord) -> str:
     branch = record.source_branch or ""
     snapshot = record.snapshot_json if isinstance(record.snapshot_json, dict) else {}
     url = str(snapshot.get("web_url") or "")
-    rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
-    current = rounds[-1] if rounds else {}
-    current_notes = (
-        current.get("notes") if isinstance(current.get("notes"), list) else []
-    )
-    has_pending_comments = bool(current_notes)
+    has_pending_comments = bool(_pending_review_notes(record))
     pipeline_status = str(record.pipeline_status or "")
     fetch_hint = (
         f"评审意见的完整行内上下文（针对哪一行、原文）请查看 MR：{url}" if url else ""
@@ -257,11 +272,7 @@ def render_card_description(project: CloudProject, record: MRRecord) -> str:
     lines.append("")
     # Only the current round's standalone comments are unhandled feedback; older
     # rounds' comments were addressed by the latest commit and live in history.
-    feedback_notes: list[dict[str, object]] = []
-    current_notes = (
-        current.get("notes") if isinstance(current.get("notes"), list) else []
-    )
-    feedback_notes = current_notes
+    feedback_notes = _pending_review_notes(record)
 
     lines.append("### 评审意见")
     unseen = _unseen_note_ids(record)
