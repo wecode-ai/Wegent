@@ -1,6 +1,5 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
-
 import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 

@@ -86,6 +86,13 @@ export default function DevicesPage() {
 
   // Guide visibility state
   const [showSetupGuide, setShowSetupGuide] = useState(false)
+  const handleDeviceCreated = useCallback(() => {
+    void refreshDevices()
+    setShowSetupGuide(false)
+  }, [refreshDevices])
+  const handleDeviceDetected = useCallback(() => {
+    void refreshDevices()
+  }, [refreshDevices])
 
   // Edit alias dialog state
   const [editAliasDevice, setEditAliasDevice] = useState<DeviceInfo | null>(null)
@@ -186,12 +193,8 @@ export default function DevicesPage() {
                   backendUrl={backendUrl}
                   authToken={authToken}
                   guideUrl={guideUrl}
-                  onDeviceCreated={() => {
-                    refreshDevices()
-                    if (devices.length > 0) {
-                      setShowSetupGuide(false)
-                    }
-                  }}
+                  onDeviceCreated={handleDeviceCreated}
+                  onDeviceDetected={handleDeviceDetected}
                   onClose={() => setShowSetupGuide(false)}
                   showCloseButton={devices.length > 0}
                   cloudDeviceCount={
