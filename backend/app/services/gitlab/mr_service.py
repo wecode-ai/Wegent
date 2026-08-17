@@ -71,6 +71,17 @@ def _note_position(attrs: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _is_reply(note: dict[str, object]) -> bool:
+    """Whether a note replies inside an existing discussion.
+
+    Replies are part of the feedback they respond to, not new feedback; the
+    state machine ignores them entirely (the pipeline's own confirmation
+    comments and standalone self-comments are independent notes and still
+    count).
+    """
+    return bool(int(note.get("in_reply_to_id") or 0))
+
+
 class MrService:
     @staticmethod
     def _client(project: CloudProject) -> ProjectScopedGitlabClient:
@@ -412,6 +423,10 @@ class MrService:
             record.rounds_json = rounds
         current = rounds[-1]
         note_id = int(attrs.get("id") or 0)
+        # A reply inside an existing discussion is part of that feedback, not
+        # new feedback; ignore it entirely.
+        if int(attrs.get("in_reply_to_id") or 0):
+            return
         existing = {
             int(n.get("id") or 0)
             for n in (current.get("notes") or [])
@@ -437,6 +452,7 @@ class MrService:
                 "web_url": str(attrs.get("url") or ""),
                 "created_at": str(attrs.get("created_at") or ""),
                 "discussion_id": str(attrs.get("discussion_id") or ""),
+                "in_reply_to_id": int(attrs.get("in_reply_to_id") or 0),
                 "position": _note_position(attrs),
             }
         )
@@ -528,6 +544,7 @@ class MrService:
                             "web_url": str(note.get("web_url") or ""),
                             "created_at": str(note.get("created_at") or ""),
                             "discussion_id": str(note.get("discussion_id") or ""),
+                            "in_reply_to_id": int(note.get("in_reply_to_id") or 0),
                             "position": _note_position(note),
                         }
                     )
@@ -545,10 +562,29 @@ class MrService:
             rounds.append(self._round_template(record.round_number, record.head_sha))
             record.rounds_json = rounds
         current = rounds[-1]
+        # A round only accumulates the standalone (non-reply) comments that
+        # arrived after its head; older rounds' comments are handled by the
+        # latest commit and never surface again as current feedback.
+        standalone_notes = [n for n in notes if not _is_reply(n)]
+        existing_ids = {
+            int(n.get("id") or 0)
+            for item in rounds
+            for n in (item.get("notes") or [])
+            if isinstance(n, dict)
+        }
+        current_notes = (
+            list(current.get("notes")) if isinstance(current.get("notes"), list) else []
+        )
+        current_ids = {int(n.get("id") or 0) for n in current_notes}
+        current["notes"] = current_notes + [
+            n
+            for n in standalone_notes
+            if int(n.get("id") or 0) not in existing_ids
+            and int(n.get("id") or 0) not in current_ids
+        ]
         current["pipeline_status"] = terminal_status
         current["pipeline_id"] = pipeline_id
         current["failed_jobs"] = failed_jobs
-        current["notes"] = notes
         current["fetch_error"] = fetch_error
         current["at"] = _utcnow().isoformat()
         # JSON columns do not track in-place nested mutations; mark the column
@@ -556,17 +592,17 @@ class MrService:
         flag_modified(record, "rounds_json")
         self._cap_rounds(record)
 
-        # Comments the last robot run already saw are assumed addressed by its
-        # fix; anything newer — including comments that arrived mid-run — stays
-        # actionable so the card is pulled back instead of being dropped. Replies
-        # inside an already-seen discussion (including the run's own replies) are
-        # part of that feedback, not new feedback. Before any run has ever
-        # dispatched (human-driven MR), fall back to the round boundary: earlier
-        # rounds' comments are addressed by the latest fix.
+        # A comment is new actionable feedback only when it is a standalone note
+        # the latest robot run has not seen yet (a reply is part of the feedback
+        # it responds to, not new feedback). Before any run has ever dispatched
+        # (human-driven MR), fall back to the round boundary: earlier rounds'
+        # comments are addressed by the latest fix.
         if record.seen_note_ids:
-            pending_ids = self._pending_note_ids(record, notes)
+            pending_ids = self._pending_note_ids(record, standalone_notes)
             new_notes = [
-                note for note in notes if int(note.get("id") or 0) in pending_ids
+                note
+                for note in standalone_notes
+                if int(note.get("id") or 0) in pending_ids
             ]
         else:
             previous_note_ids = {
@@ -577,7 +613,7 @@ class MrService:
             }
             new_notes = [
                 note
-                for note in notes
+                for note in standalone_notes
                 if int(note.get("id") or 0) not in previous_note_ids
             ]
         record.pipeline_status = terminal_status
@@ -881,11 +917,10 @@ class MrService:
     ) -> set[int]:
         """Note ids representing NEW pending feedback among ``notes``.
 
-        A note is pending only when its discussion thread was not seen by the
-        latest robot run. Replies inside an already-seen thread (including the
-        run's own replies) belong to that feedback rather than starting new
-        work. Empty ``seen_note_ids`` means the run dispatched with no comments,
-        so every note is pending."""
+        A note is pending only when it is a standalone (non-reply) note the
+        latest robot run has not seen. Replies belong to the feedback they
+        respond to and never start new work. Empty ``seen_note_ids`` means the
+        run dispatched with no comments, so every standalone note is pending."""
         seen_note_ids = set(int(x) for x in (record.seen_note_ids or []))
         seen_keys: set[str] = set()
         rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
@@ -895,7 +930,7 @@ class MrService:
                     seen_keys.add(self._discussion_key(n))
         pending: set[int] = set()
         for note in notes:
-            if not isinstance(note, dict):
+            if not isinstance(note, dict) or _is_reply(note):
                 continue
             note_id = int(note.get("id") or 0)
             if note_id in seen_note_ids:

@@ -97,22 +97,23 @@ def max_retry_count(project: CloudProject) -> int:
 
 
 def _unseen_note_ids(record: MRRecord) -> set[int]:
-    """Note ids the last robot run did not see at dispatch (pending feedback).
+    """Standalone note ids in the current round the last robot run did not see.
 
     Empty when no run has dispatched yet — a human-driven MR has no run to be
-    "unseen by", so the round-based summary already handles it.
+    "unseen by", so the round-based summary already handles it. Older rounds'
+    comments are addressed by the latest commit and never count as pending.
     """
     seen = set(int(x) for x in (record.seen_note_ids or []))
     if not seen:
         return set()
     rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
-    all_ids = {
+    current = rounds[-1] if rounds else {}
+    current_ids = {
         int(n.get("id") or 0)
-        for item in rounds
-        for n in (item.get("notes") or [])
+        for n in (current.get("notes") or [])
         if isinstance(n, dict)
     }
-    return all_ids - seen
+    return current_ids - seen
 
 
 def _format_ts(iso: str) -> str:
@@ -144,11 +145,22 @@ def trace_tail(trace: str, limit_chars: int = 4000) -> str:
 
 
 def _task_instruction(project: CloudProject, record: MRRecord) -> str:
-    """Instruction preamble for the model that will act on this card."""
+    """Instruction preamble for the model that will act on this card.
+
+    Driven by the same logical state as the card column: the current round's CI
+    outcome plus whether the latest commit has any unhandled standalone review
+    comments (a new commit always marks earlier comments as addressed).
+    """
     branch = record.source_branch or ""
     snapshot = record.snapshot_json if isinstance(record.snapshot_json, dict) else {}
     url = str(snapshot.get("web_url") or "")
-    unseen = _unseen_note_ids(record)
+    rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+    current = rounds[-1] if rounds else {}
+    current_notes = (
+        current.get("notes") if isinstance(current.get("notes"), list) else []
+    )
+    has_pending_comments = bool(current_notes)
+    pipeline_status = str(record.pipeline_status or "")
     fetch_hint = (
         f"评审意见的完整行内上下文（针对哪一行、原文）请查看 MR：{url}" if url else ""
     )
@@ -166,26 +178,31 @@ def _task_instruction(project: CloudProject, record: MRRecord) -> str:
     )
     if record.state == "closed":
         return "该 MR 已合并/关闭，无需处理。"
-    if record.state == "clean" and not unseen:
-        return (
-            "已提交修复且 CI 通过，等待人工/评审确认，无需再修改。"
-            f"源分支：`{branch}`"
-        )
-    if str(record.pipeline_status or "") in _FAILED_PIPELINE_STATUSES:
+    if pipeline_status in _FAILED_PIPELINE_STATUSES:
+        if has_pending_comments:
+            return (
+                "CI 未通过且有新的评审意见需要处理。\n"
+                "请根据下方的评审意见和 CI 失败信息修复代码，提交并 push 到源分支 "
+                f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。\n"
+                f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
+            )
         return (
             "这是一个 CI 未通过 / 有评审意见的 MR 修复任务。\n"
             "请根据下方的评审意见和 CI 失败信息修复代码，提交并 push 到源分支 "
             f"`{branch}`（push 后会触发 CI 重跑），直到 CI 通过且评审意见得到回应。\n"
             f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
         )
-    if str(record.pipeline_status or "") == "success":
-        # CI is green but there are review comments (current round or unseen from
-        # a mid-run arrival): make clear the task is to respond to those.
+    if has_pending_comments:
         return (
             "CI 已通过，但仍有新的评审意见需要处理。\n"
             "请根据下方或 MR 页面的评审意见修改代码，提交并 push 到源分支 "
             f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。\n"
             f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
+        )
+    if pipeline_status == "success":
+        return (
+            "已提交修复且 CI 通过，等待人工/评审确认，无需再修改。"
+            f"源分支：`{branch}`"
         )
     return "该 MR 正在等待 CI 结果，请稍后再查看。" f"源分支：`{branch}`"
 
@@ -234,28 +251,15 @@ def render_card_description(project: CloudProject, record: MRRecord) -> str:
     lines.append(_task_instruction(project, record))
 
     lines.append("")
-    # Review feedback must never disappear across rounds: when the current round
-    # is pending (no notes yet), fall back to the most recent round's comments.
+    # Only the current round's standalone comments are unhandled feedback; older
+    # rounds' comments were addressed by the latest commit and live in history.
     feedback_notes: list[dict[str, object]] = []
-    feedback_round = record.round_number
     current_notes = (
         current.get("notes") if isinstance(current.get("notes"), list) else []
     )
-    if current_notes:
-        feedback_notes = current_notes
-    else:
-        for item in reversed(rounds[:-1]):
-            item_notes = (
-                item.get("notes") if isinstance(item.get("notes"), list) else []
-            )
-            if item_notes:
-                feedback_notes = item_notes
-                feedback_round = int(item.get("round_number") or feedback_round)
-                break
+    feedback_notes = current_notes
 
     lines.append("### 评审意见")
-    if feedback_round != record.round_number:
-        lines.append(f"（第 {feedback_round} 轮意见，待处理）")
     unseen = _unseen_note_ids(record)
     if unseen:
         lines.append(f"（本次运行后新增 {len(unseen)} 条评论待处理）")

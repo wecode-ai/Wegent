@@ -414,7 +414,9 @@ def test_rounds_json_persisted_after_finalize(env: dict[str, Any]) -> None:
     assert stored_round["failed_jobs"]
 
 
-def test_render_falls_back_to_previous_round_notes(env: dict[str, Any]) -> None:
+def test_render_drops_previous_round_comments_after_new_commit(
+    env: dict[str, Any],
+) -> None:
     db = env["db"]
     fake: FakeGitlab = env["fake"]
     mr_service.handle_merge_request_event(
@@ -435,16 +437,91 @@ def test_render_falls_back_to_previous_round_notes(env: dict[str, Any]) -> None:
         db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
     )
     db.commit()
-    # New push -> round 2 is pending (no notes yet); round 1's review comment
-    # must stay visible instead of being pushed out.
+    # A new push creates round 2; round 1's review comment is now addressed by
+    # that commit and must not surface as current feedback.
     mr_service.handle_merge_request_event(
         db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
     )
     db.commit()
     record = _record(db, env["integration"])
     desc = render_card_description(env["project"], record)
-    assert "please rename X" in desc
-    assert "待处理" in desc
+    assert "please rename X" not in desc
+    assert "暂无评审意见。" in desc
+
+
+def test_reply_to_review_is_ignored(env: dict[str, Any]) -> None:
+    """A reply inside an existing discussion is part of that feedback, not new
+    feedback: it must neither surface on the card nor pull it back."""
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    fake.notes = [
+        {
+            "id": 11,
+            "system": False,
+            "body": "please fix X",
+            "author": {"username": "bob"},
+            "web_url": "u",
+        }
+    ]
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    _start_run(env, db, _card(db, env["project"]))
+    before = _card(db, env["project"]).status
+
+    reply = _note_event(1, 12, "already fixed")
+    reply["object_attributes"]["in_reply_to_id"] = 11
+    mr_service.handle_note_event(db, env["integration"], env["project"], reply)
+    db.commit()
+
+    record = _record(db, env["integration"])
+    current_notes = record.rounds_json[-1].get("notes") or []
+    assert all(int(n["id"]) != 12 for n in current_notes)
+    assert _card(db, env["project"]).status == before
+
+
+def test_standalone_comment_pulls_card_back_from_in_review(
+    env: dict[str, Any],
+) -> None:
+    """A standalone (non-reply) comment — like the pipeline's confirmation note —
+    after CI passes pulls the in-review card back to in-progress."""
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    fake.notes = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
+    )
+    fake.notes = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA2, "success")
+    )
+    db.commit()
+    assert _card(db, env["project"]).status == "in_review"
+
+    mr_service.handle_note_event(
+        db, env["integration"], env["project"], _note_event(1, 21, "new feedback")
+    )
+    db.commit()
+
+    assert _card(db, env["project"]).status == "in_progress"
+    record = _record(db, env["integration"])
+    current_notes = record.rounds_json[-1].get("notes") or []
+    assert any(int(n["id"]) == 21 for n in current_notes)
 
 
 def test_clean_finalize_refreshes_card_description(env: dict[str, Any]) -> None:
