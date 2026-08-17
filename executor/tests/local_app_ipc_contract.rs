@@ -253,7 +253,12 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert!(todos.as_array().unwrap().is_empty());
 
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
-    let current_project = &projects.as_array().unwrap()[0];
+    let current_project = projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|project| project["id"] == project_id)
+        .expect("created project should be listed");
     server
         .dispatch(
             "projects.archive",
@@ -262,7 +267,9 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .await
         .unwrap();
     let projects = server.dispatch("projects.list", json!({})).await.unwrap();
-    assert!(projects.as_array().unwrap().is_empty());
+    assert_eq!(projects.as_array().unwrap().len(), 1);
+    assert_eq!(projects[0]["id"], "default-work-items");
+    assert_eq!(projects[0]["name"], "我的任务");
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
 }
 

@@ -30,6 +30,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
     ProjectChatAgentView,
+    ProjectChatAutomationManagerContinuation,
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
@@ -583,6 +584,195 @@ class ProjectChatService:
             return self.to_view(existing)
         db.refresh(row)
         return self.to_view(row)
+
+    def start_automation_manager_response(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        request: ProjectChatAutomationManagerContinuation,
+    ) -> ProjectChatMessageView:
+        """Open a new reply in the custom manager's existing Runtime session."""
+
+        self._require_scope(
+            db,
+            user_id=user_id,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            required_role=BaseRole.Developer,
+        )
+        trigger = self._user_trigger(
+            db,
+            user_id=user_id,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            message_id=request.trigger_message_id,
+        )
+        manager = self._custom_manager_reply_target(
+            db,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            message_id=request.manager_message_id,
+        )
+        if trigger.reply_to_message_id != manager.message_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Reply does not target this custom AI manager comment",
+            )
+        existing = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.trigger_message_id == trigger.message_id,
+                ProjectChatMessage.sender_id == manager.sender_id,
+                ProjectChatMessage.runtime_device_id == manager.runtime_device_id,
+                ProjectChatMessage.runtime_task_id == manager.runtime_task_id,
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .first()
+        )
+        if existing is not None:
+            return self.to_view(existing)
+
+        message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+        manager_metadata = (
+            manager.metadata_json if isinstance(manager.metadata_json, dict) else {}
+        )
+        metadata = {
+            "kind": "automation_manager_continuation",
+            "manager_type": "custom",
+            "manager_root_message_id": manager.message_id,
+            "run_id": (
+                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+            ),
+            "run_status": "running",
+            "conversation_only": True,
+        }
+        model = manager_metadata.get("model")
+        if isinstance(model, str) and model:
+            metadata["model"] = model
+        row = ProjectChatMessage(
+            message_id=message_id,
+            client_message_id=message_id,
+            runtime_activity_key=self._runtime_activity_key(
+                manager.runtime_device_id,
+                manager.runtime_task_id,
+                trigger.message_id,
+            ),
+            project_id=request.project_id,
+            task_id=request.task_id,
+            sender_type="agent",
+            sender_id=manager.sender_id,
+            sender_name=manager.sender_name,
+            message_type="agent_chunk",
+            content="",
+            metadata_json=metadata,
+            trigger_message_id=trigger.message_id,
+            reply_to_message_id=trigger.message_id,
+            thread_root_message_id=manager.message_id,
+            agent_id="",
+            runtime_device_id=manager.runtime_device_id,
+            runtime_task_id=manager.runtime_task_id,
+            status="streaming",
+        )
+        try:
+            db.add(row)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.trigger_message_id == trigger.message_id,
+                    ProjectChatMessage.sender_id == manager.sender_id,
+                    ProjectChatMessage.runtime_device_id == manager.runtime_device_id,
+                    ProjectChatMessage.runtime_task_id == manager.runtime_task_id,
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .first()
+            )
+            if existing is None:
+                raise
+            return self.to_view(existing)
+        db.refresh(row)
+        return self.to_view(row)
+
+    @staticmethod
+    def _user_trigger(
+        db: Session,
+        *,
+        user_id: int,
+        project_id: str,
+        task_id: str,
+        message_id: str,
+    ) -> ProjectChatMessage:
+        row = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == message_id,
+                ProjectChatMessage.project_id == project_id,
+                ProjectChatMessage.task_id == task_id,
+                ProjectChatMessage.sender_type == "user",
+                ProjectChatMessage.sender_id == str(user_id),
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .one_or_none()
+        )
+        if row is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Custom AI manager continuation requires your task comment",
+            )
+        return row
+
+    @staticmethod
+    def _custom_manager_reply_target(
+        db: Session,
+        *,
+        project_id: str,
+        task_id: str,
+        message_id: str,
+    ) -> ProjectChatMessage:
+        row = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.message_id == message_id,
+                ProjectChatMessage.project_id == project_id,
+                ProjectChatMessage.task_id == task_id,
+                ProjectChatMessage.sender_type == "agent",
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .one_or_none()
+        )
+        metadata = (
+            row.metadata_json
+            if row is not None and isinstance(row.metadata_json, dict)
+            else {}
+        )
+        try:
+            execution_id = int(metadata["execution_id"])
+        except (KeyError, TypeError, ValueError):
+            execution_id = 0
+        from app.models.loop_item_execution import LoopItemExecution
+
+        execution = db.get(LoopItemExecution, execution_id) if execution_id else None
+        if (
+            row is None
+            or metadata.get("executor_type") != "automation_manager"
+            or metadata.get("manager_type") != "custom"
+            or not row.runtime_device_id
+            or not row.runtime_task_id
+            or execution is None
+            or execution.executor_type != "automation_manager"
+            or execution.cloud_project_id != project_id
+            or execution.loop_item_id != task_id
+            or execution.runtime_device_id != row.runtime_device_id
+            or execution.runtime_task_id != row.runtime_task_id
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Reply target is not a custom AI manager execution",
+            )
+        return row
 
     @staticmethod
     def _runtime_activity_key(
@@ -1148,6 +1338,8 @@ class ProjectChatService:
             run_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
 
         row.metadata_json = {**metadata, "run_id": run_id, "run_status": status_value}
+        if metadata.get("conversation_only") is True:
+            return
         if not row.task_id:
             return
 
@@ -1260,10 +1452,9 @@ class ProjectChatService:
         if row.sender_type != "agent":
             return False
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
-        reconciled = self._reconcile_board_robot_sender(db, row=row, metadata=metadata)
         if row.status in {"completed", "failed"}:
             if metadata.get("run_status") == row.status:
-                return reconciled
+                return False
             row.metadata_json = {**metadata, "run_status": row.status}
             if row.task_id:
                 self._set_task_ai_state(
@@ -1283,7 +1474,7 @@ class ProjectChatService:
             )
             return True
         if row.status != "streaming" or not row.task_id:
-            return reconciled
+            return False
 
         task = db.get(LoopItem, row.task_id)
         task_metadata = (
@@ -1295,9 +1486,9 @@ class ProjectChatService:
         ai_state = ai_state if isinstance(ai_state, dict) else {}
         run_status = ai_state.get("status")
         if run_status not in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
-            return reconciled
+            return False
         if ai_state.get("project_chat_message_id") != row.message_id:
-            return reconciled
+            return False
 
         status_value = (
             "failed"
@@ -1318,89 +1509,6 @@ class ProjectChatService:
             run_status,
         )
         return True
-
-    @staticmethod
-    def _reconcile_board_robot_sender(
-        db: Session,
-        *,
-        row: ProjectChatMessage,
-        metadata: dict,
-    ) -> bool:
-        """Repair activity authors from their selected board robot."""
-
-        resolved = ProjectChatService._board_robot_for_activity(
-            db, row=row, metadata=metadata
-        )
-        if resolved is None:
-            return False
-        agent, manager_activity = resolved
-        sender_name = str(agent.title or agent.name or "AI")
-        if manager_activity:
-            if row.sender_name == sender_name:
-                return False
-            row.sender_name = sender_name
-            logger.warning(
-                "[ProjectChat] Reconciled manager activity display name to board robot: "
-                "project_id=%s task_id=%s message_id=%s agent_id=%s",
-                row.project_id,
-                row.task_id,
-                row.message_id,
-                agent.id,
-            )
-            return True
-        if (
-            row.sender_id == agent.id
-            and row.sender_name == sender_name
-            and row.agent_id == agent.id
-        ):
-            return False
-        row.sender_id = agent.id
-        row.sender_name = sender_name
-        row.agent_id = agent.id
-        logger.warning(
-            "[ProjectChat] Reconciled Wegent execution sender to board robot: "
-            "project_id=%s task_id=%s message_id=%s agent_id=%s",
-            row.project_id,
-            row.task_id,
-            row.message_id,
-            agent.id,
-        )
-        return True
-
-    @staticmethod
-    def _board_robot_for_activity(
-        db: Session,
-        *,
-        row: ProjectChatMessage,
-        metadata: dict,
-    ) -> tuple[ProjectChatAgent, bool] | None:
-        """Resolve the board robot represented by an activity projection."""
-
-        manager_activity = metadata.get("selected_assignee_type") == "agent"
-        agent_id = ""
-        if manager_activity:
-            agent_id = str(metadata.get("selected_assignee_id") or "")
-        elif metadata.get("executor_type") == "wegent_team":
-            try:
-                execution_id = int(metadata["execution_id"])
-            except (KeyError, TypeError, ValueError):
-                return None
-            from app.models.loop_item_execution import LoopItemExecution
-
-            execution = db.get(LoopItemExecution, execution_id)
-            if (
-                execution is None
-                or execution.cloud_project_id != row.project_id
-                or execution.loop_item_id != row.task_id
-            ):
-                return None
-            agent_id = str(execution.agent_id or "")
-        if not agent_id:
-            return None
-        agent = db.get(ProjectChatAgent, agent_id)
-        if agent is None or agent.cloud_project_id != row.project_id:
-            return None
-        return agent, manager_activity
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:

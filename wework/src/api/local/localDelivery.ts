@@ -2,13 +2,17 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 
 import {
   createProjectTaskTrackingSingleFlight,
+  enqueueTaskTrackingMutation,
+  isDefaultWorkItemProject,
   nextTaskTrackingStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
+  type CloudLoopItemExecution,
   type CloudProject,
   type CloudProjectFile,
   type CloudProjectId,
   type CloudProjectMember,
+  type CloudTaskContext,
   type Delivery,
   type DeliveryAsset,
   type DeliveryCreateInput,
@@ -753,6 +757,25 @@ export function createLocalDeliveryApi(
       }
       return { items }
     },
+    async listLoopItemExecutions(
+      projectId: CloudProjectId,
+      options: { agent_id?: string; status?: string } = {}
+    ): Promise<{ items: CloudLoopItemExecution[] }> {
+      const records = await request<LocalLoopItemExecution[]>('executions.list', {
+        project_id: String(projectId),
+        agent_id: options.agent_id ?? null,
+        status: options.status ?? null,
+      })
+      return {
+        items: records.map(record => ({
+          ...record,
+          executor_type: 'project_robot',
+          team_id: null,
+          backend_task_id: null,
+          automation_run_id: '',
+        })),
+      }
+    },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
       const record = await request<LocalLoopItemRecord>('todos.get', {
@@ -936,39 +959,42 @@ export function createLocalDeliveryApi(
     },
     async updateTaskTrackingStatus(
       task: RuntimeTaskAddress,
-      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled'
+      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
     ) {
-      let binding: LocalTaskBindingRecord
-      try {
-        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-          device_id: task.deviceId,
-          task_id: task.taskId,
+      return enqueueTaskTrackingMutation(task, async () => {
+        let context: CloudTaskContext
+        try {
+          context = await api.findCloudContextForTask(task)
+        } catch {
+          return null
+        }
+        if (!context.loop_item_id || !context.loop_item) return null
+        const item = context.loop_item
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
+          completeOnSuccess: isDefaultWorkItemProject(context.project),
         })
-      } catch {
-        return null
-      }
-      if (!binding.loop_item_id) return null
-      const item = await api.getLoopItem(binding.loop_item_id)
-      const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
-      return nextStatus
-        ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
-        : item
+        return nextStatus
+          ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
+          : item
+      })
     },
     async updateTaskTrackingTitle(task: RuntimeTaskAddress, title: string) {
-      let binding: LocalTaskBindingRecord
-      try {
-        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-          device_id: task.deviceId,
-          task_id: task.taskId,
-        })
-      } catch {
-        return null
-      }
-      if (!binding.loop_item_id) return null
-      const item = await api.getLoopItem(binding.loop_item_id)
-      return item.title === title
-        ? item
-        : api.updateLoopItem(item.id, { version: item.version, title })
+      return enqueueTaskTrackingMutation(task, async () => {
+        let binding: LocalTaskBindingRecord
+        try {
+          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+        } catch {
+          return null
+        }
+        if (!binding.loop_item_id) return null
+        const item = await api.getLoopItem(binding.loop_item_id)
+        return item.title === title
+          ? item
+          : api.updateLoopItem(item.id, { version: item.version, title })
+      })
     },
     async unbindCloudContext(task: RuntimeTaskAddress) {
       await request('runtime_tasks.unbind', {

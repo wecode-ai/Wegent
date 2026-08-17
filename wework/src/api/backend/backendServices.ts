@@ -22,6 +22,7 @@ import { createSocketClient } from '@wegent/chat-core'
 import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { createProjectAutomationApi } from '@/api/projectAutomations'
+import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -73,6 +74,7 @@ export function createBackendWorkbenchServices(
   const modelApi = createModelApi(client)
   const projectChatAgentApi = createProjectChatAgentApi(client)
   const projectAutomationApi = createProjectAutomationApi(client)
+  const projectIncomingHookApi = createProjectIncomingHookApi(client)
 
   return {
     teamApi,
@@ -94,6 +96,7 @@ export function createBackendWorkbenchServices(
         projectChatClient,
         projectChatAgentApi,
         projectAutomationApi,
+        projectIncomingHookApi,
         deviceApi,
         modelApi,
         teamApi,
@@ -118,6 +121,7 @@ export function createBackendWorkbenchServices(
     projectChatClient,
     projectChatAgentApi,
     projectAutomationApi,
+    projectIncomingHookApi,
     workspaceSessionApi: {
       startProjectTerminal: projectApi.startTerminalSession,
       startProjectCodeServer: projectApi.startCodeServerSession,

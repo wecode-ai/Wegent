@@ -121,7 +121,7 @@ export function ProjectSwitcherOverlay({
                       </span>
                       <span className="block text-xs text-text-muted">
                         {t('todo.work_item_count', {
-                          defaultValue: '{{count}} 个工作项',
+                          defaultValue: '{{count}} 个工作空间',
                           count,
                         })}
                       </span>
@@ -418,7 +418,7 @@ export function TodoSidebar({
                   <ProjectNav
                     testId="todo-sidebar-work-items"
                     icon={ListTodo}
-                    label="Work items"
+                    label="工作空间"
                     count={projectItemCount(selectedProject)}
                     active={activeView === 'work-items'}
                     onClick={() => onSelectView('work-items')}

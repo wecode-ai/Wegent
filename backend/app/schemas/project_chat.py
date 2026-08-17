@@ -265,6 +265,15 @@ class ProjectChatAgentFailure(ProjectChatSchema):
     error: str | None = Field(default=None, max_length=2_000)
 
 
+class ProjectChatAutomationManagerContinuation(ProjectChatSchema):
+    """Open one reply in a custom automation manager's Runtime session."""
+
+    project_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    trigger_message_id: str = Field(min_length=1, max_length=64)
+    manager_message_id: str = Field(min_length=1, max_length=64)
+
+
 class ProjectChatWegentContinuation(ProjectChatSchema):
     """Continue the native Wegent Task behind one board comment thread."""
 

@@ -3,6 +3,7 @@ import { getLocalUser, LOCAL_USER } from './localSession'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from './localServices'
 import {
   clearLocalModelConfigs,
+  findLocalModelConfigByModelName,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -404,6 +405,46 @@ describe('createLocalAppServices', () => {
 
     resolveRestart?.({ restarted: true })
     await Promise.all([firstDevices, secondDevices])
+  })
+
+  test('accepts an already loaded catalog model when an idle restart is unavailable', async () => {
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'loaded-model',
+      displayName: 'Loaded model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'loaded-model',
+      displayName: 'Loaded model',
+      modelId: 'loaded-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry,
+      codexCatalogModelId: String(catalogEntry.slug),
+      catalogReady: false,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: false }
+      if (method === 'runtime.codex.models.list') {
+        return { data: [{ id: catalogEntry.slug }] }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+        runtimeInstanceId: 'runtime-1',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.deviceApi.listDevices()
+
+    expect(findLocalModelConfigByModelName(String(catalogEntry.slug))?.catalogReady).toBe(true)
+    expect(request).toHaveBeenCalledWith('runtime.codex.models.list', { includeHidden: true })
   })
 
   test('hides official Codex models without auth while keeping provider models', async () => {

@@ -43,9 +43,45 @@ const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
-  variant?: 'default' | 'process'
+  variant?: 'default' | 'document' | 'process'
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   fileChanges?: TurnFileChangesSummary
+}
+
+const MARKDOWN_HEADING_CLASSES = {
+  default: {
+    h1: 'mb-4 mt-6 text-lg font-semibold text-text-primary',
+    h2: 'mb-3 mt-5 text-base font-semibold text-text-primary',
+    h3: 'mb-2 mt-4 text-sm font-semibold text-text-primary',
+  },
+  document: {
+    h1: 'mb-5 mt-8 text-heading-lg font-semibold tracking-[-0.02em] text-text-primary',
+    h2: 'mb-4 mt-7 text-heading-md font-semibold tracking-[-0.01em] text-text-primary',
+    h3: 'mb-3 mt-6 text-heading-sm font-semibold text-text-primary',
+  },
+  process: {
+    h1: 'mb-2 mt-3 text-base font-semibold text-text-primary',
+    h2: 'mb-1.5 mt-3 text-sm font-semibold text-text-primary',
+    h3: 'mb-1 mt-2 text-sm font-semibold text-text-primary',
+  },
+} as const
+
+const DOCUMENT_MARKDOWN_HEADING_COMPONENTS = {
+  h4: ({ children }: { children?: ReactNode }) => (
+    <h4 data-scroll-anchor className="mb-2 mt-5 text-lg font-semibold text-text-primary">
+      {children}
+    </h4>
+  ),
+  h5: ({ children }: { children?: ReactNode }) => (
+    <h5 data-scroll-anchor className="mb-2 mt-4 text-base font-semibold text-text-primary">
+      {children}
+    </h5>
+  ),
+  h6: ({ children }: { children?: ReactNode }) => (
+    <h6 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-secondary">
+      {children}
+    </h6>
+  ),
 }
 
 type AssistantMarkdownPart =
@@ -83,44 +119,25 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     }
     openFileRef.current?.(path)
   }, [])
+  const headingClasses = MARKDOWN_HEADING_CLASSES[variant]
   const components = useMemo(
     () => ({
       h1: ({ children }: { children?: ReactNode }) => (
-        <h1
-          data-scroll-anchor
-          className={
-            variant === 'process'
-              ? 'mb-2 mt-3 text-base font-semibold text-text-primary'
-              : 'mb-4 mt-6 text-lg font-semibold text-text-primary'
-          }
-        >
+        <h1 data-scroll-anchor className={headingClasses.h1}>
           {children}
         </h1>
       ),
       h2: ({ children }: { children?: ReactNode }) => (
-        <h2
-          data-scroll-anchor
-          className={
-            variant === 'process'
-              ? 'mb-1.5 mt-3 text-sm font-semibold text-text-primary'
-              : 'mb-3 mt-5 text-base font-semibold text-text-primary'
-          }
-        >
+        <h2 data-scroll-anchor className={headingClasses.h2}>
           {children}
         </h2>
       ),
       h3: ({ children }: { children?: ReactNode }) => (
-        <h3
-          data-scroll-anchor
-          className={
-            variant === 'process'
-              ? 'mb-1 mt-2 text-sm font-semibold text-text-primary'
-              : 'mb-2 mt-4 text-sm font-semibold text-text-primary'
-          }
-        >
+        <h3 data-scroll-anchor className={headingClasses.h3}>
           {children}
         </h3>
       ),
+      ...(variant === 'document' ? DOCUMENT_MARKDOWN_HEADING_COMPONENTS : {}),
       p: ({ children }: { children?: ReactNode }) => (
         <p
           data-scroll-anchor
@@ -200,7 +217,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [openFile, variant]
+    [headingClasses, openFile, variant]
   )
 
   return (

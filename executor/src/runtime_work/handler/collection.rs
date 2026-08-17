@@ -195,7 +195,7 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
-        let links = links
+        let mut links = links
             .into_iter()
             .map(|mut link| {
                 if !is_codex_runtime(&link.runtime) {
@@ -205,16 +205,6 @@ impl RuntimeWorkRpcHandler {
                 if let Some(thread_id) = link.thread_id.as_deref() {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
-                    let project_key = runtime_task_sidebar_project_key(&link, project_index);
-                    if project_index.has_manual_thread_order(&project_key) {
-                        let order = project_index.thread_sort_order(
-                            &project_key,
-                            thread_id,
-                            link.list_order.unwrap_or(usize::MAX / 2),
-                        );
-                        link.list_order = Some(order);
-                        link.sidebar_order = Some(order);
-                    }
                 }
                 link
             })
@@ -229,6 +219,7 @@ impl RuntimeWorkRpcHandler {
             .join("|");
 
         if !project_index.has_projects() && !project_index.has_project_state() {
+            self.apply_manual_project_thread_orders(&mut links, project_index);
             log_executor_event(
                 "runtime work project filter skipped",
                 &[
@@ -373,17 +364,6 @@ impl RuntimeWorkRpcHandler {
             let project_name = project.name.clone();
             link.group_workspace_path = Some(project_workspace_path.clone());
             link.group_project_key = Some(project_key.clone());
-            if let Some(thread_id) = link.thread_id.as_deref() {
-                if project_index.has_manual_thread_order(&project_key) {
-                    let order = project_index.thread_sort_order(
-                        &project_key,
-                        thread_id,
-                        link.list_order.unwrap_or(usize::MAX / 2),
-                    );
-                    link.list_order = Some(order);
-                    link.sidebar_order = Some(order);
-                }
-            }
             kept_project += 1;
             log_runtime_project_filter_item(
                 &link,
@@ -425,7 +405,80 @@ impl RuntimeWorkRpcHandler {
             ],
         );
 
+        self.apply_manual_project_thread_orders(&mut visible_links, project_index);
         visible_links
+    }
+
+    fn apply_manual_project_thread_orders(
+        &self,
+        links: &mut [RuntimeTaskLink],
+        project_index: &CodexGlobalProjectIndex,
+    ) {
+        struct ManualProjectTaskGroups {
+            unlisted: Vec<usize>,
+            listed: Vec<usize>,
+            unlisted_before_listed: bool,
+        }
+
+        let mut groups = HashMap::<String, ManualProjectTaskGroups>::new();
+        for (index, link) in links.iter().enumerate() {
+            if !is_codex_runtime(&link.runtime) {
+                continue;
+            }
+            let Some(thread_id) = link.thread_id.as_deref() else {
+                continue;
+            };
+            let project_key = runtime_task_sidebar_project_key(link, project_index);
+            if !project_index.has_manual_thread_order(&project_key) {
+                continue;
+            }
+
+            let group =
+                groups
+                    .entry(project_key.clone())
+                    .or_insert_with(|| ManualProjectTaskGroups {
+                        unlisted: Vec::new(),
+                        listed: Vec::new(),
+                        unlisted_before_listed: link.group_project_key.is_some(),
+                    });
+            if project_index.is_thread_in_manual_order(&project_key, thread_id) {
+                group.listed.push(index);
+            } else {
+                group.unlisted.push(index);
+            }
+        }
+
+        for (project_key, mut group) in groups {
+            group.listed.sort_by(|left, right| {
+                let left_thread = links[*left].thread_id.as_deref().unwrap_or("");
+                let right_thread = links[*right].thread_id.as_deref().unwrap_or("");
+                project_index
+                    .thread_sort_order(&project_key, left_thread, 0)
+                    .cmp(&project_index.thread_sort_order(&project_key, right_thread, 0))
+            });
+            if group.unlisted_before_listed {
+                group.unlisted.sort_by(|left, right| {
+                    compare_unlisted_manual_project_links(&links[*left], &links[*right])
+                });
+            } else {
+                group.unlisted.sort_by(|left, right| {
+                    links[*left]
+                        .list_order
+                        .unwrap_or(usize::MAX / 2)
+                        .cmp(&links[*right].list_order.unwrap_or(usize::MAX / 2))
+                });
+            }
+
+            let ordered_indices = if group.unlisted_before_listed {
+                group.unlisted.into_iter().chain(group.listed)
+            } else {
+                group.listed.into_iter().chain(group.unlisted)
+            };
+            for (next_order, index) in ordered_indices.enumerate() {
+                links[index].list_order = Some(next_order);
+                links[index].sidebar_order = Some(next_order);
+            }
+        }
     }
 
     pub(super) async fn task_link_from_payload(
@@ -559,8 +612,11 @@ impl RuntimeWorkRpcHandler {
         let queue_position = local_link
             .as_ref()
             .and_then(|link| self.queued_local_task_position(&link.local_task_id));
-        let workspace_path = string_field(thread, "cwd")
-            .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
+        let workspace_path = local_link
+            .as_ref()
+            .map(|link| link.workspace_path.clone())
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| string_field(thread, "cwd"))
             .unwrap_or_else(|| "~/.codex".to_owned());
         let mut link =
             RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);
@@ -902,6 +958,13 @@ fn runtime_task_sidebar_project_key(
     project_index: &CodexGlobalProjectIndex,
 ) -> String {
     if let Some(project_key) = link
+        .group_project_key
+        .as_deref()
+        .filter(|project_key| !project_key.trim().is_empty())
+    {
+        return project_key.to_owned();
+    }
+    if let Some(project_key) = link
         .thread_id
         .as_deref()
         .and_then(|thread_id| project_index.sidebar_project_key_for_thread(thread_id))
@@ -926,4 +989,15 @@ fn runtime_task_sidebar_project_key(
         return "chats".to_owned();
     }
     format!("local:{}", workspace_group_path(&link.workspace_path))
+}
+
+fn compare_unlisted_manual_project_links(
+    left: &RuntimeTaskLink,
+    right: &RuntimeTaskLink,
+) -> std::cmp::Ordering {
+    right
+        .updated_at
+        .cmp(&left.updated_at)
+        .then_with(|| right.created_at.cmp(&left.created_at))
+        .then_with(|| left.local_task_id.cmp(&right.local_task_id))
 }

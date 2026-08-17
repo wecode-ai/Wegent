@@ -442,7 +442,7 @@ export function TodoDetailPanel({
               item.task?.error ||
               t(
                 'todo.runtime_task_description',
-                '该工作项来自 Wework 原任务。打开原任务页可查看完整执行上下文与历史消息。'
+                '该工作空间来自 Wework 原任务。打开原任务页可查看完整执行上下文与历史消息。'
               )}
           </p>
         </section>
