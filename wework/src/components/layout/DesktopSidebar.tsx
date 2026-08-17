@@ -184,7 +184,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   collapsed?: boolean

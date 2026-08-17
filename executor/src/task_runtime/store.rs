@@ -7,6 +7,7 @@ use std::{
     env,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use chrono::Utc;
@@ -24,6 +25,8 @@ use super::model::{
 };
 
 const LOCAL_SCHEMA_VERSION: i64 = 7;
+const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
+const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
 
 #[derive(Debug, Error)]
 pub enum TaskRuntimeError {
@@ -63,6 +66,7 @@ impl LocalTaskStore {
                 .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
         }
         let connection = Connection::open(&path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         migrate(&connection)?;
@@ -105,22 +109,7 @@ impl LocalTaskStore {
         let id = public_id.clone();
         let project_key = normalize_project_key(input.project_key, &input.name);
         let now = now();
-        let metadata = json!({
-            "project_store": ProjectStoreKind::Local,
-            "task_provider": input.task_provider,
-            "provider_config": provider_config,
-            "board_config": {
-                "group_by": "status",
-                "statuses": [
-                    {"id": "inbox", "name": "收集箱", "color": "gray"},
-                    {"id": "pending", "name": "待开始", "color": "blue"},
-                    {"id": "in_progress", "name": "进行中", "color": "orange"},
-                    {"id": "in_review", "name": "待确认", "color": "purple"},
-                    {"id": "completed", "name": "已完成", "color": "green"}
-                ]
-            },
-            "tags": [],
-        });
+        let metadata = local_project_metadata(input.task_provider, provider_config);
         let connection = self.connection()?;
         connection.execute(
             "INSERT INTO loop_items (
@@ -2413,11 +2402,110 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          ON loop_items(assignee_agent_id)",
         [],
     )?;
+    let default_board_migration_applied = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM schema_migrations WHERE version = ?1
+         )",
+        [LOCAL_SCHEMA_VERSION],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !default_board_migration_applied {
+        let timestamp = now();
+        let metadata = local_project_metadata(TaskProviderKind::Local, json!({}));
+        let metadata = json!({
+            "system_kind": "default_work_items",
+            "project_store": metadata["project_store"],
+            "task_provider": metadata["task_provider"],
+            "provider_config": metadata["provider_config"],
+            "board_config": metadata["board_config"],
+            "tags": metadata["tags"],
+        });
+        let conflicting_project_ids = connection
+            .prepare(
+                "SELECT id FROM loop_items
+                 WHERE resource_type = 'project' AND project_key = ?1 AND id != ?2",
+            )?
+            .query_map(
+                params![DEFAULT_WORK_ITEM_PROJECT_KEY, DEFAULT_WORK_ITEM_PROJECT_ID],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        for project_id in conflicting_project_ids {
+            let replacement_key = unused_project_key(connection)?;
+            connection.execute(
+                "UPDATE loop_items
+                 SET project_key = ?1, updated_at = ?2
+                 WHERE id = ?3 AND resource_type = 'project'",
+                params![replacement_key, timestamp, project_id],
+            )?;
+        }
+        connection.execute(
+            "INSERT OR IGNORE INTO loop_items (
+                id, resource_type, project_space, public_id, project_key, name,
+                description, storage_prefix, next_item_number, status, sort_order,
+                metadata, version, created_at, updated_at
+             ) VALUES (?1, 'project', 'default', ?1, ?2, ?3, ?4, ?5, 1, 'active',
+                       0, ?6, 1, ?7, ?7)",
+            params![
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                DEFAULT_WORK_ITEM_PROJECT_KEY,
+                "我的任务",
+                "自动收纳任务，并同步每次执行的生命周期。",
+                format!("projects/{DEFAULT_WORK_ITEM_PROJECT_ID}"),
+                metadata.to_string(),
+                timestamp,
+            ],
+        )?;
+        connection.execute(
+            "UPDATE loop_items
+             SET project_key = ?1, name = ?2, description = ?3, metadata = ?4,
+                 status = 'active', deleted_at = NULL, updated_at = ?5
+             WHERE id = ?6 AND resource_type = 'project'",
+            params![
+                DEFAULT_WORK_ITEM_PROJECT_KEY,
+                "我的任务",
+                "自动收纳任务，并同步每次执行的生命周期。",
+                metadata.to_string(),
+                timestamp,
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+            ],
+        )?;
+        let canonical_project_exists = connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM loop_items
+                WHERE id = ?1 AND resource_type = 'project'
+                  AND project_key = ?2
+                  AND json_extract(metadata, '$.system_kind') = 'default_work_items'
+             )",
+            params![DEFAULT_WORK_ITEM_PROJECT_ID, DEFAULT_WORK_ITEM_PROJECT_KEY],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !canonical_project_exists {
+            return Err(TaskRuntimeError::Invalid(
+                "failed to reserve the default work-item project".to_owned(),
+            ));
+        }
+    }
     connection.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
         params![LOCAL_SCHEMA_VERSION, now()],
     )?;
     Ok(())
+}
+
+fn unused_project_key(connection: &Connection) -> Result<String, rusqlite::Error> {
+    loop {
+        let candidate =
+            format!("PRJ{}", &Uuid::new_v4().simple().to_string()[..8]).to_ascii_uppercase();
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_items WHERE project_key = ?1)",
+            [&candidate],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !exists {
+            return Ok(candidate);
+        }
+    }
 }
 
 fn get_item_from(
@@ -2717,6 +2805,25 @@ fn descriptor_loop_item(
         execution_id: None,
         execution_state: None,
     }
+}
+
+fn local_project_metadata(task_provider: TaskProviderKind, provider_config: Value) -> Value {
+    json!({
+        "project_store": ProjectStoreKind::Local,
+        "task_provider": task_provider,
+        "provider_config": provider_config,
+        "board_config": {
+            "group_by": "status",
+            "statuses": [
+                {"id": "inbox", "name": "收集箱", "color": "gray"},
+                {"id": "pending", "name": "待开始", "color": "blue"},
+                {"id": "in_progress", "name": "进行中", "color": "orange"},
+                {"id": "in_review", "name": "待确认", "color": "purple"},
+                {"id": "completed", "name": "已完成", "color": "green"}
+            ]
+        },
+        "tags": [],
+    })
 }
 
 fn require_parent(
@@ -4925,6 +5032,96 @@ mod tests {
     }
 
     #[test]
+    fn creates_the_default_work_item_project_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("tasks.sqlite");
+
+        let first_store = LocalTaskStore::open(&db_path).unwrap();
+        let first_projects = first_store.list_projects().unwrap();
+        let default_board = first_projects
+            .iter()
+            .find(|project| project.project_key.as_deref() == Some(DEFAULT_WORK_ITEM_PROJECT_KEY))
+            .expect("the default work-item project must exist");
+        assert_eq!(default_board.id, DEFAULT_WORK_ITEM_PROJECT_ID);
+        assert_eq!(default_board.name.as_deref(), Some("我的任务"));
+        assert_eq!(
+            default_board.metadata["system_kind"],
+            json!("default_work_items")
+        );
+        drop(first_store);
+
+        let reopened_store = LocalTaskStore::open(&db_path).unwrap();
+        let default_board_count = reopened_store
+            .list_projects()
+            .unwrap()
+            .into_iter()
+            .filter(|project| project.project_key.as_deref() == Some(DEFAULT_WORK_ITEM_PROJECT_KEY))
+            .count();
+        assert_eq!(default_board_count, 1);
+    }
+
+    #[test]
+    fn migration_reserves_the_default_work_item_project_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&db_path).unwrap();
+        let legacy_project = store
+            .create_project(ProjectCreate {
+                name: "Existing work board".to_owned(),
+                project_key: Some("LEGACY".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Local,
+                provider_config: json!({}),
+            })
+            .unwrap();
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "DELETE FROM loop_items WHERE id = ?1",
+                    [DEFAULT_WORK_ITEM_PROJECT_ID],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE loop_items SET project_key = ?1 WHERE id = ?2",
+                    params![DEFAULT_WORK_ITEM_PROJECT_KEY, legacy_project.id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM schema_migrations WHERE version = ?1",
+                    [LOCAL_SCHEMA_VERSION],
+                )
+                .unwrap();
+        }
+        drop(store);
+
+        let migrated = LocalTaskStore::open(&db_path).unwrap();
+        let projects = migrated.list_projects().unwrap();
+        let default_project = projects
+            .iter()
+            .find(|project| project.id == DEFAULT_WORK_ITEM_PROJECT_ID)
+            .expect("the canonical default project should be created");
+        assert_eq!(
+            default_project.project_key.as_deref(),
+            Some(DEFAULT_WORK_ITEM_PROJECT_KEY)
+        );
+        assert_eq!(
+            default_project.metadata["system_kind"],
+            json!("default_work_items")
+        );
+        let preserved_legacy_project = projects
+            .iter()
+            .find(|project| project.id == legacy_project.id)
+            .expect("the existing project should be preserved");
+        assert_ne!(
+            preserved_legacy_project.project_key.as_deref(),
+            Some(DEFAULT_WORK_ITEM_PROJECT_KEY)
+        );
+    }
+
+    #[test]
     fn caches_backend_external_projects_without_exposing_credentials() {
         let (_directory, store) = store();
         let configured = store
@@ -4946,10 +5143,12 @@ mod tests {
 
         assert_eq!(configured.id, "cloud-1");
         let projects = store.list_projects().unwrap();
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].id, "cloud-1");
+        let cached_project = projects
+            .iter()
+            .find(|project| project.id == "cloud-1")
+            .expect("cached project must be listed");
         assert_eq!(
-            projects[0].metadata["task_provider"],
+            cached_project.metadata["task_provider"],
             json!(TaskProviderKind::Github)
         );
         let serialized = store
@@ -5011,8 +5210,8 @@ mod tests {
 
         let projects = store.list_projects().unwrap();
 
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].id, local.id);
+        assert!(projects.iter().any(|project| project.id == local.id));
+        assert!(projects.iter().all(|project| project.id != "future-1"));
     }
 
     #[test]
@@ -5124,6 +5323,7 @@ mod tests {
             .list_projects()
             .unwrap()
             .into_iter()
+            .filter(|project| project.project_key.as_deref() != Some(DEFAULT_WORK_ITEM_PROJECT_KEY))
             .map(|project| project.id)
             .collect::<Vec<_>>();
         assert_eq!(project_ids, vec!["account-b"]);

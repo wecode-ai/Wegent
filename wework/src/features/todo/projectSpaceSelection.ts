@@ -1,4 +1,4 @@
-import type { CloudProject } from '@/api/deliveries'
+import { isDefaultWorkItemProject, type CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
@@ -13,10 +13,34 @@ export interface ProjectSpaceOption {
   api: ProjectSpaceApi
 }
 
+export { isDefaultWorkItemProject }
+
 export function projectStoreLocation(
   projectStore: RuntimeProjectSpaceRef['projectStore']
 ): 'local' | 'cloud' {
   return projectStore === 'local' ? 'local' : 'cloud'
+}
+
+const projectSpaceTaskContextListeners = new Set<(task: RuntimeTaskAddress) => void>()
+
+export function publishProjectSpaceTaskContextChanged(task: RuntimeTaskAddress) {
+  for (const listener of projectSpaceTaskContextListeners) listener(task)
+}
+
+export function subscribeProjectSpaceTaskContextChanged(
+  listener: (task: RuntimeTaskAddress) => void
+) {
+  projectSpaceTaskContextListeners.add(listener)
+  return () => {
+    projectSpaceTaskContextListeners.delete(listener)
+  }
+}
+
+export async function loadDefaultWorkItemProject(
+  api: ProjectSpaceApi
+): Promise<CloudProject | null> {
+  const response = await api.listCloudProjects()
+  return response.items.find(isDefaultWorkItemProject) ?? null
 }
 
 export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
@@ -70,11 +94,19 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
   return ['local', 'github', 'gitlab'].includes(project.task_provider)
 }
 
-export function findProjectSpaceContextForTask(
+export async function findProjectSpaceContextForTask(
   apis: ProjectSpaceApi[],
   task: RuntimeTaskAddress
 ): ReturnType<ProjectSpaceApi['findCloudContextForTask']> {
-  return Promise.any(apis.map(api => api.findCloudContextForTask(task)))
+  const errors: unknown[] = []
+  for (const api of apis) {
+    try {
+      return await api.findCloudContextForTask(task)
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  throw new AggregateError(errors, 'Task is not linked to a project space')
 }
 
 export async function loadProjectSpaceOptions(

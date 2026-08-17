@@ -238,8 +238,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
   }, [loadLocalHarnessSessions])
-  const todoOpen = currentPath === '/todo'
-  const activeItem = todoOpen ? 'todo' : 'chat'
+  const routeWorkItemsOpen = currentPath === '/todo'
+  const todoOpen = routeWorkItemsOpen
+  const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
     setActiveLocalHarnessSessionId(null)
@@ -837,8 +838,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
-      onOpenPlugins={() => navigateTo('/plugins')}
-      onOpenAutomation={() => navigateTo('/automations')}
+      onOpenPlugins={() => {
+        navigateTo('/plugins')
+      }}
+      onOpenAutomation={() => {
+        navigateTo('/automations')
+      }}
       onRefreshDevices={onRefreshDevices}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
@@ -873,11 +878,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        {!todoOpen && <WorkbenchBackground />}
+        {!routeWorkItemsOpen && <WorkbenchBackground />}
         {!settingsOpen &&
-          !todoOpen &&
+          !routeWorkItemsOpen &&
           renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-        {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
+        {!settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
           <>
             <div
               data-testid="desktop-sidebar-hover-edge"

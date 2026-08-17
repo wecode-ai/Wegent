@@ -845,7 +845,48 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
-  test('marks only background non-Goal completion unread and clears it when opened', () => {
+  test('marks a running task unread when startup reconciliation settles it', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+
+    store.syncRuntimeTranscriptSnapshot(address, {
+      running: false,
+      turns: [
+        {
+          id: 'restored-turn',
+          items: [],
+          status: 'completed',
+          completedAt: 1_786_692_066_192,
+        },
+      ],
+    })
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+  })
+
+  test('marks work interrupted by an app restart unread', () => {
+    const previousStore = new RuntimeTaskLifecycleStore('test')
+    previousStore.syncRuntimeWork(runtimeWork(task()))
+    previousStore.executorStarted(address)
+
+    const restoredStore = new RuntimeTaskLifecycleStore('test')
+    restoredStore.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'cancelled',
+          completedAt: 1_786_692_066_192,
+          turnStatus: 'interrupted',
+        })
+      )
+    )
+
+    expect(restoredStore.getTask(address)?.derived.shouldShowUnread).toBe(true)
+    expect(localStorage.getItem('wework.runtimeTaskLifecycle.test.running')).toBe('[]')
+  })
+
+  test('marks background non-Goal completion unread and clears it when opened', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
     store.executorSettled(address)
@@ -912,9 +953,15 @@ describe('RuntimeTaskLifecycleStore', () => {
     const listener = vi.fn()
     store.subscribe(listener)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('storage unavailable')
-    })
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(function (key, value) {
+        if (key === 'wework.runtimeTaskLifecycle.test.unread') {
+          throw new Error('storage unavailable')
+        }
+        return originalSetItem.call(this, key, value)
+      })
 
     store.executorSettled(address)
 
@@ -933,7 +980,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.executorSettled(address)
     store.goalStatusReceived(address, 'paused')
 
-    expect(setItem).toHaveBeenCalledOnce()
+    expect(
+      setItem.mock.calls.filter(([key]) => key === 'wework.runtimeTaskLifecycle.test.unread')
+    ).toHaveLength(1)
     setItem.mockRestore()
   })
 

@@ -36,6 +36,7 @@ import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttach
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { isHttpUrl, openExternalUrl } from '@/lib/external-links'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
   buildRobotRoleDescription,
   mergeProjectChatMessages,
@@ -521,6 +522,67 @@ export function TaskActivityView({
     )
   }
 
+  function isCustomAutomationManager(message: ProjectChatMessage): boolean {
+    return (
+      message.sender.type === 'agent' &&
+      message.metadata.executor_type === 'automation_manager' &&
+      message.metadata.manager_type === 'custom'
+    )
+  }
+
+  async function continueCustomAutomationManager(
+    root: ProjectChatMessage,
+    trigger: ProjectChatMessage,
+    address: { runtimeDeviceId: string; runtimeTaskId: string },
+    attachments: Attachment[]
+  ): Promise<void> {
+    if (!client?.continueAutomationManager) return
+    let pending: ProjectChatMessage | null = null
+    try {
+      pending = await client.continueAutomationManager({
+        projectId: project.id,
+        taskId: task.id,
+        triggerMessageId: trigger.messageId,
+        managerMessageId: root.messageId,
+      })
+      setMessages(current => mergeProjectChatMessages(current, [pending!]))
+      let runtimeError: string | null = null
+      const continued = await sendRuntimePaneMessage(
+        {
+          address: {
+            deviceId: address.runtimeDeviceId,
+            taskId: address.runtimeTaskId,
+          },
+          message: trigger.content,
+          collaborationMode: 'default',
+          attachmentIds: remoteAttachmentIds(attachments),
+          attachments: localRuntimeAttachments(attachments),
+        },
+        {
+          onError: message => {
+            runtimeError = message
+          },
+        }
+      )
+      if (continued) return
+      const error = runtimeError ?? t('workbench.project_chat_agent_start_failed')
+      const failed = await client.failAgentResponse({
+        projectId: project.id,
+        taskId: task.id,
+        messageId: pending.messageId,
+        error,
+      })
+      setMessages(current => mergeProjectChatMessages(current, [failed]))
+      setCardAiErrors(current => ({ ...current, [root.messageId]: error }))
+    } catch (cause) {
+      setCardAiErrors(current => ({
+        ...current,
+        [root.messageId]:
+          cause instanceof Error ? cause.message : t('workbench.project_chat_agent_start_failed'),
+      }))
+    }
+  }
+
   function existingRuntimeAddress(message: ProjectChatMessage): RuntimeTaskAddress | null {
     const address = message.runtimeAddress
     if (!address?.deviceId || !address.taskId) return null
@@ -637,12 +699,18 @@ export function TaskActivityView({
     if (cardSessionActive(card)) {
       return { ok: false, error: t('workbench.runtime_task_running_message') }
     }
+    const customManager = isCustomAutomationManager(card.root)
+    const customManagerAddress = customManager ? cardSessionAddress(card) : null
+    if (customManager && (!client.continueAutomationManager || !customManagerAddress)) {
+      return { ok: false, error: t('workbench.project_chat_agent_start_failed') }
+    }
     setSending(true)
     setError(null)
     try {
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const activeMentions =
+        assignedAgent && !customManager
+          ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+          : []
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
@@ -660,6 +728,11 @@ export function TaskActivityView({
       followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
+      if (customManager && customManagerAddress) {
+        void continueCustomAutomationManager(card.root, message, customManagerAddress, attachments)
+        revealCardBottom(rootId)
+        return { ok: true }
+      }
       if (assignedAgent && !selfManagedExecution) {
         if (assignedAgent.runtime === 'wegent') {
           if (!client.continueWegentTask) {
@@ -988,6 +1061,8 @@ export function TaskActivityView({
                   <article
                     key={rootId}
                     data-testid={`cloud-task-activity-card-${rootId}`}
+                    data-executor-type={String(card.root.metadata.executor_type ?? '')}
+                    data-manager-type={String(card.root.metadata.manager_type ?? '')}
                     className="task-detail-comment-card"
                   >
                     <ChatMessage

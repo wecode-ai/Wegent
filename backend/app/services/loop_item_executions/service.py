@@ -1638,14 +1638,8 @@ class LoopItemExecutionService:
                 "model": profile.model or None,
             }
         )
-        row.sender_type = "agent"
-        row.sender_id = execution.agent_id or (
-            f"{execution.executor_type}:{execution.automation_run_id}"
-        )
-        row.sender_name = profile.display_name
         row.message_type = "agent_chunk"
         row.metadata_json = metadata
-        row.agent_id = execution.agent_id or ""
         row.runtime_device_id = execution.runtime_device_id
         row.runtime_task_id = execution.runtime_task_id
         row.runtime_activity_key = project_chat_service._runtime_activity_key(

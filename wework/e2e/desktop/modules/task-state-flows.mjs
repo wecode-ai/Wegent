@@ -140,15 +140,12 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await control.command(
       'waitFor',
-      `[data-testid="runtime-priority-list"] [data-testid="${requestInputTaskRowTestId}"]`,
+      `[data-testid="runtime-priority-section"] [data-testid="${requestInputTaskRowTestId}"]`,
       {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
-    await captureVerificationScreenshot(
-      control,
-      'priority-filter-03-handled-task-stays-priority.png'
-    )
+    await captureVerificationScreenshot(control, 'priority-filter-03-handled-task-settled.png')
 
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {

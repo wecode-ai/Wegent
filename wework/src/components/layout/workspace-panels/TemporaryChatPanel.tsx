@@ -59,6 +59,7 @@ interface TemporaryChatPanelProps {
   instanceId: string
   testId?: string
   initialInput?: string
+  autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
   createTask?: (
     message: string,
@@ -87,6 +88,7 @@ export function TemporaryChatPanel({
   instanceId,
   testId = 'right-workspace-chat-panel',
   initialInput = '',
+  autoSubmitInitialInput = false,
   initialAddress = null,
   createTask,
   onAddressChange,
@@ -151,6 +153,7 @@ export function TemporaryChatPanel({
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const queuedMessagesRef = useRef(queuedMessages)
   const createdAddressKeyRef = useRef<string | null>(null)
+  const autoSubmittedInitialInputRef = useRef(false)
 
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
@@ -547,6 +550,14 @@ export function TemporaryChatPanel({
     ]
   )
 
+  useEffect(() => {
+    if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
+      return
+    }
+    autoSubmittedInitialInputRef.current = true
+    void send(initialInput)
+  }, [autoSubmitInitialInput, initialInput, send])
+
   const cancelQueuedMessage = useCallback((id: string) => {
     setQueuedMessages(messages =>
       messages.filter(message => message.id !== id || message.status === 'sending')
@@ -610,7 +621,7 @@ export function TemporaryChatPanel({
             : 'bg-background py-3'
         )}
       >
-        {expanded && (
+        {expanded && onRestoreConversation ? (
           <button
             type="button"
             data-testid="restore-conversation-from-expanded-workspace-button"
@@ -620,7 +631,7 @@ export function TemporaryChatPanel({
             <span>{t('workbench.latest_conversation_turn')}</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
-        )}
+        ) : null}
         <div
           data-testid="side-chat-composer-layout"
           className={cn('pointer-events-auto', !expanded && DESKTOP_CHAT_CONTENT_WIDTH_CLASS)}
