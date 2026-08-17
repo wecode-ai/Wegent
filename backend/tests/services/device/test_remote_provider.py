@@ -35,6 +35,7 @@ async def test_device_service_lists_remote_devices(test_db, test_user):
                 "deviceName": "Docker Remote Device",
                 "createdAt": datetime.now().isoformat(),
             },
+            "runtimeTransferHost": "192.0.2.40",
         },
         "status": {"state": "Available"},
     }
@@ -56,3 +57,4 @@ async def test_device_service_lists_remote_devices(test_db, test_user):
     assert [device["device_id"] for device in devices] == ["remote-device-1"]
     assert devices[0]["device_type"] == DeviceType.REMOTE.value
     assert devices[0]["remote_config"]["provider"] == "docker"
+    assert devices[0]["runtime_transfer_host"] == "192.0.2.40"

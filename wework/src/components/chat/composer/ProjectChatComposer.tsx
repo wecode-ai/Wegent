@@ -51,6 +51,7 @@ interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
@@ -125,6 +126,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       disabled,
@@ -429,12 +431,13 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             value={value}
             onChange={handleComposerChange}
             onBlur={onBlur}
+            onCompositionStart={onCompositionStart}
             onCompositionEnd={onCompositionEnd}
             onSubmit={onSubmit}
             canSend={canSend}
             disabled={disabled}
             placeholder={placeholder}
-            rows={1}
+            rows={2}
             onPasteFiles={onFileSelect}
             onOpenSkillFile={onOpenSkillFile}
             workspaceTarget={workspaceTarget}
@@ -464,7 +467,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               return true
             }}
             className={cn(
-              'max-h-[112px] min-h-8 w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
+              'max-h-[112px] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
               styles.input
             )}
             skillMenuClassName="left-[-1rem] right-[-0.5rem]"

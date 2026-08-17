@@ -138,10 +138,10 @@ function isSafeLegacyVisualizationFile(file: string): boolean {
 
 function isSafeAbsoluteVisualizationFile(file: string): boolean {
   const normalized = file.replace(/\\/g, '/')
+  const segments = normalized.split('/')
   return (
     (normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized)) &&
-    normalized.split('/').includes('visualizations') &&
-    !normalized.split('/').some(segment => segment === '..') &&
+    !segments.some(segment => segment === '..') &&
     /\.(?:html?|xhtml)$/i.test(normalized)
   )
 }

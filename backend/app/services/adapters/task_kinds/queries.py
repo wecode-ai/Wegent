@@ -393,6 +393,11 @@ class TaskQueryMixin:
         )
 
         refresh_extended_video_result_urls(task_dict, user_id)
+        from app.services.execution.agents.image.download_url import (
+            refresh_task_image_download_urls,
+        )
+
+        refresh_task_image_download_urls(task_dict)
         return task_dict
 
     def get_task_skills(

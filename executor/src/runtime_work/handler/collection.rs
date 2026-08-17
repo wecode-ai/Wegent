@@ -206,11 +206,15 @@ impl RuntimeWorkRpcHandler {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
                     let project_key = runtime_task_sidebar_project_key(&link, project_index);
-                    link.list_order = Some(project_index.thread_sort_order(
-                        &project_key,
-                        thread_id,
-                        link.list_order.unwrap_or(usize::MAX / 2),
-                    ));
+                    if project_index.has_manual_thread_order(&project_key) {
+                        let order = project_index.thread_sort_order(
+                            &project_key,
+                            thread_id,
+                            link.list_order.unwrap_or(usize::MAX / 2),
+                        );
+                        link.list_order = Some(order);
+                        link.sidebar_order = Some(order);
+                    }
                 }
                 link
             })
@@ -370,11 +374,15 @@ impl RuntimeWorkRpcHandler {
             link.group_workspace_path = Some(project_workspace_path.clone());
             link.group_project_key = Some(project_key.clone());
             if let Some(thread_id) = link.thread_id.as_deref() {
-                link.list_order = Some(project_index.thread_sort_order(
-                    &project_key,
-                    thread_id,
-                    link.list_order.unwrap_or(usize::MAX / 2),
-                ));
+                if project_index.has_manual_thread_order(&project_key) {
+                    let order = project_index.thread_sort_order(
+                        &project_key,
+                        thread_id,
+                        link.list_order.unwrap_or(usize::MAX / 2),
+                    );
+                    link.list_order = Some(order);
+                    link.sidebar_order = Some(order);
+                }
             }
             kept_project += 1;
             log_runtime_project_filter_item(

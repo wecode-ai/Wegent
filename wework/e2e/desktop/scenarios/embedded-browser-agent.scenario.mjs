@@ -48,6 +48,7 @@ const BROWSER_ANNOTATE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="wo
 const BROWSER_ANNOTATION_CLOSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-close-button"]`
 const BROWSER_ANNOTATION_CLEAR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-clear-button"]`
 const BROWSER_ANNOTATION_COUNT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-count"]`
+const BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-original-view-button"]`
 const BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR =
   '[data-testid="workspace-browser-annotation-discard-confirm-button"]'
 const BROWSER_CLEAR_STARTED_TEXT = '开始清除浏览数据'
@@ -1036,6 +1037,72 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         targetColor.value,
         'rgb(239, 68, 68)',
         'Annotation adjustment did not update the target'
+      )
+      await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const originalViewPressedBefore = await control.command(
+        'getAttribute',
+        BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
+        { value: 'aria-pressed' }
+      )
+      assert.equal(
+        originalViewPressedBefore,
+        'false',
+        'Hold-to-view-original button should start unpressed'
+      )
+      await control.command('pointerDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+      const originalViewPressedDuring = await control.command(
+        'getAttribute',
+        BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
+        { value: 'aria-pressed' }
+      )
+      assert.equal(
+        originalViewPressedDuring,
+        'true',
+        'Hold-to-view-original button did not stay pressed while held'
+      )
+      const originalViewTargetColor = await bridgeCall({
+        action: 'evaluate',
+        expression: "document.querySelector('#annotation-target')?.style.color || ''",
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        originalViewTargetColor.ok,
+        true,
+        `Original view target color evaluation failed: ${JSON.stringify(originalViewTargetColor)}`
+      )
+      assert.equal(
+        originalViewTargetColor.value,
+        '',
+        'Hold-to-view-original did not restore the original target style'
+      )
+      await control.command('pointerUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+      await control.command('click', BROWSER_ANNOTATION_COUNT_SELECTOR)
+      const originalViewPressedAfter = await control.command(
+        'getAttribute',
+        BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
+        { value: 'aria-pressed' }
+      )
+      assert.equal(
+        originalViewPressedAfter,
+        'false',
+        'Hold-to-view-original button changed pressed state after focus loss'
+      )
+      const replayedTargetColor = await bridgeCall({
+        action: 'evaluate',
+        expression: "document.querySelector('#annotation-target')?.style.color || ''",
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        replayedTargetColor.ok,
+        true,
+        `Replayed target color evaluation failed: ${JSON.stringify(replayedTargetColor)}`
+      )
+      assert.equal(
+        replayedTargetColor.value,
+        'rgb(239, 68, 68)',
+        'Annotation adjustment did not replay after releasing original view'
       )
       const annotationScreenshot =
         process.platform === 'darwin'

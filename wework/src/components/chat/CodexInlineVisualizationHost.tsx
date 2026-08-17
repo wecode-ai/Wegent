@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { localHtmlBrowserUrl } from './assistantMarkdownLinks'
 import { joinDevicePath } from '@/lib/device-workspace-path'
+import { readInlineVisualizationHtml } from '@/tauri/inlineVisualization'
 import type { TurnFileChangesSummary } from '@/types/api'
 
 const MIN_FRAME_HEIGHT = 120
@@ -76,15 +77,11 @@ export function CodexInlineVisualizationHost({
   useFrameResizeMessages(frameRef, resizeToken, setFrameHeight)
 
   useEffect(() => {
-    if (!sourceUrl || typeof URL.createObjectURL !== 'function') return
+    if (!sourcePath || !sourceUrl || typeof URL.createObjectURL !== 'function') return
 
     let active = true
     let objectUrl: string | undefined
-    void fetch(sourceUrl)
-      .then(response => {
-        if (!response.ok) throw new Error(`Failed to load visualization: ${response.status}`)
-        return response.text()
-      })
+    void readInlineVisualizationHtml(sourcePath)
       .then(fragment => {
         if (!active) return
         objectUrl = URL.createObjectURL(
@@ -100,10 +97,10 @@ export function CodexInlineVisualizationHost({
       active = false
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [resizeToken, sourceUrl])
+  }, [resizeToken, sourcePath, sourceUrl])
 
   if (!sourceUrl) return null
-  const frameUrl = documentUrl?.source === sourceUrl ? documentUrl.url : sourceUrl
+  const frameUrl = documentUrl?.source === sourceUrl ? documentUrl.url : 'about:blank'
 
   return (
     <div

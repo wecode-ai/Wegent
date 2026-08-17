@@ -118,6 +118,24 @@ describe('theme token guard', () => {
     expect(source).toContain('border-radius: 999px;')
   })
 
+  test('browser annotation toolbar surface derives from theme tokens for dark mode', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const globalsSource = readFileSync(globalsPath, 'utf8')
+    const panelPath = resolve(
+      sourceRoot,
+      'components/layout/workspace-panels/WorkspaceBrowserPanel.tsx'
+    )
+    const panelSource = readFileSync(panelPath, 'utf8')
+
+    expect(globalsSource).toContain('--color-browser-annotation-surface: color-mix(')
+    expect(globalsSource).toContain('rgb(var(--color-bg-surface)) 82%')
+    expect(globalsSource).toContain('rgb(var(--color-focus)) 18%')
+    expect(panelSource).not.toMatch(/\b(?:bg|border|text)-blue-(?:50|100|200|700)\b/)
+    expect(panelSource).toContain('bg-[var(--color-browser-annotation-surface)]')
+    expect(panelSource).toContain('border-[var(--color-browser-annotation-border)]')
+    expect(panelSource).toContain('bg-[var(--color-browser-annotation-chip)]')
+  })
+
   test.each(guardedFiles)(
     '%s uses theme tokens instead of hardcoded surface colors',
     relativePath => {

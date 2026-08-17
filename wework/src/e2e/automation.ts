@@ -37,6 +37,7 @@ import { selectDesktopControlOption } from './desktop-control-select'
 import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
+import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -359,6 +360,7 @@ export async function installWeworkAutomationBridge(
   if (isTauriRuntime()) {
     await loadDesktopE2ERuntimeConfig()
   }
+  installDesktopE2EClipboard()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
@@ -652,6 +654,36 @@ function pressDesktopControlPointer(selector: string): string {
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   dispatchDesktopControlPointerEvent(element, 'pointerup', options)
   return element.textContent?.trim() ?? ''
+}
+
+let activeDesktopControlPointer: {
+  element: HTMLElement
+  options: MouseEventInit & PointerEventInit
+} | null = null
+
+function startDesktopControlPointer(selector: string): string {
+  if (activeDesktopControlPointer) throw new Error('A desktop control pointer is already active')
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.scrollIntoView({ block: 'center', inline: 'center' })
+  const options = { ...desktopControlEventOptions(element), buttons: 1 }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
+  activeDesktopControlPointer = { element, options }
+  return element.textContent?.trim() ?? ''
+}
+
+function endDesktopControlPointer(): string {
+  const activePointer = activeDesktopControlPointer
+  if (!activePointer) throw new Error('No desktop control pointer is active')
+  try {
+    dispatchDesktopControlPointerEvent(activePointer.element, 'pointerup', {
+      ...activePointer.options,
+      buttons: 0,
+    })
+    return activePointer.element.textContent?.trim() ?? ''
+  } finally {
+    activeDesktopControlPointer = null
+  }
 }
 
 let activeDesktopControlDrag: {
@@ -1240,6 +1272,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'snapshot':
       return desktopControlSnapshot(command.selector)
+    case 'getClipboardText':
+      return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -1469,6 +1503,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerDownOnly':
+      return startDesktopControlPointer(command.selector)
+    case 'pointerUp':
+      return endDesktopControlPointer()
     case 'navigate': {
       const appPath = normalizeAppPath(command.value ?? '/')
       window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))

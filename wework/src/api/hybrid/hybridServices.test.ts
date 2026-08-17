@@ -668,6 +668,35 @@ describe('createHybridWorkbenchServices', () => {
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
   })
 
+  it('keeps remote Docker devices in the workbench device list after background sync', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 2,
+        device_id: 'remote-device',
+        name: 'Remote Docker Device',
+        status: 'online',
+        is_default: false,
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+        executor_version: '1.8.5',
+        client_ip: '10.201.3.201',
+      },
+    ])
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices).toEqual([
+      expect.objectContaining({ device_id: 'local-device' }),
+      expect.objectContaining({
+        device_id: 'remote-device',
+        device_type: 'remote',
+        client_ip: '10.201.3.201',
+      }),
+    ])
+  })
+
   it('drops remembered cloud devices after an authoritative empty background sync', async () => {
     const services = createServices()
 
@@ -1441,13 +1470,9 @@ describe('createHybridWorkbenchServices', () => {
   it('routes remote device startup command generation to the cloud service', async () => {
     const services = createServices()
 
-    const response = await services.deviceApi.createDockerRemoteDeviceCommand?.({
-      client_origin: 'http://localhost:1420',
-    })
+    const response = await services.deviceApi.createDockerRemoteDeviceCommand?.()
 
-    expect(mocks.cloudCreateDockerRemoteDeviceCommand).toHaveBeenCalledWith({
-      client_origin: 'http://localhost:1420',
-    })
+    expect(mocks.cloudCreateDockerRemoteDeviceCommand).toHaveBeenCalledWith(undefined)
     expect(response?.commands?.map(command => command.kind)).toEqual(['docker', 'process'])
   })
 

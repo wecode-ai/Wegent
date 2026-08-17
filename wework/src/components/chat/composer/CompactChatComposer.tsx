@@ -61,6 +61,7 @@ interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
@@ -110,6 +111,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       disabled,
@@ -375,6 +377,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               value={value}
               onChange={handleComposerChange}
               onBlur={onBlur}
+              onCompositionStart={onCompositionStart}
               onCompositionEnd={onCompositionEnd}
               onSubmit={onSubmit}
               canSend={canSend}
@@ -591,6 +594,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 value={value}
                 onChange={handleComposerChange}
                 onBlur={onBlur}
+                onCompositionStart={onCompositionStart}
                 onCompositionEnd={onCompositionEnd}
                 onSubmit={onSubmit}
                 canSend={canSend}

@@ -193,8 +193,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-chat-composer')).toHaveClass(
       'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
     )
-    expect(input).toHaveAttribute('rows', '1')
-    expect(input).toHaveClass('min-h-8', 'max-h-[112px]', 'pt-1', 'placeholder:text-text-muted/55')
+    expect(input).toHaveAttribute('rows', '2')
+    expect(input).toHaveClass('min-h-12', 'max-h-[112px]', 'pt-1', 'placeholder:text-text-muted/55')
     fireEvent.click(input)
     expect(form).toHaveAttribute('data-short-expanded', 'true')
     fireEvent.pointerDown(document.body)
@@ -1082,6 +1082,7 @@ describe('ChatInput', () => {
       'rounded-[26px]'
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
+    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '1')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'py-[14px]',
       'scrollbar-none',

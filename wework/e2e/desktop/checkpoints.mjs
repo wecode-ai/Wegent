@@ -1,4 +1,5 @@
 export const DESKTOP_CHECKPOINTS = [
+  'remote-device-onboarding',
   'workspace-tabs',
   'priority-filter',
   'telemetry-consent',

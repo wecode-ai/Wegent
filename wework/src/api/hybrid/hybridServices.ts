@@ -21,6 +21,7 @@ import {
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   EMPTY_RUNTIME_WORK,
   mergeDeviceLists,
@@ -407,15 +408,43 @@ export function createHybridWorkbenchServices(
     Boolean(deviceId && (deviceId === 'local-device' || localDeviceIds.has(deviceId)))
   const isKnownCloudDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && rememberedCloudDevices.some(device => device.device_id === deviceId))
-  const runtimeApiForCreate = async (deviceId?: string | null) => {
-    if (isLocalDeviceId(deviceId)) return localServices.runtimeWorkApi!
+  const runtimeApiForCreate = async (
+    deviceId: string | null | undefined,
+    taskId: string | undefined
+  ) => {
+    if (isLocalDeviceId(deviceId)) {
+      logRuntimeTaskCreateStage('hybrid-route-resolved', {
+        taskId: taskId ?? null,
+        deviceId: deviceId ?? null,
+        route: 'local',
+        discoveryRequired: false,
+      })
+      return localServices.runtimeWorkApi!
+    }
 
     // Device discovery and task creation race during bootstrap. An unknown route must
     // not default to cloud because that makes a local task wait on an unavailable
     // cloud connection. Refresh the authoritative local device identities first.
-    if (!isKnownCloudDeviceId(deviceId)) {
+    const discoveryRequired = !isKnownCloudDeviceId(deviceId)
+    if (discoveryRequired) {
+      logRuntimeTaskCreateStage('hybrid-local-device-discovery-started', {
+        taskId: taskId ?? null,
+        deviceId: deviceId ?? null,
+      })
       await listLocalDevices()
+      logRuntimeTaskCreateStage('hybrid-local-device-discovery-resolved', {
+        taskId: taskId ?? null,
+        deviceId: deviceId ?? null,
+        resolvedAsLocal: isLocalDeviceId(deviceId),
+      })
     }
+    const route = isLocalDeviceId(deviceId) ? 'local' : 'cloud'
+    logRuntimeTaskCreateStage('hybrid-route-resolved', {
+      taskId: taskId ?? null,
+      deviceId: deviceId ?? null,
+      route,
+      discoveryRequired,
+    })
     return runtimeApi(deviceId)
   }
   const invalidateCloudArchiveCache = () => {
@@ -1002,7 +1031,36 @@ export function createHybridWorkbenchServices(
       return routeByAddress(data).reorderQueuedRuntimeTask(data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest) {
-      return (await runtimeApiForCreate(data.deviceId)).createRuntimeTask(data)
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage('hybrid-create-started', {
+        taskId: data.taskId ?? null,
+        deviceId: data.deviceId ?? null,
+        runtime: data.runtime,
+      })
+      try {
+        const api = await runtimeApiForCreate(data.deviceId, data.taskId)
+        logRuntimeTaskCreateStage('hybrid-create-forwarded', {
+          taskId: data.taskId ?? null,
+          deviceId: data.deviceId ?? null,
+          elapsedMs: Date.now() - startedAt,
+        })
+        const response = await api.createRuntimeTask(data)
+        logRuntimeTaskCreateStage('hybrid-create-resolved', {
+          taskId: response.taskId || data.taskId || null,
+          deviceId: response.deviceId || data.deviceId || null,
+          elapsedMs: Date.now() - startedAt,
+          accepted: response.accepted,
+        })
+        return response
+      } catch (error) {
+        logRuntimeTaskCreateStage('hybrid-create-failed', {
+          taskId: data.taskId ?? null,
+          deviceId: data.deviceId ?? null,
+          elapsedMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.name : typeof error,
+        })
+        throw error
+      }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
