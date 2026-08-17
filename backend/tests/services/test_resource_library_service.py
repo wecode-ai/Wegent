@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.endpoints.adapter.shells import list_unified_shells
@@ -314,7 +315,9 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
     assert next(item for item in result.items if item.id == skill.id).bind_modes == []
 
 
-def test_market_search_matches_tags_within_selected_type(test_db, test_user):
+def test_market_search_matches_tags_within_selected_type(
+    test_db: Session, test_user: User
+) -> None:
     agent = Kind(
         user_id=0,
         kind="Team",
@@ -331,6 +334,22 @@ def test_market_search_matches_tags_within_selected_type(test_db, test_user):
         },
         is_active=True,
     )
+    top_level_tag_agent = Kind(
+        user_id=0,
+        kind="Team",
+        name="top-level-tag-agent",
+        namespace="default",
+        json={
+            "kind": "Team",
+            "metadata": {"name": "top-level-tag-agent"},
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "tags": ["data_analysis"],
+            },
+        },
+        is_active=True,
+    )
     model = Kind(
         user_id=0,
         kind="Model",
@@ -343,7 +362,7 @@ def test_market_search_matches_tags_within_selected_type(test_db, test_user):
         },
         is_active=True,
     )
-    test_db.add_all([agent, model])
+    test_db.add_all([agent, top_level_tag_agent, model])
     test_db.commit()
 
     result = resource_library_service.list_public(
@@ -355,8 +374,8 @@ def test_market_search_matches_tags_within_selected_type(test_db, test_user):
         limit=20,
     )
 
-    assert [item.id for item in result.items] == [agent.id]
-    assert result.items[0].resource_type == "agent"
+    assert {item.id for item in result.items} == {agent.id, top_level_tag_agent.id}
+    assert {item.resource_type for item in result.items} == {"agent"}
     assert model.id not in {item.id for item in result.items}
 
 
