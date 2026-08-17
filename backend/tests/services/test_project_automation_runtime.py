@@ -148,3 +148,34 @@ def test_manager_prompt_is_minimal_visible_assignment_input():
         "请读取候选执行者并按调度要求完成分派，不要执行任务。\n\n"
         "Prefer domain ownership."
     )
+
+
+def test_manager_activity_binding_persists_execution_identity(monkeypatch):
+    activity = SimpleNamespace(
+        metadata_json={
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+        }
+    )
+    execution = SimpleNamespace(
+        id=61,
+        executor_type="automation_manager",
+        execution_device_id="device-1",
+    )
+    find_activity = MagicMock(return_value=activity)
+    monkeypatch.setattr(ProjectAutomationExecution, "_activity", find_activity)
+
+    ProjectAutomationExecution._bind_activity_to_execution(
+        MagicMock(),
+        run=SimpleNamespace(id="run-1"),
+        execution=execution,
+    )
+
+    assert activity.metadata_json == {
+        "assignment_mode": "ai_managed",
+        "manager_type": "custom",
+        "execution_id": 61,
+        "executor_type": "automation_manager",
+        "run_status": "queued",
+        "execution_device_id": "device-1",
+    }

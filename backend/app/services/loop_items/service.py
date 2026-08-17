@@ -2004,9 +2004,7 @@ class LoopItemService:
                 cancelled.status == "cancel_requested"
                 and cancelled.runtime_device_id
                 and cancelled.runtime_task_id
-            ) or (
-                cancelled.team_id is not None and cancelled.backend_task_id is not None
-            ):
+            ) or (cancelled.team_id and cancelled.backend_task_id):
                 cancelled_runs.append(cancelled)
         if target_type == "agent" and agent is not None:
             config = bot_config(agent)
