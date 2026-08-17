@@ -540,6 +540,7 @@ class TestKnowledgeBaseTool:
                     ),
                     "source": "123.video.md",
                     "score": 0.9,
+                    "knowledge_base_id": 1,
                     "document_id": 123,
                     "metadata": {
                         "video_segment_id": "segment_10_20",

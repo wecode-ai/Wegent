@@ -44,3 +44,26 @@ def test_chat_done_payload_preserves_video_segment_reference() -> None:
             "description": "Sample video segment description.",
         }
     ]
+
+
+def test_chat_done_payload_preserves_segments_truncated_flag() -> None:
+    payload = ChatDonePayload.model_validate(
+        {
+            "subtask_id": 1,
+            "offset": 0,
+            "sources": [
+                {
+                    "index": 1,
+                    "title": "825.video.md",
+                    "kb_id": 212,
+                    "source_type": "wegent_video_chapters",
+                    "document_id": 825,
+                    "segments": [{"start_sec": 0, "end_sec": 48}],
+                    "segments_truncated": True,
+                }
+            ],
+        }
+    )
+
+    source = payload.model_dump(exclude_none=True)["sources"][0]
+    assert source["segments_truncated"] is True

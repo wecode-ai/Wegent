@@ -6,6 +6,11 @@ import json
 from unittest.mock import Mock
 
 from shared.knowledge.video_segments import extract_all_video_segments
+from shared.knowledge.video_sources import (
+    VideoSourceIdentity,
+    VideoSourceSegment,
+    build_video_source,
+)
 from wecode.service.knowledge.video_citation_sources import (
     KNOWLEDGE_MCP_SERVER_LABEL,
     MAX_VIDEO_SEGMENTS_PER_SOURCE,
@@ -13,6 +18,31 @@ from wecode.service.knowledge.video_citation_sources import (
     collect_knowledge_mcp_video_sources,
     merge_video_sources,
 )
+
+
+def _built_source(
+    kb_id: int,
+    document_id: int,
+    title: str,
+    ranges: list[tuple[int, int]],
+    *,
+    coverage: str = "retrieved",
+    truncated: bool = False,
+):
+    source = build_video_source(
+        identity=VideoSourceIdentity(kb_id, document_id, title),
+        coverage=coverage,  # type: ignore[arg-type]
+        segments=[
+            VideoSourceSegment(start_sec=start, end_sec=end) for start, end in ranges
+        ],
+        input_truncated=truncated,
+    )
+    assert source is not None
+    return source
+
+
+def _segment_ranges(source) -> list[tuple[int, int]]:
+    return [(s.start_sec, s.end_sec) for s in source.segments]
 
 
 def _video_rag_output() -> dict:
@@ -69,16 +99,7 @@ def test_merge_video_sources_upgrades_matching_plain_source() -> None:
         },
         {"index": 5, "title": "Plain document", "kb_id": 211, "document_id": 812},
     ]
-    videos = {
-        (211, 811): {
-            "index": 1,
-            "title": "811.video.md",
-            "kb_id": 211,
-            "document_id": 811,
-            "source_type": "wegent_video_segment",
-            "segments": [{"start_sec": 6, "end_sec": 15}],
-        }
-    }
+    videos = {(211, 811): _built_source(211, 811, "811.video.md", [(6, 15)])}
 
     merged = merge_video_sources(existing, videos)
 
@@ -86,21 +107,12 @@ def test_merge_video_sources_upgrades_matching_plain_source() -> None:
     assert merged[0]["index"] == 4
     assert merged[0]["title"] == "Video document"
     assert merged[0]["source_type"] == "wegent_video_segment"
-    assert merged[0]["segments"] == [{"start_sec": 6, "end_sec": 15}]
+    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(6, 15)]
     assert merged[1] == existing[1]
 
 
 def test_merge_video_sources_appends_new_document_after_existing_indexes() -> None:
-    videos = {
-        (211, 813): {
-            "index": 1,
-            "title": "813.video.md",
-            "kb_id": 211,
-            "document_id": 813,
-            "source_type": "wegent_video_segment",
-            "segments": [{"start_sec": 0, "end_sec": 5}],
-        }
-    }
+    videos = {(211, 813): _built_source(211, 813, "813.video.md", [(0, 5)])}
 
     merged = merge_video_sources(
         [{"index": 7, "title": "Plain", "kb_id": 211, "document_id": 812}],
@@ -116,16 +128,7 @@ def test_merge_video_sources_enforces_segment_limit_on_existing_source() -> None
         for index in range(MAX_VIDEO_SEGMENTS_PER_SOURCE - 1)
     ]
     videos = {
-        (211, 811): {
-            "title": "811.video.md",
-            "kb_id": 211,
-            "document_id": 811,
-            "source_type": "wegent_video_segment",
-            "segments": [
-                {"start_sec": 200, "end_sec": 201},
-                {"start_sec": 202, "end_sec": 203},
-            ],
-        }
+        (211, 811): _built_source(211, 811, "811.video.md", [(200, 201), (202, 203)])
     }
 
     merged = merge_video_sources(
@@ -142,7 +145,10 @@ def test_merge_video_sources_enforces_segment_limit_on_existing_source() -> None
     )
 
     assert len(merged[0]["segments"]) == MAX_VIDEO_SEGMENTS_PER_SOURCE
-    assert merged[0]["segments"][-1] == {"start_sec": 200, "end_sec": 201}
+    assert (
+        merged[0]["segments"][-1]["start_sec"],
+        merged[0]["segments"][-1]["end_sec"],
+    ) == (200, 201)
     assert merged[0]["segments_truncated"] is True
 
 
@@ -157,22 +163,14 @@ def test_merge_video_sources_does_not_mutate_existing_segments() -> None:
             "segments": original_segments,
         }
     ]
-    videos = {
-        (211, 811): {
-            "title": "811.video.md",
-            "kb_id": 211,
-            "document_id": 811,
-            "source_type": "wegent_video_segment",
-            "segments": [{"start_sec": 2, "end_sec": 3}],
-        }
-    }
+    videos = {(211, 811): _built_source(211, 811, "811.video.md", [(2, 3)])}
 
     merged = merge_video_sources(existing, videos)
 
     assert existing[0]["segments"] == [{"start_sec": 0, "end_sec": 1}]
-    assert merged[0]["segments"] == [
-        {"start_sec": 0, "end_sec": 1},
-        {"start_sec": 2, "end_sec": 3},
+    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [
+        (0, 1),
+        (2, 3),
     ]
 
 
@@ -315,6 +313,37 @@ def test_collect_and_log_content_fallback_when_label_missing() -> None:
     assert "content_fallback" in logger.info.call_args[0]
 
 
+def test_collect_and_log_reports_replace_when_segment_count_shrinks() -> None:
+    logger = Mock()
+    collected = {}
+    collect_knowledge_mcp_video_sources(
+        collected,
+        {
+            "mode": "rag_retrieval",
+            "chunks": [
+                _rag_chunk(0, 10),
+                _rag_chunk(25, 50),
+                _rag_chunk(60, 70),
+            ],
+        },
+    )
+
+    # The complete snapshot (2 chapters) replaces 3 partial hits, so the
+    # segment delta is negative; the replacement must still be logged.
+    added = collect_and_log_knowledge_mcp_video_sources(
+        collected,
+        json.dumps(_document_content_payload()),
+        logger=logger,
+        context="test",
+    )
+
+    assert added == -1
+    log_message = logger.info.call_args[0][0]
+    log_args = logger.info.call_args[0]
+    assert "coverage_action=%s" in log_message
+    assert "replace" in log_args
+
+
 def test_collect_document_content_builds_chapters_source() -> None:
     collected = {}
 
@@ -324,23 +353,13 @@ def test_collect_document_content_builds_chapters_source() -> None:
 
     assert list(collected) == [(212, 825)]
     source = collected[(212, 825)]
-    assert source["source_type"] == "wegent_video_chapters"
-    assert source["title"] == "产品培训示例视频.mp4"
-    assert source["segments"] == [
-        {
-            "id": "segment_0_48",
-            "start_sec": 0,
-            "end_sec": 48,
-            "title": "背景",
-            "description": "开场介绍。",
-        },
-        {
-            "id": "segment_48_109",
-            "start_sec": 48,
-            "end_sec": 109,
-            "title": "架构",
-            "description": "整体架构。",
-        },
+    assert source.coverage == "complete"
+    assert source.identity.title == "产品培训示例视频.mp4"
+    assert [
+        (s.start_sec, s.end_sec, s.title, s.description) for s in source.segments
+    ] == [
+        (0, 48, "背景", "开场介绍。"),
+        (48, 109, "架构", "整体架构。"),
     ]
 
 
@@ -368,33 +387,91 @@ def test_collect_document_content_skips_partial_reads_and_non_video() -> None:
         assert collected == {}, overrides
 
 
-def test_collect_document_content_upgrades_existing_rag_source_type() -> None:
+def _rag_chunk(start: int, end: int, document_id: int = 825) -> dict:
+    return {
+        "title": f"{document_id}.video.md",
+        "knowledge_base_id": 212,
+        "document_id": document_id,
+        "metadata": {
+            "source_media_type": "video",
+            "video_start_sec": start,
+            "video_end_sec": end,
+        },
+    }
+
+
+def test_collect_document_content_replaces_overlapping_rag_segments() -> None:
     collected = {}
     collect_knowledge_mcp_video_sources(
         collected,
         {
             "mode": "rag_retrieval",
-            "chunks": [
-                {
-                    "title": "825.video.md",
-                    "knowledge_base_id": 212,
-                    "document_id": 825,
-                    "metadata": {
-                        "source_media_type": "video",
-                        "video_start_sec": 0,
-                        "video_end_sec": 48,
-                    },
-                }
-            ],
+            "chunks": [_rag_chunk(10, 30), _rag_chunk(25, 50)],
         },
     )
 
     collect_knowledge_mcp_video_sources(collected, _document_content_payload())
 
     source = collected[(212, 825)]
-    assert source["source_type"] == "wegent_video_chapters"
-    # The RAG segment (0-48) is deduped against the parsed chapter range.
-    assert [(s["start_sec"], s["end_sec"]) for s in source["segments"]] == [
-        (0, 48),
-        (48, 109),
+    assert source.coverage == "complete"
+    # Partial RAG segments are replaced by the complete chapter list.
+    assert _segment_ranges(source) == [(0, 48), (48, 109)]
+
+
+def test_collect_rag_segments_do_not_append_after_chapters() -> None:
+    collected = {}
+    collect_knowledge_mcp_video_sources(collected, _document_content_payload())
+
+    collect_knowledge_mcp_video_sources(
+        collected,
+        {"mode": "rag_retrieval", "chunks": [_rag_chunk(10, 30)]},
+    )
+
+    source = collected[(212, 825)]
+    assert source.coverage == "complete"
+    assert _segment_ranges(source) == [(0, 48), (48, 109)]
+
+
+def test_merge_video_sources_chapters_replace_existing_partial_segments() -> None:
+    existing = [
+        {
+            "index": 3,
+            "title": "Video",
+            "kb_id": 212,
+            "document_id": 825,
+            "source_type": "wegent_video_segment",
+            "segments": [{"start_sec": 10, "end_sec": 30}],
+            "segments_truncated": True,
+        }
     ]
+    videos = {
+        (212, 825): _built_source(
+            212, 825, "825.video.md", [(0, 48)], coverage="complete"
+        )
+    }
+
+    merged = merge_video_sources(existing, videos)
+
+    assert merged[0]["source_type"] == "wegent_video_chapters"
+    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(0, 48)]
+    # A complete, non-truncated parse clears the stale truncation flag.
+    assert "segments_truncated" not in merged[0]
+
+
+def test_merge_video_sources_partial_hits_do_not_extend_chapters() -> None:
+    existing = [
+        {
+            "index": 3,
+            "title": "Video",
+            "kb_id": 212,
+            "document_id": 825,
+            "source_type": "wegent_video_chapters",
+            "segments": [{"start_sec": 0, "end_sec": 48}],
+        }
+    ]
+    videos = {(212, 825): _built_source(212, 825, "825.video.md", [(10, 30)])}
+
+    merged = merge_video_sources(existing, videos)
+
+    assert merged[0]["source_type"] == "wegent_video_chapters"
+    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(0, 48)]

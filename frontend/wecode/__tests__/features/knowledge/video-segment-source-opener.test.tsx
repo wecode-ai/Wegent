@@ -67,23 +67,17 @@ describe('resolveVideoSegmentBounds', () => {
     expect(resolveVideoSegmentBounds({ start_sec: 10, end_sec: 10 })).toBeNull()
   })
 
-  it('corrects model output that shifts MM:SS into HH:MM:SS positions', () => {
-    expect(resolveVideoSegmentBounds({ start_sec: 17940, end_sec: 28560 }, 905)).toEqual({
-      startSec: 299,
-      endSec: 476,
-      duration: 177,
-    })
+  it('rejects model output that shifts MM:SS into HH:MM:SS positions', () => {
+    // The frontend never reinterprets normalized seconds; out-of-range
+    // segments are reported as invalid instead of guessed.
+    expect(resolveVideoSegmentBounds({ start_sec: 17940, end_sec: 28560 }, 905)).toBeNull()
   })
 
-  it('corrects a shifted first segment instead of expanding it to the full video', () => {
-    expect(resolveVideoSegmentBounds({ start_sec: 0, end_sec: 10680 }, 905)).toEqual({
-      startSec: 0,
-      endSec: 178,
-      duration: 178,
-    })
+  it('rejects a shifted first segment instead of guessing the full video', () => {
+    expect(resolveVideoSegmentBounds({ start_sec: 0, end_sec: 10680 }, 905)).toBeNull()
   })
 
-  it('does not reinterpret a valid standard range in a long video', () => {
+  it('accepts a valid standard range in a long video', () => {
     expect(resolveVideoSegmentBounds({ start_sec: 17940, end_sec: 28560 }, 30000)).toEqual({
       startSec: 17940,
       endSec: 28560,

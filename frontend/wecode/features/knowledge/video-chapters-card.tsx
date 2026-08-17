@@ -4,15 +4,7 @@
 
 'use client'
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AlertCircle, ChevronDown, ChevronUp, Maximize, Minimize, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -22,6 +14,7 @@ import type { SourceReference } from '@/types/socket'
 import { activatePlayer, getActivePlayerId, subscribeActivePlayer } from './active-video-store'
 import { resolveVideoSegmentBounds } from './video-segment-bounds'
 import { formatVideoTime } from './video-time'
+import { useVideoSegmentPlayback } from './use-video-segment-playback'
 
 function VideoChaptersCard({ source }: { source: SourceReference }) {
   const { t } = useTranslation('chat')
@@ -42,108 +35,53 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
     isExpanded && documentId > 0
   )
 
-  const videoRef = useRef<HTMLVideoElement>(null)
   const cardRef = useRef<HTMLElement>(null)
-  const pendingSegRef = useRef<number>(0)
   const [activeSeg, setActiveSeg] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [videoError, setVideoError] = useState(false)
-  const [mediaDuration, setMediaDuration] = useState<number>()
-  const [position, setPosition] = useState(0)
 
   const currentSeg = useMemo(() => segments[activeSeg], [segments, activeSeg])
-  const currentBounds = useMemo(
-    () => (currentSeg ? resolveVideoSegmentBounds(currentSeg, mediaDuration) : null),
-    [currentSeg, mediaDuration]
-  )
+  const {
+    videoRef,
+    bounds: currentBounds,
+    mediaDuration,
+    position,
+    isPlaying,
+    videoError,
+    handleLoadedMetadata,
+    handleTimeUpdate,
+    handlePause,
+    handleEnded,
+    handleError,
+    togglePlayback,
+    seekAbsolute,
+    playFrom,
+    clearVideoError,
+  } = useVideoSegmentPlayback({
+    segment: currentSeg ?? null,
+    active: isExpanded,
+    positionMode: 'absolute',
+  })
   const fullscreenAvailable = typeof document !== 'undefined' && document.fullscreenEnabled
 
-  // Collapsing (including when another player takes over) unmounts the video
-  // element. Reset playback state so a later re-expand starts with a fresh
-  // play icon instead of a stale pause icon.
-  useEffect(() => {
-    if (!isExpanded) {
-      setIsPlaying(false)
-    }
-  }, [isExpanded])
-
   const handleToggle = useCallback(() => {
-    if (!isExpanded) {
-      pendingSegRef.current = activeSeg
-    }
     activatePlayer(isExpanded ? null : playerId)
-  }, [activeSeg, isExpanded, playerId])
+  }, [isExpanded, playerId])
 
   const handleRetry = useCallback(() => {
-    pendingSegRef.current = activeSeg
-    setVideoError(false)
+    clearVideoError()
     retry()
-  }, [activeSeg, retry])
-
-  const seekToSegment = useCallback(
-    (idx: number) => {
-      const video = videoRef.current
-      if (!video || !segments[idx]) return
-      const bounds = resolveVideoSegmentBounds(segments[idx], mediaDuration)
-      if (!bounds) return
-      if (video.readyState >= 1) {
-        video.currentTime = bounds.startSec
-        setPosition(bounds.startSec)
-        setActiveSeg(idx)
-        pendingSegRef.current = -1
-      } else {
-        pendingSegRef.current = idx
-      }
-    },
-    [mediaDuration, segments]
-  )
+  }, [clearVideoError, retry])
 
   const playSegment = useCallback(
     (idx: number) => {
-      seekToSegment(idx)
-      const video = videoRef.current
-      if (!video) return
-      // jsdom and some legacy browsers may return undefined from play().
-      Promise.resolve(video.play())
-        .then(() => setIsPlaying(true))
-        .catch(() => setIsPlaying(false))
+      const target = segments[idx]
+      if (!target) return
+      const targetBounds = resolveVideoSegmentBounds(target, mediaDuration)
+      if (!targetBounds) return
+      setActiveSeg(idx)
+      playFrom(targetBounds.startSec)
     },
-    [seekToSegment]
+    [mediaDuration, playFrom, segments]
   )
-
-  const handleLoadedMetadata = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    setVideoError(false)
-    const duration =
-      Number.isFinite(video.duration) && video.duration > 0 ? video.duration : undefined
-    setMediaDuration(duration)
-    const pending = pendingSegRef.current
-    if (pending >= 0 && segments[pending]) {
-      const bounds = resolveVideoSegmentBounds(segments[pending], duration)
-      if (bounds) {
-        video.currentTime = bounds.startSec
-        setPosition(bounds.startSec)
-        setActiveSeg(pending)
-        pendingSegRef.current = -1
-      }
-    }
-  }, [segments])
-
-  const handleTimeUpdate = useCallback(() => {
-    const video = videoRef.current
-    if (!video || !currentBounds) return
-    setPosition(video.currentTime)
-    if (video.currentTime < currentBounds.startSec) {
-      video.currentTime = currentBounds.startSec
-      return
-    }
-    if (video.currentTime >= currentBounds.endSec) {
-      video.pause()
-      setIsPlaying(false)
-      return
-    }
-  }, [currentBounds])
 
   const findSegmentAtTime = useCallback(
     (time: number): number => {
@@ -160,38 +98,16 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
 
   const handleTimelineSeek = useCallback(
     (time: number) => {
-      const video = videoRef.current
-      if (!video || mediaDuration === undefined) return
+      if (mediaDuration === undefined) return
       const clamped = Math.min(Math.max(time, 0), mediaDuration)
-      video.currentTime = clamped
-      setPosition(clamped)
+      seekAbsolute(clamped)
       const idx = findSegmentAtTime(clamped)
       if (idx >= 0 && idx !== activeSeg) {
         setActiveSeg(idx)
-        pendingSegRef.current = -1
       }
     },
-    [activeSeg, findSegmentAtTime, mediaDuration]
+    [activeSeg, findSegmentAtTime, mediaDuration, seekAbsolute]
   )
-
-  const togglePlayback = useCallback(async () => {
-    const video = videoRef.current
-    if (!video || !currentBounds) return
-    if (!video.paused) {
-      video.pause()
-      setIsPlaying(false)
-      return
-    }
-    if (video.currentTime < currentBounds.startSec || video.currentTime >= currentBounds.endSec) {
-      seekToSegment(activeSeg)
-    }
-    try {
-      await video.play()
-      setIsPlaying(true)
-    } catch {
-      setIsPlaying(false)
-    }
-  }, [currentBounds, activeSeg, seekToSegment])
 
   // Fullscreen tracking
   const fullscreenElement = useSyncExternalStore(
@@ -301,9 +217,9 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
               playsInline
               onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
-              onError={() => setVideoError(true)}
+              onPause={handlePause}
+              onEnded={handleEnded}
+              onError={handleError}
               className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
               data-testid={`video-chapters-player-${source.index}`}
             >
@@ -316,6 +232,7 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
               className="absolute inset-0 m-auto h-11 w-11 rounded-full bg-black/60 text-white hover:bg-black/75"
               onClick={togglePlayback}
               disabled={!currentBounds}
+              data-testid={`video-chapters-overlay-toggle-${source.index}`}
               aria-label={t(
                 isPlaying
                   ? 'sourceReferences.pauseVideoSegment'
@@ -387,6 +304,7 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
             type="button"
             onClick={handleToggle}
             className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"
+            data-testid={`video-chapters-collapse-${source.index}`}
           >
             {t('common:actions.collapse')}
             <ChevronUp className="h-3 w-3" />

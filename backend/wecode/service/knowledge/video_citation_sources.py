@@ -14,9 +14,22 @@ from shared.knowledge.video_segments import (
     DEFAULT_MAX_SEGMENTS,
     extract_all_video_segments,
 )
+from shared.knowledge.video_sources import (
+    BuiltVideoSource,
+    VideoSourceIdentity,
+    VideoSourceSegment,
+    build_video_source,
+    merge_video_source,
+    video_source_to_payload,
+)
 
 MAX_VIDEO_SEGMENTS_PER_SOURCE = DEFAULT_MAX_SEGMENTS
-VideoSourceMap = dict[tuple[int, int], dict[str, Any]]
+VideoSourceMap = dict[tuple[int, int], BuiltVideoSource]
+
+_COVERAGE_TO_SOURCE_TYPE = {
+    "retrieved": "wegent_video_segment",
+    "complete": "wegent_video_chapters",
+}
 
 #: Server label of the built-in knowledge MCP server. Used as the primary
 #: identity check for video citation collection; tool names are not reliable
@@ -96,43 +109,36 @@ def collect_knowledge_mcp_video_sources(
     _collect_document_content_video_source(collected, payload)
 
 
-def _get_or_create_source(
+def _collect_into(
     collected: VideoSourceMap,
     source_key: tuple[int, int],
     *,
     title: Any,
-    source_type: str,
-) -> dict[str, Any] | None:
-    """Return the source entry for ``source_key``, creating it if needed."""
-    source = collected.get(source_key)
-    if source is not None:
-        return source
+    coverage: str,
+    segments: list[VideoSourceSegment],
+    input_truncated: bool = False,
+) -> None:
+    """Build and coverage-merge one observation into the collection map."""
+    existing = collected.get(source_key)
     if not isinstance(title, str) or not title.strip():
-        return None
-    source = {
-        "index": len(collected) + 1,
-        "title": title.strip(),
-        "kb_id": source_key[0],
-        "document_id": source_key[1],
-        "source_type": source_type,
-        "segments": [],
-    }
-    collected[source_key] = source
-    return source
-
-
-def _append_segment(source: dict[str, Any], segment: dict[str, Any]) -> None:
-    """Append a segment with dedup by time range and a per-source cap."""
-    segment_key = (segment.get("start_sec"), segment.get("end_sec"))
-    if any(
-        (item.get("start_sec"), item.get("end_sec")) == segment_key
-        for item in source["segments"]
-    ):
+        # A new source needs a display title; merging into an existing one
+        # keeps the already-recorded title.
+        if existing is None:
+            return
+        title = existing.identity.title
+    built = build_video_source(
+        identity=VideoSourceIdentity(
+            knowledge_base_id=source_key[0],
+            document_id=source_key[1],
+            title=title,
+        ),
+        coverage=coverage,  # type: ignore[arg-type]
+        segments=segments,
+        input_truncated=input_truncated,
+    )
+    if built is None:
         return
-    if len(source["segments"]) >= MAX_VIDEO_SEGMENTS_PER_SOURCE:
-        source["segments_truncated"] = True
-        return
-    source["segments"].append(segment)
+    collected[source_key] = merge_video_source(existing, built)
 
 
 def _collect_rag_retrieval_video_sources(
@@ -162,25 +168,21 @@ def _collect_rag_retrieval_video_sources(
         ):
             continue
 
-        source = _get_or_create_source(
+        _collect_into(
             collected,
             source_key,
             title=chunk.get("title") or metadata.get("source_file"),
-            source_type="wegent_video_segment",
-        )
-        if source is None:
-            continue
-
-        _append_segment(
-            source,
-            {
-                "id": metadata.get("video_segment_id"),
-                "start_sec": start_sec,
-                "end_sec": end_sec,
-                "score": chunk.get("score"),
-                "title": metadata.get("video_segment_title"),
-                "description": metadata.get("video_segment_description"),
-            },
+            coverage="retrieved",
+            segments=[
+                VideoSourceSegment(
+                    start_sec=start_sec,
+                    end_sec=end_sec,
+                    segment_id=metadata.get("video_segment_id"),
+                    score=chunk.get("score"),
+                    title=metadata.get("video_segment_title"),
+                    description=metadata.get("video_segment_description"),
+                )
+            ],
         )
 
 
@@ -213,31 +215,24 @@ def _collect_document_content_video_source(
     if not parse_result.segments:
         return
 
-    source = _get_or_create_source(
+    # Full-document chapters are strictly more complete than chunk-level RAG
+    # segments; the coverage rules in merge_video_source replace partial hits.
+    _collect_into(
         collected,
         (kb_id, document_id),
         title=payload.get("name"),
-        source_type="wegent_video_chapters",
+        coverage="complete",
+        segments=[
+            VideoSourceSegment(
+                start_sec=segment.start_sec,
+                end_sec=segment.end_sec,
+                title=segment.title,
+                description=segment.description,
+            )
+            for segment in parse_result.segments
+        ],
+        input_truncated=parse_result.truncated,
     )
-    if source is None:
-        return
-
-    # Full-document chapters are strictly more complete than chunk-level
-    # segments, so prefer the chapters renderer when both were collected.
-    source["source_type"] = "wegent_video_chapters"
-    for segment in parse_result.segments:
-        _append_segment(
-            source,
-            {
-                "id": f"segment_{segment.start_sec}_{segment.end_sec}",
-                "start_sec": segment.start_sec,
-                "end_sec": segment.end_sec,
-                "title": segment.title,
-                "description": segment.description,
-            },
-        )
-    if parse_result.truncated:
-        source["segments_truncated"] = True
 
 
 def collect_and_log_knowledge_mcp_video_sources(
@@ -270,22 +265,28 @@ def collect_and_log_knowledge_mcp_video_sources(
     else:
         decision = "content_fallback"
     previous_source_count = len(collected)
-    previous_segment_count = sum(
-        len(source.get("segments", [])) for source in collected.values()
-    )
+    previous_segment_count = sum(len(source.segments) for source in collected.values())
+    previous_coverages = {key: source.coverage for key, source in collected.items()}
     collect_knowledge_mcp_video_sources(collected, tool_output)
-    current_segment_count = sum(
-        len(source.get("segments", [])) for source in collected.values()
-    )
+    current_segment_count = sum(len(source.segments) for source in collected.values())
     added_segments = current_segment_count - previous_segment_count
-    if added_segments > 0 or len(collected) > previous_source_count:
+    # A retrieved → complete replacement can shrink the segment count, so
+    # growth alone cannot observe it; track coverage upgrades explicitly.
+    replaced = any(
+        previous_coverages.get(key) == "retrieved" and source.coverage == "complete"
+        for key, source in collected.items()
+    )
+    if added_segments != 0 or len(collected) > previous_source_count or replaced:
         logger.info(
-            "Collected MCP video citations: decision=%s, context=%s, "
-            "source_count=%d, new_segment_count=%d",
+            "Collected MCP video citations: decision=%s, coverage_action=%s, "
+            "context=%s, source_count=%d, previous_segment_count=%d, "
+            "new_segment_count=%d",
             decision,
+            "replace" if replaced else "merge",
             context,
             len(collected),
-            added_segments,
+            previous_segment_count,
+            current_segment_count,
         )
     return added_segments
 
@@ -308,47 +309,57 @@ def merge_video_sources(existing: Any, videos: VideoSourceMap) -> list[dict[str,
         + 1
     )
 
-    for key, video in videos.items():
+    for key, video_source in videos.items():
+        video = video_source_to_payload(video_source)
+        video["source_type"] = _COVERAGE_TO_SOURCE_TYPE[video_source.coverage]
         target = by_key.get(key)
         if target is None:
             target = dict(video)
-            video_segments = target.get("segments")
-            if (
-                isinstance(video_segments, list)
-                and len(video_segments) > MAX_VIDEO_SEGMENTS_PER_SOURCE
-            ):
-                target["segments"] = video_segments[:MAX_VIDEO_SEGMENTS_PER_SOURCE]
-                target["segments_truncated"] = True
             target["index"] = next_index
             next_index += 1
             merged.append(target)
             by_key[key] = target
             continue
 
-        target["source_type"] = video["source_type"]
         target["document_id"] = video["document_id"]
         target["kb_id"] = video["kb_id"]
+        if (
+            target.get("source_type") == "wegent_video_chapters"
+            and video["source_type"] != "wegent_video_chapters"
+        ):
+            # Complete chapters already present; ignore later partial RAG hits.
+            continue
+        target["source_type"] = video["source_type"]
+        # Video segments are already normalized by the shared builder; for a
+        # complete snapshot this replaces partial segments outright, and for
+        # retrieved hits the builder already deduped across MCP calls.
+        if video["source_type"] == "wegent_video_chapters":
+            target["segments"] = video["segments"]
+            if video.get("segments_truncated"):
+                target["segments_truncated"] = True
+            else:
+                target.pop("segments_truncated", None)
+            continue
         existing_segments = target.get("segments")
         if not isinstance(existing_segments, list):
             existing_segments = []
             target["segments"] = existing_segments
-        if len(existing_segments) >= MAX_VIDEO_SEGMENTS_PER_SOURCE:
-            target["segments_truncated"] = True
         seen = {
             (segment.get("start_sec"), segment.get("end_sec"))
             for segment in existing_segments
             if isinstance(segment, dict)
         }
+        truncated = bool(video.get("segments_truncated"))
         for segment in video["segments"]:
             segment_key = (segment.get("start_sec"), segment.get("end_sec"))
             if segment_key in seen:
                 continue
             if len(existing_segments) >= MAX_VIDEO_SEGMENTS_PER_SOURCE:
-                target["segments_truncated"] = True
+                truncated = True
                 break
             existing_segments.append(segment)
             seen.add(segment_key)
-        if video.get("segments_truncated"):
+        if truncated:
             target["segments_truncated"] = True
 
     return merged

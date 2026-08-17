@@ -855,6 +855,12 @@ def _build_kb_head_video_sources(results: list[dict[str, Any]]) -> list[dict[str
     Non-video documents produce no sources — preserving existing behavior.
     """
     from shared.knowledge.video_segments import extract_all_video_segments
+    from shared.knowledge.video_sources import (
+        VideoSourceIdentity,
+        VideoSourceSegment,
+        build_video_source,
+        video_source_to_payload,
+    )
 
     sources: list[dict[str, Any]] = []
     for doc in results:
@@ -871,28 +877,30 @@ def _build_kb_head_video_sources(results: list[dict[str, Any]]) -> list[dict[str
             continue
 
         parse_result = extract_all_video_segments(doc.get("content", ""))
-        if not parse_result.segments:
-            continue
-
-        source: dict[str, Any] = {
-            "index": len(sources) + 1,
-            "title": doc.get("name", "Unknown"),
-            "kb_id": kb_id,
-            "document_id": document_id,
-            "source_type": "wegent_video_chapters",
-            "segments": [
-                {
-                    "id": f"segment_{s.start_sec}_{s.end_sec}",
-                    "start_sec": s.start_sec,
-                    "end_sec": s.end_sec,
-                    "title": s.title,
-                    "description": s.description,
-                }
+        built = build_video_source(
+            identity=VideoSourceIdentity(
+                knowledge_base_id=kb_id,
+                document_id=document_id,
+                title=doc.get("name") or "",
+            ),
+            coverage="complete",
+            segments=[
+                VideoSourceSegment(
+                    start_sec=s.start_sec,
+                    end_sec=s.end_sec,
+                    title=s.title,
+                    description=s.description,
+                )
                 for s in parse_result.segments
             ],
-        }
-        if parse_result.truncated:
-            source["segments_truncated"] = True
+            input_truncated=parse_result.truncated,
+        )
+        if built is None:
+            continue
+
+        source = video_source_to_payload(built)
+        source["index"] = len(sources) + 1
+        source["source_type"] = "wegent_video_chapters"
         sources.append(source)
 
     return sources

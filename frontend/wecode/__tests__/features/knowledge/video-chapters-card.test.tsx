@@ -119,6 +119,10 @@ describe('VideoChaptersCard', () => {
     Object.defineProperty(video, 'duration', { configurable: true, value: 60 })
     fireEvent.loadedMetadata(video)
 
+    // All interactive elements expose stable test IDs.
+    expect(screen.getByTestId('video-chapters-overlay-toggle-1')).toBeInTheDocument()
+    expect(screen.getByTestId('video-chapters-collapse-1')).toBeInTheDocument()
+
     const slider = screen.getByTestId('video-chapters-progress-1')
     expect(slider).toHaveAttribute('max', '60')
 
