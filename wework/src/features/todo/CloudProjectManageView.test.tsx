@@ -69,6 +69,16 @@ function makeApi(overrides: Partial<DeliveryApi> = {}): DeliveryApi {
     disableGitLabMrIntegration: vi.fn(async () => {
       state.enabled = false
     }),
+    updateCloudProject: vi.fn(async (_id, values) => {
+      const payload = values as { ai_automation?: { max_retry_count?: number } }
+      return {
+        ...makeProject('gitlab'),
+        ai_automation: payload.ai_automation ?? {
+          auto_retry_on_failure: false,
+          max_retry_count: 3,
+        },
+      } as unknown as CloudProject
+    }),
     ...overrides,
   } as unknown as DeliveryApi
 }
@@ -162,5 +172,24 @@ describe('CloudProjectManageView GitLab MR integration', () => {
     await user.click(toggle)
     await waitFor(() => expect(calls).toBeGreaterThan(1))
     await waitFor(() => expect(api.enableGitLabMrIntegration).toHaveBeenCalledWith('11'))
+  })
+
+  it('saves the AI auto-retry count through project settings', async () => {
+    const api = makeApi()
+    const user = userEvent.setup()
+    renderView(api, makeProject('gitlab'))
+    const input = (await screen.findByTestId('gitlab-mr-retry-count')) as HTMLInputElement
+    expect(input.value).toBe('10')
+    await user.clear(input)
+    await user.type(input, '5')
+    await user.click(screen.getByTestId('gitlab-mr-retry-save'))
+    await waitFor(() =>
+      expect(api.updateCloudProject).toHaveBeenCalledWith(
+        '11',
+        expect.objectContaining({
+          ai_automation: { auto_retry_on_failure: false, max_retry_count: 5 },
+        })
+      )
+    )
   })
 })

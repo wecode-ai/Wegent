@@ -135,7 +135,8 @@ class CloudProjectBoardConfig(BaseModel):
 
 class CloudProjectAiAutomation(BaseModel):
     auto_retry_on_failure: bool = False
-    max_retry_count: int = Field(default=3, ge=1, le=10)
+    # 0 disables auto-retry; the UI exposes 0-10.
+    max_retry_count: int = Field(default=10, ge=0, le=10)
 
 
 class CloudProjectUpdate(BaseModel):

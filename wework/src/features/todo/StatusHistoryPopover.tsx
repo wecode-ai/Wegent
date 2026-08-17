@@ -13,6 +13,7 @@ const STATUS_ACTION_KEYS: Record<StatusHistoryEntry['trigger'], string> = {
   ai_completed: 'todo.status_action_ai_completed',
   task_started: 'todo.status_action_task_started',
   delivery: 'todo.status_action_delivery',
+  mr_merged: 'todo.status_action_mr_merged',
   status_removed: 'todo.status_action_status_removed',
 }
 
@@ -46,9 +47,14 @@ export function StatusHistoryPopover({
           entry.trigger === 'user_update' &&
           entry.from_status === 'in_review' &&
           entry.to_status === 'completed'
-        const actionLabel = isAccept
-          ? t('todo.status_action_accept', '验收')
-          : t(STATUS_ACTION_KEYS[entry.trigger] ?? 'todo.status_action_user_update', entry.trigger)
+        const actionLabel =
+          entry.label ??
+          (isAccept
+            ? t('todo.status_action_accept', '验收')
+            : t(
+                STATUS_ACTION_KEYS[entry.trigger] ?? 'todo.status_action_user_update',
+                entry.trigger
+              ))
         return (
           <div
             key={`${entry.at}-${index}`}

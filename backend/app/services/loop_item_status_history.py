@@ -59,25 +59,30 @@ def write_status_change(
     to_status: str,
     trigger: str,
     by_user_id: int | None,
+    label: str | None = None,
 ) -> None:
-    """Append one transition to ``metadata["status_history"]`` in place."""
+    """Append one transition to ``metadata["status_history"]`` in place.
+
+    ``label``, when provided, is the human-readable action copy for this entry
+    (e.g. the MR fix-task wording chosen at write time). Callers that leave it
+    unset rely on the frontend mapping the ``trigger`` to localized text.
+    """
     current = metadata.get(STATUS_HISTORY_KEY)
     # Always build a fresh list: callers shallow-copy the committed metadata,
     # so appending in place would mutate the committed list and leave the new
     # metadata content-equal to it, which SQLAlchemy then skips on flush.
     history = list(current) if isinstance(current, list) else []
     now = datetime.now(timezone.utc)
-    history.append(
-        {
-            "from_status": from_status,
-            "from_status_name": (
-                status_name(project, from_status) if from_status else ""
-            ),
-            "to_status": to_status,
-            "to_status_name": status_name(project, to_status) if to_status else "",
-            "trigger": trigger,
-            "by_user_id": by_user_id,
-            "at": now.isoformat(),
-        }
-    )
+    entry: dict[str, Any] = {
+        "from_status": from_status,
+        "from_status_name": (status_name(project, from_status) if from_status else ""),
+        "to_status": to_status,
+        "to_status_name": status_name(project, to_status) if to_status else "",
+        "trigger": trigger,
+        "by_user_id": by_user_id,
+        "at": now.isoformat(),
+    }
+    if label:
+        entry["label"] = label
+    history.append(entry)
     metadata[STATUS_HISTORY_KEY] = history

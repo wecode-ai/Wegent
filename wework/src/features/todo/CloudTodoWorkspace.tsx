@@ -2551,7 +2551,7 @@ export function CloudTodoWorkspace({
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
-                                      archiveDisabled={selectedProject.task_provider !== 'local'}
+                                      archiveDisabled={item.is_external === true}
                                     />
                                   ))}
                                   {columnItems.length === 0 && columnEmptyHints[column.status] && (

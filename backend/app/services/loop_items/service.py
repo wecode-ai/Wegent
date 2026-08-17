@@ -146,6 +146,8 @@ class LoopItemService:
             **item.__dict__,
             "can_view_detail": can_view_detail,
             "can_edit": can_edit,
+            # False: a real local board card is owned by wework (archivable).
+            "is_external": False,
         }
         if item.assignee_user_id:
             assignee = db.get(User, item.assignee_user_id)

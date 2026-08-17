@@ -99,6 +99,9 @@ export function CloudProjectManageView({
   const [mrBusy, setMrBusy] = useState(false)
   const [mrError, setMrError] = useState<string | null>(null)
   const [mrUrlCopied, setMrUrlCopied] = useState(false)
+  const [mrRetryCount, setMrRetryCount] = useState(project.ai_automation?.max_retry_count ?? 10)
+  const [mrRetryBusy, setMrRetryBusy] = useState(false)
+  const [mrRetrySaved, setMrRetrySaved] = useState(false)
 
   const isAITable = project.task_provider === 'dingtalk_aitable'
   const [aitableUrl, setAITableUrl] = useState(() => configText(project, 'source_url'))
@@ -192,6 +195,32 @@ export function CloudProjectManageView({
       window.setTimeout(() => setMrUrlCopied(false), 2000)
     } catch {
       setMrError(t('todo.mr_integration_error'))
+    }
+  }
+
+  const saveMrRetryCount = async (): Promise<void> => {
+    if (mrRetryBusy) return
+    const previous = mrRetryCount
+    setMrRetryBusy(true)
+    setMrRetrySaved(false)
+    try {
+      const updated = await updateProject({
+        version,
+        ai_automation: {
+          auto_retry_on_failure: project.ai_automation?.auto_retry_on_failure ?? false,
+          max_retry_count: mrRetryCount,
+        },
+      })
+      setMrRetryCount(updated.ai_automation?.max_retry_count ?? mrRetryCount)
+      setMrRetrySaved(true)
+      window.setTimeout(() => setMrRetrySaved(false), 2000)
+      track('feature_action_completed', { domain: 'project_space', action: 'update' })
+    } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
+      setMrRetryCount(previous)
+      setMrError(cause instanceof Error ? cause.message : t('todo.mr_integration_retry_error'))
+    } finally {
+      setMrRetryBusy(false)
     }
   }
 
@@ -882,6 +911,32 @@ export function CloudProjectManageView({
                 </button>
               </div>
             )}
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <label className="text-sm text-text-muted">
+                {t('todo.mr_integration_retry_label')}
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={mrRetryCount}
+                onChange={e => setMrRetryCount(Number(e.target.value))}
+                data-testid="gitlab-mr-retry-count"
+                className="h-9 w-20 rounded-lg border border-border bg-muted px-3 text-sm outline-none"
+              />
+              <button
+                type="button"
+                data-testid="gitlab-mr-retry-save"
+                disabled={mrRetryBusy}
+                onClick={() => void saveMrRetryCount()}
+                className="h-9 rounded-lg border border-border px-3 text-sm disabled:opacity-60"
+              >
+                {mrRetrySaved
+                  ? t('todo.mr_integration_retry_saved')
+                  : t('todo.mr_integration_retry_save')}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-text-muted">{t('todo.mr_integration_retry_desc')}</p>
             {mrError && <p className="mt-2 text-xs text-destructive">{mrError}</p>}
           </section>
         )}

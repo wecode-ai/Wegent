@@ -23,7 +23,11 @@ from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.services.gitlab.client import ProjectScopedGitlabClient
 from app.services.gitlab.mr_service import mr_service
-from app.services.gitlab.mr_templates import render_card_description, trace_tail
+from app.services.gitlab.mr_templates import (
+    render_card_description,
+    resolve_status_id,
+    trace_tail,
+)
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.service import loop_item_service
 
@@ -438,7 +442,7 @@ def test_render_falls_back_to_previous_round_notes(env: dict[str, Any]) -> None:
     )
     db.commit()
     record = _record(db, env["integration"])
-    desc = render_card_description(record)
+    desc = render_card_description(env["project"], record)
     assert "please rename X" in desc
     assert "待处理" in desc
 
@@ -1107,7 +1111,7 @@ def test_diff_note_position_and_author_from_webhook(env: dict[str, Any]) -> None
     assert note["author"] == "carol"
     assert note["position"]["path"] == "review_demo/calculator.py"
     assert note["position"]["line"] == 17
-    assert "calculator.py:17" in render_card_description(record)
+    assert "calculator.py:17" in render_card_description(env["project"], record)
 
 
 def _settle_with_run(env: dict[str, Any], terminal_status: str) -> None:
@@ -1241,3 +1245,196 @@ def test_pipeline_ref_mismatch_does_not_finalize_wrong_record(
     db.commit()
     record = _record(db, env["integration"])
     assert record.state == "clean"
+
+
+def _card_history(env: dict[str, Any]) -> list[dict[str, Any]]:
+    card = _card(env["db"], env["project"])
+    metadata = card.metadata_json if isinstance(card.metadata_json, dict) else {}
+    return metadata.get("status_history") or []
+
+
+def test_card_creation_records_create_history(env: dict[str, Any]) -> None:
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    history = _card_history(env)
+    assert history
+    assert history[0]["trigger"] == "create"
+    assert history[0]["to_status"] == resolve_status_id(env["project"], "inbox")
+
+
+def test_repull_records_ai_started_history(env: dict[str, Any]) -> None:
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    # Round 1: CI fails -> card created (inbox).
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.notes = []
+    fake.jobs = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    # New head -> card goes to in_review.
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
+    )
+    db.commit()
+    # Round 2 CI fails -> the in-review card is pulled back to in_progress.
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA2, "failed")
+    )
+    db.commit()
+    history = _card_history(env)
+    assert history[-1]["trigger"] == "ai_started"
+    assert history[-1]["to_status"] == resolve_status_id(env["project"], "in_progress")
+    assert history[-2]["trigger"] == "ai_completed"
+    assert history[-2]["to_status"] == resolve_status_id(env["project"], "in_review")
+
+
+def test_close_records_mr_merged_history_and_closed_description(
+    env: dict[str, Any],
+) -> None:
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.notes = []
+    fake.jobs = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    assert card is not None
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "merged", SHA1)
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    history = _card_history(env)
+    assert history[-1]["trigger"] == "mr_merged"
+    assert history[-1]["to_status"] == resolve_status_id(env["project"], "completed")
+    assert card.status == resolve_status_id(env["project"], "completed")
+    # Ordering: the description is refreshed to the closed state under the new
+    # completed status, never stale content.
+    assert "已合并/关闭" in card.description
+
+
+def test_cap_exhausted_shows_warning_in_description(env: dict[str, Any]) -> None:
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.notes = []
+    fake.jobs = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    record.auto_retrigger_count = 10  # cap hit (default max_retry_count = 10)
+    db.commit()
+    card = _card(db, env["project"])
+    mr_service._refresh_card(db, env["project"], record)
+    db.commit()
+    assert "已达自动重试上限" in card.description
+
+
+def test_instruction_requires_no_pending_review_before_done(
+    env: dict[str, Any],
+) -> None:
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.notes = []
+    fake.jobs = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    assert "完成条件" in card.description
+    assert "所有评论/review 都已处理且 CI 通过" in card.description
+
+
+def test_reply_in_seen_discussion_is_not_pending(env: dict[str, Any]) -> None:
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    # The run saw note A (discussion D1); the AI replied B inside D1; a reviewer
+    # opened a new discussion C in D2. Replies to a seen thread are part of that
+    # feedback, so only C is pending.
+    record.seen_note_ids = [1]
+    record.rounds_json = [
+        {
+            "sha": SHA1,
+            "round_number": 1,
+            "pipeline_status": "success",
+            "pipeline_id": 0,
+            "failed_jobs": [],
+            "at": "",
+            "notes": [
+                {
+                    "id": 1,
+                    "discussion_id": "D1",
+                    "note": "review A",
+                    "created_at": "t1",
+                },
+                {
+                    "id": 2,
+                    "discussion_id": "D1",
+                    "note": "AI reply B",
+                    "created_at": "t2",
+                },
+                {"id": 3, "discussion_id": "D2", "note": "new C", "created_at": "t3"},
+            ],
+        }
+    ]
+    assert mr_service._unseen_note_ids(record) == {3}
+
+
+def test_standalone_ai_reply_is_still_pending(env: dict[str, Any]) -> None:
+    db = env["db"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    # A standalone reply (no discussion id) is its own thread: it cannot be
+    # linked to a seen discussion, so it stays pending. This documents the
+    # executor-threading prerequisite.
+    record.seen_note_ids = [1]
+    record.rounds_json = [
+        {
+            "sha": SHA1,
+            "round_number": 1,
+            "pipeline_status": "success",
+            "pipeline_id": 0,
+            "failed_jobs": [],
+            "at": "",
+            "notes": [
+                {
+                    "id": 1,
+                    "discussion_id": "D1",
+                    "note": "review A",
+                    "created_at": "t1",
+                },
+                {"id": 2, "note": "standalone reply B", "created_at": "t2"},
+            ],
+        }
+    ]
+    assert mr_service._unseen_note_ids(record) == {2}

@@ -50,6 +50,7 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  is_external?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
@@ -77,7 +78,9 @@ export interface CloudLoopItem {
       | 'ai_completed'
       | 'task_started'
       | 'delivery'
+      | 'mr_merged'
       | 'status_removed'
+    label?: string | null
     by_user_id: number | null
     at: string
   }>

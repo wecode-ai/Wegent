@@ -92,6 +92,9 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    # True when this card mirrors an external provider issue (wework does not
+    # own its lifecycle); used to gate ownership-dependent actions like archive.
+    is_external: bool = False
     current_delivery_id: str | None
     version: int
     created_at: datetime

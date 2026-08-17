@@ -80,6 +80,22 @@ def _short_sha(sha: str) -> str:
     return sha[:8] if sha else ""
 
 
+def max_retry_count(project: CloudProject) -> int:
+    """Auto-run cap from the project's ``ai_automation`` config (default 10).
+
+    ``0`` means auto-retry is disabled: the state machine never re-triggers a
+    robot run on its own.
+    """
+    metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
+    ai_automation = metadata.get("ai_automation")
+    ai_automation = ai_automation if isinstance(ai_automation, dict) else {}
+    raw = ai_automation.get("max_retry_count")
+    try:
+        return int(raw) if raw is not None else 10
+    except (TypeError, ValueError):
+        return 10
+
+
 def _unseen_note_ids(record: MRRecord) -> set[int]:
     """Note ids the last robot run did not see at dispatch (pending feedback).
 
@@ -127,7 +143,7 @@ def trace_tail(trace: str, limit_chars: int = 4000) -> str:
     return tail
 
 
-def _task_instruction(record: MRRecord) -> str:
+def _task_instruction(project: CloudProject, record: MRRecord) -> str:
     """Instruction preamble for the model that will act on this card."""
     branch = record.source_branch or ""
     snapshot = record.snapshot_json if isinstance(record.snapshot_json, dict) else {}
@@ -139,6 +155,14 @@ def _task_instruction(record: MRRecord) -> str:
     precommit_hint = (
         "提交前请重新拉取该 MR 的最新评审意见（如 gitlab api "
         f"merge_requests/{record.mr_iid}/notes），确认没有新增遗漏后再 push。"
+    )
+    reply_hint = (
+        "如需回复某条评审意见，请在它所在的 discussion 线程内回复（glab mr note 或 "
+        "GitLab API 回复到对应 discussion），不要新开独立评论，以免被当作新的待处理反馈。"
+    )
+    completion_condition = (
+        "完成条件：push 后必须重新拉取该 MR 的最新评审意见（notes），确认所有评论/review "
+        "都已处理且 CI 通过，才能结束任务；否则继续修复并再次 push。"
     )
     if record.state == "closed":
         return "该 MR 已合并/关闭，无需处理。"
@@ -152,7 +176,7 @@ def _task_instruction(record: MRRecord) -> str:
             "这是一个 CI 未通过 / 有评审意见的 MR 修复任务。\n"
             "请根据下方的评审意见和 CI 失败信息修复代码，提交并 push 到源分支 "
             f"`{branch}`（push 后会触发 CI 重跑），直到 CI 通过且评审意见得到回应。\n"
-            f"{fetch_hint}\n{precommit_hint}"
+            f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
         )
     if str(record.pipeline_status or "") == "success":
         # CI is green but there are review comments (current round or unseen from
@@ -161,12 +185,12 @@ def _task_instruction(record: MRRecord) -> str:
             "CI 已通过，但仍有新的评审意见需要处理。\n"
             "请根据下方或 MR 页面的评审意见修改代码，提交并 push 到源分支 "
             f"`{branch}`（push 后会触发 CI 重跑），并回应评审意见。\n"
-            f"{fetch_hint}\n{precommit_hint}"
+            f"{fetch_hint}\n{precommit_hint}\n{reply_hint}\n{completion_condition}"
         )
     return "该 MR 正在等待 CI 结果，请稍后再查看。" f"源分支：`{branch}`"
 
 
-def render_card_description(record: MRRecord) -> str:
+def render_card_description(project: CloudProject, record: MRRecord) -> str:
     """Render the fix-card description from the record's snapshot and rounds.
 
     Current round renders the full CI failure summary and review comments; older
@@ -193,9 +217,21 @@ def render_card_description(record: MRRecord) -> str:
     if meta:
         lines.append(meta)
 
+    # Auto-retry exhausted: surface why the robot stopped instead of leaving the
+    # card looking active with nothing happening.
+    cap = max_retry_count(project)
+    if record.state == "actionable" and record.auto_retrigger_count >= cap:
+        reason = (
+            "已关闭自动重试，机器人不会自动修复。"
+            if cap == 0
+            else f"已达自动重试上限（{record.auto_retrigger_count} 次）仍失败，机器人已停止自动修复。"
+        )
+        lines.append("")
+        lines.append(f"⚠️ {reason}请人工介入或关闭重建 MR。")
+
     lines.append("")
     lines.append("### 任务")
-    lines.append(_task_instruction(record))
+    lines.append(_task_instruction(project, record))
 
     lines.append("")
     # Review feedback must never disappear across rounds: when the current round

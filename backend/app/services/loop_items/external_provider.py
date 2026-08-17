@@ -1092,6 +1092,9 @@ class ExternalLoopItemProvider:
             "created_by_user_name": creator_name,
             "can_view_detail": can_view,
             "can_edit": can_edit,
+            # True: this card mirrors an external provider issue; wework does not
+            # own its lifecycle (archiving it would only delete a local pointer).
+            "is_external": True,
             "current_delivery_id": None,
             "version": self._derived_version(updated_at),
             "created_at": created_at,

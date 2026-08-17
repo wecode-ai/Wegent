@@ -27,11 +27,13 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.services.gitlab.client import ProjectScopedGitlabClient
 from app.services.gitlab.mr_templates import (
+    max_retry_count,
     mr_snapshot,
     render_card_description,
     resolve_status_id,
     trace_tail,
 )
+from app.services.loop_item_status_history import write_status_change
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,16 @@ TERMINAL_STATUSES = {"success", "failed", "canceled", "skipped", "error"}
 FAILED_STATUSES = {"failed", "canceled", "error"}
 ROUNDS_STORED_LIMIT = 5
 RECONCILE_EVALUATING_AGE_SECONDS = 600
+
+# Human-readable action copy baked into MR fix-card status history at write
+# time, so the frontend renders the entry directly instead of inferring the
+# card type from unrelated fields.
+_MR_ACTION_LABELS = {
+    "create": "创建修复任务",
+    "ai_started": "收到新反馈，重新处理",
+    "ai_completed": "提交修复，待确认",
+    "mr_merged": "MR 合并，已完成",
+}
 
 
 def _utcnow() -> datetime:
@@ -259,9 +271,14 @@ class MrService:
             # A reopen is a fresh MR lifecycle: reset the auto-run cap so the
             # robot can retry the reopened MR (the cap stays per lifecycle).
             record.auto_retrigger_count = 0
-            self._move_card(db, project, record, "in_progress")
+            self._transition_card(
+                db, project, record, to_logical="in_progress", trigger="user_update"
+            )
+            moved = True
             # Fall through to the head_sha check: a reopen may carry a new head,
             # which must start a fresh round instead of keeping the stale sha.
+        else:
+            moved = False
         last_commit = (
             attrs.get("last_commit")
             if isinstance(attrs.get("last_commit"), dict)
@@ -280,8 +297,12 @@ class MrService:
             flag_modified(record, "rounds_json")
             self._cap_rounds(record)
             # A new head means a fix was pushed; wait for CI/review to confirm.
-            self._move_card(db, project, record, "in_review")
-        self._refresh_card(db, project, record)
+            self._transition_card(
+                db, project, record, to_logical="in_review", trigger="ai_completed"
+            )
+            moved = True
+        if not moved:
+            self._refresh_card(db, project, record)
         db.flush()
 
     def handle_pipeline_event(
@@ -413,6 +434,7 @@ class MrService:
                 "note": body,
                 "web_url": str(attrs.get("url") or ""),
                 "created_at": str(attrs.get("created_at") or ""),
+                "discussion_id": str(attrs.get("discussion_id") or ""),
                 "position": _note_position(attrs),
             }
         )
@@ -502,6 +524,7 @@ class MrService:
                             "note": body,
                             "web_url": str(note.get("web_url") or ""),
                             "created_at": str(note.get("created_at") or ""),
+                            "discussion_id": str(note.get("discussion_id") or ""),
                             "position": _note_position(note),
                         }
                     )
@@ -532,13 +555,15 @@ class MrService:
 
         # Comments the last robot run already saw are assumed addressed by its
         # fix; anything newer — including comments that arrived mid-run — stays
-        # actionable so the card is pulled back instead of being dropped. Before
-        # any run has ever dispatched (human-driven MR), fall back to the round
-        # boundary: earlier rounds' comments are addressed by the latest fix.
+        # actionable so the card is pulled back instead of being dropped. Replies
+        # inside an already-seen discussion (including the run's own replies) are
+        # part of that feedback, not new feedback. Before any run has ever
+        # dispatched (human-driven MR), fall back to the round boundary: earlier
+        # rounds' comments are addressed by the latest fix.
         if record.seen_note_ids:
-            seen_note_ids = set(int(x) for x in record.seen_note_ids)
+            pending_ids = self._pending_note_ids(record, notes)
             new_notes = [
-                note for note in notes if int(note.get("id") or 0) not in seen_note_ids
+                note for note in notes if int(note.get("id") or 0) in pending_ids
             ]
         else:
             previous_note_ids = {
@@ -623,7 +648,7 @@ class MrService:
         )
         title = f"MR !{record.mr_iid} · {record.mr_title or ''}"
         snapshot = mr_snapshot(record)
-        description = render_card_description(record)
+        description = render_card_description(project, record)
         assignee = self._resolve_assignee_user_id(
             db, project, integration, record.author_id
         )
@@ -652,6 +677,14 @@ class MrService:
                 metadata_json={"tags": ["mr-fix"]},
                 version=1,
             )
+            self._record_card_status(
+                card,
+                project,
+                from_status="",
+                to_status=resolve_status_id(project, "inbox"),
+                trigger="create",
+                by_user_id=integration.created_by_user_id or None,
+            )
             db.add(card)
             db.flush()
             record.current_loop_item_id = card.id
@@ -659,9 +692,19 @@ class MrService:
             card.title = title
             card.description = description
             # Keep an unassigned inbox card in the inbox; only an already-started
-            # card (in review) goes back to in progress on new feedback.
-            if card.status != resolve_status_id(project, "inbox"):
-                card.status = resolve_status_id(project, "in_progress")
+            # card (in review) goes back to in progress on new feedback. History
+            # is recorded only for a real status change, not a no-op re-set.
+            in_progress = resolve_status_id(project, "in_progress")
+            if card.status not in {resolve_status_id(project, "inbox"), in_progress}:
+                self._record_card_status(
+                    card,
+                    project,
+                    from_status=card.status,
+                    to_status=in_progress,
+                    trigger="ai_started",
+                    by_user_id=None,
+                )
+                card.status = in_progress
             card.source_task_snapshot = snapshot
             card.assignee_user_id = assignee
             card.version += 1
@@ -685,17 +728,7 @@ class MrService:
         card = db.get(LoopItem, record.current_loop_item_id)
         if card is None or card.deleted_at is not None or not card.assignee_agent_id:
             return
-        metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
-        )
-        ai_automation = metadata.get("ai_automation")
-        ai_automation = ai_automation if isinstance(ai_automation, dict) else {}
-        raw = ai_automation.get("max_retry_count")
-        try:
-            max_retries = int(raw) if raw is not None else 3
-        except (TypeError, ValueError):
-            max_retries = 3
-        if record.auto_retrigger_count >= max_retries:
+        if record.auto_retrigger_count >= max_retry_count(project):
             return
         from app.models.loop_item_execution import LoopItemExecution
 
@@ -754,11 +787,20 @@ class MrService:
         if record.current_loop_item_id:
             card = db.get(LoopItem, record.current_loop_item_id)
             if card is not None and card.deleted_at is None:
+                # Content first so the card shows the closed state under the new
+                # completed status, and the merge is recorded in history.
+                self._apply_card_content(card, project, record)
+                self._record_card_status(
+                    card,
+                    project,
+                    from_status=card.status,
+                    to_status=resolve_status_id(project, "completed"),
+                    trigger="mr_merged",
+                    by_user_id=None,
+                )
                 card.status = resolve_status_id(project, "completed")
                 card.completed_at = _utcnow()
                 card.version += 1
-                # Re-render so the task instruction reflects the closed state.
-                self._refresh_card(db, project, record)
         db.flush()
 
     def settle_by_reconcile(
@@ -821,23 +863,49 @@ class MrService:
     # ------------------------------------------------------------- helpers
 
     @staticmethod
-    def _all_note_ids(record: MRRecord) -> set[int]:
+    def _discussion_key(note: dict[str, object]) -> str:
+        """A note's thread identity: its GitLab discussion id, or itself when it
+        is a standalone comment with no thread."""
+        return str(note.get("discussion_id") or note.get("id") or "")
+
+    def _pending_note_ids(
+        self, record: MRRecord, notes: list[dict[str, object]]
+    ) -> set[int]:
+        """Note ids representing NEW pending feedback among ``notes``.
+
+        A note is pending only when its discussion thread was not seen by the
+        latest robot run. Replies inside an already-seen thread (including the
+        run's own replies) belong to that feedback rather than starting new
+        work. Empty ``seen_note_ids`` means the run dispatched with no comments,
+        so every note is pending."""
+        seen_note_ids = set(int(x) for x in (record.seen_note_ids or []))
+        seen_keys: set[str] = set()
         rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
-        return {
-            int(n.get("id") or 0)
-            for item in rounds
-            for n in (item.get("notes") or [])
-            if isinstance(n, dict)
-        }
+        for item in rounds:
+            for n in item.get("notes") or []:
+                if isinstance(n, dict) and int(n.get("id") or 0) in seen_note_ids:
+                    seen_keys.add(self._discussion_key(n))
+        pending: set[int] = set()
+        for note in notes:
+            if not isinstance(note, dict):
+                continue
+            note_id = int(note.get("id") or 0)
+            if note_id in seen_note_ids:
+                continue
+            if self._discussion_key(note) in seen_keys:
+                continue
+            pending.add(note_id)
+        return pending
 
     def _unseen_note_ids(self, record: MRRecord) -> set[int]:
-        """Note ids the latest robot run did not see at dispatch.
+        """Note ids the latest robot run has not seen, per discussion.
 
         Called only after a run completes (``reconcile_pending_feedback``), so an
         empty ``seen_note_ids`` means the run dispatched with no comments — every
         note present now arrived mid-run and must re-pull the card."""
-        seen = set(int(x) for x in (record.seen_note_ids or []))
-        return self._all_note_ids(record) - seen
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        all_notes = [n for item in rounds for n in (item.get("notes") or [])]
+        return self._pending_note_ids(record, all_notes)
 
     def _has_active_run(self, db: Session, record: MRRecord) -> bool:
         if not record.current_loop_item_id:
@@ -856,21 +924,81 @@ class MrService:
             is not None
         )
 
-    def _move_card(
+    def _transition_card(
         self,
         db: Session,
         project: CloudProject,
         record: MRRecord,
-        logical: str,
+        *,
+        to_logical: str,
+        trigger: str,
+        by_user_id: int | None = None,
     ) -> None:
+        """Refresh the card to current state, then change its status with history.
+
+        Order is deliberate: the description/snapshot is updated first so the
+        card never shows stale content under a new status, and every transition
+        is recorded via ``write_status_change``.
+        """
         if not record.current_loop_item_id:
             return
         card = db.get(LoopItem, record.current_loop_item_id)
         if card is None or card.deleted_at is not None:
             return
-        card.status = resolve_status_id(project, logical)
+        self._apply_card_content(card, project, record)
+        to_status = resolve_status_id(project, to_logical)
+        self._record_card_status(
+            card,
+            project,
+            from_status=card.status,
+            to_status=to_status,
+            trigger=trigger,
+            by_user_id=by_user_id,
+        )
+        card.status = to_status
         card.version += 1
         db.flush()
+
+    def _apply_card_content(
+        self,
+        card: LoopItem,
+        project: CloudProject,
+        record: MRRecord,
+    ) -> None:
+        """Refresh the card's title/description/snapshot to the record's state."""
+        card.title = f"MR !{record.mr_iid} · {record.mr_title or ''}"
+        card.description = render_card_description(project, record)
+        card.source_task_snapshot = mr_snapshot(record)
+
+    @staticmethod
+    def _record_card_status(
+        card: LoopItem,
+        project: CloudProject,
+        *,
+        from_status: str,
+        to_status: str,
+        trigger: str,
+        by_user_id: int | None,
+    ) -> None:
+        """Record one status transition in the card's metadata history.
+
+        ``write_status_change`` mutates the passed dict in place; a plain JSON
+        column does not track nested mutations, so the metadata is shallow-copied
+        and reassigned for SQLAlchemy to persist the change.
+        """
+        metadata = (
+            dict(card.metadata_json) if isinstance(card.metadata_json, dict) else {}
+        )
+        write_status_change(
+            metadata,
+            project=project,
+            from_status=from_status,
+            to_status=to_status,
+            trigger=trigger,
+            by_user_id=by_user_id,
+            label=_MR_ACTION_LABELS.get(trigger),
+        )
+        card.metadata_json = metadata
 
     def _refresh_card(
         self,
@@ -883,9 +1011,7 @@ class MrService:
         card = db.get(LoopItem, record.current_loop_item_id)
         if card is None or card.deleted_at is not None:
             return
-        card.title = f"MR !{record.mr_iid} · {record.mr_title or ''}"
-        card.description = render_card_description(record)
-        card.source_task_snapshot = mr_snapshot(record)
+        self._apply_card_content(card, project, record)
         card.version += 1
         db.flush()
 
