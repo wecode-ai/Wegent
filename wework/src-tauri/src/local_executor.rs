@@ -59,7 +59,7 @@ const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) {
     if cfg!(windows) {
         180
     } else {
-        60
+        120
     }
 } else {
     10
