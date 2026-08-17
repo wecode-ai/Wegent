@@ -92,6 +92,21 @@ class DeviceUpgradeRequest(BaseModel):
     )
 
 
+class DeviceRuntimeSettingsUpdate(BaseModel):
+    """Runtime-wide concurrency limit for one connected device."""
+
+    max_concurrent_tasks: int = Field(..., ge=1, le=20)
+
+
+class DeviceRuntimeSettingsResponse(BaseModel):
+    """Current runtime capacity settings reported by one device."""
+
+    device_id: str
+    max_concurrent_tasks: int
+    active_tasks: int = 0
+    queued_tasks: int = 0
+
+
 class DeviceUpgradeResponse(BaseModel):
     """Response model for device upgrade trigger."""
 
@@ -587,6 +602,82 @@ async def trigger_device_upgrade(
         )
 
 
+def _runtime_settings_response(
+    device_id: str, result: dict[str, Any]
+) -> DeviceRuntimeSettingsResponse:
+    limit = result.get("maxConcurrentTasks", result.get("limit"))
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Device returned invalid runtime settings",
+        )
+    active = result.get("active", 0)
+    queued = result.get("queued", 0)
+    return DeviceRuntimeSettingsResponse(
+        device_id=device_id,
+        max_concurrent_tasks=limit,
+        active_tasks=active if isinstance(active, int) else 0,
+        queued_tasks=queued if isinstance(queued, int) else 0,
+    )
+
+
+@router.get(
+    "/{device_id}/runtime-settings",
+    response_model=DeviceRuntimeSettingsResponse,
+)
+async def get_device_runtime_settings(
+    device_id: str,
+    current_user: User = Depends(security.get_current_user),
+) -> DeviceRuntimeSettingsResponse:
+    """Read the total task concurrency owned by one connected Runtime."""
+
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=current_user.id,
+            device_id=device_id,
+            method="runtime.capacity.get",
+            payload={},
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    return _runtime_settings_response(device_id, result)
+
+
+@router.put(
+    "/{device_id}/runtime-settings",
+    response_model=DeviceRuntimeSettingsResponse,
+)
+async def update_device_runtime_settings(
+    device_id: str,
+    request: DeviceRuntimeSettingsUpdate,
+    current_user: User = Depends(security.get_current_user),
+) -> DeviceRuntimeSettingsResponse:
+    """Persist and apply one connected Runtime's total task concurrency."""
+
+    try:
+        await runtime_rpc_service.call(
+            user_id=current_user.id,
+            device_id=device_id,
+            method="runtime.settings.update",
+            payload={"maxConcurrentTasks": request.max_concurrent_tasks},
+        )
+        result = await runtime_rpc_service.call(
+            user_id=current_user.id,
+            device_id=device_id,
+            method="runtime.capacity.get",
+            payload={},
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    return _runtime_settings_response(device_id, result)
+
+
 @router.post("/{device_id}/commands", response_model=DeviceCommandResponse)
 async def execute_device_command(
     device_id: str,
@@ -658,8 +749,6 @@ async def execute_device_command(
 
 # ==================== Device Session Endpoints ====================
 
-DEFAULT_DEVICE_SESSION_PATH = "/home/ubuntu/.wegent-executor/workspace"
-
 
 class DeviceSessionResponse(BaseModel):
     """Response model for device session creation."""
@@ -705,7 +794,7 @@ async def start_device_terminal(
     )
 
     requested_path = payload.path.strip() if payload and payload.path else ""
-    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
+    session_path = requested_path
     try:
         result = await local_device_session_service.start_session(
             db=db,
@@ -750,7 +839,7 @@ async def start_device_code_server(
     )
 
     requested_path = payload.path.strip() if payload and payload.path else ""
-    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
+    session_path = requested_path
     try:
         result = await local_device_session_service.start_session(
             db=db,

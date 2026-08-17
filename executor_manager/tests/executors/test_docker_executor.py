@@ -387,12 +387,12 @@ class TestDockerExecutor:
         mock_requests.post.return_value = MagicMock()
 
         with patch.object(executor, "_get_container_port", return_value=(10005, None)):
-            result = executor.cancel_task(6258)
+            result = executor.cancel_task(6258, 8664)
 
         assert result["status"] == "success"
         mock_requests.post.assert_called_once_with(
             f"http://{docker_executor_module.DEFAULT_DOCKER_HOST}:10005"
-            "/api/tasks/cancel?task_id=6258",
+            "/api/tasks/cancel?task_id=6258&subtask_id=8664",
             timeout=10,
         )
 

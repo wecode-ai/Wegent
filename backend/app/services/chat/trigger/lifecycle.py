@@ -206,6 +206,7 @@ def prepare_execution_session(
     video_config: Optional[Dict[str, Any]] = None,
     image_config: Optional[Dict[str, Any]] = None,
     prepared_task: Optional[TaskResource] = None,
+    commit: bool = True,
 ) -> ExecutionSessionSetup:
     """Create or reuse task/session state before building an execution request."""
     resolved_task_params = task_params
@@ -400,7 +401,10 @@ def prepare_execution_session(
             message_source=resolved_task_params.message_source,
         )
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(task)
     db.refresh(user_subtask)
     if assistant_subtask is not None:

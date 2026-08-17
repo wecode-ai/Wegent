@@ -16,11 +16,13 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRun,
     ProjectChatAgent,
+    loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.services.device.capacity import RuntimeCapacity
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
@@ -43,6 +45,18 @@ def _fake_run_event_wait(monkeypatch):
     monkeypatch.setattr(
         "app.services.chat.trigger.unified.build_wework_runtime_model_config",
         lambda *_args, **_kwargs: {"model_id": "test-model"},
+    )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.get_runtime_capacity",
+        AsyncMock(
+            return_value=RuntimeCapacity(
+                runtime_instance_id="runtime-1",
+                limit=1,
+                active=0,
+                active_task_ids=frozenset(),
+                queued=0,
+            )
+        ),
     )
 
 
@@ -151,23 +165,21 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
         agent_id=agent.id,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     execution = claimed
 
     emit_rpc = AsyncMock(return_value={"emitted": True})
-    online = AsyncMock(return_value=True)
-    with (
-        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
-        patch(
-            "app.tasks.robot_queue_tasks.device_service.get_device_online_info", online
-        ),
-    ):
+    with patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc):
         import asyncio
 
         asyncio.run(_dispatch_execution(test_db, execution))
 
-    assert online.await_count == 1
     emit_rpc.assert_awaited_once()
     kwargs = emit_rpc.await_args.kwargs
     assert kwargs["method"] == "runtime.tasks.create"
@@ -178,19 +190,25 @@ def test_dispatch_execution_uses_app_codex_channel_and_writes_back_ids(
     assert payload["executionRequest"]["subtask_id"] == (
         f"codex-queue-{execution.id}-assistant"
     )
-    assert payload["message"]
-    # The instruction stays separate from the current full task context.
-    assert "你是 Dispatch Bot，这个项目任务的 AI 执行者。" in payload["message"]
-    assert "Verify before reporting." in payload["message"]
+    assert payload["message"] == (
+        f"project_id: {project.id}\n"
+        f"task_id: {execution.loop_item_id}\n"
+        f"execution_id: {execution.id}\n\n"
+        f"看板任务数据位于 cloud://projects/{project.id}/todos/"
+        f"{execution.loop_item_id}，请通过看板工具自行查看。\n\n"
+        "Verify before reporting."
+    )
     assert "Build the landing page" not in payload["message"]
-    assert "get_board_item" not in payload["additionalContext"]["projectChat"]["value"]
-    assert "Build the landing page" in payload["additionalContext"]["task"]["value"]
+    assert "system_prompt" not in payload["executionRequest"]
+    assert "system_prompt" not in payload["executionRequest"]["bot"][0]
+    assert payload["additionalContext"] == {}
     assert payload["executionRequest"]["mcp_servers"] == []
 
     test_db.refresh(execution)
     assert execution.runtime_device_id == "local-device"
     assert execution.runtime_task_id == f"codex-queue-{execution.id}"
-    assert execution.status == "running"
+    assert execution.status == "claimed"
+    assert not loop_datetime_value_is_unset(execution.start_requested_at)
 
 
 def test_dispatch_first_terminal_event_does_not_reopen_completed_activity(
@@ -240,6 +258,11 @@ def test_dispatch_first_terminal_event_does_not_reopen_completed_activity(
         agent_id=agent.id,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
     monkeypatch.setattr(
@@ -254,7 +277,7 @@ def test_dispatch_first_terminal_event_does_not_reopen_completed_activity(
             device_id="local-device",
             runtime_task_id=runtime_task_id,
             event_name="response.completed",
-            payload={"data": {"value": "Finished immediately"}},
+            payload={"eventSeq": 1, "data": {"value": "Finished immediately"}},
         )
         assert completed is not None and completed.status == "completed"
         return {"emitted": True}
@@ -305,6 +328,11 @@ def test_dispatch_execution_fails_when_executor_never_starts_session(
         agent_id=agent.id,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
 
@@ -352,6 +380,11 @@ def test_dispatch_execution_rejects_explicit_foreign_routing_owner(
         agent_id=agent.id,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
     )
     assert claimed is not None
 
@@ -409,7 +442,10 @@ def test_consumer_claims_cloud_and_leaves_local_for_app_claim(
 
     assert handled == 1
     enqueue.assert_called_once_with(args=[cloud_execution.id])
-    assert lock_names == [f"robot_exec:{test_user.id}:cloud:local-device"]
+    assert lock_names == [
+        f"robot_exec_owner:{test_user.id}",
+        f"robot_exec:{test_user.id}:runtime:runtime-1",
+    ]
 
     test_db.refresh(local_execution)
     test_db.refresh(cloud_execution)
@@ -462,7 +498,8 @@ def test_periodic_scan_only_recovers_and_publishes_metrics(
     assert result == {
         "status": "ok",
         "requeued": 2,
-        "failed": 1,
+        "unknown": 1,
+        "reconciled": 0,
         "stalled": 0,
     }
     recovery.assert_called_once_with(test_db)
@@ -511,7 +548,6 @@ def test_two_owners_with_same_cloud_device_get_independent_capacity_and_routes(
             _acquired,
         ),
         patch("app.tasks.robot_queue_tasks.execute_robot_task.apply_async", enqueue),
-        patch("app.tasks.robot_queue_tasks.settings.ROBOT_CLOUD_DEVICE_SLOTS", 1),
     ):
         from app.tasks.robot_queue_tasks import _consumer_pass
 
@@ -527,8 +563,10 @@ def test_two_owners_with_same_cloud_device_get_independent_capacity_and_routes(
         (other.id, "local-device"),
     }
     assert set(lock_names) == {
-        f"robot_exec:{test_user.id}:cloud:local-device",
-        f"robot_exec:{other.id}:cloud:local-device",
+        f"robot_exec_owner:{test_user.id}",
+        f"robot_exec_owner:{other.id}",
+        f"robot_exec:{test_user.id}:runtime:runtime-1",
+        f"robot_exec:{other.id}:runtime:runtime-1",
     }
     test_db.refresh(first)
     test_db.refresh(second)
@@ -554,6 +592,10 @@ def test_execute_robot_task_advances_claimed_and_dispatches(
         test_db,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=1,
     )
     assert len(claimed) == 1
@@ -578,7 +620,8 @@ def test_execute_robot_task_advances_claimed_and_dispatches(
 
     assert result["status"] == "dispatched"
     test_db.refresh(execution)
-    assert execution.status == "running"
+    assert execution.status == "claimed"
+    assert not loop_datetime_value_is_unset(execution.start_requested_at)
     assert execution.runtime_task_id == f"codex-queue-{execution.id}"
     emit_rpc.assert_awaited_once()
 
@@ -601,6 +644,10 @@ def test_execute_robot_task_skips_reclaimed_execution(
         test_db,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=1,
     )
     assert len(claimed) == 1
@@ -637,6 +684,10 @@ def test_execute_robot_task_fails_and_requeues(
         test_db,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=1,
     )
     assert len(claimed) == 1
@@ -661,6 +712,102 @@ def test_execute_robot_task_fails_and_requeues(
     assert "Device did not accept the runtime RPC" in claimed[0].error_message
 
 
+def test_execute_robot_task_keeps_ambiguous_emit_outcome_unknown(
+    test_db: Session, test_user: User
+) -> None:
+    from contextlib import contextmanager
+
+    from app.tasks.robot_queue_tasks import execute_robot_task
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    project = _make_project(test_db, test_user)
+    agent = _make_agent(test_db, project, test_user)
+    _make_execution(test_db, project, agent, test_user)
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="local-device",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+        device_capacity=1,
+    )[0]
+    emit_rpc = AsyncMock(return_value={"emitted": False, "outcome_unknown": True})
+    with (
+        patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
+        patch(
+            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
+            AsyncMock(return_value=True),
+        ),
+        patch("app.db.session.get_db_session", _test_session),
+    ):
+        result = execute_robot_task(claimed.id)
+
+    assert result["status"] == "unknown"
+    test_db.refresh(claimed)
+    assert claimed.status == "claimed"
+    assert claimed.sync_state == "stale"
+    assert not loop_datetime_value_is_unset(claimed.start_requested_at)
+
+
+@pytest.mark.asyncio
+async def test_stale_reconciliation_uses_runtime_turn_status(test_db: Session) -> None:
+    from app.tasks.robot_queue_tasks import _reconcile_stale_executions
+
+    execution = MagicMock(
+        id=42,
+        executor_owner_user_id=7,
+        runtime_device_id="local-device",
+        runtime_task_id="codex-queue-42",
+    )
+    response = {
+        "accepted": True,
+        "response": {
+            "workspaces": [
+                {
+                    "tasks": [
+                        {
+                            "taskId": "codex-queue-42",
+                            "status": "active",
+                            "running": False,
+                            "turnStatus": "completed",
+                        }
+                    ]
+                }
+            ]
+        },
+    }
+    with (
+        patch.object(
+            loop_item_execution_service,
+            "stale_for_reconciliation",
+            return_value=[execution],
+        ),
+        patch(
+            "app.tasks.robot_queue_tasks._emit_runtime_rpc",
+            AsyncMock(return_value=response),
+        ),
+        patch.object(
+            loop_item_execution_service,
+            "reconcile_runtime_snapshot",
+        ) as reconcile,
+    ):
+        count = await _reconcile_stale_executions(test_db)
+
+    assert count == 1
+    reconcile.assert_called_once_with(
+        test_db,
+        execution_id=42,
+        runtime_status="active",
+        running=False,
+        turn_status="completed",
+    )
+
+
 def test_execute_robot_task_requeues_offline_without_consuming_retries(
     test_db: Session, test_user: User
 ) -> None:
@@ -682,17 +829,19 @@ def test_execute_robot_task_requeues_offline_without_consuming_retries(
         test_db,
         execution_device_id="local-device",
         environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        runtime_active=0,
+        runtime_active_task_ids=set(),
         device_capacity=1,
     )
     assert len(claimed) == 1
 
-    online = AsyncMock(return_value=False)
+    capacity = AsyncMock(return_value=None)
     emit_rpc = AsyncMock(return_value={"emitted": True})
     with (
         patch("app.tasks.robot_queue_tasks._emit_runtime_rpc", emit_rpc),
-        patch(
-            "app.tasks.robot_queue_tasks.device_service.get_device_online_info", online
-        ),
+        patch("app.tasks.robot_queue_tasks.get_runtime_capacity", capacity),
         patch("app.db.session.get_db_session", _test_session),
     ):
         result = execute_robot_task(claimed[0].id)
@@ -704,7 +853,7 @@ def test_execute_robot_task_requeues_offline_without_consuming_retries(
     assert claimed[0].status == "queued"
     assert claimed[0].retry_attempt == 0
     assert claimed[0].execution_note == "device_offline"
-    assert "went offline before dispatch" in claimed[0].error_message
+    assert "capacity observation expired before dispatch" in claimed[0].error_message
 
 
 def test_cloud_dispatch_never_uses_another_users_shared_device(

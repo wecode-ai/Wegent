@@ -86,6 +86,54 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(device_dockerfile.contains("ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}"));
     assert!(device_dockerfile.contains("cargo build --release --locked"));
     assert!(device_dockerfile.contains("target/release/wegent-executor"));
+    assert!(device_dockerfile.contains("ARG NODE_DIST_MIRROR=https://nodejs.org/dist"));
+    assert!(device_dockerfile.contains("ARG CODE_SERVER_VERSION=4.121.0"));
+    assert!(device_dockerfile.contains(
+        "ARG CODE_SERVER_REPOSITORY_RAW=https://raw.githubusercontent.com/coder/code-server"
+    ));
+    assert!(device_dockerfile.contains("ARG CODE_SERVER_HTTPS_PROXY="));
+    assert!(!device_dockerfile.contains("WECODE_CLI_CC"));
+    assert!(!device_dockerfile.contains("wecode-cli-cc"));
+    assert!(device_dockerfile.contains("export HTTPS_PROXY=\"$CODE_SERVER_HTTPS_PROXY\""));
+    assert!(device_dockerfile.contains("ARG CARGO_HTTPS_PROXY="));
+    assert!(device_dockerfile.contains("export HTTPS_PROXY=\"$CARGO_HTTPS_PROXY\""));
+    assert!(device_dockerfile.contains("/v${CODE_SERVER_VERSION}/install.sh"));
+    assert!(device_dockerfile.contains("--method=standalone"));
+    assert!(device_dockerfile.contains("--prefix=/usr/local"));
+    assert!(device_dockerfile.contains("--version=\"${CODE_SERVER_VERSION}\""));
+    assert!(device_dockerfile.contains(
+        "/usr/local/lib/code-server-${CODE_SERVER_VERSION}/lib/vscode/node_modules/vsda"
+    ));
+    assert!(device_dockerfile.contains("code-server --version | tail -n 1 | awk '{print $1}'"));
+    assert!(device_dockerfile
+        .contains("test \"$installed_code_server_version\" = \"$CODE_SERVER_VERSION\""));
+    assert!(device_dockerfile
+        .contains("install -m 0755 /app/executor \"$WEGENT_EXECUTOR_HOME/bin/wegent-executor\""));
+    assert!(device_dockerfile
+        .contains("ENV LOCAL_WORKSPACE_ROOT=/home/wegent/.wecode/wegent-executor/workspace"));
+    assert!(device_dockerfile.contains("ENV WEGENT_WORKSPACE_ROOTS=/home/wegent"));
+    assert!(device_dockerfile.contains(
+        "mkdir -p \"$WEGENT_EXECUTOR_HOME/bin\" \"$LOCAL_WORKSPACE_ROOT\" \"$DEVICE_LOG_DIR\""
+    ));
+    assert!(device_dockerfile.contains("auth: none"));
+    assert!(device_dockerfile.contains("--auth none"));
+    assert!(!device_dockerfile.contains("--auth password"));
+    assert!(!device_dockerfile.contains("--install-extension"));
+    assert!(device_dockerfile.contains("$WEGENT_EXECUTOR_HOME/logs"));
+    assert!(!device_dockerfile.contains("code-server@${CODE_SERVER_VERSION}"));
+    assert!(!device_dockerfile.contains("deb.nodesource.com"));
+    assert!(!device_dockerfile.contains(
+        "ARG CODE_SERVER_DIST_MIRROR=https://github.com/coder/code-server/releases/download"
+    ));
+
+    let github_pipeline = fs::read_to_string("../.github/workflows/publish-image.yml").unwrap();
+    assert_eq!(
+        github_pipeline
+            .matches("file: docker/device/Dockerfile")
+            .count(),
+        2
+    );
+    assert!(!github_pipeline.contains("file: wecode/docker/device/Dockerfile"));
 
     let e2e_workflow = fs::read_to_string("../.github/workflows/e2e-tests.yml").unwrap();
     assert!(!e2e_workflow.contains("python -m executor.main"));

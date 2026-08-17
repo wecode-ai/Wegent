@@ -6,11 +6,15 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import {
+  WEWORK_MIN_EXECUTOR_VERSION,
   canUseForProjectCreation,
   canUseForRemoteProjectCreation,
+  hasLocalRuntimeRoute,
   isCloudDevice,
   isClaudeCodeDevice,
   isRemoteDevice,
+  isUsableDevice,
+  isWeWorkExecutorVersionCompatible,
 } from '@/lib/device-capabilities'
 import type { DeviceInfo } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
@@ -57,13 +61,39 @@ function getRemoteDeviceLabel(device: DeviceInfo): string {
   return getRemoteDeviceNetworkLabel(device) ?? getStandaloneDeviceLabel(device)
 }
 
-function getUsableStandaloneDevices(
+function getRemoteDeviceOptionLabel(
+  device: DeviceInfo,
+  typeLabel: string,
+  unavailableLabel: string,
+  upgradeLabel: string
+): string {
+  const deviceLabel = getStandaloneDeviceLabel(device)
+  const networkLabel = getRemoteDeviceNetworkLabel(device)
+  const labels = [typeLabel, deviceLabel]
+  if (networkLabel && networkLabel !== deviceLabel) labels.push(networkLabel)
+  if (!isUsableDevice(device)) labels.push(unavailableLabel)
+  else if (!isWeWorkExecutorVersionCompatible(device.executor_version)) labels.push(upgradeLabel)
+  return labels.join(' · ')
+}
+
+function getStandaloneDeviceOptions(
   devices: DeviceInfo[],
   mode: StandaloneWorkspaceDialogMode
 ): DeviceInfo[] {
   const isTargetDevice = mode === 'remote' ? isRemoteProjectDevice : isLocalDevice
-  return devices
-    .filter(device => isClaudeCodeDevice(device) && isTargetDevice(device))
+  return devices.filter(
+    device =>
+      isClaudeCodeDevice(device) &&
+      isTargetDevice(device) &&
+      (mode !== 'remote' || !hasLocalRuntimeRoute(device))
+  )
+}
+
+function getUsableStandaloneDevices(
+  devices: DeviceInfo[],
+  mode: StandaloneWorkspaceDialogMode
+): DeviceInfo[] {
+  return getStandaloneDeviceOptions(devices, mode)
     .filter(device =>
       mode === 'remote' ? canUseForRemoteProjectCreation(device) : canUseForProjectCreation(device)
     )
@@ -319,6 +349,17 @@ export function StandaloneFolderProjectDialog({
     () => getUsableStandaloneDevices(devices, mode),
     [devices, mode]
   )
+  const remoteDeviceOptions = useMemo(
+    () =>
+      mode === 'remote'
+        ? getStandaloneDeviceOptions(devices, mode).sort((left, right) =>
+            getRemoteDeviceLabel(left).localeCompare(getRemoteDeviceLabel(right))
+          )
+        : [],
+    [devices, mode]
+  )
+  const cloudDeviceOptions = remoteDeviceOptions.filter(isCloudDevice)
+  const remoteDockerDeviceOptions = remoteDeviceOptions.filter(isRemoteDevice)
   const defaultDevice = useMemo(
     () => getPreferredStandaloneWorkspaceDevice(devices, preferredDeviceId, mode),
     [devices, mode, preferredDeviceId]
@@ -592,7 +633,7 @@ export function StandaloneFolderProjectDialog({
           </button>
         </div>
 
-        {usesRemoteFolderPicker && selectableDevices.length > 0 && !addingRemoteDevice && (
+        {usesRemoteFolderPicker && remoteDeviceOptions.length > 0 && !addingRemoteDevice && (
           <label className="mt-5 block">
             <span className="text-sm font-medium text-text-primary">
               {t('workbench.remote_host', '远程主机')}
@@ -605,13 +646,70 @@ export function StandaloneFolderProjectDialog({
                 onChange={event => setActiveDeviceId(event.target.value)}
                 className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none"
               >
-                {selectableDevices.map(device => (
-                  <option key={device.device_id} value={device.device_id}>
-                    {getRemoteDeviceLabel(device)}
+                {!activeDevice && (
+                  <option value="" disabled>
+                    {t('workbench.no_remote_project_device', '暂无可用远程或云设备')}
                   </option>
-                ))}
+                )}
+                {cloudDeviceOptions.length > 0 && (
+                  <optgroup label={t('workbench.remote_host_cloud_group', '云设备')}>
+                    {cloudDeviceOptions.map(device => (
+                      <option
+                        key={device.device_id}
+                        value={device.device_id}
+                        disabled={!canUseForRemoteProjectCreation(device)}
+                        data-testid={`standalone-remote-device-option-${device.device_id}`}
+                      >
+                        {getRemoteDeviceOptionLabel(
+                          device,
+                          t('workbench.remote_host_cloud_group', '云设备'),
+                          t('workbench.project_device_offline', '（离线）'),
+                          t(
+                            'workbench.remote_host_upgrade_required',
+                            `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+                            { version: WEWORK_MIN_EXECUTOR_VERSION }
+                          )
+                        )}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {remoteDockerDeviceOptions.length > 0 && (
+                  <optgroup label={t('workbench.remote_host_docker_group', '远程 Docker 设备')}>
+                    {remoteDockerDeviceOptions.map(device => (
+                      <option
+                        key={device.device_id}
+                        value={device.device_id}
+                        disabled={!canUseForRemoteProjectCreation(device)}
+                        data-testid={`standalone-remote-device-option-${device.device_id}`}
+                      >
+                        {getRemoteDeviceOptionLabel(
+                          device,
+                          t('workbench.remote_host_docker_group', '远程 Docker 设备'),
+                          t('workbench.project_device_offline', '（离线）'),
+                          t(
+                            'workbench.remote_host_upgrade_required',
+                            `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+                            { version: WEWORK_MIN_EXECUTOR_VERSION }
+                          )
+                        )}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </span>
+            {remoteDeviceOptions.some(device => !canUseForRemoteProjectCreation(device)) && (
+              <span
+                data-testid="standalone-remote-device-unavailable-hint"
+                className="mt-2 block text-xs leading-5 text-text-secondary"
+              >
+                {t(
+                  'workbench.remote_host_unavailable_hint',
+                  '离线或版本不匹配的远程设备会显示在列表中，但暂时不能选择。'
+                )}
+              </span>
+            )}
           </label>
         )}
 

@@ -145,6 +145,11 @@ the static CSS bundle:
 | Heading large  |       `24px` |              `29px` | `500`     | rare prominent heading                |
 | Display        |       `28px` |         `32px–34px` | `500`     | exceptional home/onboarding use only  |
 
+Document-style Markdown previews use the heading ramp for clear content
+hierarchy: H1 uses Heading large, H2 uses Heading medium, and H3 uses Heading
+small. Lower heading levels continue through the semantic UI sizes. Compact
+chat and process Markdown keep their denser heading scale.
+
 The default UI font size is `14px`; the default code font size is `12px`.
 Appearance settings may change UI size from `11px` through `16px` and code size
 from `8px` through `24px`, in whole-pixel steps. Changing UI size scales every

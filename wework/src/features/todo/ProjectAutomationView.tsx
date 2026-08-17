@@ -66,6 +66,7 @@ export function ProjectAutomationView({
           projectChatAgentApi={projectChatAgentApi}
           deviceApi={deviceApi}
           modelApi={modelApi}
+          teamApi={teamApi}
           localProjects={localProjects}
           runtimeWork={runtimeWork}
           canManage={canManageAgents}

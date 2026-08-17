@@ -33,8 +33,20 @@ import inspect
 import json
 import logging
 import re
+import types
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from pydantic import BaseModel
 
@@ -82,11 +94,11 @@ def _python_type_to_json_schema(py_type: Any) -> Dict[str, Any]:
         return type_map[py_type]
 
     # Handle typing module types
-    origin = getattr(py_type, "__origin__", None)
+    origin = get_origin(py_type)
 
     # Optional[X] = Union[X, None]
-    if origin is Union:
-        args = getattr(py_type, "__args__", ())
+    if origin in {Union, types.UnionType}:
+        args = get_args(py_type)
         # Filter out NoneType
         non_none_args = [a for a in args if a is not type(None)]
         if len(non_none_args) == 1:
@@ -98,7 +110,7 @@ def _python_type_to_json_schema(py_type: Any) -> Dict[str, Any]:
 
     # List[X]
     if origin is list:
-        args = getattr(py_type, "__args__", ())
+        args = get_args(py_type)
         if args:
             return {"type": "array", "items": _python_type_to_json_schema(args[0])}
         return {"type": "array"}
@@ -133,6 +145,7 @@ def _extract_parameters_from_signature(
         List of parameter definitions for MCP schema
     """
     sig = inspect.signature(func)
+    type_hints = get_type_hints(func)
     params = []
 
     for name, param in sig.parameters.items():
@@ -144,8 +157,9 @@ def _extract_parameters_from_signature(
         mcp_name = param_renames.get(name, name)
 
         # Determine type
-        if param.annotation != inspect.Parameter.empty:
-            schema = _python_type_to_json_schema(param.annotation)
+        annotation = type_hints.get(name, param.annotation)
+        if annotation != inspect.Parameter.empty:
+            schema = _python_type_to_json_schema(annotation)
         else:
             schema = {"type": "string"}
 

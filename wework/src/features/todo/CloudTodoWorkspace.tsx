@@ -26,6 +26,7 @@ import {
   LockKeyhole,
   Plus,
   Search,
+  Settings,
 } from 'lucide-react'
 import type {
   CloudLoopItem,
@@ -62,6 +63,7 @@ import type {
 } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
+import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
 import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
@@ -70,6 +72,7 @@ import {
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { waitForDwsAuthentication } from './dwsAuth'
 import { ProjectAutomationView } from './ProjectAutomationView'
+import { ProjectSpaceSettings } from './ProjectSpaceSettings'
 import {
   type LocatedProjectSpace,
   projectSpaceKey,
@@ -89,7 +92,7 @@ import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } 
 import { AiChatModal } from './AiChatModal'
 
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
-type RootView = 'projects' | 'my-work'
+type RootView = 'projects' | 'my-work' | 'settings'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
 type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
 
@@ -253,11 +256,14 @@ function boardStatusFromDropId(id: string | number | undefined): string | null {
 }
 
 function itemMatchesAssigneeGroup(item: CloudLoopItem, groupValue: string): boolean {
+  if (groupValue.startsWith('team:')) {
+    return item.assignee_team_id === Number(groupValue.slice('team:'.length))
+  }
   if (groupValue.startsWith('agent:')) {
     return item.assignee_agent_id === groupValue.slice('agent:'.length)
   }
   if (groupValue === '') {
-    return !item.assignee_user_id && !item.assignee_agent_id
+    return !item.assignee_user_id && !item.assignee_agent_id && !item.assignee_team_id
   }
   return String(item.assignee_user_id ?? '') === groupValue
 }
@@ -852,6 +858,12 @@ export function CloudTodoWorkspace({
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
   const boardSnapshotSignatureRef = useRef<string | null>(null)
+  const activeProjectRefKey =
+    activeProjectRef === undefined
+      ? undefined
+      : activeProjectRef === null
+        ? null
+        : projectSpaceKey(activeProjectRef)
 
   const resetProjectViewState = useCallback(() => {
     setProjectView('board')
@@ -864,13 +876,20 @@ export function CloudTodoWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeProjectRef === undefined) return
-    if (sameProjectSpace(locallyRequestedProjectRef.current, activeProjectRef)) {
+    if (activeProjectRefKey === undefined) return
+    const locallyRequestedRef = locallyRequestedProjectRef.current
+    const locallyRequestedKey =
+      locallyRequestedRef === undefined
+        ? undefined
+        : locallyRequestedRef === null
+          ? null
+          : projectSpaceKey(locallyRequestedRef)
+    if (locallyRequestedKey === activeProjectRefKey) {
       locallyRequestedProjectRef.current = undefined
       return
     }
     resetProjectViewState()
-  }, [activeProjectRef, resetProjectViewState])
+  }, [activeProjectRefKey, resetProjectViewState])
 
   useLayoutEffect(() => {
     const header = projectHeaderRef.current
@@ -1073,8 +1092,14 @@ export function CloudTodoWorkspace({
   // render, so unrelated workspace re-renders do not restart the queue load
   // (which flashed the loading state).
   const automationExecutionApi = useMemo(() => {
-    if (selectedProject?.location === 'local' && selectedProjectServices?.loopItemExecutionApi) {
-      return selectedProjectServices.loopItemExecutionApi
+    if (selectedProject?.location === 'local') {
+      const local = selectedProjectServices?.loopItemExecutionApi
+      if (!local) return undefined
+      return {
+        ...local,
+        stop: (_projectId: string, executionId: number) =>
+          stopLocalRobotQueueExecution(local, services.runtimeWorkApi, executionId),
+      }
     }
     if (!selectedProjectApi) return undefined
     return {
@@ -1085,7 +1110,12 @@ export function CloudTodoWorkspace({
       stop: (projectId: string, executionId: number) =>
         selectedProjectApi.stopExecution(projectId, executionId),
     }
-  }, [selectedProject?.location, selectedProjectApi, selectedProjectServices?.loopItemExecutionApi])
+  }, [
+    selectedProject?.location,
+    selectedProjectApi,
+    services.runtimeWorkApi,
+    selectedProjectServices?.loopItemExecutionApi,
+  ])
   const selectedProjectAgents = useMemo(
     () => (selectedProjectKey ? (projectAgents[selectedProjectKey] ?? []) : []),
     [projectAgents, selectedProjectKey]
@@ -1783,17 +1813,26 @@ export function CloudTodoWorkspace({
             return { ...candidate, priority: column.groupValue as CloudLoopItem['priority'] }
           }
           if (nativeGroupBy === 'assignee') {
-            return column.groupValue.startsWith('agent:')
+            return column.groupValue.startsWith('team:')
               ? {
                   ...candidate,
                   assignee_user_id: null,
-                  assignee_agent_id: column.groupValue.slice('agent:'.length),
-                }
-              : {
-                  ...candidate,
-                  assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
                   assignee_agent_id: null,
+                  assignee_team_id: Number(column.groupValue.slice('team:'.length)),
                 }
+              : column.groupValue.startsWith('agent:')
+                ? {
+                    ...candidate,
+                    assignee_user_id: null,
+                    assignee_agent_id: column.groupValue.slice('agent:'.length),
+                    assignee_team_id: null,
+                  }
+                : {
+                    ...candidate,
+                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                    assignee_agent_id: null,
+                    assignee_team_id: null,
+                  }
           }
           return { ...candidate, tags: column.groupValue ? [column.groupValue] : [] }
         })
@@ -1809,15 +1848,23 @@ export function CloudTodoWorkspace({
           : nativeGroupBy === 'priority'
             ? { priority: column.groupValue as CloudLoopItem['priority'] }
             : nativeGroupBy === 'assignee'
-              ? column.groupValue.startsWith('agent:')
+              ? column.groupValue.startsWith('team:')
                 ? {
                     assignee_user_id: null,
-                    assignee_agent_id: column.groupValue.slice('agent:'.length),
-                  }
-                : {
-                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
                     assignee_agent_id: null,
+                    assignee_team_id: Number(column.groupValue.slice('team:'.length)),
                   }
+                : column.groupValue.startsWith('agent:')
+                  ? {
+                      assignee_user_id: null,
+                      assignee_agent_id: column.groupValue.slice('agent:'.length),
+                      assignee_team_id: null,
+                    }
+                  : {
+                      assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                      assignee_agent_id: null,
+                      assignee_team_id: null,
+                    }
               : { tags: column.groupValue ? [column.groupValue] : [] }
       const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
       const locatedUpdated = { ...updated, project_store: item.project_store }
@@ -1965,6 +2012,17 @@ export function CloudTodoWorkspace({
                 testId="cloud-my-work"
                 selected={rootView === 'my-work'}
                 onClick={() => setRootView('my-work')}
+              />
+              <DesktopSidebarNavItem
+                icon={Settings}
+                label={t('workbench.project_settings_title')}
+                testId="cloud-project-settings"
+                selected={rootView === 'settings'}
+                onClick={() => {
+                  setRootView('settings')
+                  selectProject(null)
+                  setSelectedItem(null)
+                }}
               />
             </nav>
             <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
@@ -2147,7 +2205,13 @@ export function CloudTodoWorkspace({
               </button>
             </div>
           ) : null}
-          {rootView === 'my-work' ? (
+          {rootView === 'settings' ? (
+            <ProjectSpaceSettings
+              deviceApi={services.deviceApi}
+              projects={projects}
+              projectServices={services.projectSpaceDetailServices}
+            />
+          ) : rootView === 'my-work' ? (
             <CloudMyWorkView
               items={myWork}
               // Open the detail drawer in place instead of jumping to the board.
@@ -2864,6 +2928,7 @@ export function CloudTodoWorkspace({
           mode="edit"
           api={selectedItemApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          teamApi={services.teamApi}
           projectChatClient={selectedProjectChatClient}
           selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
@@ -2944,6 +3009,7 @@ export function CloudTodoWorkspace({
           mode="create"
           api={createTodoApi}
           projectChatAgentApi={selectedProjectAgentApi}
+          teamApi={services.teamApi}
           project={createTodoProject}
           initialParent={createTodoParent}
           initialStatus={createTodoStatus}
@@ -2972,7 +3038,7 @@ export function CloudTodoWorkspace({
             }))
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
-            if (item.assignee_agent_id) setSelectedItem(locatedItem)
+            if (item.assignee_agent_id || item.assignee_team_id) setSelectedItem(locatedItem)
             track('board_item_created', {
               has_parent: item.parent_id !== null,
               source: createTodoProject.location,

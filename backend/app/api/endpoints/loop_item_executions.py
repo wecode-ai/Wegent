@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.distributed_lock import distributed_lock
 from app.core.security import get_current_user
 from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
@@ -24,20 +25,23 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     LoopItemExecutionCancel,
     LoopItemExecutionClaim,
-    LoopItemExecutionComplete,
     LoopItemExecutionDeviceClaim,
-    LoopItemExecutionFail,
+    LoopItemExecutionDispatchFailed,
+    LoopItemExecutionDispatchIntent,
+    LoopItemExecutionDispatchUnknown,
     LoopItemExecutionHeartbeat,
     LoopItemExecutionListResponse,
     LoopItemExecutionRuntimeStart,
     LoopItemExecutionView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.device.capacity import get_runtime_capacity_sync
 from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     _optional_datetime,
     _optional_text,
     _optional_user_id,
+    execution_display_state,
     loop_item_execution_service,
 )
 
@@ -98,6 +102,13 @@ def _execution_view(
     db: Session, row: object, *, include_runtime_payload: bool = False
 ) -> LoopItemExecutionView:
     item = db.get(LoopItem, row.loop_item_id)
+    agent = db.get(ProjectChatAgent, row.agent_id) if row.agent_id else None
+    if agent is not None:
+        from app.services.project_chat.service import bot_max_concurrent_executions
+
+        agent_max_concurrent_executions = bot_max_concurrent_executions(agent)
+    else:
+        agent_max_concurrent_executions = 1
     return LoopItemExecutionView.model_validate(
         {
             "id": row.id,
@@ -108,16 +119,32 @@ def _execution_view(
             "task_priority": item.priority if item else None,
             "executor_type": row.executor_type,
             "agent_id": _optional_text(row.agent_id),
+            "team_id": row.team_id,
+            "backend_task_id": row.backend_task_id,
+            "automation_run_id": row.automation_run_id,
             "assigner_user_id": row.assigner_user_id,
             "execution_environment": row.execution_environment,
             "execution_device_id": _optional_text(row.execution_device_id),
+            "runtime_instance_id": _optional_text(row.runtime_instance_id),
             "status": row.status,
+            "display_state": execution_display_state(row),
+            "observed_state": row.observed_state,
+            "sync_state": row.sync_state,
             "priority_weight": row.priority_weight,
             "queued_at": _optional_datetime(row.queued_at),
             "started_at": _optional_datetime(row.started_at),
             "completed_at": _optional_datetime(row.completed_at),
             "lease_expires_at": _optional_datetime(row.lease_expires_at),
             "heartbeat_at": _optional_datetime(row.heartbeat_at),
+            "claimed_at": _optional_datetime(row.claimed_at),
+            "start_requested_at": _optional_datetime(row.start_requested_at),
+            "observed_at": _optional_datetime(row.observed_at),
+            "cancel_requested_at": _optional_datetime(row.cancel_requested_at),
+            "attempt_no": row.attempt_no,
+            "previous_execution_id": row.previous_execution_id or None,
+            "execution_scope": row.execution_scope,
+            "last_event_seq": row.last_event_seq,
+            "termination_reason": row.termination_reason,
             "retry_attempt": row.retry_attempt,
             "error_message": row.error_message,
             "execution_note": row.execution_note,
@@ -126,6 +153,7 @@ def _execution_view(
             "rejected_reason": _optional_text(row.rejected_reason),
             "runtime_device_id": _optional_text(row.runtime_device_id),
             "runtime_task_id": _optional_text(row.runtime_task_id),
+            "agent_max_concurrent_executions": agent_max_concurrent_executions,
             "runtime_payload": (
                 loop_item_execution_service.build_runtime_payload(
                     db,
@@ -207,9 +235,9 @@ def claim_execution(
     """Claim the next queued run for a robot on the caller's device.
 
     Local App pullers are the only API callers; the atomic CAS plus the
-    caller-supplied device capacity prevents two of the creator's computers
-    from claiming the same run. Cloud runs are claimed by the Celery worker
-    directly, never through this endpoint.
+    Runtime heartbeat capacity prevents two transport routes for the same
+    installation from over-claiming. Cloud runs are claimed by the Celery
+    worker directly, never through this endpoint.
     """
 
     if values.execution_environment != "local":
@@ -223,15 +251,37 @@ def claim_execution(
         agent_id=values.agent_id,
         user_id=current_user.id,
     )
-    row = loop_item_execution_service.claim(
+    capacity = get_runtime_capacity_sync(
         db,
-        agent_id=values.agent_id,
-        execution_device_id=values.execution_device_id,
-        environment=values.execution_environment,
-        lease_seconds=values.lease_seconds,
-        device_capacity=values.device_capacity,
-        assigner_filter=values.assigner_user_id,
+        owner_user_id=current_user.id,
+        device_id=values.execution_device_id,
     )
+    if capacity is None:
+        return None
+    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
+    with distributed_lock.acquire_context(
+        f"robot_exec_owner:{current_user.id}", expire_seconds=30
+    ) as owner_acquired:
+        if not owner_acquired:
+            return None
+        with distributed_lock.acquire_context(
+            lock_key, expire_seconds=30
+        ) as device_acquired:
+            if not device_acquired:
+                return None
+            row = loop_item_execution_service.claim(
+                db,
+                agent_id=values.agent_id,
+                execution_device_id=values.execution_device_id,
+                environment=values.execution_environment,
+                owner_user_id=current_user.id,
+                runtime_instance_id=capacity.runtime_instance_id,
+                device_capacity=capacity.limit,
+                runtime_active=capacity.active,
+                runtime_active_task_ids=capacity.active_task_ids,
+                lease_seconds=values.lease_seconds,
+                assigner_filter=values.assigner_user_id,
+            )
     return _claimed_execution_view(db, row) if row else None
 
 
@@ -247,27 +297,50 @@ def claim_my_next_execution(
     """Device-scoped claim used by the creator's local App puller.
 
     Finds the next queued local run for any robot bound to the caller's device
-    and returns it with a just-in-time runtime request. The atomic CAS plus the
-    caller-supplied device capacity keeps multiple computers from double-
-    claiming the same run.
+    and returns it with a just-in-time runtime request. Runtime heartbeat
+    capacity and the atomic CAS keep multiple routes from over-claiming.
     """
 
-    row = loop_item_execution_service.claim_next_for_device(
+    capacity = get_runtime_capacity_sync(
         db,
-        execution_device_id=values.execution_device_id,
-        environment="local",
-        lease_seconds=values.lease_seconds,
-        device_capacity=values.device_capacity,
         owner_user_id=current_user.id,
+        device_id=values.execution_device_id,
     )
-    if row is None:
-        row = loop_item_execution_service.claim_next_unbound_local(
-            db,
-            owner_user_id=current_user.id,
-            execution_device_id=values.execution_device_id,
-            lease_seconds=values.lease_seconds,
-            device_capacity=values.device_capacity,
-        )
+    if capacity is None:
+        return None
+    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
+    with distributed_lock.acquire_context(
+        f"robot_exec_owner:{current_user.id}", expire_seconds=30
+    ) as owner_acquired:
+        if not owner_acquired:
+            return None
+        with distributed_lock.acquire_context(
+            lock_key, expire_seconds=30
+        ) as device_acquired:
+            if not device_acquired:
+                return None
+            row = loop_item_execution_service.claim_next_for_device(
+                db,
+                execution_device_id=values.execution_device_id,
+                environment="local",
+                runtime_instance_id=capacity.runtime_instance_id,
+                device_capacity=capacity.limit,
+                runtime_active=capacity.active,
+                runtime_active_task_ids=capacity.active_task_ids,
+                lease_seconds=values.lease_seconds,
+                owner_user_id=current_user.id,
+            )
+            if row is None:
+                row = loop_item_execution_service.claim_next_unbound_local(
+                    db,
+                    owner_user_id=current_user.id,
+                    execution_device_id=values.execution_device_id,
+                    runtime_instance_id=capacity.runtime_instance_id,
+                    device_capacity=capacity.limit,
+                    runtime_active=capacity.active,
+                    runtime_active_task_ids=capacity.active_task_ids,
+                    lease_seconds=values.lease_seconds,
+                )
     if row is None:
         return None
     if row.executor_owner_user_id != current_user.id:
@@ -293,12 +366,11 @@ def _claimed_execution_view(
             row.id,
             str(exc),
         )
-        loop_item_execution_service.fail(
+        loop_item_execution_service.fail_runtime_preflight(
             db,
             execution_id=row.id,
             error=str(exc),
             note="runtime_configuration_unavailable",
-            requeue=False,
         )
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
@@ -331,6 +403,63 @@ def heartbeat_execution(
 
 
 @router.post(
+    "/{project_id}/executions/{execution_id}/start-requested",
+    response_model=Optional[LoopItemExecutionView],
+)
+def request_runtime_start(
+    project_id: int,
+    execution_id: int,
+    values: LoopItemExecutionDispatchIntent,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Optional[LoopItemExecutionView]:
+    """Persist delivery intent before the App sends Runtime create."""
+
+    _require_run_creator(
+        db,
+        project_id=project_id,
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+    row = loop_item_execution_service.request_runtime_start(
+        db,
+        execution_id=execution_id,
+        runtime_device_id=values.runtime_device_id,
+        runtime_task_id=values.runtime_task_id,
+    )
+    return _execution_view(db, row) if row else None
+
+
+@router.post(
+    "/{project_id}/executions/{execution_id}/dispatch-unknown",
+    response_model=Optional[LoopItemExecutionView],
+)
+def report_runtime_dispatch_unknown(
+    project_id: int,
+    execution_id: int,
+    values: LoopItemExecutionDispatchUnknown,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Optional[LoopItemExecutionView]:
+    """Record an ambiguous App-to-Runtime create outcome for reconciliation."""
+
+    _require_run_creator(
+        db,
+        project_id=project_id,
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+    row = loop_item_execution_service.report_runtime_dispatch_unknown(
+        db,
+        execution_id=execution_id,
+        runtime_device_id=values.runtime_device_id,
+        runtime_task_id=values.runtime_task_id,
+        error=values.error,
+    )
+    return _execution_view(db, row) if row else None
+
+
+@router.post(
     "/{project_id}/executions/{execution_id}/runtime-start",
     response_model=Optional[LoopItemExecutionView],
 )
@@ -341,44 +470,32 @@ def runtime_start_execution(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Optional[LoopItemExecutionView]:
-    """Record the created runtime task and open the task-detail AI message."""
+    """Record Runtime acceptance without claiming that execution has started."""
 
-    row = _require_run_creator(
+    _require_run_creator(
         db,
         project_id=project_id,
         execution_id=execution_id,
         user_id=current_user.id,
     )
-    heartbeat_view = loop_item_execution_service.heartbeat(
+    accepted = loop_item_execution_service.accept_runtime_and_open_activity(
         db,
         execution_id=execution_id,
         runtime_device_id=values.runtime_device_id,
         runtime_task_id=values.runtime_task_id,
+        prompt=values.prompt,
     )
-    if heartbeat_view is not None:
-        try:
-            loop_item_execution_service.open_execution_activity(
-                db,
-                execution=row,
-                prompt=values.prompt,
-            )
-        except Exception:
-            # The run itself is healthy; the activity message is best-effort.
-            logger.exception(
-                "[LoopItemExecution] Runtime start activity open failed execution=%s",
-                execution_id,
-            )
-    return _execution_view(db, row) if heartbeat_view is not None else None
+    return _execution_view(db, accepted) if accepted is not None else None
 
 
 @router.post(
-    "/{project_id}/executions/{execution_id}/complete",
+    "/{project_id}/executions/{execution_id}/dispatch-failed",
     response_model=Optional[LoopItemExecutionView],
 )
-def complete_execution(
+def fail_runtime_preflight(
     project_id: int,
     execution_id: int,
-    values: LoopItemExecutionComplete,
+    values: LoopItemExecutionDispatchFailed,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Optional[LoopItemExecutionView]:
@@ -388,35 +505,11 @@ def complete_execution(
         execution_id=execution_id,
         user_id=current_user.id,
     )
-    row = loop_item_execution_service.complete(
-        db, execution_id=execution_id, note=values.note
-    )
-    return _execution_view(db, row) if row else None
-
-
-@router.post(
-    "/{project_id}/executions/{execution_id}/fail",
-    response_model=Optional[LoopItemExecutionView],
-)
-def fail_execution(
-    project_id: int,
-    execution_id: int,
-    values: LoopItemExecutionFail,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Optional[LoopItemExecutionView]:
-    _require_run_creator(
-        db,
-        project_id=project_id,
-        execution_id=execution_id,
-        user_id=current_user.id,
-    )
-    row = loop_item_execution_service.fail(
+    row = loop_item_execution_service.fail_runtime_preflight(
         db,
         execution_id=execution_id,
         error=values.error,
         note=values.note,
-        requeue=values.requeue,
     )
     return _execution_view(db, row) if row else None
 
@@ -442,7 +535,23 @@ def cancel_execution(
     row = loop_item_execution_service.cancel(
         db, execution_id=execution_id, note=values.note
     )
-    if row is not None and row.runtime_device_id and row.runtime_task_id:
+    if row.team_id is not None and row.backend_task_id:
+        from app.services.project_automation_managed_execution import (
+            project_automation_managed_execution_service,
+        )
+
+        background_tasks.add_task(
+            project_automation_managed_execution_service.cancel,
+            task_id=row.backend_task_id,
+            user_id=row.executor_owner_user_id,
+            source="board_team_assignment",
+        )
+    if (
+        row is not None
+        and row.status == "cancel_requested"
+        and row.runtime_device_id
+        and row.runtime_task_id
+    ):
         from app.tasks.robot_queue_tasks import emit_runtime_cancels
 
         background_tasks.add_task(emit_runtime_cancels, [row])
@@ -473,7 +582,23 @@ def stop_execution(
         execution_id=execution_id,
         note="Stopped from the automation queue",
     )
-    if row is not None and row.runtime_device_id and row.runtime_task_id:
+    if row.team_id is not None and row.backend_task_id:
+        from app.services.project_automation_managed_execution import (
+            project_automation_managed_execution_service,
+        )
+
+        background_tasks.add_task(
+            project_automation_managed_execution_service.cancel,
+            task_id=row.backend_task_id,
+            user_id=row.executor_owner_user_id,
+            source="board_team_assignment",
+        )
+    if (
+        row is not None
+        and row.status == "cancel_requested"
+        and row.runtime_device_id
+        and row.runtime_task_id
+    ):
         from app.tasks.robot_queue_tasks import emit_runtime_cancels
 
         background_tasks.add_task(emit_runtime_cancels, [row])

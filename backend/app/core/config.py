@@ -429,8 +429,6 @@ class Settings(BaseSettings):
     # Project robot queue scheduler
     ROBOT_QUEUE_SCHEDULER_ENABLED: bool = True
     ROBOT_QUEUE_SCAN_INTERVAL_SECONDS: int = 5
-    ROBOT_CLOUD_DEVICE_SLOTS: int = 2
-    ROBOT_LOCAL_DEVICE_SLOTS: int = 2
 
     # GitLab MR integration reconcile sweep
     GITLAB_MR_RECONCILE_INTERVAL_SECONDS: int = 300

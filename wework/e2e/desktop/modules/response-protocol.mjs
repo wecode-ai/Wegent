@@ -57,7 +57,7 @@ function responseCompleted(id, output) {
       id,
       object: 'response',
       status: 'completed',
-      ...(output ? { output } : {}),
+      output: output ?? [],
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -80,23 +80,43 @@ function responseFailed(id, message) {
   }
 }
 
-function functionCall(callId, name, argumentsValue) {
+function functionCall(callId, name, argumentsValue, outputIndex = 0) {
+  const argumentsText = JSON.stringify(argumentsValue)
   return [
     {
       type: 'response.output_item.added',
+      output_index: outputIndex,
       item: {
+        id: callId,
         type: 'function_call',
         call_id: callId,
         name,
+        arguments: '',
       },
     },
     {
+      type: 'response.function_call_arguments.delta',
+      output_index: outputIndex,
+      item_id: callId,
+      call_id: callId,
+      delta: argumentsText,
+    },
+    {
+      type: 'response.function_call_arguments.done',
+      output_index: outputIndex,
+      item_id: callId,
+      call_id: callId,
+      arguments: argumentsText,
+    },
+    {
       type: 'response.output_item.done',
+      output_index: outputIndex,
       item: {
+        id: callId,
         type: 'function_call',
         call_id: callId,
         name,
-        arguments: JSON.stringify(argumentsValue),
+        arguments: argumentsText,
       },
     },
   ]

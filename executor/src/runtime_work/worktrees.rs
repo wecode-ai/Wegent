@@ -1448,6 +1448,7 @@ mod tests {
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,

@@ -198,7 +198,8 @@ impl RuntimeWorkRpcHandler {
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
         let handler = self.clone();
         tokio::spawn(async move {
-            let _scheduled_turn_guard = ScheduledTurnGuard::new(handler.clone());
+            let _scheduled_turn_guard =
+                ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
             let (request, model_proxy_token) = prepare_claude_model_proxy(request);
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);

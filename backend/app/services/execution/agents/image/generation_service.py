@@ -22,6 +22,10 @@ from app.services.execution.agents.video.materials import (
 )
 
 from .attachment_uploader import upload_image_attachment
+from .download_url import (
+    IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS,
+    build_image_download_url,
+)
 from .providers import get_image_provider
 
 
@@ -94,13 +98,16 @@ class ImageGenerationService:
                 index=index,
             )
             persisted_url = context_service.build_attachment_url(attachment_id)
+            download_url = build_image_download_url(attachment_id)
             image_urls.append(persisted_url)
             attachment_ids.append(attachment_id)
             images.append(
                 {
-                    "url": persisted_url,
+                    "url": download_url,
+                    "attachment_url": persisted_url,
                     "size": image.size,
                     "attachment_id": attachment_id,
+                    "expires_in_seconds": IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS,
                 }
             )
 
@@ -116,6 +123,10 @@ class ImageGenerationService:
                     "status": "done",
                     "is_placeholder": False,
                     "image_urls": image_urls,
+                    "image_download_urls": [image["url"] for image in images],
+                    "image_download_url_expires_in_seconds": (
+                        IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS
+                    ),
                     "image_attachment_ids": attachment_ids,
                     "image_count": len(image_urls),
                     "timestamp": int(time.time() * 1000),

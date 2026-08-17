@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class DeviceStatusEnum(str, Enum):
@@ -54,12 +54,6 @@ class DeviceConnectionMode(str, Enum):
     # API = "api"  # For cloud provider API-based connections
 
 
-# Maximum concurrent tasks per device (0 = unlimited)
-# With ephemeral CC sessions (auto-close after each message),
-# slot limits are no longer needed for local devices.
-MAX_DEVICE_SLOTS = 0
-
-
 class DeviceRunningTask(BaseModel):
     """Information about a task running on a device."""
 
@@ -92,7 +86,7 @@ class DeviceInfo(BaseModel):
         None, description="Device capabilities/tags (e.g., 'gpu', 'high-memory')"
     )
     slot_used: int = Field(0, description="Number of slots currently in use")
-    slot_max: int = Field(MAX_DEVICE_SLOTS, description="Maximum concurrent task slots")
+    slot_max: int = Field(0, description="Latest observed Runtime task limit")
     running_tasks: List[DeviceRunningTask] = Field(
         default_factory=list, description="List of tasks running on this device"
     )
@@ -313,6 +307,27 @@ class DeviceRegisterPayload(BaseModel):
     )
 
 
+class RuntimeCapacityObservation(BaseModel):
+    """Authoritative live capacity reported by the local Runtime scheduler."""
+
+    limit: int = Field(..., ge=1, le=20)
+    active: int = Field(..., ge=0)
+    active_task_ids: List[str] = Field(default_factory=list, max_length=20)
+    queued: int = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def validate_active_task_identity(self) -> "RuntimeCapacityObservation":
+        normalized = [task_id.strip() for task_id in self.active_task_ids]
+        if (
+            any(not task_id for task_id in normalized)
+            or len(set(normalized)) != len(normalized)
+            or len(normalized) != self.active
+        ):
+            raise ValueError("active_task_ids must identify every active Runtime task")
+        self.active_task_ids = normalized
+        return self
+
+
 class DeviceHeartbeatPayload(BaseModel):
     """Payload for device heartbeat via WebSocket."""
 
@@ -337,6 +352,16 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    runtime_instance_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=100,
+        description="Stable runtime installation ID for the capacity domain",
+    )
+    runtime_capacity: Optional[RuntimeCapacityObservation] = Field(
+        None,
+        description="Live scheduler capacity; missing observations cannot claim work",
     )
 
 
