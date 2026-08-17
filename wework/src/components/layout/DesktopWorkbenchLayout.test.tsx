@@ -5536,6 +5536,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
   })
 
+  test('uses separate browser shortcuts for the closed and open right panel', async () => {
+    renderWorkspacePanelLayout()
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute('aria-hidden', 'true')
+
+    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+
+    expect(await screen.findByTestId('right-workspace-browser-tab-1')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('workspace-browser-url-input')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 't', metaKey: true })
+
+    expect(await screen.findByTestId('right-workspace-browser-tab-2')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+
+    fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
+
+    expect(screen.queryByTestId('right-workspace-browser-tab-3')).not.toBeInTheDocument()
+  })
+
   test('deactivates the right workspace browser while settings are open', async () => {
     renderWorkspacePanelLayout()
 
