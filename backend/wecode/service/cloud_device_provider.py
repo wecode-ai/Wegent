@@ -29,11 +29,7 @@ import app.stores.tasks as task_stores
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
-from app.schemas.device import (
-    MAX_DEVICE_SLOTS,
-    DeviceConnectionMode,
-    DeviceType,
-)
+from app.schemas.device import DeviceConnectionMode, DeviceType
 from app.services.device.base_provider import BaseDeviceProvider
 from app.services.device.version_service import executor_version_service
 from wecode.config.nevis_config import nevis_settings
@@ -48,6 +44,8 @@ logger = logging.getLogger(__name__)
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 DEVICE_ONLINE_TTL = 90  # seconds
 UBUNTU_PASSWORD_TOKEN_BYTES = 24
+# The wecode cloud-device UI has always treated zero as unbounded capacity.
+WECODE_CLOUD_DEVICE_SLOT_MAX = 0
 
 
 class CloudDeviceProvider(BaseDeviceProvider):
@@ -884,7 +882,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         return {
             "used": len(running_task_ids),
-            "max": MAX_DEVICE_SLOTS,
+            "max": WECODE_CLOUD_DEVICE_SLOT_MAX,
             "running_tasks": running_tasks,
         }
 

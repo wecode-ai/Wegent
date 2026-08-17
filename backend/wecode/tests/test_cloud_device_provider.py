@@ -5,6 +5,7 @@
 """Tests for wecode cloud device provider creation behavior."""
 
 import base64
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,6 +24,36 @@ class _FakeNevisClient:
     async def create_sandbox(self, **kwargs):
         self.create_sandbox_kwargs = kwargs
         return {"id": "sandbox-1"}
+
+
+@pytest.mark.asyncio
+async def test_slot_usage_preserves_unbounded_cloud_device_semantics(
+    test_db, monkeypatch
+):
+    """Cloud devices should keep reporting running tasks with max=0."""
+    provider = CloudDeviceProvider(client=_FakeNevisClient())
+    monkeypatch.setattr(
+        provider,
+        "_get_online_info",
+        AsyncMock(return_value={"running_task_ids": [101, 202]}),
+    )
+    monkeypatch.setattr(
+        provider_module.task_stores.task_store,
+        "list_by_ids",
+        lambda db, task_ids: [],
+    )
+
+    result = await provider.get_slot_usage(
+        db=test_db,
+        user_id=7,
+        device_id="cloud-device-1",
+    )
+
+    assert result == {
+        "used": 2,
+        "max": 0,
+        "running_tasks": [],
+    }
 
 
 @pytest.mark.asyncio
