@@ -2410,11 +2410,11 @@ async def test_execute_configured_device_command_allows_remote_directory_creatio
     ],
 )
 async def test_execute_configured_device_command_allows_cloud_runtime_auth_commands(
-    monkeypatch,
-    command_key,
-    stdout,
-    env,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    command_key: str,
+    stdout: str,
+    env: dict[str, str],
+) -> None:
     """Cloud devices should support the constrained runtime auth commands."""
     from app.schemas.device import DeviceType
     from app.services.device import command_service
@@ -2482,8 +2482,8 @@ async def test_execute_configured_device_command_allows_cloud_runtime_auth_comma
 
 @pytest.mark.asyncio
 async def test_execute_configured_device_command_rejects_remote_runtime_auth_command(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Remote devices should not gain access to runtime auth commands."""
     from app.services.device import command_service
 
