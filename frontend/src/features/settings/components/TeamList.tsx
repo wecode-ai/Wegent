@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 import '@/features/common/scrollbar.css'
 import LoadingState from '@/features/common/LoadingState'
@@ -20,20 +20,14 @@ import {
   UserGroupIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
-import {
-  fetchTeamsList,
-  deleteTeam,
-  shareTeam,
-  checkTeamRunningTasks,
-  copyTeam,
-} from '../services/teams'
+import { fetchTeamsList, deleteTeam, shareTeam, copyTeam } from '../services/teams'
 import { teamApis } from '@/apis/team'
-import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
-import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
+import { TeamIdentityConfirmDialog } from './TeamIdentityConfirmDialog'
 import TeamShareModal from './TeamShareModal'
 import { TeamChildNamespaceAuthorizationDialog } from './TeamChildNamespaceAuthorizationDialog'
+import { TeamCardActionsMenu } from './TeamCardActionsMenu'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -53,6 +47,13 @@ import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -61,6 +62,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
+import {
+  ResourceCardIcon,
+  getResourceCardActionsClassName,
+  getResourceCardBodyClassName,
+  getResourceCardClassName,
+  getResourceGridClassName,
+} from '@/components/common/resourceCardLayout'
 import { TeamIconDisplay } from './teams/TeamIconDisplay'
 import {
   DropdownMenu,
@@ -74,6 +82,7 @@ import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
+  type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
 import {
   buildTeamTargetHref,
@@ -85,11 +94,19 @@ import {
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import {
   buildGroupDisplayNameMap,
+  filterResourceLibraryItemsByGroups,
   sortResourceLibraryItems,
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
+import { cn } from '@/lib/utils'
+import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
+import { ResourceIcon } from '@/features/resource-library/components/ResourceIcon'
+import { paths } from '@/config/paths'
+import { useUser } from '@/features/common/UserContext'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -100,7 +117,22 @@ interface TeamListProps {
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  groupFilter?: string[]
   sortMode?: ResourceLibrarySortMode
+  modeFilter?: TeamModeFilter
+  onModeFilterChange?: (mode: TeamModeFilter) => void
+  hideModeFilter?: boolean
+  createRequest?: ResourceCreateRequest
+  onCreated?: (team: Team) => void
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  compact?: boolean
+  hideCreateActions?: boolean
+  searchQuery?: string
+}
+
+function deduplicateResourcesById<T extends { id: number }>(items: T[]): T[] {
+  return Array.from(new Map(items.map(item => [item.id, item])).values())
 }
 
 /**
@@ -120,31 +152,48 @@ export default function TeamList({
   sortControls,
   sourceFilter = 'all',
   groups = [],
+  groupFilter,
   sortMode = 'default',
+  modeFilter: controlledModeFilter,
+  onModeFilterChange,
+  hideModeFilter = false,
+  createRequest,
+  onCreated,
+  onCreateRequestClose,
+  creationOnly = false,
+  compact = false,
+  hideCreateActions = false,
+  searchQuery = '',
 }: TeamListProps) {
   const { t } = useTranslation(['common', 'wizard'])
+  const { user } = useUser()
   const { toast } = useToast()
   const [teams, setTeams] = useState<Team[]>([])
+  const [publishedTeamIds, setPublishedTeamIds] = useState<Set<number>>(new Set())
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
-  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
   const [isUnbindingSharedTeam, setIsUnbindingSharedTeam] = useState(false)
-  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null)
-  const [isCheckingTasks, setIsCheckingTasks] = useState(false)
+  const [pendingMarketUnbind, setPendingMarketUnbind] = useState<{
+    team: Team
+    targetNamespace: string
+  } | null>(null)
+  const [isUnbindingMarketTeam, setIsUnbindingMarketTeam] = useState(false)
   const [shareModalVisible, setShareModalVisible] = useState(false)
   const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null)
   const [sharingId, setSharingId] = useState<number | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
-  const [modeFilter, setModeFilter] = useState<TeamModeFilter>('all')
+  const [internalModeFilter, setInternalModeFilter] = useState<TeamModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [wizardTarget, setWizardTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [copyingTeamId, setCopyingTeamId] = useState<number | null>(null)
+  const [apiCallTeam, setApiCallTeam] = useState<Team | null>(null)
   const [childAuthorizationTeam, setChildAuthorizationTeam] = useState<Team | null>(null)
   const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
   const [pendingCopy, setPendingCopy] = useState<{
@@ -152,6 +201,9 @@ export default function TeamList({
     targetNamespace: string
     personalSkills: Array<{ id: number; name: string; description: string }>
   } | null>(null)
+  const modeFilter = controlledModeFilter ?? internalModeFilter
+  const handledCreateRequestId = useRef<number | null>(null)
+  const pendingCreateRequestRef = useRef<ResourceCreateRequest | null>(null)
   // Groups where user has at least Developer role (for copy target selection)
   const [writableGroups, setWritableGroups] = useState<Group[]>([])
   const router = useRouter()
@@ -173,10 +225,22 @@ export default function TeamList({
         setIsLoading(true)
       }
       try {
-        const [teamsData, botsData] = await Promise.all([
-          fetchTeamsList(scope, groupName),
-          fetchBotsList(scope, groupName),
-        ])
+        const selectedGroupNames =
+          scope === 'group' && !groupName && groupFilter !== undefined ? groupFilter : null
+        const [teamsData, botsData] = selectedGroupNames
+          ? await Promise.all([
+              Promise.all(
+                selectedGroupNames.map(selectedGroupName =>
+                  fetchTeamsList('group', selectedGroupName)
+                )
+              ).then(groupTeams => deduplicateResourcesById(groupTeams.flat())),
+              Promise.all(
+                selectedGroupNames.map(selectedGroupName =>
+                  fetchBotsList('group', selectedGroupName)
+                )
+              ).then(groupBots => deduplicateResourcesById(groupBots.flat())),
+            ])
+          : await Promise.all([fetchTeamsList(scope, groupName), fetchBotsList(scope, groupName)])
         setTeams(teamsData)
         setBotsSorted(botsData)
       } catch {
@@ -190,16 +254,58 @@ export default function TeamList({
         }
       }
     },
-    [groupName, scope, setBotsSorted, t, toast]
+    [groupFilter, groupName, scope, setBotsSorted, t, toast]
   )
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  const handleTeamSaved = useCallback(async () => {
-    await loadData(false)
-  }, [loadData])
+  useEffect(() => {
+    if (!compact) return
+
+    let isMounted = true
+    resourceLibraryApi
+      .listMyPublished({ resourceType: 'agent', page: 1, limit: 100 })
+      .then(response => {
+        if (isMounted) {
+          setPublishedTeamIds(
+            new Set(response.items.filter(item => item.status === 'published').map(item => item.id))
+          )
+        }
+      })
+      .catch(() => {
+        if (isMounted) setPublishedTeamIds(new Set())
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [compact])
+
+  const handleTeamSaved = useCallback(
+    async (team: Team) => {
+      await loadData(false)
+      if (pendingCreateRequestRef.current) onCreated?.(team)
+      pendingCreateRequestRef.current = null
+    },
+    [loadData, onCreated]
+  )
+
+  const handleCreateOptionsChange = useCallback(
+    (target: ResourceCreateTarget, publishAfterCreate: boolean, marketplaceTags: string[]) => {
+      setCreateTarget(target)
+      if (pendingCreateRequestRef.current) {
+        pendingCreateRequestRef.current = {
+          ...pendingCreateRequestRef.current,
+          target,
+          publishAfterCreate,
+          marketplaceTags,
+        }
+      }
+    },
+    []
+  )
 
   // Load groups where user has at least Developer role (for copy target selection)
   useEffect(() => {
@@ -219,21 +325,31 @@ export default function TeamList({
     }
   }, [editingTeamId])
 
-  const handleCreateTeam = (target: ResourceCreateTarget) => {
-    if (target.scope === 'group' && !target.groupName) {
-      toast({
-        variant: 'destructive',
-        title: t('teams.group_required_title'),
-        description: t('teams.group_required_message'),
-      })
-      return
-    }
+  const handleCreateTeam = useCallback(
+    (target: ResourceCreateTarget) => {
+      if (target.scope === 'group' && !target.groupName) {
+        toast({
+          variant: 'destructive',
+          title: t('teams.group_required_title'),
+          description: t('teams.group_required_message'),
+        })
+        return
+      }
 
-    setCreateTarget(target)
-    setPrefillTeam(null)
-    setEditingTeamId(0) // Use 0 to mark new creation
-    setEditDialogOpen(true)
-  }
+      setCreateTarget(target)
+      setPrefillTeam(null)
+      setEditingTeamId(0) // Use 0 to mark new creation
+      setEditDialogOpen(true)
+    },
+    [t, toast]
+  )
+
+  useEffect(() => {
+    if (!createRequest || handledCreateRequestId.current === createRequest.id) return
+    handledCreateRequestId.current = createRequest.id
+    pendingCreateRequestRef.current = createRequest
+    handleCreateTeam(createRequest.target)
+  }, [createRequest, handleCreateTeam])
 
   const handleEditTeam = (team: Team) => {
     // Notify parent to update group selector if editing a group resource
@@ -305,10 +421,13 @@ export default function TeamList({
   }
 
   const handleCloseEditDialog = () => {
+    const hadPendingCreateRequest = pendingCreateRequestRef.current !== null
+    pendingCreateRequestRef.current = null
     setEditDialogOpen(false)
     setEditingTeamId(null)
     setPrefillTeam(null)
     setCreateTarget({ scope: 'personal' })
+    if (hadPendingCreateRequest) onCreateRequestClose?.()
   }
 
   const handleWizardSuccess = async (_teamId: number, teamName: string) => {
@@ -341,7 +460,7 @@ export default function TeamList({
     }
 
     if (targetPage === 'devices/chat') {
-      return t('settings:team.list.goToDevice')
+      return t('settings:team.list.runOnDevice')
     }
 
     return t('teams.go_to_chat')
@@ -356,27 +475,48 @@ export default function TeamList({
 
   // Filter teams based on mode filter
   const sourceFilteredTeams = useMemo(() => {
+    let filteredTeams = teams
     if (sourceFilter === 'personal') {
-      return teams.filter(team => !isPublicTeam(team) && !isGroupTeam(team) && !isSharedTeam(team))
+      filteredTeams = teams.filter(
+        team => !isPublicTeam(team) && !isGroupTeam(team) && !isSharedTeam(team)
+      )
+    } else if (sourceFilter === 'group') {
+      filteredTeams = teams.filter(
+        team => isGroupTeam(team) || isSharedTeam(team) || isNamespaceAuthorizedTeam(team)
+      )
+    } else if (sourceFilter === 'system') {
+      filteredTeams = teams.filter(isPublicTeam)
+    } else if (sourceFilter === 'mine') {
+      filteredTeams = teams.filter(team => user !== null && team.user_id === user.id)
     }
-    if (sourceFilter === 'group') {
-      return teams.filter(isGroupTeam)
-    }
-    if (sourceFilter === 'system') {
-      return teams.filter(isPublicTeam)
-    }
-    return teams
-  }, [teams, sourceFilter])
+
+    return filteredTeams.filter(team =>
+      matchesResourceSearch(
+        searchQuery,
+        team.name,
+        getTeamDisplayName(team),
+        team.description,
+        team.user?.user_name
+      )
+    )
+  }, [teams, sourceFilter, searchQuery, user])
+
+  const groupFilteredTeams = useMemo(() => {
+    const isFilteredByGroupApi = scope === 'group' && !groupName && groupFilter !== undefined
+    return isFilteredByGroupApi
+      ? sourceFilteredTeams
+      : filterResourceLibraryItemsByGroups(sourceFilteredTeams, groupFilter, team => team.namespace)
+  }, [sourceFilteredTeams, groupFilter, groupName, scope])
 
   const filteredTeams = useMemo(() => {
-    return filterTeamsByMode(sourceFilteredTeams, modeFilter)
-  }, [sourceFilteredTeams, modeFilter])
+    return filterTeamsByMode(groupFilteredTeams, modeFilter)
+  }, [groupFilteredTeams, modeFilter])
 
   const groupDisplayNames = useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
   const getTeamSource = useCallback((team: Team): ResourceLibrarySortSource => {
     if (isPublicTeam(team)) return 'system'
-    if (isGroupTeam(team) || isSharedTeam(team)) return 'group'
+    if (isGroupTeam(team) || isSharedTeam(team) || isNamespaceAuthorizedTeam(team)) return 'group'
     return 'personal'
   }, [])
 
@@ -395,6 +535,12 @@ export default function TeamList({
       }),
     [filteredTeams, sortMode, groupDisplayNames, getTeamSource]
   )
+  const showAgentMarketEmptyAction =
+    compact &&
+    sourceFilter === 'all' &&
+    teams.length === 0 &&
+    searchQuery.trim().length === 0 &&
+    modeFilter === 'all'
 
   const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
     scope,
@@ -404,39 +550,14 @@ export default function TeamList({
 
   const handleDelete = async (teamId: number) => {
     setTeamToDelete(teamId)
-    setIsCheckingTasks(true)
+    setDeleteConfirmation('')
 
     // Check if this is a shared team
     const team = teams.find(t => t.id === teamId)
     const isShared = team?.share_status === 2
     setIsUnbindingSharedTeam(isShared)
 
-    // For shared teams, skip running tasks check and show unbind confirmation directly
-    if (isShared) {
-      setIsCheckingTasks(false)
-      setDeleteConfirmVisible(true)
-      return
-    }
-
-    try {
-      // Check if team has running tasks
-      const result = await checkTeamRunningTasks(teamId)
-      setRunningTasksInfo(result)
-
-      if (result.has_running_tasks) {
-        // Show force delete confirmation dialog
-        setForceDeleteConfirmVisible(true)
-      } else {
-        // Show normal delete confirmation dialog
-        setDeleteConfirmVisible(true)
-      }
-    } catch (e) {
-      // If check fails, show normal delete dialog
-      console.error('Failed to check running tasks:', e)
-      setDeleteConfirmVisible(true)
-    } finally {
-      setIsCheckingTasks(false)
-    }
+    setDeleteConfirmVisible(true)
   }
 
   const handleConfirmDelete = async () => {
@@ -444,11 +565,12 @@ export default function TeamList({
 
     setIsDeleting(true)
     try {
-      await deleteTeam(teamToDelete)
+      const team = teams.find(item => item.id === teamToDelete)
+      await deleteTeam(teamToDelete, isUnbindingSharedTeam ? undefined : team?.name)
       setTeams(prev => prev.filter(team => team.id !== teamToDelete))
       setDeleteConfirmVisible(false)
       setTeamToDelete(null)
-      setRunningTasksInfo(null)
+      setDeleteConfirmation('')
     } catch {
       toast({
         variant: 'destructive',
@@ -459,31 +581,33 @@ export default function TeamList({
     }
   }
 
-  const handleForceDelete = async () => {
-    if (!teamToDelete) return
+  const handleConfirmMarketUnbind = async () => {
+    if (!pendingMarketUnbind) return
 
-    setIsDeleting(true)
+    setIsUnbindingMarketTeam(true)
     try {
-      await deleteTeam(teamToDelete, true)
-      setTeams(prev => prev.filter(team => team.id !== teamToDelete))
-      setForceDeleteConfirmVisible(false)
-      setTeamToDelete(null)
-      setRunningTasksInfo(null)
-    } catch {
+      await resourceLibraryApi.uninstallListing(
+        pendingMarketUnbind.team.id,
+        pendingMarketUnbind.targetNamespace
+      )
+      setTeams(current => current.filter(team => team.id !== pendingMarketUnbind.team.id))
+      setPendingMarketUnbind(null)
+      toast({ title: t('resource-library:messages.remove_from_team_agent_success') })
+    } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('teams.delete'),
+        title: t('resource-library:messages.remove_from_team_agent_failed'),
+        description: error instanceof Error ? error.message : undefined,
       })
     } finally {
-      setIsDeleting(false)
+      setIsUnbindingMarketTeam(false)
     }
   }
 
   const handleCancelDelete = () => {
     setDeleteConfirmVisible(false)
-    setForceDeleteConfirmVisible(false)
     setTeamToDelete(null)
-    setRunningTasksInfo(null)
+    setDeleteConfirmation('')
     setIsUnbindingSharedTeam(false)
   }
 
@@ -529,6 +653,9 @@ export default function TeamList({
   const shouldShowDelete = (team: Team) => {
     // Public teams cannot be deleted by regular users (managed by admin)
     if (isPublicTeam(team)) return false
+    // Namespace-authorized teams are managed by the publisher's binding settings.
+    // Group members must not remove the authorization for the whole group.
+    if (isNamespaceAuthorizedTeam(team)) return false
     // For group teams, check group permissions
     if (isGroupTeam(team)) {
       return canDeleteGroupResource(team.namespace!)
@@ -554,6 +681,15 @@ export default function TeamList({
     return canEditGroupResource(team.namespace!)
   }
 
+  const getMarketUnbindTargetNamespace = () => {
+    if (scope !== 'group') return null
+    const targetNamespace = groupName || (groupFilter?.length === 1 ? groupFilter[0] : null)
+    return targetNamespace && canEditGroupResource(targetNamespace) ? targetNamespace : null
+  }
+
+  const shouldShowMarketUnbind = (team: Team) =>
+    isNamespaceAuthorizedTeam(team) && getMarketUnbindTargetNamespace() !== null
+
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
     // Read-only teams (public or shared from others) cannot be copied
@@ -572,7 +708,6 @@ export default function TeamList({
   const modeFilterOptions: Array<{
     value: TeamModeFilter
     label: string
-    icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>
     testId: string
   }> = [
     {
@@ -583,19 +718,16 @@ export default function TeamList({
     {
       value: 'chat',
       label: t('teams.filter_chat'),
-      icon: ChatBubbleLeftEllipsisIcon,
       testId: 'team-mode-filter-chat',
     },
     {
       value: 'code',
       label: t('teams.filter_code'),
-      icon: CodeBracketIcon,
       testId: 'team-mode-filter-code',
     },
     {
       value: 'task',
       label: t('settings:team.list.filterDevice'),
-      icon: CpuChipIcon,
       testId: 'team-mode-filter-device',
     },
   ]
@@ -629,318 +761,433 @@ export default function TeamList({
   ) : null
 
   const filters = (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-      <div className="flex min-w-0 flex-col gap-3">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end">
         {sourceControls}
-        <div
-          className="flex flex-col gap-2 sm:flex-row sm:items-center"
-          data-testid="team-mode-filter"
-        >
-          <span className="text-xs font-medium text-text-muted">{t('teams.filter_mode')}</span>
-          <div className="flex flex-wrap items-center gap-2">
-            {modeFilterOptions.map(option => {
-              const Icon = option.icon
-              return (
-                <Button
-                  key={option.value}
-                  type="button"
-                  variant={modeFilter === option.value ? 'primary' : 'outline'}
-                  aria-pressed={modeFilter === option.value}
-                  onClick={() => setModeFilter(option.value)}
-                  data-testid={option.testId}
-                  className="h-11 min-w-[44px] px-4 lg:h-9"
-                >
-                  {Icon && <Icon className="h-4 w-4" aria-hidden />}
-                  {option.label}
-                </Button>
-              )
-            })}
+        {!hideModeFilter && (
+          <div
+            className="flex flex-col gap-2 sm:flex-row sm:items-center"
+            data-testid="team-mode-filter"
+          >
+            <span className="text-xs font-medium text-text-muted">{t('teams.filter_mode')}</span>
+            <Select
+              value={modeFilter}
+              onValueChange={value => {
+                const nextMode = value as TeamModeFilter
+                setInternalModeFilter(nextMode)
+                onModeFilterChange?.(nextMode)
+              }}
+            >
+              <SelectTrigger
+                className="h-11 w-full min-w-36 bg-base sm:w-36 lg:h-9"
+                aria-label={t('teams.filter_mode')}
+                data-testid="team-mode-filter-select"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {modeFilterOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value} data-testid={option.testId}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </div>
+        )}
       </div>
-      {sortControls}
+      <div className="flex flex-wrap items-end gap-2 sm:justify-end">
+        {sortControls}
+        {compact && !hideCreateActions && createActions}
+      </div>
     </div>
   )
+  const visibleFilters =
+    sourceControls ||
+    !hideModeFilter ||
+    sortControls ||
+    (compact && !hideCreateActions && createActions)
+      ? filters
+      : undefined
+  const teamPendingDeletion = teams.find(team => team.id === teamToDelete) || null
 
   return (
     <>
-      <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
-        <ResourceManagementLayout
-          title={t('teams.title')}
-          description={t('teams.description')}
-          actions={createActions}
-          filters={filters}
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          {isLoading ? (
-            <div className="py-12">
-              <LoadingState fullScreen={false} message={t('teams.loading')} />
-            </div>
-          ) : (
-            <div
-              className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 pr-1"
-              data-testid="team-list-items"
-            >
-              {sortedTeams.length > 0 ? (
-                sortedTeams.map(team => (
-                  <Card
-                    key={team.id}
-                    className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
-                    data-testid={`team-card-${team.id}`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
-                      <ResourceListItem
-                        name={team.name}
-                        displayName={getTeamDisplayName(team)}
-                        description={team.description}
-                        icon={
-                          <TeamIconDisplay iconId={team.icon} size="md" className="text-primary" />
-                        }
-                        tags={[
-                          ...(isPublicTeam(team)
-                            ? [
-                                {
-                                  key: 'public',
-                                  label: t('teams.public'),
-                                  variant: 'default' as const,
-                                },
-                              ]
-                            : []),
-                          ...(isGroupTeam(team)
-                            ? [
-                                {
-                                  key: 'group',
-                                  label: team.namespace!,
-                                  variant: 'success' as const,
-                                },
-                              ]
-                            : []),
-                          ...(team.workflow?.mode
-                            ? [
-                                {
-                                  key: 'mode',
-                                  label: t(`team_model.${String(team.workflow.mode)}`),
-                                  variant: 'default' as const,
-                                  className: 'capitalize text-xs',
-                                },
-                              ]
-                            : []),
-                          ...(team.share_status === 1
-                            ? [
-                                {
-                                  key: 'sharing',
-                                  label: t('teams.sharing'),
-                                  variant: 'info' as const,
-                                },
-                              ]
-                            : []),
-                          ...(isNamespaceAuthorizedTeam(team) && team.namespace
-                            ? [
-                                {
-                                  key: 'namespace-authorization',
-                                  label: t('teams.authorized_from_group', {
-                                    group: team.namespace,
-                                  }),
-                                  variant: 'success' as const,
-                                },
-                              ]
-                            : []),
-                          ...(team.share_status === 2 &&
-                          team.user?.user_name &&
-                          !isNamespaceAuthorizedTeam(team)
-                            ? [
-                                {
-                                  key: 'shared',
-                                  label: t('teams.shared_by', {
-                                    author: team.user.user_name,
-                                  }),
-                                  variant: 'success' as const,
-                                },
-                              ]
-                            : []),
-                          ...(team.bots.length > 0
-                            ? [
-                                {
-                                  key: 'bots',
-                                  label: `${team.bots.length} ${team.bots.length === 1 ? 'Bot' : 'Bots'}`,
-                                  variant: 'info' as const,
-                                  className: 'hidden sm:inline-flex text-xs',
-                                },
-                              ]
-                            : []),
-                        ]}
-                      >
-                        <div className="flex items-center space-x-1 flex-shrink-0">
-                          <div
-                            className="w-2 h-2 rounded-full"
-                            style={{
-                              backgroundColor: team.is_active
-                                ? 'rgb(var(--color-success))'
-                                : 'rgb(var(--color-border))',
-                            }}
-                          ></div>
-                          <span className="text-xs text-text-muted">
-                            {team.is_active ? t('teams.active') : t('teams.inactive')}
-                          </span>
-                        </div>
-                      </ResourceListItem>
-                      <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0 sm:ml-3 self-end sm:self-auto">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleChatTeam(team)}
-                          title={getActionTitle(getTeamTargetPage(team, modeFilter))}
-                          className="h-7 w-7 sm:h-8 sm:w-8"
-                        >
-                          {getTeamTargetPage(team, modeFilter) === 'code' ? (
-                            <CodeBracketIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
-                            <CpuChipIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          ) : (
-                            <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          )}
-                        </Button>
-                        <TeamApiCallButton team={team} />
-                        {shouldShowEdit(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEditTeam(team)}
-                            title={t('teams.edit')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
-                          >
-                            <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
-                        )}
-                        {shouldShowChildAuthorization(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setChildAuthorizationTeam(team)}
-                            title={t('teams.child_authorization.action')}
-                            className="h-11 min-w-[44px] md:h-8 md:min-w-8"
-                            data-testid={`team-child-auth-button-${team.id}`}
-                          >
-                            <UserGroupIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
-                        )}
-                        {shouldShowCopy(team) && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                disabled={copyingTeamId === team.id}
-                                title={t('teams.copy')}
-                                className="h-7 w-7 sm:h-8 sm:w-8"
-                                data-testid={`copy-team-button-${team.id}`}
-                              >
-                                {copyingTeamId === team.id ? (
-                                  <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                                ) : (
-                                  <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                )}
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent
-                              align="end"
-                              className="w-44 max-h-64 overflow-y-auto py-1"
-                              style={{ boxShadow: 'var(--shadow-popover)' }}
-                            >
-                              {/* Section label */}
-                              <div className="px-2.5 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
-                                {t('teams.copy_to_label')}
-                              </div>
-                              {/* Personal space */}
-                              <DropdownMenuItem
-                                onClick={() => handleCopyTeam(team, 'default')}
-                                className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
-                                data-testid={`copy-team-to-personal-${team.id}`}
-                              >
-                                <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
-                                  <svg
-                                    className="h-3 w-3"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
-                                    />
-                                  </svg>
-                                </div>
-                                <span className="truncate">{t('teams.copy_to_personal')}</span>
-                              </DropdownMenuItem>
-                              {/* Groups */}
-                              {writableGroups.length > 0 && (
-                                <>
-                                  <div className="my-1 h-px bg-border/60" />
-                                  {writableGroups.map(group => {
-                                    const label = group.display_name || group.name
-                                    const initials = label.slice(0, 2).toUpperCase()
-                                    return (
-                                      <DropdownMenuItem
-                                        key={group.name}
-                                        onClick={() => handleCopyTeam(team, group.name)}
-                                        className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
-                                        data-testid={`copy-team-to-group-${team.id}-${group.name}`}
-                                      >
-                                        <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-[9px] font-semibold text-primary">
-                                          {initials}
-                                        </div>
-                                        <span className="truncate">{label}</span>
-                                      </DropdownMenuItem>
-                                    )
-                                  })}
-                                </>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                        {shouldShowShare(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleShareTeam(team)}
-                            title={t('teams.share.title')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
-                            disabled={sharingId === team.id}
-                          >
-                            <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
-                        )}
-                        {shouldShowDelete(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(team.id)}
-                            disabled={isCheckingTasks}
-                            title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
-                            className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
-                          >
-                            {isSharedTeam(team) ? (
-                              <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+      {!creationOnly && (
+        <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
+          <ResourceManagementLayout
+            title={t('teams.title')}
+            description={t('teams.description')}
+            actions={compact || hideCreateActions ? undefined : createActions}
+            filters={visibleFilters}
+            hideHeader={compact}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {isLoading ? (
+              <div className="py-12">
+                <LoadingState fullScreen={false} message={t('teams.loading')} />
+              </div>
+            ) : (
+              <div
+                className={cn(
+                  'min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1',
+                  getResourceGridClassName(compact),
+                  compact && 'pt-1'
+                )}
+                data-testid="team-list-items"
+              >
+                {sortedTeams.length > 0 ? (
+                  sortedTeams.map(team => (
+                    <Card
+                      key={team.id}
+                      className={cn(
+                        getResourceCardClassName(compact),
+                        compact && 'group relative min-h-[160px] gap-4'
+                      )}
+                      data-testid={`team-card-${team.id}`}
+                    >
+                      <div className={getResourceCardBodyClassName(compact)}>
+                        <ResourceListItem
+                          cardLayout={compact}
+                          name={team.name}
+                          displayName={getTeamDisplayName(team)}
+                          description={team.description}
+                          identity={
+                            isGroupTeam(team) && !isNamespaceAuthorizedTeam(team)
+                              ? team.namespace
+                              : undefined
+                          }
+                          icon={
+                            compact ? (
+                              <ResourceIcon
+                                resourceType="agent"
+                                name={getTeamDisplayName(team)}
+                                icon={team.icon}
+                                size="sm"
+                              />
                             ) : (
-                              <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              <ResourceCardIcon compact={false}>
+                                <TeamIconDisplay
+                                  iconId={team.icon}
+                                  size="md"
+                                  className="text-primary"
+                                />
+                              </ResourceCardIcon>
+                            )
+                          }
+                          actions={
+                            compact &&
+                            (team.publication_status === 'published' ||
+                              publishedTeamIds.has(team.id)) ? (
+                              <PublishedResourceIndicator
+                                testId={`published-agent-${team.id}-indicator`}
+                              />
+                            ) : undefined
+                          }
+                          tags={[
+                            {
+                              key: 'status',
+                              label: team.is_active ? t('teams.active') : t('teams.inactive'),
+                              variant: team.is_active ? ('success' as const) : ('default' as const),
+                            },
+                            ...(isPublicTeam(team)
+                              ? [
+                                  {
+                                    key: 'public',
+                                    label: t('teams.public'),
+                                    variant: 'default' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.workflow?.mode
+                              ? [
+                                  {
+                                    key: 'mode',
+                                    label: t(`team_model.${String(team.workflow.mode)}`),
+                                    variant: 'default' as const,
+                                    className: 'capitalize text-xs',
+                                  },
+                                ]
+                              : []),
+                            ...(team.share_status === 1
+                              ? [
+                                  {
+                                    key: 'sharing',
+                                    label: t('teams.sharing'),
+                                    variant: 'info' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(isNamespaceAuthorizedTeam(team) && team.namespace
+                              ? [
+                                  {
+                                    key: 'namespace-authorization',
+                                    label: t('teams.authorized_from_group', {
+                                      group: team.namespace,
+                                    }),
+                                    variant: 'success' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.share_status === 2 &&
+                            team.user?.user_name &&
+                            !isNamespaceAuthorizedTeam(team)
+                              ? [
+                                  {
+                                    key: 'shared',
+                                    label: t('teams.shared_by', {
+                                      author: team.user.user_name,
+                                    }),
+                                    variant: 'success' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.bots.length > 0
+                              ? [
+                                  {
+                                    key: 'bots',
+                                    label: t('teams.bot_count', { count: team.bots.length }),
+                                    variant: 'info' as const,
+                                    className: 'hidden sm:inline-flex text-xs',
+                                  },
+                                ]
+                              : []),
+                          ]}
+                        />
+                        <div
+                          className={cn(
+                            'flex flex-shrink-0 items-center gap-0.5 sm:gap-1',
+                            getResourceCardActionsClassName(compact),
+                            compact && 'flex-nowrap gap-2'
+                          )}
+                        >
+                          {compact && shouldShowEdit(team) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleEditTeam(team)}
+                              title={t('teams.edit')}
+                              className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                              data-testid={`edit-team-button-${team.id}`}
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                              <span>{t('actions.edit')}</span>
+                            </Button>
+                          )}
+                          <Button
+                            variant={compact ? 'outline' : 'ghost'}
+                            size={compact ? 'default' : 'icon'}
+                            onClick={() => handleChatTeam(team)}
+                            title={getActionTitle(getTeamTargetPage(team, modeFilter))}
+                            className={cn(
+                              compact
+                                ? 'h-11 min-w-0 flex-1 gap-2 border-primary/[0.15] bg-primary/[0.08] px-3 text-xs text-primary hover:border-primary/20 hover:bg-primary/[0.15] md:h-8'
+                                : 'h-7 w-7 sm:h-8 sm:w-8'
+                            )}
+                            data-testid={`use-team-button-${team.id}`}
+                          >
+                            {getTeamTargetPage(team, modeFilter) === 'code' ? (
+                              <CodeBracketIcon className="h-4 w-4" />
+                            ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
+                              <CpuChipIcon className="h-4 w-4" />
+                            ) : compact ? (
+                              <ChatBubbleLeftEllipsisIcon className="h-4 w-4" />
+                            ) : (
+                              <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            )}
+                            {compact && (
+                              <span>{getActionTitle(getTeamTargetPage(team, modeFilter))}</span>
                             )}
                           </Button>
-                        )}
+                          {compact ? (
+                            <div
+                              className="shrink-0"
+                              data-testid={`team-management-actions-${team.id}`}
+                            >
+                              <TeamCardActionsMenu
+                                team={team}
+                                writableGroups={writableGroups}
+                                copying={copyingTeamId === team.id}
+                                checkingTasks={false}
+                                canEdit={false}
+                                canAuthorizeChildren={shouldShowChildAuthorization(team)}
+                                canCopy={shouldShowCopy(team)}
+                                canShare={shouldShowShare(team)}
+                                canDelete={shouldShowDelete(team)}
+                                canUnbindFromGroup={shouldShowMarketUnbind(team)}
+                                shared={isSharedTeam(team)}
+                                onOpenApi={() => setApiCallTeam(team)}
+                                onEdit={() => handleEditTeam(team)}
+                                onAuthorizeChildren={() => setChildAuthorizationTeam(team)}
+                                onCopy={targetNamespace => handleCopyTeam(team, targetNamespace)}
+                                onShare={() => handleShareTeam(team)}
+                                onDelete={() => handleDelete(team.id)}
+                                onUnbindFromGroup={() => {
+                                  const targetNamespace = getMarketUnbindTargetNamespace()
+                                  if (targetNamespace) {
+                                    setPendingMarketUnbind({ team, targetNamespace })
+                                  }
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div className="contents">
+                              <TeamApiCallButton team={team} />
+                              {shouldShowEdit(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditTeam(team)}
+                                  title={t('teams.edit')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
+                                >
+                                  <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              )}
+                              {shouldShowChildAuthorization(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setChildAuthorizationTeam(team)}
+                                  title={t('teams.child_authorization.action')}
+                                  className="h-11 min-w-[44px] md:h-8 md:min-w-8"
+                                  data-testid={`team-child-auth-button-${team.id}`}
+                                >
+                                  <UserGroupIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              )}
+                              {shouldShowCopy(team) && (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={copyingTeamId === team.id}
+                                      title={t('teams.copy')}
+                                      className="h-7 w-7 sm:h-8 sm:w-8"
+                                      data-testid={`copy-team-button-${team.id}`}
+                                    >
+                                      {copyingTeamId === team.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
+                                      ) : (
+                                        <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                      )}
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="end"
+                                    className="w-44 max-h-64 overflow-y-auto py-1"
+                                    style={{ boxShadow: 'var(--shadow-popover)' }}
+                                  >
+                                    <div className="px-2.5 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                                      {t('teams.copy_to_label')}
+                                    </div>
+                                    <DropdownMenuItem
+                                      onClick={() => handleCopyTeam(team, 'default')}
+                                      className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
+                                      data-testid={`copy-team-to-personal-${team.id}`}
+                                    >
+                                      <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
+                                        <svg
+                                          className="h-3 w-3"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          viewBox="0 0 24 24"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+                                          />
+                                        </svg>
+                                      </div>
+                                      <span className="truncate">
+                                        {t('teams.copy_to_personal')}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    {writableGroups.length > 0 && (
+                                      <>
+                                        <div className="my-1 h-px bg-border/60" />
+                                        {writableGroups.map(group => {
+                                          const label = group.display_name || group.name
+                                          const initials = label.slice(0, 2).toUpperCase()
+                                          return (
+                                            <DropdownMenuItem
+                                              key={group.name}
+                                              onClick={() => handleCopyTeam(team, group.name)}
+                                              className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
+                                              data-testid={`copy-team-to-group-${team.id}-${group.name}`}
+                                            >
+                                              <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-[9px] font-semibold text-primary">
+                                                {initials}
+                                              </div>
+                                              <span className="truncate">{label}</span>
+                                            </DropdownMenuItem>
+                                          )
+                                        })}
+                                      </>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              )}
+                              {shouldShowShare(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleShareTeam(team)}
+                                  title={t('teams.share.title')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
+                                  disabled={sharingId === team.id}
+                                >
+                                  <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              )}
+                              {shouldShowDelete(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDelete(team.id)}
+                                  title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
+                                >
+                                  {isSharedTeam(team) ? (
+                                    <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                  ) : (
+                                    <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                  )}
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </Card>
-                ))
-              ) : (
-                <div className="text-center text-text-muted py-8" data-testid="team-empty-state">
-                  <p className="text-sm">{t('teams.no_teams')}</p>
-                </div>
-              )}
-            </div>
-          )}
-        </ResourceManagementLayout>
-      </div>
+                    </Card>
+                  ))
+                ) : (
+                  <div
+                    className="flex flex-col items-center gap-3 py-8 text-center text-text-muted"
+                    data-testid="team-empty-state"
+                  >
+                    <p className="text-sm">{t('teams.no_teams')}</p>
+                    {showAgentMarketEmptyAction && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 min-w-[44px] rounded-xl px-4"
+                        onClick={() => router.push(`${paths.resourceLibrary.getHref()}?type=agent`)}
+                        data-testid="team-empty-browse-market-button"
+                      >
+                        {t('resource-library:actions.browse_agent_market')}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </ResourceManagementLayout>
+        </div>
+      )}
 
       {/* Team Edit Dialog */}
       <TeamEditDialog
@@ -958,6 +1205,10 @@ export default function TeamList({
           editingTeamId === 0 && createTarget.scope === 'group' ? createTarget.groupName : groupName
         }
         onSaved={handleTeamSaved}
+        createTarget={createTarget}
+        writableGroups={writableGroups}
+        publishAfterCreate={Boolean(pendingCreateRequestRef.current?.publishAfterCreate)}
+        onCreateOptionsChange={handleCreateOptionsChange}
       />
 
       <TeamChildNamespaceAuthorizationDialog
@@ -968,23 +1219,26 @@ export default function TeamList({
         }}
       />
 
+      {apiCallTeam && (
+        <TeamApiCallButton
+          team={apiCallTeam}
+          hideTrigger
+          open
+          onOpenChange={open => {
+            if (!open) setApiCallTeam(null)
+          }}
+        />
+      )}
+
       {/* Delete/Unbind confirmation dialog */}
       <Dialog
-        open={deleteConfirmVisible}
+        open={deleteConfirmVisible && isUnbindingSharedTeam}
         onOpenChange={open => !open && !isDeleting && setDeleteConfirmVisible(false)}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {isUnbindingSharedTeam
-                ? t('teams.unbind_confirm_title')
-                : t('teams.delete_confirm_title')}
-            </DialogTitle>
-            <DialogDescription>
-              {isUnbindingSharedTeam
-                ? t('teams.unbind_confirm_message')
-                : t('teams.delete_confirm_message')}
-            </DialogDescription>
+            <DialogTitle>{t('teams.unbind_confirm_title')}</DialogTitle>
+            <DialogDescription>{t('teams.unbind_confirm_message')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
@@ -1023,64 +1277,59 @@ export default function TeamList({
         </DialogContent>
       </Dialog>
 
-      {/* Force delete confirmation dialog for running tasks */}
+      <TeamIdentityConfirmDialog
+        open={deleteConfirmVisible && !isUnbindingSharedTeam}
+        title={t('teams.delete_confirm_title')}
+        description={t('teams.destructive_delete_warning')}
+        currentName={teamPendingDeletion?.name || ''}
+        confirmation={deleteConfirmation}
+        confirmationLabel={t('teams.confirm_name_label', {
+          name: teamPendingDeletion?.name || '',
+        })}
+        cancelLabel={t('common.cancel')}
+        confirmLabel={t('teams.delete')}
+        busy={isDeleting}
+        destructive
+        highlightDescription
+        onConfirmationChange={setDeleteConfirmation}
+        onOpenChange={open => {
+          if (!open) handleCancelDelete()
+        }}
+        onConfirm={() => void handleConfirmDelete()}
+      />
+
       <Dialog
-        open={forceDeleteConfirmVisible}
-        onOpenChange={open => !open && !isDeleting && setForceDeleteConfirmVisible(false)}
+        open={pendingMarketUnbind !== null}
+        onOpenChange={open => {
+          if (!open && !isUnbindingMarketTeam) setPendingMarketUnbind(null)
+        }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('teams.force_delete_confirm_title')}</DialogTitle>
+            <DialogTitle>{t('resource-library:actions.remove_from_team')}</DialogTitle>
             <DialogDescription>
-              {t('teams.force_delete_confirm_message', {
-                count: runningTasksInfo?.running_tasks_count || 0,
-              })}
+              {pendingMarketUnbind &&
+                t('resource-library:messages.remove_from_team_agent_confirm', {
+                  agent: getTeamDisplayName(pendingMarketUnbind.team),
+                  group: pendingMarketUnbind.targetNamespace,
+                })}
             </DialogDescription>
           </DialogHeader>
-          <ForceDeleteTaskSummary
-            runningTasks={runningTasksInfo?.running_tasks || []}
-            runningTasksTitle={t('teams.running_tasks_list')}
-            warning={t('teams.force_delete_warning')}
-            andMoreLabel={
-              runningTasksInfo && runningTasksInfo.running_tasks.length > 5
-                ? `... ${t('teams.and_more_tasks', {
-                    count: runningTasksInfo.running_tasks.length - 5,
-                  })}`
-                : undefined
-            }
-          />
           <DialogFooter>
-            <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
+            <Button
+              variant="secondary"
+              onClick={() => setPendingMarketUnbind(null)}
+              disabled={isUnbindingMarketTeam}
+            >
               {t('common.cancel')}
             </Button>
-            <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
-              {isDeleting ? (
-                <div className="flex items-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  {t('actions.deleting')}
-                </div>
-              ) : (
-                t('teams.force_delete')
-              )}
+            <Button
+              variant="destructive"
+              onClick={() => void handleConfirmMarketUnbind()}
+              disabled={isUnbindingMarketTeam}
+              data-testid="confirm-remove-market-agent"
+            >
+              {t('resource-library:actions.remove_from_team')}
             </Button>
           </DialogFooter>
         </DialogContent>

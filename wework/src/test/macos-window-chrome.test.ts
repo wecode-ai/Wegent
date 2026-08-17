@@ -6,6 +6,8 @@ interface TauriWindowConfig {
   titleBarStyle?: string
   hiddenTitle?: boolean
   decorations?: boolean
+  transparent?: boolean
+  windowEffects?: unknown
   dragDropEnabled?: boolean
   trafficLightPosition?: {
     x: number
@@ -37,15 +39,17 @@ describe('macOS window chrome', () => {
     expect(mainWindow.titleBarStyle).toBe('Overlay')
     expect(mainWindow.hiddenTitle).toBe(true)
     expect(mainWindow.decorations).toBe(true)
+    expect(mainWindow.transparent).toBe(false)
+    expect(mainWindow).not.toHaveProperty('windowEffects')
     expect(mainWindow.trafficLightPosition).toEqual({ x: 19, y: 21 })
   })
 
-  test('enables native file drop events in the desktop webview', () => {
+  test('keeps standard web file drop events enabled in the desktop webview', () => {
     const configPath = resolve(process.cwd(), 'src-tauri/tauri.conf.json')
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as TauriConfig
     const mainWindow = config.app.windows[0]
 
-    expect(mainWindow.dragDropEnabled).toBe(true)
+    expect(mainWindow.dragDropEnabled).toBe(false)
   })
 
   test('grants permission to start native window dragging', () => {

@@ -75,6 +75,102 @@ GIT_PUSH_COMMAND = (
     'exec git push -u origin "$branch"\''
 )
 
+GIT_HOSTING_CLI_STATUS_SCRIPT = """
+import json
+import re
+import shutil
+import subprocess
+import sys
+
+
+tool = sys.argv[1]
+timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
+executable = shutil.which(tool)
+if not executable:
+    print(
+        json.dumps(
+            {
+                "tool": tool,
+                "installed": False,
+                "authenticated": False,
+                "executablePath": None,
+                "version": None,
+                "detectionError": None,
+            }
+        )
+    )
+    raise SystemExit(0)
+
+
+def run(*args):
+    return subprocess.run(
+        [executable, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+
+
+def is_authenticated(auth_result):
+    if auth_result.returncode == 0:
+        return True
+    if tool != "glab":
+        return False
+
+    output = "\\n".join((auth_result.stdout, auth_result.stderr))
+    return re.search(r"(?m)^\\s*[✓✔]\\s+Logged in to\\s+", output) is not None
+
+
+try:
+    version_result = run("--version")
+    version = next(
+        (
+            line.strip()
+            for line in version_result.stdout.splitlines()
+            if line.strip()
+        ),
+        None,
+    )
+    auth_result = run("auth", "status")
+except subprocess.TimeoutExpired:
+    print(
+        json.dumps(
+            {
+                "tool": tool,
+                "installed": True,
+                "authenticated": False,
+                "executablePath": executable,
+                "version": None,
+                "detectionError": "timeout",
+            }
+        )
+    )
+    raise SystemExit(0)
+
+print(
+    json.dumps(
+        {
+            "tool": tool,
+            "installed": True,
+            "authenticated": is_authenticated(auth_result),
+            "executablePath": executable,
+            "version": version,
+            "detectionError": None,
+        }
+    )
+)
+""".strip()
+
+
+def git_hosting_cli_status_command(tool: str) -> str:
+    """Build a safe CLI status command for a fixed provider tool."""
+    return (
+        f"python3 -c {shlex.quote(GIT_HOSTING_CLI_STATUS_SCRIPT)} {shlex.quote(tool)}"
+    )
+
+
 WORKSPACE_ROOT_GUARD_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
@@ -1177,10 +1273,8 @@ import tempfile
 from pathlib import Path
 
 MAX_PATCH_BYTES = 20 * 1024 * 1024
-# task_id is 0 for runtime-local work (no DB task row); subtask_id is always
-# positive. Both segments are pure digits, so fullmatch still blocks traversal.
 ARTIFACT_PATTERN = re.compile(
-    r"turn-file-changes/([0-9]+)/([0-9]+)"
+    r"turn-file-changes/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)"
 )
 
 
@@ -1272,8 +1366,8 @@ match = ARTIFACT_PATTERN.fullmatch(artifact_id)
 if not match:
     fail("invalid artifact id")
 
-task_id = int(match.group(1))
-subtask_id = int(match.group(2))
+task_id = match.group(1)
+subtask_id = match.group(2)
 executor_home = Path(
     os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")
 ).expanduser()
@@ -1300,7 +1394,7 @@ except (OSError, json.JSONDecodeError) as exc:
 
 if not isinstance(metadata, dict):
     fail("invalid artifact metadata", code=65)
-if metadata.get("task_id") != task_id or metadata.get("subtask_id") != subtask_id:
+if str(metadata.get("task_id")) != task_id or str(metadata.get("subtask_id")) != subtask_id:
     fail("artifact metadata id mismatch", code=65)
 
 workspace = Path.cwd().resolve()
@@ -1536,6 +1630,28 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="git status --porcelain"
     ),
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
+    "git_github_cli_status": LocalDeviceCommandDefinition(
+        command=git_hosting_cli_status_command("gh"),
+        post_processor="json",
+    ),
+    "git_gitlab_cli_status": LocalDeviceCommandDefinition(
+        command=git_hosting_cli_status_command("glab"),
+        post_processor="json",
+    ),
+    "git_github_pull_requests": LocalDeviceCommandDefinition(
+        command=(
+            "gh pr list --state all --limit 20 "
+            "--json number,url,title,state,isDraft,statusCheckRollup --head"
+        ),
+        post_processor="json",
+    ),
+    "git_gitlab_merge_requests": LocalDeviceCommandDefinition(
+        command=(
+            "glab mr list --all --per-page 20 --order updated_at --sort desc "
+            "--output json --source-branch"
+        ),
+        post_processor="json",
+    ),
     "git_commit_available": LocalDeviceCommandDefinition(
         command='sh -c \'git -C "$1" cat-file -e "$2^{commit}"\' --'
     ),

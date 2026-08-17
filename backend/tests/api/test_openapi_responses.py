@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.endpoints.openapi_responses import (
     _create_non_streaming_response_unified,
     _filter_current_assistant_turn,
+    _iter_callback_events,
     _task_to_response_object,
 )
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
@@ -29,6 +30,31 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+
+
+@pytest.mark.asyncio
+async def test_callback_event_stream_waits_for_executor_terminal_event():
+    messages = [
+        None,
+        {
+            "type": "message",
+            "data": json.dumps(
+                {"type": "block_created", "task_id": 1, "subtask_id": 2}
+            ),
+        },
+        None,
+        {
+            "type": "message",
+            "data": json.dumps({"type": "done", "task_id": 1, "subtask_id": 2}),
+        },
+    ]
+    pubsub = AsyncMock()
+    pubsub.get_message = AsyncMock(side_effect=messages)
+
+    events = [event async for event in _iter_callback_events(pubsub, asyncio.Event())]
+
+    assert [event.type for event in events] == ["block_created", "done"]
+    assert pubsub.get_message.await_count == 4
 
 
 @pytest.fixture
@@ -740,14 +766,15 @@ class TestOpenAPIResponsesCreate:
         assert "Streaming is only supported" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_streaming_unsupported_returns_response_failed_event(
+    async def test_streaming_unsupported_returns_bad_request(
         self,
         test_db: Session,
         test_user: User,
         test_team: Kind,
     ):
-        """Non-SSE shells use callback streaming via Redis. When Redis subscribe
-        fails, the stream should return a response.failed event."""
+        """Non-SSE shells reject stream=true before returning a response."""
+        from fastapi import HTTPException
+
         from app.api.endpoints.openapi_responses import (
             _create_streaming_response_unified,
         )
@@ -775,60 +802,45 @@ class TestOpenAPIResponsesCreate:
                 return_value=False,
             ),
             patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ) as mock_dispatch,
+            patch(
                 "app.services.chat.storage.session_manager.register_stream",
-                new=AsyncMock(return_value=asyncio.Event()),
-            ),
-            patch(
-                "app.services.chat.storage.session_manager.subscribe_callback_channel",
-                new=AsyncMock(return_value=(None, None)),
-            ),
-            patch(
-                "app.services.chat.storage.session_manager.unregister_stream",
                 new=AsyncMock(),
-            ),
+            ) as mock_register_stream,
             patch(
-                "app.services.chat.storage.session_manager.delete_streaming_content",
+                "app.api.endpoints.openapi_responses._persist_terminal_failure",
                 new=AsyncMock(),
-            ),
-            patch(
-                "app.api.endpoints.openapi_responses.collect_completed_result",
-                new=AsyncMock(return_value={"value": ""}),
-            ),
-            patch(
-                "app.api.endpoints.openapi_responses.persist_completed_result",
-                new=AsyncMock(),
-            ),
+            ) as mock_persist_failure,
         ):
-            response = await _create_streaming_response_unified(
-                db=test_db,
-                user=test_user,
-                team=test_team,
-                model_info={"namespace": "default", "team_name": "test-team"},
-                request_body=ResponseCreateInput(
-                    model="default#test-team",
-                    input="hello",
-                    stream=True,
-                ),
-                input_text="hello",
-                tool_settings={},
-            )
-            body = []
-            async for chunk in response.body_iterator:
-                body.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+            with pytest.raises(HTTPException) as exc_info:
+                await _create_streaming_response_unified(
+                    db=test_db,
+                    user=test_user,
+                    team=test_team,
+                    model_info={"namespace": "default", "team_name": "test-team"},
+                    request_body=ResponseCreateInput(
+                        model="default#test-team",
+                        input="hello",
+                        stream=True,
+                    ),
+                    input_text="hello",
+                    tool_settings={},
+                )
 
-        payload = "".join(body)
-        events = []
-        for chunk in payload.split("\n\n"):
-            chunk = chunk.strip()
-            if not chunk.startswith("data: "):
-                continue
-            events.append(json.loads(chunk.removeprefix("data: ").strip()))
-
-        failed_event = next(
-            event for event in events if event["type"] == "response.failed"
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == (
+            "Streaming is only supported for Chat Shell type teams"
         )
-        assert failed_event["response"]["status"] == "failed"
-        assert failed_event["response"]["error"]["code"] == "stream_error"
+        mock_persist_failure.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            error_message="Streaming is only supported for Chat Shell type teams",
+            error_code="streaming_not_supported",
+        )
+        mock_dispatch.assert_not_awaited()
+        mock_register_stream.assert_not_awaited()
 
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key

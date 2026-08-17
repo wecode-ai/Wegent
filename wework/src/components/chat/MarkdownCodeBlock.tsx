@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { CSSProperties, HTMLProps, ReactNode } from 'react'
 import { ArrowRightToLine, Copy, CopyCheck, TextWrap } from 'lucide-react'
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { track } from '@/telemetry/client'
 import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
 import css from 'react-syntax-highlighter/dist/esm/languages/prism/css'
 import diff from 'react-syntax-highlighter/dist/esm/languages/prism/diff'
@@ -73,8 +74,8 @@ const codeCustomStyle: CSSProperties = {
   margin: 0,
   padding: '0.75rem 1rem',
   background: 'transparent',
-  fontSize: '0.8125rem',
-  lineHeight: '1.6',
+  fontSize: 'var(--text-code)',
+  lineHeight: '1.8',
 }
 
 const markdownWrapStateByKey = new Map<string, boolean>()
@@ -110,6 +111,7 @@ export function MarkdownCodeBlock({
 
   const handleCopy = async () => {
     await copyCodeText(text)
+    track('ai_output_action_completed', { action: 'copy', source: 'chat' })
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
   }
@@ -126,7 +128,7 @@ export function MarkdownCodeBlock({
       data-testid="markdown-code-block"
       data-scroll-anchor
       className={[
-        'max-w-full select-none overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
+        'markdown-code-block max-w-full select-none overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
         compact ? 'mb-1.5' : 'mb-3 mt-2',
       ].join(' ')}
     >

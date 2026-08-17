@@ -27,11 +27,11 @@ from sqlalchemy.orm import Session
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.services.group_member_helper import NAMESPACE_RESOURCE_TYPE
-from app.services.share.external_entity_resolver import (
+from app.services.external_entity_resolver import (
     IExternalEntityResolver,
     get_entity_resolver,
 )
+from app.services.group_member_helper import NAMESPACE_RESOURCE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ class NamespaceEntityResolver(IExternalEntityResolver):
 
         # 2) Entity-derived memberships
         # Get all registered entity types and check which namespaces have entity members
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             get_all_entity_types,
             get_entity_resolver,
         )

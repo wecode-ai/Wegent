@@ -7,6 +7,7 @@
 import React, { useRef, useCallback } from 'react'
 import { ArrowUp } from 'lucide-react'
 import LoadingDots from '../message/LoadingDots'
+import { useToast } from '@/hooks/use-toast'
 
 interface SendButtonProps {
   onClick: () => void
@@ -16,6 +17,7 @@ interface SendButtonProps {
   ariaLabel?: string
   /** @deprecated No longer used, kept for API compatibility */
   compact?: boolean
+  disabledReason?: string | null
 }
 
 export default function SendButton({
@@ -24,19 +26,29 @@ export default function SendButton({
   isLoading = false,
   className = '',
   ariaLabel = 'Send message',
+  disabledReason,
 }: SendButtonProps) {
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const { toast } = useToast()
 
   // Handle main button click (send message)
   const handleMainClick = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      if (!disabled && !isLoading) {
-        onClick()
+      if (isLoading) return
+      if (disabled) {
+        if (disabledReason) {
+          toast({
+            variant: 'destructive',
+            title: disabledReason,
+          })
+        }
+        return
       }
+      onClick()
     },
-    [disabled, isLoading, onClick]
+    [disabled, disabledReason, isLoading, onClick, toast]
   )
 
   return (
@@ -46,7 +58,8 @@ export default function SendButton({
         ref={buttonRef}
         type="button"
         onClick={handleMainClick}
-        disabled={disabled || isLoading}
+        disabled={isLoading || (disabled && !disabledReason)}
+        aria-disabled={disabled || isLoading}
         aria-label={ariaLabel}
         title={ariaLabel}
         data-tour="send-button"

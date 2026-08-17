@@ -68,31 +68,84 @@ test('serves browser-accessible OpenAI Responses API mock responses', async ({ p
   })
 })
 
-test('sends local model connection tests through the Wework Responses API path', async ({
-  page,
-}) => {
-  const app = new WeworkApp(page)
+for (const protocol of [
+  {
+    name: 'Responses custom tools',
+    apiFormat: 'openai-responses' as const,
+    toolProfile: 'custom' as const,
+    path: '/v1/responses',
+    modelId: 'mock-response-model',
+    expectedToolType: 'custom',
+    expectedToolName: 'apply_patch',
+  },
+  {
+    name: 'Responses shell profile function capability',
+    apiFormat: 'openai-responses' as const,
+    toolProfile: 'shell' as const,
+    path: '/v1/responses',
+    modelId: 'mock-response-shell-model',
+    expectedToolType: 'function',
+    expectedToolName: 'wework_capability_probe',
+  },
+  {
+    name: 'Chat Completions function tools',
+    apiFormat: 'openai-chat-completions' as const,
+    toolProfile: 'function' as const,
+    path: '/v1/chat/completions',
+    modelId: 'mock-chat-model',
+    expectedToolType: 'function',
+    expectedToolName: 'wework_capability_probe',
+  },
+  {
+    name: 'Anthropic Messages function tools',
+    apiFormat: 'anthropic-messages' as const,
+    toolProfile: 'function' as const,
+    path: '/v1/messages',
+    modelId: 'mock-anthropic-model',
+    expectedToolType: undefined,
+    expectedToolName: 'wework_capability_probe',
+  },
+]) {
+  test(`runs an Agent capability probe through ${protocol.name}`, async ({ page }) => {
+    const app = new WeworkApp(page)
+    await app.goto('/')
 
-  await app.goto('/')
+    const [request, result] = await Promise.all([
+      page.waitForRequest(
+        candidate =>
+          candidate.method() === 'POST' &&
+          candidate.url().startsWith(responseApiMockUrl) &&
+          candidate.url().endsWith(protocol.path.split('/').at(-1) ?? protocol.path)
+      ),
+      app.testLocalModelConnection({
+        baseUrl: `${responseApiMockUrl}/v1`,
+        apiFormat: protocol.apiFormat,
+        toolProfile: protocol.toolProfile,
+        modelId: protocol.modelId,
+        apiKey: 'test-token',
+      }),
+    ])
 
-  const [request, result] = await Promise.all([
-    page.waitForRequest(
-      candidate =>
-        candidate.method() === 'POST' && candidate.url() === `${responseApiMockUrl}/v1/responses`
-    ),
-    app.testLocalModelConnection({
-      baseUrl: `${responseApiMockUrl}/v1`,
-      modelId: 'mock-response-model',
-      apiKey: 'test-token',
-    }),
-  ])
-
-  expect(result).toEqual({ status: 200 })
-  expect(request.postDataJSON()).toMatchObject({
-    model: 'mock-response-model',
+    expect(result).toEqual({ status: 200, toolCalling: true })
+    const body = request.postDataJSON()
+    const probeTool = body.tools.find(
+      (tool: { name?: string; function?: { name?: string } }) =>
+        (tool.name ?? tool.function?.name) === protocol.expectedToolName
+    )
+    expect(body.model).toBe(protocol.modelId)
+    expect(request.postData()).toContain(protocol.expectedToolName)
+    expect(body.tool_choice).toBeUndefined()
+    if (protocol.apiFormat === 'openai-responses') {
+      expect(body.max_output_tokens).toBe(protocol.toolProfile === 'custom' ? 256 : 64)
+    }
+    expect(probeTool).toBeTruthy()
+    if (protocol.expectedToolType) {
+      expect(probeTool.type).toBe(protocol.expectedToolType)
+    } else {
+      expect(probeTool.input_schema).toBeTruthy()
+    }
   })
-  expect(request.postData()).toContain('Reply with ok.')
-})
+}
 
 test('surfaces local model send circuit breaker failures', async ({ page }) => {
   const app = new WeworkApp(page)

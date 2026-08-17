@@ -11,6 +11,7 @@ from .knowledge_base import (
     KB_PROMPT_RESTRICTED_ANALYST,
     KB_PROMPT_STRICT,
 )
+from .selected_knowledge import render_selected_knowledge_prompt
 
 __all__ = [
     "KB_PROMPT_STRICT",
@@ -20,4 +21,5 @@ __all__ = [
     "USER_QUESTION_MARKER",
     "extract_user_question",
     "parse_prompt_blocks",
+    "render_selected_knowledge_prompt",
 ]

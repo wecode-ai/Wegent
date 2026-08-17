@@ -117,6 +117,83 @@ def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:
     assert subtask.id == 11
 
 
+def test_list_by_ids_and_role_filters_ids_and_role(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(2, owner_id=10))
+    assistant = _subtask(
+        subtask_id=21,
+        task_id=2,
+        user_id=10,
+        message_id=1,
+        role=SubtaskRole.ASSISTANT,
+    )
+    user = _subtask(
+        subtask_id=22,
+        task_id=2,
+        user_id=10,
+        message_id=2,
+        role=SubtaskRole.USER,
+    )
+    skipped = _subtask(
+        subtask_id=23,
+        task_id=2,
+        user_id=10,
+        message_id=3,
+        role=SubtaskRole.ASSISTANT,
+    )
+    test_db.add_all([assistant, user, skipped])
+    test_db.commit()
+
+    subtasks = store.list_by_ids_and_role(
+        test_db,
+        subtask_ids=[assistant.id, user.id],
+        role=SubtaskRole.ASSISTANT,
+    )
+
+    assert subtasks == [assistant]
+
+
+def test_list_failed_details_by_ids_preserves_input_order_and_limit(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    task = _task(7, owner_id=test_user.id)
+    first_failure = _subtask(
+        subtask_id=71,
+        task_id=7,
+        user_id=test_user.id,
+        message_id=1,
+        status=SubtaskStatus.FAILED,
+    )
+    completed = _subtask(
+        subtask_id=72,
+        task_id=7,
+        user_id=test_user.id,
+        message_id=2,
+    )
+    second_failure = _subtask(
+        subtask_id=73,
+        task_id=7,
+        user_id=test_user.id,
+        message_id=3,
+        status=SubtaskStatus.FAILED,
+    )
+    test_db.add_all([task, first_failure, completed, second_failure])
+    test_db.commit()
+
+    details = store.list_failed_details_by_ids(
+        test_db,
+        subtask_ids=[second_failure.id, completed.id, first_failure.id],
+        limit=1,
+    )
+
+    assert len(details) == 1
+    assert details[0].subtask.id == second_failure.id
+    assert details[0].task.id == task.id
+    assert details[0].user_name == test_user.user_name
+
+
 def test_get_cleanup_cursor_recent_start_reference_prefers_recent_created_at(
     test_db: Session,
 ) -> None:

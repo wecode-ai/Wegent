@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CheckCircle2, Cloud, XCircle } from 'lucide-react'
-import { userApis } from '@/apis/user'
+import { removeToken, userApis } from '@/apis/user'
 import { Button } from '@/components/ui/button'
 import { paths } from '@/config/paths'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
@@ -71,6 +71,16 @@ function WeworkAuthorizeContent() {
       )
       setState('error')
     }
+  }
+
+  function handleSwitchAccount() {
+    // Drop the current Web session and bounce through the login page so the
+    // authorization can be granted by a different account. The login page
+    // reads POST_LOGIN_REDIRECT_KEY and returns here after a successful login.
+    removeToken()
+    const redirectTarget = currentRedirectTarget()
+    sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+    router.replace(`${paths.auth.login.getHref()}?redirect=${encodeURIComponent(redirectTarget)}`)
   }
 
   if (!sessionId) {
@@ -157,6 +167,16 @@ function WeworkAuthorizeContent() {
             onClick={handleDecline}
           >
             {t('auth.wework_authorize.cancel')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            data-testid="wework-authorize-switch-account"
+            disabled={state === 'submitting'}
+            onClick={handleSwitchAccount}
+          >
+            {t('auth.wework_authorize.switch_account')}
           </Button>
           <Button
             type="button"

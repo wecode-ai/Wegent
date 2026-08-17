@@ -10,7 +10,9 @@ from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_db
 from app.api.endpoints.internal import chat_storage
+from app.core.config import settings
 from app.models.subtask import SubtaskRole, SubtaskStatus
+from app.services.chat import compaction_checkpoint
 from app.services.task_fork_history import ForkHistoryItem
 
 
@@ -41,8 +43,9 @@ def _patch_internal_history(monkeypatch, items, *, resolver_applies_limit=False)
         SimpleNamespace(get_by_id=lambda db, *, task_id: SimpleNamespace(user_id=7)),
         raising=False,
     )
+    # The resolver call now lives in the shared compaction_checkpoint pipeline.
     monkeypatch.setattr(
-        chat_storage,
+        compaction_checkpoint,
         "task_fork_history_resolver",
         SimpleNamespace(resolve_for_task=resolve_for_task),
         raising=False,
@@ -72,11 +75,15 @@ def _patch_internal_history(monkeypatch, items, *, resolver_applies_limit=False)
 
 
 @pytest.fixture
-def internal_chat_client():
+def internal_chat_client(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
     app = FastAPI()
     app.include_router(chat_storage.router, prefix="/internal")
     app.dependency_overrides[get_db] = lambda: SimpleNamespace()
-    return TestClient(app)
+    return TestClient(
+        app,
+        headers={"Authorization": "Bearer test-internal-token"},
+    )
 
 
 def test_internal_history_uses_fork_resolver(internal_chat_client, monkeypatch):

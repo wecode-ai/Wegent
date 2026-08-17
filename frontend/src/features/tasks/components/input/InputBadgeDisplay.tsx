@@ -4,39 +4,125 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { X, Loader2 } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { AudioLines, Pause, Play, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import ContextBadge from '../chat/ContextBadge'
 import {
   formatFileSize,
   getFileIcon,
+  isAudioExtension,
   isImageExtension,
+  isVideoExtension,
   getAttachmentPreviewUrl,
 } from '@/apis/attachments'
 import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getExternalKnowledgeScopeKey } from '@/features/knowledge/externalKnowledgeSelection'
+import { formatCompactKnowledgeScope } from '@/features/knowledge/knowledgeContextPresentation'
+import { groupDingTalkContexts } from '@/features/knowledge/dingTalkContextGrouping'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, DingTalkDocContext } from '@/types/context'
 
 interface InputBadgeDisplayProps {
   /** Selected knowledge base contexts */
   contexts: ContextItem[]
   /** Current attachments state */
   attachmentState: MultiAttachmentUploadState
-  /** Callback to remove a context */
-  onRemoveContext: (contextId: number | string) => void
+  /** Callback to atomically remove one aggregated context group */
+  onRemoveContexts: (contextIds: (number | string)[]) => void
   /** Callback to remove an attachment */
   onRemoveAttachment: (attachmentId: number) => void
   /** Whether the component is disabled */
   disabled?: boolean
+  /** Optional semantic labels keyed by attachment ID */
+  attachmentLabels?: Record<number, string>
+  /** Hide ready attachment cards when another component owns their preview */
+  hideAttachments?: boolean
+}
+
+interface InputContextGroup {
+  key: string
+  context: ContextItem
+  contextIds: (number | string)[]
+  displayName?: string
+  displaySubtitle?: string
+}
+
+type Translate = (key: string, params?: Record<string, unknown>) => string
+
+export function groupInputContexts(contexts: ContextItem[], t: Translate): InputContextGroup[] {
+  const groups: InputContextGroup[] = []
+  const groupIndexes = new Map<string, number>()
+  const dingtalkGroups = groupDingTalkContexts(
+    contexts.filter((context): context is DingTalkDocContext => context.type === 'dingtalk_doc'),
+    t
+  )
+  const dingtalkGroupByContextId = new Map(
+    dingtalkGroups.flatMap(group => group.contexts.map(context => [context.id, group] as const))
+  )
+
+  contexts.forEach(context => {
+    let key = `context:${context.type}:${context.id}`
+    let displayName: string | undefined
+
+    if (context.type === 'dingtalk_doc') {
+      const dingtalkGroup = dingtalkGroupByContextId.get(context.id)
+      key = dingtalkGroup?.key ?? key
+      displayName = dingtalkGroup?.displayName
+    } else if (
+      context.type === 'external_knowledge' &&
+      context.ref.target_type === 'document' &&
+      context.ref.id
+    ) {
+      key = `external:${getExternalKnowledgeScopeKey(context.ref)}`
+      displayName = context.ref.name ?? context.name
+    }
+
+    const existingIndex = groupIndexes.get(key)
+    if (existingIndex === undefined) {
+      groupIndexes.set(key, groups.length)
+      groups.push({ key, context, contextIds: [context.id], displayName })
+      return
+    }
+
+    groups[existingIndex].contextIds.push(context.id)
+  })
+
+  return groups.map(group => {
+    if (group.context.type === 'dingtalk_doc') {
+      const selected = contexts.filter(
+        (context): context is DingTalkDocContext =>
+          context.type === 'dingtalk_doc' && group.contextIds.includes(context.id)
+      )
+      const folderCount = selected.filter(context => context.node_type === 'folder').length
+      const documentCount = selected.length - folderCount
+      return {
+        ...group,
+        displaySubtitle: formatCompactKnowledgeScope(folderCount, documentCount, t),
+      }
+    }
+    if (
+      group.context.type === 'external_knowledge' &&
+      group.context.ref.target_type === 'document'
+    ) {
+      return {
+        ...group,
+        displaySubtitle: t('knowledge:picker.scopeDocumentsCompact', {
+          count: group.contextIds.length,
+        }),
+      }
+    }
+    return group
+  })
 }
 
 /**
  * Custom hook to fetch image with authentication and return blob URL
  */
-function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
+export function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -99,40 +185,48 @@ function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
 /**
  * Inline attachment preview component
  */
-function AttachmentPreviewInline({
+export function AttachmentPreviewInline({
   attachment,
   disabled,
   onRemove,
   t,
+  label,
 }: {
   attachment: Attachment
   disabled?: boolean
   onRemove: () => void
-  t: (key: string) => string
+  t: (key: string, params?: Record<string, unknown>) => string
+  label?: string
 }) {
   const isImage = isImageExtension(attachment.file_extension)
+  const isVideo = isVideoExtension(attachment.file_extension)
+  const isAudio = isAudioExtension(attachment.file_extension)
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
   } = useAuthenticatedImageInline(attachment.id, isImage)
 
+  if ((isVideo || isAudio) && attachment.local_preview_url) {
+    return (
+      <MediaAttachmentPreview
+        attachment={attachment}
+        disabled={disabled}
+        isVideo={isVideo}
+        label={label}
+        onRemove={onRemove}
+      />
+    )
+  }
+
   // For images, show thumbnail preview
   if (isImage && !imageError) {
     // Show loading state
     if (imageLoading) {
       return (
-        <div
-          className={`relative flex items-center gap-2 px-2 py-1.5 rounded-lg border bg-muted border-border`}
-        >
-          <div className="relative h-10 w-10 rounded overflow-hidden border border-border flex items-center justify-center bg-muted">
+        <div className="relative h-14 w-14 overflow-hidden rounded-lg border border-border bg-muted">
+          <div className="flex h-full w-full items-center justify-center">
             <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
-          </div>
-          <div className="flex flex-col min-w-0 max-w-[120px]">
-            <span className="text-xs font-medium truncate" title={attachment.filename}>
-              {attachment.filename}
-            </span>
-            <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
           </div>
           {!disabled && (
             <Button
@@ -140,7 +234,7 @@ function AttachmentPreviewInline({
               variant="ghost"
               size="icon"
               onClick={onRemove}
-              className="h-5 w-5 ml-1 text-text-muted hover:text-text-primary"
+              className="absolute right-0 top-0 h-5 w-5 rounded-bl-md rounded-tr-lg bg-black/50 text-white hover:bg-black/70 hover:text-white"
             >
               <X className="h-3 w-3" />
             </Button>
@@ -153,7 +247,7 @@ function AttachmentPreviewInline({
     if (imageUrl) {
       return (
         <div
-          className={`relative flex items-center gap-2 px-2 py-1.5 rounded-lg border ${
+          className={`relative h-14 w-14 overflow-hidden rounded-lg border ${
             attachment.status === 'ready'
               ? 'bg-muted border-border'
               : attachment.status === 'failed'
@@ -161,17 +255,16 @@ function AttachmentPreviewInline({
                 : 'bg-muted border-border'
           }`}
         >
-          <div className="relative h-10 w-10 rounded overflow-hidden border border-border">
-            <img src={imageUrl} alt={attachment.filename} className="h-full w-full object-cover" />
-          </div>
-          <div className="flex flex-col min-w-0 max-w-[120px]">
-            <span className="text-xs font-medium truncate" title={attachment.filename}>
-              {attachment.filename}
+          <img src={imageUrl} alt={attachment.filename} className="h-full w-full object-cover" />
+          {label && (
+            <span className="absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1 py-0.5 text-center text-[10px] text-white">
+              {label}
             </span>
-            <span className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</span>
-          </div>
+          )}
           {attachment.status === 'parsing' && (
-            <Loader2 className="h-3 w-3 animate-spin text-primary ml-1" />
+            <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+              <Loader2 className="h-4 w-4 animate-spin text-white" />
+            </div>
           )}
           {!disabled && (
             <Button
@@ -179,7 +272,7 @@ function AttachmentPreviewInline({
               variant="ghost"
               size="icon"
               onClick={onRemove}
-              className="h-5 w-5 ml-1 text-text-muted hover:text-text-primary"
+              className="absolute right-0 top-0 h-5 w-5 rounded-bl-md rounded-tr-lg bg-black/50 text-white hover:bg-black/70 hover:text-white"
             >
               <X className="h-3 w-3" />
             </Button>
@@ -202,6 +295,7 @@ function AttachmentPreviewInline({
     >
       <span className="text-base">{getFileIcon(attachment.file_extension)}</span>
       <div className="flex flex-col min-w-0 max-w-[150px]">
+        {label && <span className="text-xs font-medium text-primary">{label}</span>}
         <span className="text-xs font-medium truncate" title={attachment.filename}>
           {attachment.filename}
         </span>
@@ -229,6 +323,158 @@ function AttachmentPreviewInline({
   )
 }
 
+function MediaAttachmentPreview({
+  attachment,
+  disabled,
+  isVideo,
+  label,
+  onRemove,
+}: {
+  attachment: Attachment
+  disabled?: boolean
+  isVideo: boolean
+  label?: string
+  onRemove: () => void
+}) {
+  const mediaRef = useRef<HTMLMediaElement>(null)
+  const [isPaused, setIsPaused] = useState(true)
+  const [isHovered, setIsHovered] = useState(false)
+  const [isVideoDialogOpen, setIsVideoDialogOpen] = useState(false)
+
+  const play = async () => {
+    try {
+      await mediaRef.current?.play()
+      setIsPaused(false)
+    } catch {
+      setIsPaused(true)
+    }
+  }
+
+  const pause = () => {
+    mediaRef.current?.pause()
+    setIsPaused(true)
+  }
+
+  const handleClick = () => {
+    if (isVideo) {
+      pause()
+      setIsVideoDialogOpen(true)
+      return
+    }
+    if (isPaused) {
+      void play()
+    } else {
+      pause()
+    }
+  }
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      handleClick()
+    }
+  }
+
+  const handleRemoveClick = (event: React.MouseEvent) => {
+    event.stopPropagation()
+    pause()
+    onRemove()
+  }
+
+  const handleMouseEnter = () => {
+    setIsHovered(true)
+    void play()
+  }
+
+  const handleMouseLeave = () => {
+    setIsHovered(false)
+    pause()
+  }
+
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid={`attachment-media-preview-${attachment.id}`}
+        aria-label={attachment.filename}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        className={`group relative z-0 flex cursor-pointer items-center overflow-hidden rounded-lg border border-border bg-muted transition-[width,height] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+          isVideo && isHovered ? 'z-10 h-24 w-40' : 'h-14 w-14'
+        }`}
+      >
+        {isVideo ? (
+          <video
+            ref={mediaRef as React.RefObject<HTMLVideoElement>}
+            src={attachment.local_preview_url}
+            muted
+            playsInline
+            preload="metadata"
+            onEnded={() => setIsPaused(true)}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <>
+            <audio
+              ref={mediaRef as React.RefObject<HTMLAudioElement>}
+              src={attachment.local_preview_url}
+              preload="metadata"
+              onEnded={() => setIsPaused(true)}
+            />
+            <div className="flex h-14 w-20 items-center justify-center bg-surface">
+              <AudioLines className="h-6 w-6 text-primary" />
+            </div>
+          </>
+        )}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
+          {isPaused ? (
+            <Play className="h-5 w-5 fill-white text-white" />
+          ) : (
+            <Pause className="h-5 w-5 fill-white text-white" />
+          )}
+        </div>
+        {label && (
+          <span className="pointer-events-none absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1 py-0.5 text-center text-[10px] text-white">
+            {label}
+          </span>
+        )}
+        {!disabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            data-testid={`remove-attachment-${attachment.id}`}
+            onClick={handleRemoveClick}
+            className="absolute right-0 top-0 h-5 w-5 rounded-bl-md rounded-tr-lg bg-black/50 text-white hover:bg-black/70 hover:text-white"
+          >
+            <X className="h-3 w-3" />
+          </Button>
+        )}
+      </div>
+
+      {isVideo && (
+        <Dialog open={isVideoDialogOpen} onOpenChange={setIsVideoDialogOpen}>
+          <DialogContent className="w-[calc(100vw-32px)] max-w-4xl overflow-hidden border-0 bg-black p-0">
+            <DialogTitle className="sr-only">{attachment.filename}</DialogTitle>
+            <DialogDescription className="sr-only">{attachment.filename}</DialogDescription>
+            <video
+              data-testid={`attachment-video-dialog-${attachment.id}`}
+              src={attachment.local_preview_url}
+              controls
+              autoPlay
+              playsInline
+              className="max-h-[80vh] w-full bg-black object-contain"
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  )
+}
+
 /**
  * Unified badge display component that shows both knowledge base badges and attachment badges
  * in a single horizontal scrollable row
@@ -236,15 +482,18 @@ function AttachmentPreviewInline({
 export default function InputBadgeDisplay({
   contexts,
   attachmentState,
-  onRemoveContext,
+  onRemoveContexts,
   onRemoveAttachment,
   disabled = false,
+  attachmentLabels,
+  hideAttachments = false,
 }: InputBadgeDisplayProps) {
   const { t } = useTranslation()
   const hasContexts = contexts.length > 0
-  const hasAttachments = attachmentState.attachments.length > 0
+  const hasAttachments = !hideAttachments && attachmentState.attachments.length > 0
   const isUploading = attachmentState.uploadingFiles.size > 0
   const hasErrors = attachmentState.errors.size > 0
+  const contextGroups = groupInputContexts(contexts, t)
 
   // Only render if there are items to display
   if (!hasContexts && !hasAttachments && !isUploading && !hasErrors) {
@@ -269,27 +518,31 @@ export default function InputBadgeDisplay({
       {(hasContexts || hasAttachments) && (
         <div className="flex items-center gap-2 overflow-x-auto max-w-full badge-scroll">
           {/* Knowledge base badges */}
-          {contexts.map(context => (
-            <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
+          {contextGroups.map(group => (
+            <div key={group.key} className="flex-shrink-0">
               <ContextBadge
-                context={context}
-                onRemove={() => onRemoveContext(context.id)}
+                context={group.context}
+                displayName={group.displayName}
+                displaySubtitle={group.displaySubtitle}
+                onRemove={() => onRemoveContexts(group.contextIds)}
                 disableUrlClick={true}
               />
             </div>
           ))}
 
           {/* Attachment badges */}
-          {attachmentState.attachments.map(attachment => (
-            <div key={`attachment-${attachment.id}`} className="flex-shrink-0">
-              <AttachmentPreviewInline
-                attachment={attachment}
-                disabled={disabled}
-                onRemove={() => onRemoveAttachment(attachment.id)}
-                t={t}
-              />
-            </div>
-          ))}
+          {!hideAttachments &&
+            attachmentState.attachments.map(attachment => (
+              <div key={`attachment-${attachment.id}`} className="flex-shrink-0">
+                <AttachmentPreviewInline
+                  attachment={attachment}
+                  disabled={disabled}
+                  onRemove={() => onRemoveAttachment(attachment.id)}
+                  t={t}
+                  label={attachmentLabels?.[attachment.id]}
+                />
+              </div>
+            ))}
         </div>
       )}
 

@@ -5,113 +5,115 @@
 name: Lint
 
 on:
-  push:
-    branches:
-      - main
-      - master
-      - develop
   pull_request:
     branches:
       - main
-      - master
-      - develop
+  merge_group:
+    types:
+      - checks_requested
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: Detect CI Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      wework: ${{ steps.classify.outputs.wework }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "merge_group" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
+
   lint-backend:
     name: Lint Backend (Black & isort)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.11 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.11'
 
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-
       - name: Install dependencies
         working-directory: ./backend
-        run: |
-          source $HOME/.cargo/env
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run Black format check
         working-directory: ./backend
-        run: |
-          source $HOME/.cargo/env
-          uv run black --check app/
+        run: uv run black --check app/
 
       - name: Run isort check
         working-directory: ./backend
-        run: |
-          source $HOME/.cargo/env
-          uv run isort --check-only --diff app/
+        run: uv run isort --check-only --diff app/
 
   lint-knowledge-engine:
     name: Lint Knowledge Engine (Black & isort)
+    needs: changes
+    if: needs.changes.outputs.knowledge_engine == 'true'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.12 and uv
+        uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: '3.12'
 
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-
       - name: Install dependencies
         working-directory: ./knowledge_engine
-        run: |
-          source $HOME/.cargo/env
-          uv sync --dev
+        run: uv sync --dev
 
       - name: Run Black format check
         working-directory: ./knowledge_engine
-        run: |
-          source $HOME/.cargo/env
-          uv run black --check knowledge_engine tests
+        run: uv run black --check knowledge_engine tests
 
       - name: Run isort check
         working-directory: ./knowledge_engine
-        run: |
-          source $HOME/.cargo/env
-          uv run isort --check-only --diff knowledge_engine tests
+        run: uv run isort --check-only --diff knowledge_engine tests
 
   lint-frontend:
     name: Lint Frontend (ESLint & TypeScript)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: ./pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run ESLint
         run: pnpm --filter wecode-ai-assistant lint
@@ -121,24 +123,16 @@ jobs:
 
   lint-wework:
     name: Lint Wework (ESLint & TypeScript)
+    needs: changes
+    if: needs.changes.outputs.wework == 'true'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: ./pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
       - name: Run ESLint
         run: pnpm --filter wework lint
@@ -158,6 +152,18 @@ jobs:
         run: |
           chmod +x ./scripts/hooks/check-settings-config.sh
           ./scripts/hooks/check-settings-config.sh
+
+      - name: Test CI change classifier
+        run: .github/scripts/test-classify-ci-changes.sh
+
+      - name: Test CI cache policy
+        run: .github/scripts/test-ci-cache-policy.sh
+
+      - name: Test Wegent release policy
+        run: scripts/test-publish-image-release-policy.sh
+
+      - name: Test repository policy workflow
+        run: scripts/test-repository-policy-workflow.sh
 
       - name: Run repository policy check
         # Fork PRs run this in repository-policy.yml using pull_request_target
@@ -186,19 +192,27 @@ jobs:
   lint-summary:
     name: Lint Summary
     runs-on: ubuntu-latest
-    needs: [lint-backend, lint-knowledge-engine, lint-frontend, lint-wework, check-settings-config, check-alembic-heads]
+    needs: [changes, lint-backend, lint-knowledge-engine, lint-frontend, lint-wework, check-settings-config, check-alembic-heads]
     if: always()
 
     steps:
       - name: Check lint results
         run: |
           echo "All lint jobs completed"
-          if [[ "${{ needs.lint-backend.result }}" == "failure" ]] || \
-             [[ "${{ needs.lint-knowledge-engine.result }}" == "failure" ]] || \
-             [[ "${{ needs.lint-frontend.result }}" == "failure" ]] || \
-             [[ "${{ needs.lint-wework.result }}" == "failure" ]] || \
-             [[ "${{ needs.check-settings-config.result }}" == "failure" ]] || \
-             [[ "${{ needs.check-alembic-heads.result }}" == "failure" ]]; then
-            echo "One or more lint jobs failed"
-            exit 1
-          fi
+          assert_result() {
+            local expected="$1"
+            local result="$2"
+            local name="$3"
+            if [[ "$expected" == "true" && "$result" != "success" ]]; then
+              echo "$name was required but completed with: $result"
+              exit 1
+            fi
+          }
+
+          [[ "${{ needs.changes.result }}" == "success" ]]
+          [[ "${{ needs.check-settings-config.result }}" == "success" ]]
+          [[ "${{ needs.check-alembic-heads.result }}" == "success" ]]
+          assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.lint-backend.result }}" "Backend lint"
+          assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.lint-knowledge-engine.result }}" "Knowledge Engine lint"
+          assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.lint-frontend.result }}" "Frontend lint"
+          assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.lint-wework.result }}" "Wework lint"

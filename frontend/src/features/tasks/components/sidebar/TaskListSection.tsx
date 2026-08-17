@@ -56,6 +56,7 @@ interface TaskListSectionProps {
   isCollapsed?: boolean
   showTitle?: boolean
   enableDrag?: boolean
+  onSelectMultiple?: (taskId: number) => void
 }
 
 import { useRouter } from 'next/navigation'
@@ -109,6 +110,7 @@ export default function TaskListSection({
   isCollapsed = false,
   showTitle = true,
   enableDrag = false,
+  onSelectMultiple,
 }: TaskListSectionProps) {
   const router = useRouter()
   const {
@@ -673,6 +675,7 @@ export default function TaskListSection({
                             handleCopyTaskId={handleCopyTaskId}
                             handleDeleteTask={handleDeleteTask}
                             onRename={() => handleStartRename(task.id)}
+                            onSelectMultiple={onSelectMultiple}
                             isGroupChat={task.is_group_chat}
                           />
                         </div>

@@ -3,7 +3,9 @@ import {
   ArrowLeft,
   ChevronRight,
   FolderGit2,
+  GitPullRequest,
   Info,
+  MessageSquareText,
   Package,
   Palette,
   SlidersHorizontal,
@@ -13,6 +15,8 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -22,6 +26,9 @@ import { PluginSettingsPage } from './PluginSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
+import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { HarnessSettingsPage } from './HarnessSettingsPage'
+import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
@@ -43,6 +50,7 @@ export function MobileSettingsPage({
   onRefreshWorkLists,
 }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [activePage, setActivePage] = useState<
     | 'menu'
     | 'general'
@@ -51,10 +59,67 @@ export function MobileSettingsPage({
     | 'about'
     | 'personal'
     | 'model-settings'
+    | 'quick-phrases'
     | 'plugins'
+    | 'git-hosting'
+    | 'harnesses'
     | 'worktrees'
     | 'archived-conversations'
   >('menu')
+
+  if (activePage === 'git-hosting') {
+    return (
+      <main
+        data-testid="mobile-git-hosting-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-git-hosting-settings-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">
+            {t('workbench.settings_nav_git_hosting', '代码托管')}
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <GitHostingSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
+  if (activePage === 'quick-phrases') {
+    return (
+      <main
+        data-testid="mobile-quick-phrases-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-quick-phrases-back-button"
+            onClick={() => setActivePage('personal')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">{t('workbench.quick_phrases', '快捷短语')}</h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <QuickPhrasesSettingsPage />
+        </div>
+      </main>
+    )
+  }
 
   if (activePage === 'general') {
     return (
@@ -225,6 +290,35 @@ export function MobileSettingsPage({
     )
   }
 
+  if (activePage === 'harnesses' && experimentalFeaturesEnabled) {
+    return (
+      <main
+        data-testid="mobile-harness-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-harness-settings-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="flex items-center gap-2 text-lg font-semibold">
+            <span>{t('workbench.settings_nav_harnesses', '编码工具')}</span>
+            <ExperimentalBadge testId="mobile-harness-settings-experimental-badge" />
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <HarnessSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
   if (activePage === 'plugins') {
     return (
       <main
@@ -329,6 +423,18 @@ export function MobileSettingsPage({
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
+          <button
+            type="button"
+            data-testid="mobile-settings-quick-phrases-button"
+            onClick={() => setActivePage('quick-phrases')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <MessageSquareText className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.quick_phrases', '快捷短语')}
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
         </section>
       </main>
     )
@@ -405,6 +511,33 @@ export function MobileSettingsPage({
           <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_personal', '个人')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
+        {experimentalFeaturesEnabled ? (
+          <button
+            type="button"
+            data-testid="mobile-settings-harnesses-button"
+            onClick={() => setActivePage('harnesses')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.settings_nav_harnesses', '编码工具')}
+            </span>
+            <ExperimentalBadge testId="mobile-settings-harnesses-experimental-badge" />
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          data-testid="mobile-settings-git-hosting-button"
+          onClick={() => setActivePage('git-hosting')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <GitPullRequest className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_git_hosting', '代码托管')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>

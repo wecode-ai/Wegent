@@ -9,6 +9,10 @@ import { adminApis } from '@/apis/admin'
 import { uploadAttachment } from '@/apis/attachments'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
 
+jest.mock('@/features/admin/components/MarketplaceTagsConfigSection', () => ({
+  MarketplaceTagsConfigSection: () => <div data-testid="marketplace-tags-config-section" />,
+}))
+
 jest.mock('@/apis/admin', () => ({
   adminApis: {
     getSloganTipsConfig: jest.fn(),
@@ -50,6 +54,8 @@ const tMock = (key: string) => {
     'system_config.quick_launch_functions_version': 'System functions version',
     'system_config.quick_launch_function_title': 'Title',
     'system_config.quick_launch_function_description': 'Description',
+    'system_config.quick_launch_function_cover': 'Scenario cover',
+    'system_config.quick_launch_function_cover_placeholder': 'Enter an image URL',
     'system_config.quick_launch_function_presets': 'Input presets',
     'system_config.quick_launch_function_add_preset': 'Add preset',
     'system_config.quick_launch_function_preset_title': 'Preset title',
@@ -120,6 +126,7 @@ describe('SystemConfigPanel', () => {
           title: 'Create PPT',
           description: 'Create presentation decks',
           icon: 'presentation',
+          cover: '/marketplace-covers/create-ppt.webp',
           team_id: 42,
           enabled: true,
           order: 1,
@@ -184,6 +191,9 @@ describe('SystemConfigPanel', () => {
     fireEvent.change(screen.getByTestId('quick-launch-function-title-0'), {
       target: { value: 'Create Skill' },
     })
+    fireEvent.change(screen.getByTestId('quick-launch-function-cover-0'), {
+      target: { value: ' /marketplace-covers/create-skill.webp ' },
+    })
     fireEvent.change(screen.getByTestId('quick-launch-function-preset-title-0-0'), {
       target: { value: 'Skill builder' },
     })
@@ -214,6 +224,7 @@ describe('SystemConfigPanel', () => {
             title: 'Create Skill',
             description: 'Create presentation decks',
             icon: 'presentation',
+            cover: '/marketplace-covers/create-skill.webp',
             team_id: 42,
             enabled: true,
             order: 1,

@@ -18,6 +18,10 @@ function isTauriRuntime() {
 }
 
 function shouldWriteTauriLog(level: ConsoleLevel) {
+  if (import.meta.env.DEV) {
+    return true
+  }
+
   if (level === 'error' || level === 'warn') {
     return true
   }

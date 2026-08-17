@@ -79,6 +79,7 @@ async def test_update_quick_launch_functions_normalizes_input_presets():
                 {
                     "id": "create_ppt",
                     "title": "创建 PPT",
+                    "cover": "/marketplace-covers/create-ppt.webp",
                     "team_id": 101,
                     "input_presets": [
                         {
@@ -104,6 +105,7 @@ async def test_update_quick_launch_functions_normalizes_input_presets():
 
     assert db.committed is True
     assert response.version == 1
+    assert response.functions[0].cover == "/marketplace-covers/create-ppt.webp"
     assert response.functions[0].input_presets[0].id == "roadmap"
     assert response.functions[0].input_presets[0].title == "产品路线图"
     assert response.functions[0].input_presets[0].prompt == "帮我创建一个 xxx 的 PPT"

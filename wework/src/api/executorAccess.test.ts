@@ -50,8 +50,18 @@ function createApis(devices: DeviceInfo[] = [createDevice()]) {
       truncated: false,
       size: 5,
     }),
+    readWorkspaceFileChunk: vi.fn().mockResolvedValue({
+      path: '/Users/me/project/image.png',
+      name: 'image.png',
+      data: 'AA==',
+      offset: 0,
+      next_offset: 1,
+      size: 1,
+      eof: true,
+    }),
   }
   const runtimeWorkApi = {
+    prepareRuntimeModel: vi.fn().mockResolvedValue(true),
     listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
     prepareDeviceWorkspace: vi.fn(),
     deleteDeviceWorkspace: vi.fn(),
@@ -114,13 +124,18 @@ describe('executor access layer', () => {
       entries: [],
     })
     await expect(
-      client.files.readWorkspaceTextFile('device-1', '/Users/me/project/README.md')
+      client.files.readWorkspaceTextFile(
+        'device-1',
+        '/Users/me/project/README.md',
+        '/Users/me/project'
+      )
     ).resolves.toMatchObject({ content: 'hello' })
 
     expect(deviceApi.listWorkspaceEntries).toHaveBeenCalledWith('device-1', '/Users/me/project')
     expect(deviceApi.readWorkspaceTextFile).toHaveBeenCalledWith(
       'device-1',
-      '/Users/me/project/README.md'
+      '/Users/me/project/README.md',
+      '/Users/me/project'
     )
   })
 
@@ -136,6 +151,53 @@ describe('executor access layer', () => {
       'executor-not-found:missing-device'
     )
     expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
+  })
+
+  test('rejects binary file reads before invoking an unknown executor', async () => {
+    const { deviceApi, runtimeWorkApi } = createApis()
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await expect(
+      client.files.readWorkspaceFileChunk(
+        'missing-device',
+        '/Users/me/project/image.png',
+        0,
+        '/Users/me/project'
+      )
+    ).rejects.toThrow('executor-not-found:missing-device')
+    expect(deviceApi.readWorkspaceFileChunk).not.toHaveBeenCalled()
+  })
+
+  test('loads a missing executor through the targeted resolver', async () => {
+    const { deviceApi, runtimeWorkApi } = createApis()
+    const resolveDevice = vi.fn().mockResolvedValue(
+      createDevice({
+        id: 2,
+        device_id: 'cloud-device',
+        name: 'Cloud Device',
+      })
+    )
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+      resolveDevice,
+    })
+
+    await client.commands.executeCommand('cloud-device', {
+      command_key: 'git_branch',
+      cwd: '/workspace/cloud',
+    })
+
+    expect(resolveDevice).toHaveBeenCalledWith('cloud-device')
+    expect(deviceApi.executeCommand).toHaveBeenCalledWith('cloud-device', {
+      command_key: 'git_branch',
+      cwd: '/workspace/cloud',
+    })
   })
 
   test('normalizes offline devices into executor-offline errors', async () => {

@@ -44,6 +44,27 @@ async fn process_engine_writes_configured_stdin_to_child() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn process_engine_removes_exported_bash_functions_from_child_environment() {
+    let engine = ProcessEngine::new(
+        CommandSpec::new("env")
+            .env("BASH_FUNC_which%%", "() {")
+            .env("WEGENT_ENV_PROBE", "present"),
+        TEST_PROCESS_TIMEOUT_SECONDS,
+    );
+
+    let outcome = engine.run(ExecutionRequest::default()).await;
+    let ExecutionOutcome::Completed { content } = outcome else {
+        panic!("environment command should complete");
+    };
+
+    assert!(!content.lines().any(|line| line.starts_with("BASH_FUNC_")));
+    assert!(content
+        .lines()
+        .any(|line| line == "WEGENT_ENV_PROBE=present"));
+}
+
 #[tokio::test]
 async fn process_engine_maps_nonzero_exit_to_failed_outcome() {
     let engine = ProcessEngine::new(

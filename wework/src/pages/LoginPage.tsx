@@ -131,7 +131,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-semibold text-text-primary">{t('workbench.login_title')}</h1>
+          <h1 className="heading-xl text-text-primary">{t('workbench.login_title')}</h1>
           <p className="mt-2 text-sm text-text-muted">{t('workbench.login_subtitle')}</p>
         </div>
         <div className="rounded-2xl border border-border bg-surface px-8 py-8 shadow-[0_16px_44px_rgba(0,0,0,0.08)]">

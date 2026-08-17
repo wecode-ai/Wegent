@@ -18,6 +18,7 @@ from app.schemas.user import (
     WeworkAuthSessionActionResponse,
     WeworkAuthSessionCreateResponse,
     WeworkAuthSessionPollResponse,
+    WeworkWebConfigResponse,
 )
 
 router = APIRouter()
@@ -105,6 +106,16 @@ def _require_poll_token(session_data: dict, poll_token: str | None) -> None:
         )
 
 
+@router.get("/config", response_model=WeworkWebConfigResponse)
+async def get_wework_web_config() -> WeworkWebConfigResponse:
+    """Return public Web and Socket.IO URLs associated with this Backend."""
+    socket_url = settings.WEGENT_SOCKET_URL.strip().rstrip("/")
+    return WeworkWebConfigResponse(
+        web_url=settings.FRONTEND_URL.rstrip("/"),
+        socket_url=socket_url or None,
+    )
+
+
 @router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)
 async def create_wework_auth_session() -> WeworkAuthSessionCreateResponse:
     """Create a short-lived cloud authorization session for Wework desktop."""
@@ -133,6 +144,7 @@ async def create_wework_auth_session() -> WeworkAuthSessionCreateResponse:
         session_id=session_id,
         poll_token=poll_token,
         authorize_url=_build_authorize_url(session_id),
+        web_url=settings.FRONTEND_URL.rstrip("/"),
         expires_at=expires_at,
         poll_interval_seconds=POLL_INTERVAL_SECONDS,
     )

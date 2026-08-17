@@ -7,6 +7,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { listDocuments } from '@/apis/knowledge'
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
+import type { KnowledgeContentOrigin } from '@/types/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => {
   const t = (key: string) => key
@@ -131,6 +132,81 @@ describe('useDocuments query parameters', () => {
         limit: 100,
         offset: 0,
       })
+    })
+  })
+
+  it('loads only the requested page when server-only pagination is enabled', async () => {
+    mockListDocuments.mockResolvedValue(
+      createListResponseFromItems([createDocument(1, 'result.txt')], {
+        total: 40,
+        has_more: true,
+      })
+    )
+
+    const { result } = renderHook(() =>
+      useDocuments({
+        knowledgeBaseId: 1,
+        paginationEnabled: true,
+        serverPaginationOnly: true,
+        initialPageSize: 20,
+        keyword: 'report',
+        sortBy: 'name',
+        sortOrder: 'asc',
+      })
+    )
+
+    await waitFor(() => {
+      expect(mockListDocuments).toHaveBeenCalledWith(1, {
+        folder_id: undefined,
+        include_subfolders: false,
+        keyword: 'report',
+        sort_by: 'name',
+        sort_order: 'asc',
+        limit: 20,
+        offset: 0,
+      })
+      expect(result.current.totalPages).toBe(2)
+    })
+
+    act(() => result.current.goToPage(2))
+    await waitFor(() => {
+      expect(mockListDocuments).toHaveBeenLastCalledWith(1, {
+        folder_id: undefined,
+        include_subfolders: false,
+        keyword: 'report',
+        sort_by: 'name',
+        sort_order: 'asc',
+        limit: 20,
+        offset: 20,
+      })
+    })
+    expect(mockListDocuments).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads when the content origin changes', async () => {
+    const { rerender } = renderHook(
+      ({ origin }) =>
+        useDocuments({
+          knowledgeBaseId: 1,
+          paginationEnabled: true,
+          serverPaginationOnly: true,
+          origin,
+        }),
+      { initialProps: { origin: 'generated' as KnowledgeContentOrigin } }
+    )
+
+    await waitFor(() => {
+      expect(mockListDocuments).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ origin: 'generated' })
+      )
+    })
+    mockListDocuments.mockClear()
+
+    rerender({ origin: 'user' })
+
+    await waitFor(() => {
+      expect(mockListDocuments).toHaveBeenCalledWith(1, expect.objectContaining({ origin: 'user' }))
     })
   })
 

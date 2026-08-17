@@ -1,31 +1,71 @@
+import {
+  createDefaultLocalModelCatalogEntry,
+  type LocalModelCatalogEntry,
+} from './localModelCatalog'
+
+export const KIMI_CODING_CONTEXT_WINDOW = 262_144
+export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
+export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
+export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
+export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
+export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
+export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
+export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
+export const DEEPSEEK_V4_PRO_CATALOG_MODEL_ID = 'wework-deepseek-v4-pro'
+export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
+
 export interface LocalModelConfig {
   id: string
+  providerProfileId?: string
   displayName: string
   group?: string
   modelId: string
   baseUrl: string
+  apiFormat: LocalModelApiFormat
+  toolProfile: LocalModelToolProfile
   requestPath?: string
   apiKey?: string
+  apiKeyConfigured?: boolean
   contextWindow?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
+  visionModelConfigId?: string
+  codexCatalogModelId?: string
+  catalogEntry?: LocalModelCatalogEntry
+  catalogReady: boolean
+  catalogPendingRuntimeInstanceId?: string
   enabled: boolean
   updatedAt: string
 }
 
+export type LocalModelApiFormat =
+  | 'openai-responses'
+  | 'openai-chat-completions'
+  | 'anthropic-messages'
+
 export type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
+
+export type LocalModelToolProfile = 'custom' | 'function' | 'shell'
 
 export interface SaveLocalModelConfigInput {
   id?: string | null
+  providerProfileId?: string | null
   displayName?: string | null
   group?: string | null
   modelId: string
   baseUrl: string
+  apiFormat?: LocalModelApiFormat | null
+  toolProfile?: LocalModelToolProfile | null
   requestPath?: string | null
   apiKey?: string | null
   contextWindow?: number | string | null
   webSearchMode?: LocalModelWebSearchMode | null
   imageGenerationEnabled?: boolean | null
+  visionModelConfigId?: string | null
+  codexCatalogModelId?: string | null
+  catalogEntry?: LocalModelCatalogEntry | null
+  catalogReady?: boolean
+  catalogPendingRuntimeInstanceId?: string | null
   enabled?: boolean
 }
 
@@ -33,10 +73,54 @@ export type LocalModelSettingsEventConfig = Omit<LocalModelConfig, 'apiKey'> & {
   apiKeyConfigured: boolean
 }
 
+export type LocalModelCatalogSnapshot = Pick<LocalModelConfig, 'id' | 'updatedAt'>
+
 export const LOCAL_MODEL_SETTINGS_STORAGE_KEY = 'wework.localModelSettings.v1'
 export const LOCAL_MODEL_SETTINGS_CHANGED_EVENT = 'wework:local-model-settings-changed'
 export const LOCAL_MODEL_NAME_PREFIX = 'local-model:'
 export const DEFAULT_LOCAL_MODEL_REQUEST_PATH = '/responses'
+export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completions'
+export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
+
+export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
+  if (apiFormat === 'openai-chat-completions') {
+    return DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
+  }
+  if (apiFormat === 'anthropic-messages') {
+    return DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH
+  }
+  return DEFAULT_LOCAL_MODEL_REQUEST_PATH
+}
+
+export function normalizeLocalModelApiFormat(value?: string | null): LocalModelApiFormat {
+  return value === 'openai-chat-completions' || value === 'anthropic-messages'
+    ? value
+    : 'openai-responses'
+}
+
+export function defaultLocalModelToolProfile(
+  apiFormat: LocalModelApiFormat
+): LocalModelToolProfile {
+  return apiFormat === 'openai-responses' ? 'custom' : 'function'
+}
+
+export function normalizeLocalModelToolProfile(
+  value: string | null | undefined,
+  apiFormat: LocalModelApiFormat
+): LocalModelToolProfile {
+  return value === 'custom' || value === 'function' || value === 'shell'
+    ? value
+    : defaultLocalModelToolProfile(apiFormat)
+}
+
+function validateLocalModelToolProfile(
+  toolProfile: LocalModelToolProfile,
+  apiFormat: LocalModelApiFormat
+): void {
+  if (toolProfile === 'custom' && apiFormat !== 'openai-responses') {
+    throw new Error('Native custom tools require the OpenAI Responses API format')
+  }
+}
 
 function readStoredConfigs(): LocalModelConfig[] {
   try {
@@ -55,10 +139,20 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
   const record = value as Record<string, unknown>
   return (
     typeof record.id === 'string' &&
+    (record.providerProfileId === undefined || typeof record.providerProfileId === 'string') &&
     typeof record.displayName === 'string' &&
     (record.group === undefined || typeof record.group === 'string') &&
     typeof record.modelId === 'string' &&
     typeof record.baseUrl === 'string' &&
+    (record.apiFormat === undefined ||
+      record.apiFormat === 'openai-responses' ||
+      record.apiFormat === 'openai-chat-completions' ||
+      record.apiFormat === 'anthropic-messages') &&
+    (record.toolProfile === undefined ||
+      record.toolProfile === 'custom' ||
+      record.toolProfile === 'function' ||
+      record.toolProfile === 'shell') &&
+    (record.apiKeyConfigured === undefined || typeof record.apiKeyConfigured === 'boolean') &&
     (record.requestPath === undefined || typeof record.requestPath === 'string') &&
     (record.requestUrlMode === undefined ||
       record.requestUrlMode === 'responses_path' ||
@@ -75,39 +169,137 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.webSearchMode === 'cached' ||
       record.webSearchMode === 'live') &&
     (record.imageGenerationEnabled === undefined ||
-      typeof record.imageGenerationEnabled === 'boolean')
+      typeof record.imageGenerationEnabled === 'boolean') &&
+    (record.visionModelConfigId === undefined || typeof record.visionModelConfigId === 'string') &&
+    (record.codexCatalogModelId === undefined || typeof record.codexCatalogModelId === 'string') &&
+    (record.catalogEntry === undefined ||
+      (typeof record.catalogEntry === 'object' &&
+        record.catalogEntry !== null &&
+        !Array.isArray(record.catalogEntry))) &&
+    (record.catalogReady === undefined || typeof record.catalogReady === 'boolean') &&
+    (record.catalogPendingRuntimeInstanceId === undefined ||
+      typeof record.catalogPendingRuntimeInstanceId === 'string')
   )
 }
 
 function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
   const legacyConfig = config as LocalModelConfig & { requestUrlMode?: string }
+  const providerProfileId =
+    legacyConfig.providerProfileId === 'minimax' &&
+    legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.minimax.io/anthropic'
+      ? 'minimax-global'
+      : legacyConfig.providerProfileId
+  const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
+  const migrateDeepSeekResponses =
+    legacyConfig.providerProfileId === 'deepseek' &&
+    deepSeekCatalogModelIdFor(legacyConfig.modelId) !== undefined &&
+    legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.deepseek.com' &&
+    storedApiFormat === 'openai-chat-completions' &&
+    normalizeLocalModelRequestPath(legacyConfig.requestPath, storedApiFormat) ===
+      DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
+  const apiFormat = migrateDeepSeekResponses ? 'openai-responses' : storedApiFormat
+  const preferredRequestPath = migrateDeepSeekResponses
+    ? DEFAULT_LOCAL_MODEL_REQUEST_PATH
+    : legacyConfig.requestPath
   const splitUrl =
     legacyConfig.requestUrlMode === 'custom_url'
-      ? splitLocalModelRequestUrl(legacyConfig.baseUrl, legacyConfig.requestPath)
+      ? splitLocalModelRequestUrl(legacyConfig.baseUrl, preferredRequestPath, apiFormat)
       : {
           baseUrl: legacyConfig.baseUrl,
-          requestPath: normalizeLocalModelRequestPath(legacyConfig.requestPath),
+          requestPath: normalizeLocalModelRequestPath(preferredRequestPath, apiFormat),
         }
+  const isCustomProvider = (providerProfileId ?? 'custom') === 'custom'
+  const catalogEntry =
+    legacyConfig.catalogEntry ??
+    (isCustomProvider
+      ? createDefaultLocalModelCatalogEntry({
+          id: legacyConfig.id,
+          displayName: legacyConfig.displayName,
+          toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+          contextWindow: legacyConfig.contextWindow,
+        })
+      : undefined)
+  const needsCatalogMigration = isCustomProvider && !legacyConfig.catalogEntry
+  const isKimiOpenPlatformK3 = providerProfileId === 'kimi' && legacyConfig.modelId === 'kimi-k3'
+  const kimiCatalogModelId = isKimiOpenPlatformK3
+    ? KIMI_K3_CATALOG_MODEL_ID
+    : providerProfileId === 'kimi-coding'
+      ? legacyConfig.modelId === 'k3'
+        ? KIMI_K3_CATALOG_MODEL_ID
+        : legacyConfig.modelId === 'kimi-for-coding' ||
+            legacyConfig.modelId === 'kimi-for-coding-highspeed'
+          ? KIMI_K27_CATALOG_MODEL_ID
+          : undefined
+      : undefined
+  const deepSeekCatalogModelId =
+    providerProfileId === 'deepseek' ? deepSeekCatalogModelIdFor(legacyConfig.modelId) : undefined
+  const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
+    ...(providerProfileId ? { providerProfileId } : {}),
     displayName: legacyConfig.displayName,
     ...(legacyConfig.group ? { group: legacyConfig.group } : {}),
     modelId: legacyConfig.modelId,
     baseUrl: legacyConfig.baseUrl,
+    apiFormat,
+    toolProfile: migrateDeepSeekResponses
+      ? 'custom'
+      : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
-    ...(legacyConfig.contextWindow ? { contextWindow: legacyConfig.contextWindow } : {}),
-    webSearchMode: normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
+    apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
+    ...(providerCatalogModelId
+      ? {
+          contextWindow: kimiCatalogModelId
+            ? isKimiOpenPlatformK3
+              ? KIMI_K3_CONTEXT_WINDOW
+              : KIMI_CODING_CONTEXT_WINDOW
+            : DEEPSEEK_V4_CONTEXT_WINDOW,
+        }
+      : legacyConfig.contextWindow
+        ? { contextWindow: legacyConfig.contextWindow }
+        : {}),
+    webSearchMode: migrateDeepSeekResponses
+      ? 'live'
+      : normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
     imageGenerationEnabled: normalizeLocalModelImageGenerationEnabled(
       legacyConfig.imageGenerationEnabled
     ),
+    ...(legacyConfig.visionModelConfigId
+      ? { visionModelConfigId: legacyConfig.visionModelConfigId }
+      : {}),
+    ...(providerCatalogModelId ||
+    legacyConfig.codexCatalogModelId ||
+    typeof catalogEntry?.slug === 'string'
+      ? {
+          codexCatalogModelId:
+            providerCatalogModelId ||
+            legacyConfig.codexCatalogModelId ||
+            (catalogEntry?.slug as string),
+        }
+      : {}),
+    ...(catalogEntry ? { catalogEntry } : {}),
+    catalogReady: legacyConfig.catalogReady ?? !needsCatalogMigration,
+    ...(legacyConfig.catalogPendingRuntimeInstanceId
+      ? { catalogPendingRuntimeInstanceId: legacyConfig.catalogPendingRuntimeInstanceId }
+      : {}),
     enabled: legacyConfig.enabled,
     updatedAt: legacyConfig.updatedAt,
   }
   return {
     ...nextConfig,
     baseUrl: splitUrl.baseUrl,
-    requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath),
+    requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat),
   }
+}
+
+export function deepSeekCatalogModelIdFor(modelId: string): string | undefined {
+  if (modelId === DEEPSEEK_V4_FLASH_MODEL_ID) {
+    return DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
+  }
+  if (modelId === DEEPSEEK_V4_PRO_MODEL_ID) {
+    return DEEPSEEK_V4_PRO_CATALOG_MODEL_ID
+  }
+  return undefined
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
@@ -152,27 +344,37 @@ export function normalizeLocalModelBaseUrl(value: string): string {
   return trimmed
 }
 
-export function normalizeLocalModelRequestPath(value?: string | null): string {
-  const trimmed = value?.trim() || DEFAULT_LOCAL_MODEL_REQUEST_PATH
+export function normalizeLocalModelRequestPath(
+  value?: string | null,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
+): string {
+  const defaultPath = defaultLocalModelRequestPath(apiFormat)
+  const trimmed = value?.trim() || defaultPath
   const withoutTrailingSlash = trimmed.replace(/\/+$/, '')
   const path = withoutTrailingSlash.startsWith('/')
     ? withoutTrailingSlash
     : `/${withoutTrailingSlash}`
-  return path || DEFAULT_LOCAL_MODEL_REQUEST_PATH
+  return path || defaultPath
 }
 
-export function buildLocalModelRequestUrl(baseUrl: string, requestPath?: string | null): string {
-  const splitUrl = splitLocalModelRequestUrl(baseUrl, requestPath)
+export function buildLocalModelRequestUrl(
+  baseUrl: string,
+  requestPath?: string | null,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
+): string {
+  const splitUrl = splitLocalModelRequestUrl(baseUrl, requestPath, apiFormat)
   return `${normalizeLocalModelBaseUrl(splitUrl.baseUrl)}${normalizeLocalModelRequestPath(
-    splitUrl.requestPath
+    splitUrl.requestPath,
+    apiFormat
   )}`
 }
 
 export function splitLocalModelRequestUrl(
   value: string,
-  preferredPath?: string | null
+  preferredPath?: string | null,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
 ): { baseUrl: string; requestPath: string } {
-  const requestPath = normalizeLocalModelRequestPath(preferredPath)
+  const requestPath = normalizeLocalModelRequestPath(preferredPath, apiFormat)
   const trimmed = value.trim().replace(/\/+$/, '')
   if (!trimmed) return { baseUrl: '', requestPath }
 
@@ -242,8 +444,16 @@ export function normalizeLocalModelImageGenerationEnabled(value?: boolean | null
   return value === true
 }
 
-function nextConfigId(): string {
+export function createLocalModelConfigId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}`
+}
+
+function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
+  const previousTimestamp = previous ? Date.parse(previous.updatedAt) : Number.NaN
+  const timestamp = Number.isFinite(previousTimestamp)
+    ? Math.max(Date.now(), previousTimestamp + 1)
+    : Date.now()
+  return new Date(timestamp).toISOString()
 }
 
 export function listLocalModelConfigs(): LocalModelConfig[] {
@@ -252,35 +462,96 @@ export function listLocalModelConfigs(): LocalModelConfig[] {
 
 export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalModelConfig {
   const modelId = normalizeLocalModelId(input.modelId)
-  const splitUrl = splitLocalModelRequestUrl(input.baseUrl, input.requestPath)
+  const apiFormat = normalizeLocalModelApiFormat(input.apiFormat)
+  const splitUrl = splitLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat)
   const baseUrl = normalizeLocalModelBaseUrl(splitUrl.baseUrl)
-  const requestPath = normalizeLocalModelRequestPath(splitUrl.requestPath)
+  const requestPath = normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat)
   const displayName = input.displayName?.trim() || modelId
   const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
   const contextWindow = normalizeLocalModelContextWindow(input.contextWindow)
-  const id = input.id?.trim() || nextConfigId()
+  const toolProfile = normalizeLocalModelToolProfile(input.toolProfile, apiFormat)
+  validateLocalModelToolProfile(toolProfile, apiFormat)
+  const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
+  const isCustomProvider =
+    (input.providerProfileId ?? previous?.providerProfileId ?? 'custom') === 'custom'
+  const catalogEntry =
+    input.catalogEntry === undefined
+      ? (previous?.catalogEntry ??
+        (isCustomProvider
+          ? createDefaultLocalModelCatalogEntry({
+              id,
+              displayName,
+              toolProfile,
+              contextWindow,
+            })
+          : undefined))
+      : (input.catalogEntry ?? undefined)
+  const catalogChanged =
+    Boolean(catalogEntry) && JSON.stringify(catalogEntry) !== JSON.stringify(previous?.catalogEntry)
+  const shouldClearPendingRuntimeInstanceId =
+    input.catalogEntry !== undefined || (input.providerProfileId !== undefined && !isCustomProvider)
+  const pendingRuntimeInstanceId =
+    input.catalogPendingRuntimeInstanceId !== undefined
+      ? input.catalogPendingRuntimeInstanceId?.trim() || undefined
+      : shouldClearPendingRuntimeInstanceId
+        ? undefined
+        : previous?.catalogPendingRuntimeInstanceId
   const webSearchMode = normalizeLocalModelWebSearchMode(
     input.webSearchMode ?? previous?.webSearchMode
   )
   const imageGenerationEnabled = normalizeLocalModelImageGenerationEnabled(
     input.imageGenerationEnabled ?? previous?.imageGenerationEnabled
   )
+  const visionModelConfigId =
+    input.visionModelConfigId === undefined
+      ? previous?.visionModelConfigId
+      : input.visionModelConfigId?.trim() || undefined
+  const enabled = input.enabled ?? previous?.enabled ?? true
+  if (visionModelConfigId === id) {
+    throw new Error('Vision proxy model must be different from the primary model')
+  }
+  if (
+    visionModelConfigId &&
+    !existing.some(config => config.id === visionModelConfigId && config.enabled)
+  ) {
+    throw new Error('Vision proxy model is missing or disabled')
+  }
+  if (!enabled && existing.some(config => config.id !== id && config.visionModelConfigId === id)) {
+    throw new Error('Vision proxy model is still referenced by another model')
+  }
   const next: LocalModelConfig = {
     id,
+    ...(input.providerProfileId ? { providerProfileId: input.providerProfileId } : {}),
     displayName,
     ...(group ? { group } : {}),
     modelId,
     baseUrl,
+    apiFormat,
+    toolProfile,
     requestPath,
     apiKey,
+    apiKeyConfigured: Boolean(apiKey),
     ...(contextWindow ? { contextWindow } : {}),
     webSearchMode,
     imageGenerationEnabled,
-    enabled: input.enabled ?? previous?.enabled ?? true,
-    updatedAt: new Date().toISOString(),
+    ...(visionModelConfigId ? { visionModelConfigId } : {}),
+    ...(input.codexCatalogModelId?.trim() || typeof catalogEntry?.slug === 'string'
+      ? {
+          codexCatalogModelId: input.codexCatalogModelId?.trim() || (catalogEntry?.slug as string),
+        }
+      : {}),
+    ...(catalogEntry ? { catalogEntry } : {}),
+    catalogReady:
+      input.catalogReady ??
+      (!catalogEntry ? true : catalogChanged ? false : (previous?.catalogReady ?? false)),
+    ...(pendingRuntimeInstanceId
+      ? { catalogPendingRuntimeInstanceId: pendingRuntimeInstanceId }
+      : {}),
+    enabled,
+    updatedAt: nextLocalModelUpdatedAt(previous),
   }
   const index = existing.findIndex(config => config.id === id)
   const configs =
@@ -289,9 +560,50 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   return next
 }
 
+export function markLocalModelCatalogReady(snapshot: readonly LocalModelCatalogSnapshot[]): void {
+  const writtenVersions = new Map(snapshot.map(model => [model.id, model.updatedAt]))
+  const configs = readStoredConfigs().map(config => {
+    if (writtenVersions.get(config.id) !== config.updatedAt) return config
+    const rest = { ...config }
+    delete rest.catalogPendingRuntimeInstanceId
+    return { ...rest, catalogReady: true }
+  })
+  writeStoredConfigs(configs)
+}
+
+export function reconcileLocalModelCatalogRuntime(runtimeInstanceId?: string): void {
+  if (!runtimeInstanceId) return
+  const configs = readStoredConfigs()
+  let changed = false
+  const next = configs.map(config => {
+    if (
+      config.catalogReady ||
+      !config.catalogPendingRuntimeInstanceId ||
+      config.catalogPendingRuntimeInstanceId === runtimeInstanceId
+    ) {
+      return config
+    }
+    changed = true
+    const rest = { ...config }
+    delete rest.catalogPendingRuntimeInstanceId
+    return { ...rest, catalogReady: true }
+  })
+  if (changed) writeStoredConfigs(next)
+}
+
 export function deleteLocalModelConfig(id: string): boolean {
   const configs = readStoredConfigs()
-  const next = configs.filter(config => config.id !== id)
+  const next = configs
+    .filter(config => config.id !== id)
+    .map(config => {
+      if (config.visionModelConfigId !== id) return config
+      const nextConfig = { ...config }
+      delete nextConfig.visionModelConfigId
+      return {
+        ...nextConfig,
+        updatedAt: nextLocalModelUpdatedAt(config),
+      }
+    })
   if (next.length === configs.length) return false
   writeStoredConfigs(next)
   return true
@@ -316,6 +628,12 @@ export function findLocalModelConfigByModelName(
   modelName?: string | null
 ): LocalModelConfig | null {
   const id = localModelIdFromModelName(modelName)
-  if (!id) return null
-  return readStoredConfigs().find(config => config.id === id) ?? null
+  const configs = readStoredConfigs()
+  if (id) return configs.find(config => config.id === id) ?? null
+  if (!modelName) return null
+  return (
+    configs.find(
+      config => config.codexCatalogModelId === modelName || config.catalogEntry?.slug === modelName
+    ) ?? null
+  )
 }

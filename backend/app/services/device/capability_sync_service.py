@@ -14,9 +14,14 @@ from sqlalchemy.orm import Session
 
 from app.core.socketio import get_sio
 from app.models.kind import Kind
+from app.models.plugin_marketplace import PluginDeviceInstallation, PluginRelease
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.services.device_service import device_service
+from app.services.plugin_device_installation_service import (
+    plugin_device_installation_service,
+)
+from app.services.plugin_package_storage import plugin_package_storage
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +51,12 @@ class DeviceCapabilitySyncService:
         *,
         user_id: int,
         mode: str = "replace",
+        device_id: str | None = None,
     ) -> dict[str, Any]:
-        """Build the full enabled capability set from user install records."""
+        """Build the full desired capability set from user install records."""
         self._validate_mode(mode)
         skills = self._load_enabled_installed_skills(db, user_id=user_id)
-        plugins = self._load_enabled_installed_plugins(db, user_id=user_id)
+        plugins = self._load_installed_plugins(db, user_id=user_id, device_id=device_id)
         mcps = self._load_enabled_installed_mcps(db, user_id=user_id)
         logger.info(
             "Built desired capabilities: user_id=%s mode=%s skill_names=%s plugin_names=%s mcp_names=%s",
@@ -118,15 +124,11 @@ class DeviceCapabilitySyncService:
         mode: str = "replace",
     ) -> DeviceCapabilitySyncResponse:
         """Sync the user's full desired capability set to all online devices."""
-        payload = self.build_desired_capabilities(db, user_id=user_id, mode=mode)
         devices = await device_service.get_online_devices(db, user_id)
         logger.info(
-            "Syncing global capabilities: user_id=%s mode=%s skills=%s plugins=%s mcps=%s online_devices=%s",
+            "Syncing global capabilities: user_id=%s mode=%s online_devices=%s",
             user_id,
             mode,
-            len(payload.get("skills") or []),
-            len(payload.get("plugins") or []),
-            len(payload.get("mcps") or []),
             len(devices),
         )
         results: list[DeviceCapabilitySyncResult] = []
@@ -142,6 +144,12 @@ class DeviceCapabilitySyncService:
                     device,
                 )
                 continue
+            payload = self.build_desired_capabilities(
+                db,
+                user_id=user_id,
+                mode=mode,
+                device_id=device_id,
+            )
             results.append(
                 await self.sync_device_payload(
                     user_id=user_id,
@@ -166,12 +174,11 @@ class DeviceCapabilitySyncService:
         mode: str = "merge",
     ) -> DeviceCapabilitySyncResponse:
         """Resolve selected capabilities and send them to one online device."""
-        device_kind = device_service.get_device_by_device_id(db, user.id, device_id)
-        if not device_kind:
-            raise DeviceCapabilityResolutionError(
-                "Device not found or access denied", 404
-            )
-
+        runtime_device_id = await self._resolve_user_device_runtime_id(
+            db,
+            user_id=user.id,
+            device_id=device_id,
+        )
         payload = self.resolve_payload(
             db,
             user=user,
@@ -182,10 +189,10 @@ class DeviceCapabilitySyncService:
             mcp_ids=mcp_ids,
             mode=mode,
         )
-        payload["device_id"] = device_id
+        payload["device_id"] = runtime_device_id
         result = await self._dispatch_payload_or_raise(
             user_id=user.id,
-            device_id=device_id,
+            device_id=runtime_device_id,
             payload=payload,
         )
         return self._aggregate_response([result], skipped=0, mode=mode)
@@ -214,6 +221,36 @@ class DeviceCapabilitySyncService:
             installed_mcp_ids=list(installed_mcp_ids or []),
             mode=mode,
         )
+
+    async def sync_installed_plugin_to_device(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed_plugin_id: int,
+    ) -> DeviceCapabilitySyncResponse:
+        """Merge one installed plugin and require its explicit acknowledgement."""
+        response = await self.sync_device_selected_capabilities(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            installed_plugin_ids=[installed_plugin_id],
+            mode="merge",
+        )
+        plugin_result = next(
+            (
+                item
+                for item in response.plugins
+                if str(item.id) == str(installed_plugin_id)
+            ),
+            None,
+        )
+        if not plugin_result or plugin_result.status != "synced":
+            raise DeviceCapabilitySyncError(
+                f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
+            )
+        return response
 
     async def sync_device_payload(
         self,
@@ -334,6 +371,30 @@ class DeviceCapabilitySyncService:
             raise DeviceCapabilitySyncError(result.error or "Capability sync failed")
         return result
 
+    async def _resolve_user_device_runtime_id(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+    ) -> str:
+        if not device_service.get_device_by_device_id(db, user_id, device_id):
+            raise DeviceCapabilityResolutionError(
+                "Device not found or access denied", 404
+            )
+
+        devices = await device_service.get_all_devices(db, user_id)
+        device = next(
+            (item for item in devices if str(item.get("device_id") or "") == device_id),
+            None,
+        )
+        runtime_device_id = self._extract_device_id(device or {})
+        if not runtime_device_id:
+            raise DeviceCapabilityResolutionError(
+                "Device runtime is unavailable. Refresh devices and retry.", 409
+            )
+        return runtime_device_id
+
     def _load_enabled_installed_skills(
         self,
         db: Session,
@@ -360,11 +421,12 @@ class DeviceCapabilitySyncService:
             installed_skill_ids=enabled_ids,
         )
 
-    def _load_enabled_installed_plugins(
+    def _load_installed_plugins(
         self,
         db: Session,
         *,
         user_id: int,
+        device_id: str | None = None,
     ) -> list[dict[str, Any]]:
         rows = (
             db.query(Kind)
@@ -377,15 +439,20 @@ class DeviceCapabilitySyncService:
             )
             .all()
         )
-        enabled_ids = [
-            row.id
-            for row in rows
-            if self._should_include_installed_plugin(user_id, row)
+        installed_ids = [
+            row.id for row in rows if self._should_sync_installed_plugin(user_id, row)
         ]
+        release_overrides = self._device_release_overrides(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            installed_rows=rows,
+        )
         return self._resolve_plugin_payloads(
             db,
             user_id=user_id,
-            installed_plugin_ids=enabled_ids,
+            installed_plugin_ids=installed_ids,
+            release_overrides=release_overrides,
         )
 
     def _load_enabled_installed_mcps(
@@ -487,6 +554,7 @@ class DeviceCapabilitySyncService:
         user_id: int,
         installed_plugin_ids: Optional[list[int]] = None,
         strict: bool = False,
+        release_overrides: Optional[dict[int, int]] = None,
     ) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
         seen_ids: set[int] = set()
@@ -511,7 +579,13 @@ class DeviceCapabilitySyncService:
                 continue
             if installed.id in seen_ids:
                 continue
-            payloads.append(self._plugin_payload(installed))
+            payloads.append(
+                self._plugin_payload(
+                    db,
+                    installed,
+                    release_id_override=(release_overrides or {}).get(installed.id),
+                )
+            )
             seen_ids.add(installed.id)
         return payloads
 
@@ -635,7 +709,13 @@ class DeviceCapabilitySyncService:
             ),
         }
 
-    def _plugin_payload(self, installed: Kind) -> dict[str, Any]:
+    def _plugin_payload(
+        self,
+        db: Session,
+        installed: Kind,
+        *,
+        release_id_override: int | None = None,
+    ) -> dict[str, Any]:
         spec = installed.json.get("spec", {})
         source = spec.get("source") or {}
         marketplace = spec.get("marketplace") or source.get("marketplace")
@@ -645,6 +725,7 @@ class DeviceCapabilitySyncService:
             "name": self._plugin_payload_name(installed, spec, source),
             "display_name": spec.get("displayName") or installed.name,
             "description": spec.get("description", ""),
+            "enabled": spec.get("enabled", True),
             "marketplace": marketplace,
             "version": spec.get("version"),
             "source": source,
@@ -657,8 +738,73 @@ class DeviceCapabilitySyncService:
             payload["components"] = components
         if package_ref:
             payload["checksum"] = package_ref.get("checksum")
-            payload["download_path"] = f"/api/plugins/installed/{installed.id}/download"
+            release_id = release_id_override or spec.get("releaseId")
+            release = (
+                db.get(PluginRelease, release_id)
+                if isinstance(release_id, int)
+                else None
+            )
+            if (
+                release
+                and release.status == "ready"
+                and release.scan_status == "passed"
+            ):
+                if release_id_override is not None:
+                    payload["version"] = release.version
+                    payload["checksum"] = f"sha256:{release.sha256}"
+                    release_components = (release.scan_report_json or {}).get(
+                        "components"
+                    ) or {}
+                    if release_components:
+                        payload["components"] = release_components
+                download_url, expires_at = plugin_package_storage.presign_download(
+                    release.storage_key
+                )
+                payload["download_path"] = download_url
+                payload["download_url_expires_at"] = expires_at.isoformat()
+                payload["release_id"] = release.id
+            else:
+                payload["download_path"] = (
+                    f"/api/plugins/installed/{installed.id}/download"
+                )
         return payload
+
+    def _device_release_overrides(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str | None,
+        installed_rows: list[Kind],
+    ) -> dict[int, int]:
+        if not device_id or not installed_rows:
+            return {}
+        rows_by_installed_id = {
+            row.installed_kind_id: row
+            for row in db.query(PluginDeviceInstallation)
+            .filter(
+                PluginDeviceInstallation.user_id == user_id,
+                PluginDeviceInstallation.installed_kind_id.in_(
+                    [installed.id for installed in installed_rows]
+                ),
+                PluginDeviceInstallation.device_id == device_id,
+            )
+            .all()
+        }
+        overrides: dict[int, int] = {}
+        for installed in installed_rows:
+            release_id = installed.json.get("spec", {}).get("releaseId")
+            if not isinstance(release_id, int):
+                continue
+            preserved_release_id = (
+                plugin_device_installation_service.auto_update_blocked_release_id(
+                    rows_by_installed_id.get(installed.id),
+                    desired_release_id=release_id,
+                )
+            )
+            if preserved_release_id:
+                overrides[installed.id] = preserved_release_id
+        return overrides
 
     def _plugin_payload_name(
         self,
@@ -740,9 +886,9 @@ class DeviceCapabilitySyncService:
         )
         return include
 
-    def _should_include_installed_plugin(self, user_id: int, row: Kind) -> bool:
+    def _should_sync_installed_plugin(self, user_id: int, row: Kind) -> bool:
         spec = row.json.get("spec", {})
-        include = row.is_active and self._is_enabled_install(row)
+        include = row.is_active and spec.get("installState", "installed") == "installed"
         logger.info(
             "Desired-state InstalledPlugin candidate: user_id=%s installed_id=%s name=%s active=%s enabled=%s state=%s source=%s include=%s",
             user_id,

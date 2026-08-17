@@ -1044,6 +1044,52 @@ class TestTrackerEmits:
             "completed",
         ]
 
+    async def test_summary_compaction_emits_heartbeats(self, guard, monkeypatch):
+        import asyncio as _asyncio
+        from unittest.mock import AsyncMock
+
+        from chat_shell.compression.context_metrics import ContextMetricsTracker
+
+        monkeypatch.setattr(
+            "chat_shell.guard.context_guard.COMPACTION_HEARTBEAT_INTERVAL_S", 0.01
+        )
+
+        class _SlowCompactor:
+            async def compact(self, messages, *, preserve_initial_context):
+                await _asyncio.sleep(0.05)
+                return SummaryCompactResult(
+                    summary_text="Current objective:\ncontinue",
+                    replacement_history=[
+                        HumanMessage(content="[COMPACT SUMMARY]\n\ncontinue")
+                    ],
+                    removed_history_items=1,
+                )
+
+        emitter = AsyncMock()
+        tracker = ContextMetricsTracker(
+            task_id=1, subtask_id=2, metrics_fn=guard.metrics, emitter=emitter
+        )
+        guard.set_tracker(tracker)
+        guard._summary_compactor = _SlowCompactor()
+
+        state = {
+            "messages": [
+                HumanMessage(content="x" * 40000, id="h-1"),
+                AIMessage(content="y" * 40000, id="a-1"),
+            ]
+        }
+        await guard(state)
+
+        statuses = [
+            call.kwargs["context_compaction"]["status"]
+            for call in emitter.status_updated.await_args_list
+            if call.kwargs.get("context_compaction", {}).get("type")
+            == "summary_compact"
+        ]
+        assert "in_progress" in statuses
+        assert statuses[0] == "started"
+        assert statuses[-1] == "completed"
+
     async def test_summary_compaction_failure_emits_fallback_runtime_event(self, guard):
         from unittest.mock import AsyncMock
 

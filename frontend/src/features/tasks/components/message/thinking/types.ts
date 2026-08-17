@@ -98,10 +98,12 @@ export type ToolStatus =
  */
 interface BaseBlock {
   id: string // Unique block identifier
+  parent_tool_use_id?: string // Parent subagent tool use ID
   status?:
     | 'pending'
     | 'generating_arguments'
     | 'streaming'
+    | 'invoking'
     | 'done'
     | 'error'
     | 'queued'
@@ -133,6 +135,23 @@ export interface ToolBlock extends BaseBlock {
   render_payload?: unknown // UI-only renderer payload
   argument_status?: 'streaming' | 'done'
   metadata?: Record<string, unknown> // Additional metadata
+}
+
+/**
+ * Claude Code subagent block
+ */
+export interface SubagentBlock extends BaseBlock {
+  type: 'subagent'
+  tool_use_id: string // Parent Task tool call ID
+  tool_name?: string // Usually Task
+  display_name?: string
+  agent_type?: string
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: MessageBlock[] // Nested text/thinking/tool blocks from the child agent
+  metadata?: Record<string, unknown>
 }
 
 /**
@@ -170,6 +189,7 @@ export interface VideoBlock extends BaseBlock {
   type: 'video'
   video_url: string // Video URL
   video_thumbnail?: string | null // Base64 encoded thumbnail
+  cover_url?: string | null // Remote poster image URL
   video_duration?: number | null // Video duration in seconds
   video_attachment_id?: number | null // Attachment ID for download
   video_progress?: number // Video generation progress (0-100)
@@ -185,6 +205,7 @@ export interface ImageBlock extends BaseBlock {
   image_urls: string[] // Image URLs
   image_attachment_ids?: number[] // Attachment IDs for image downloads
   image_count: number // Number of generated images
+  image_size?: string // Requested output dimensions, e.g. 1512x648
   is_placeholder?: boolean // True when images are still being generated
   content?: string // Progress message
 }
@@ -266,6 +287,7 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
 export type MessageBlock =
   | TextBlock
   | ToolBlock
+  | SubagentBlock
   | ThinkingBlock
   | GuidanceBlock
   | ErrorBlock
@@ -286,6 +308,13 @@ export function isTextBlock(block: MessageBlock): block is TextBlock {
  */
 export function isToolBlock(block: MessageBlock): block is ToolBlock {
   return block.type === 'tool'
+}
+
+/**
+ * Type guard for SubagentBlock
+ */
+export function isSubagentBlock(block: MessageBlock): block is SubagentBlock {
+  return block.type === 'subagent'
 }
 
 /**

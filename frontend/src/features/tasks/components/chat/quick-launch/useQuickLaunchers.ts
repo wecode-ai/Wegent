@@ -3,11 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApis } from '@/apis/user'
 import type { QuickLaunchInputPreset, QuickLaunchResponse, Team } from '@/types/api'
-import {
-  filterTeamsByMode,
-  getTeamTargetPage,
-  type TeamModeFilter,
-} from '../../selector/team-selector-utils'
+import { getTeamTargetPage, type TeamModeFilter } from '../../selector/team-selector-utils'
 import type { QuickInputPreset, QuickLauncher } from './types'
 
 interface UseQuickLaunchersOptions {
@@ -70,8 +66,6 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
     return () => window.removeEventListener('quick-access-updated', fetchQuickLaunch)
   }, [fetchQuickLaunch])
 
-  const filteredTeams = useMemo(() => filterTeamsByMode(teams, currentMode), [teams, currentMode])
-
   const systemLaunchers = useMemo<QuickLauncher[]>(() => {
     const launchers: QuickLauncher[] = []
 
@@ -98,7 +92,7 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
     const launchers: QuickLauncher[] = []
 
     for (const item of data?.favorite_agents ?? []) {
-      const team = findTeam(filteredTeams, item.team_id)
+      const team = findTeam(teams, item.team_id)
       if (!team || defaultTeam?.id === team.id) continue
 
       launchers.push({
@@ -117,7 +111,7 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
     }
 
     return launchers
-  }, [currentMode, data?.favorite_agents, defaultTeam?.id, filteredTeams])
+  }, [currentMode, data?.favorite_agents, defaultTeam?.id, teams])
 
   return {
     isLoading,

@@ -22,8 +22,9 @@ The knowledge MCP server uses a decorator-based auto-registration system:
 """
 
 import contextvars
+import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from inspect import isawaitable, iscoroutinefunction
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
@@ -39,12 +40,15 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.mcp_server.auth import (
+    MCPAuthInfo,
     TaskTokenInfo,
+    authenticate_mcp_token,
     extract_token_from_header,
     verify_task_token,
 )
 from app.mcp_server.context import (
     MCPRequestContext,
+    get_token_info_from_context,
     reset_mcp_context,
     set_mcp_context,
 )
@@ -65,6 +69,12 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
+IMAGE_MCP_MOUNT_PATH = "/mcp/image"
+IMAGE_MCP_TRANSPORT_PATH = "/sse"
+VIDEO_MCP_MOUNT_PATH = "/mcp/video"
+VIDEO_MCP_TRANSPORT_PATH = "/sse"
+WEWORK_SPACE_MCP_MOUNT_PATH = "/mcp/wework-space"
+WEWORK_SPACE_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -77,6 +87,25 @@ class McpAppSpec:
     token_context: contextvars.ContextVar[Optional[TaskTokenInfo]]
     log_prefix: str
     include_root_metadata: bool = True
+    allow_user_token: bool = False
+
+
+@dataclass(frozen=True)
+class CustomMcpAppSpec:
+    """MCP app registered by a deployment-specific extension."""
+
+    name: str
+    mount_path: str
+    transport_path: str
+    build_app: Callable[[str], Starlette]
+
+
+_custom_mcp_app_specs: dict[str, CustomMcpAppSpec] = {}
+
+
+def register_custom_mcp_app(spec: CustomMcpAppSpec) -> None:
+    """Register or replace a deployment-specific MCP app before startup."""
+    _custom_mcp_app_specs[spec.name] = spec
 
 
 @dataclass(frozen=True)
@@ -521,6 +550,81 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
+wework_space_mcp_server = FastMCP(
+    "wegent-wework-space-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+_wework_space_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_wework_space_request_token_info", default=None)
+)
+_wework_space_tools_registered = False
+
+
+def ensure_wework_space_tools_registered() -> None:
+    global _wework_space_tools_registered
+    if _wework_space_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import wework_space  # noqa: F401
+
+    count = register_tools_to_server(wework_space_mcp_server, "wework_space")
+    logger.info("[MCP:WeworkSpace] Registered %s tools", count)
+    _wework_space_tools_registered = True
+
+
+# ============== Generation MCP Servers ==============
+
+image_mcp_server = FastMCP(
+    "wegent-image-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+video_mcp_server = FastMCP(
+    "wegent-video-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+_image_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_image_request_token_info", default=None)
+)
+_video_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_video_request_token_info", default=None)
+)
+_image_tools_registered = False
+_video_tools_registered = False
+
+
+def ensure_image_tools_registered() -> None:
+    global _image_tools_registered
+    if _image_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import image_generation  # noqa: F401
+
+    count = register_tools_to_server(image_mcp_server, "image")
+    logger.info("[MCP:Image] Registered %s tools", count)
+    _image_tools_registered = True
+
+
+def ensure_video_tools_registered() -> None:
+    global _video_tools_registered
+    if _video_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import video_generation  # noqa: F401
+
+    count = register_tools_to_server(video_mcp_server, "video")
+    logger.info("[MCP:Video] Registered %s tools", count)
+    _video_tools_registered = True
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -578,17 +682,90 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_IMAGE_MCP_SPEC = McpAppSpec(
+    name="image",
+    service_name="wegent-image-mcp",
+    mount_path=IMAGE_MCP_MOUNT_PATH,
+    transport_path=IMAGE_MCP_TRANSPORT_PATH,
+    server=image_mcp_server,
+    token_context=_image_request_token_info,
+    log_prefix="Image",
+)
+
+_VIDEO_MCP_SPEC = McpAppSpec(
+    name="video",
+    service_name="wegent-video-mcp",
+    mount_path=VIDEO_MCP_MOUNT_PATH,
+    transport_path=VIDEO_MCP_TRANSPORT_PATH,
+    server=video_mcp_server,
+    token_context=_video_request_token_info,
+    log_prefix="Video",
+)
+
+_WEWORK_SPACE_MCP_SPEC = McpAppSpec(
+    name="wework_space",
+    service_name="wegent-wework-space-mcp",
+    mount_path=WEWORK_SPACE_MCP_MOUNT_PATH,
+    transport_path=WEWORK_SPACE_MCP_TRANSPORT_PATH,
+    server=wework_space_mcp_server,
+    token_context=_wework_space_request_token_info,
+    log_prefix="WeworkSpace",
+    allow_user_token=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
+    _IMAGE_MCP_SPEC,
+    _VIDEO_MCP_SPEC,
+    _WEWORK_SPACE_MCP_SPEC,
+)
+
+MCP_CONTEXT_SERVER_NAMES = frozenset(
+    {
+        "knowledge",
+        "interactive_form_question",
+        "prompt_optimization",
+        "subscription",
+        "image",
+        "video",
+        "wework_space",
+    }
 )
 
 
+def get_mcp_lifespan_servers() -> tuple[tuple[str, FastMCP], ...]:
+    """Return every MCP server whose transport is mounted by the backend.
+
+    Mounted Starlette applications do not receive lifespan events from their
+    parent application.  The backend lifespan therefore owns the shared
+    FastMCP session managers.  Deriving this list from ``MCP_APP_SPECS`` keeps
+    transport registration and lifecycle ownership on the same source of
+    truth.
+    """
+
+    servers = [(spec.log_prefix, spec.server) for spec in MCP_APP_SPECS]
+    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
+        servers.append(("ExternalKnowledge", external_knowledge_mcp_server))
+    return tuple(servers)
+
+
+@asynccontextmanager
+async def mcp_session_managers_lifespan() -> AsyncIterator[None]:
+    """Run all mounted MCP session managers for one backend lifespan."""
+
+    async with AsyncExitStack() as stack:
+        for server_name, mcp_server in get_mcp_lifespan_servers():
+            await stack.enter_async_context(mcp_server.session_manager.run())
+            logger.info("[MCP:%s] Session manager started", server_name)
+        yield
+
+
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
-    return {
+    metadata = {
         "service": spec.service_name,
         "transport": "streamable-http",
         "endpoints": {
@@ -596,6 +773,7 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
             "health": f"{spec.mount_path}/health",
         },
     }
+    return metadata
 
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
@@ -617,6 +795,12 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+    elif spec.name == "image":
+        ensure_image_tools_registered()
+    elif spec.name == "video":
+        ensure_video_tools_registered()
+    elif spec.name == "wework_space":
+        ensure_wework_space_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -645,27 +829,28 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         token = extract_token_from_header(auth_header)
 
         token_info: Optional[TaskTokenInfo] = None
+        auth_info: Optional[MCPAuthInfo] = None
         mcp_ctx_token = None
 
         if token:
-            token_info = verify_task_token(token)
-            if token_info:
+            auth_info = authenticate_mcp_token(
+                token, allow_user_token=spec.allow_user_token
+            )
+            if auth_info:
                 logger.debug(
-                    "[MCP:%s] Authenticated: task=%s, subtask=%s, user=%s",
+                    "[MCP:%s] Authenticated: type=%s, task=%s, subtask=%s, user=%s",
                     spec.log_prefix,
-                    token_info.task_id,
-                    token_info.subtask_id,
-                    token_info.user_name,
+                    auth_info.auth_type,
+                    auth_info.task_id,
+                    auth_info.subtask_id,
+                    auth_info.user_name,
                 )
+                if auth_info.auth_type == "task":
+                    token_info = verify_task_token(token)
                 # Set MCPRequestContext for decorator-based tools
-                if spec.name in (
-                    "knowledge",
-                    "interactive_form_question",
-                    "prompt_optimization",
-                    "subscription",
-                ):
+                if spec.name in MCP_CONTEXT_SERVER_NAMES:
                     mcp_ctx = MCPRequestContext(
-                        token_info=token_info,
+                        token_info=auth_info,
                         tool_name="",  # Will be set by tool invocation
                         server_name=spec.name,
                     )
@@ -752,6 +937,21 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
             effective_spec.name,
             effective_spec.mount_path,
             effective_spec.transport_path,
+        )
+
+    for custom_spec in _custom_mcp_app_specs.values():
+        custom_mount_path = (
+            f"{normalized_prefix}{custom_spec.mount_path}"
+            if normalized_prefix
+            else custom_spec.mount_path
+        )
+        custom_app = custom_spec.build_app(custom_mount_path)
+        app.mount(custom_mount_path, custom_app)
+        logger.info(
+            "Mounted custom MCP server '%s' at %s (transport: %s)",
+            custom_spec.name,
+            custom_mount_path,
+            custom_spec.transport_path,
         )
 
     if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
@@ -893,6 +1093,20 @@ def get_mcp_subscription_config(backend_url: str, auth_token: str) -> Dict[str, 
     return _build_streamable_http_config(
         name="wegent-subscription",
         url=f"{backend_url}{SUBSCRIPTION_MCP_MOUNT_PATH}{SUBSCRIPTION_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=60,
+    )
+
+
+def get_mcp_wework_space_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Build the authenticated project-space MCP configuration."""
+
+    return _build_streamable_http_config(
+        name="wegent-wework-space",
+        url=(
+            f"{backend_url}{WEWORK_SPACE_MCP_MOUNT_PATH}"
+            f"{WEWORK_SPACE_MCP_TRANSPORT_PATH}"
+        ),
         auth_token=auth_token,
         timeout=60,
     )

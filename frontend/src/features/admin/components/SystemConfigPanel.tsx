@@ -52,6 +52,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { formatFileSize, uploadAttachment } from '@/apis/attachments'
+import { MarketplaceTagsConfigSection } from './MarketplaceTagsConfigSection'
 
 // Common form data type for both slogans and tips
 type ItemFormData = {
@@ -68,6 +69,7 @@ function normalizeQuickLaunchFunctions(
     title: item.title.trim(),
     description: item.description?.trim() || undefined,
     icon: item.icon?.trim() || undefined,
+    cover: item.cover?.trim() || undefined,
     team_id: Number(item.team_id),
     enabled: item.enabled,
     order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
@@ -414,6 +416,7 @@ const SystemConfigPanel: React.FC = () => {
         title: '',
         description: '',
         icon: '',
+        cover: '',
         team_id: publicTeams[0]?.id || 0,
         enabled: true,
         order: nextIndex,
@@ -721,6 +724,8 @@ const SystemConfigPanel: React.FC = () => {
         </Button>
       </div>
 
+      <MarketplaceTagsConfigSection />
+
       {/* Slogan Configuration */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
@@ -962,6 +967,22 @@ const SystemConfigPanel: React.FC = () => {
                       })
                     }
                     data-testid={`quick-launch-function-icon-${editingQuickLaunchFunctionIndex}`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`quick-launch-function-cover-${editingQuickLaunchFunctionIndex}`}>
+                    {t('system_config.quick_launch_function_cover')}
+                  </Label>
+                  <Input
+                    id={`quick-launch-function-cover-${editingQuickLaunchFunctionIndex}`}
+                    value={editingQuickLaunchFunction.cover || ''}
+                    onChange={event =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        cover: event.target.value,
+                      })
+                    }
+                    placeholder={t('system_config.quick_launch_function_cover_placeholder')}
+                    data-testid={`quick-launch-function-cover-${editingQuickLaunchFunctionIndex}`}
                   />
                 </div>
                 <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">

@@ -49,41 +49,44 @@ function clampIndex(value: number, length: number): number {
   return Math.min(length - 1, Math.max(0, value))
 }
 
+function attachmentPreviewIdentity(attachment: Attachment): string {
+  return `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}`
+}
+
 async function loadAttachmentImageUrl(
   attachment: Attachment
 ): Promise<{ url: string; objectUrl: string | null }> {
-  if (attachment.local_preview_url) {
-    const cachedLocalPreviewUrl = resolvedLocalAttachmentPreviewUrls.get(
-      attachment.local_preview_url
-    )
+  const localPreviewUrl = attachment.local_preview_url ?? attachment.local_path
+  if (localPreviewUrl) {
+    const cachedLocalPreviewUrl = resolvedLocalAttachmentPreviewUrls.get(localPreviewUrl)
     if (cachedLocalPreviewUrl) {
       return { url: cachedLocalPreviewUrl, objectUrl: null }
     }
 
-    if (failedAttachmentPreviewUrls.has(attachment.local_preview_url)) {
+    if (failedAttachmentPreviewUrls.has(localPreviewUrl)) {
       throw new Error('Local attachment preview already failed')
     }
 
-    const localPath = getDownloadableLocalPath(attachment.local_preview_url)
+    const localPath = getDownloadableLocalPath(localPreviewUrl)
     if (localPath && isTauriRuntime()) {
       try {
         const exists = await invoke<boolean>('local_path_exists', { path: localPath })
         if (!exists) {
-          failedAttachmentPreviewUrls.add(attachment.local_preview_url)
+          failedAttachmentPreviewUrls.add(localPreviewUrl)
           throw new Error('Local attachment preview no longer exists')
         }
       } catch (error) {
-        if (failedAttachmentPreviewUrls.has(attachment.local_preview_url)) {
+        if (failedAttachmentPreviewUrls.has(localPreviewUrl)) {
           throw error
         }
       }
     }
 
-    const resolvedLocalPreviewUrl = resolveDirectMarkdownImageSrc(attachment.local_preview_url)
+    const resolvedLocalPreviewUrl = resolveDirectMarkdownImageSrc(localPreviewUrl)
     if (!resolvedLocalPreviewUrl) {
       throw new Error('Failed to resolve local attachment preview')
     }
-    resolvedLocalAttachmentPreviewUrls.set(attachment.local_preview_url, resolvedLocalPreviewUrl)
+    resolvedLocalAttachmentPreviewUrls.set(localPreviewUrl, resolvedLocalPreviewUrl)
     return { url: resolvedLocalPreviewUrl, objectUrl: null }
   }
 
@@ -106,8 +109,9 @@ async function loadAttachmentImageUrl(
 }
 
 function rememberFailedAttachmentPreview(attachment: Attachment) {
-  if (attachment.local_preview_url) {
-    failedAttachmentPreviewUrls.add(attachment.local_preview_url)
+  const localPreviewUrl = attachment.local_preview_url ?? attachment.local_path
+  if (localPreviewUrl) {
+    failedAttachmentPreviewUrls.add(localPreviewUrl)
   }
 }
 
@@ -150,7 +154,7 @@ function getDownloadableLocalPath(value?: string): string | null {
 }
 
 async function downloadAttachmentImage(attachment: Attachment, imageUrl: string) {
-  const sourcePath = getDownloadableLocalPath(attachment.local_preview_url)
+  const sourcePath = getDownloadableLocalPath(attachment.local_preview_url ?? attachment.local_path)
   if (sourcePath && isTauriRuntime()) {
     await invoke<string>('download_local_file_to_downloads', {
       sourcePath,
@@ -186,10 +190,14 @@ export function AttachmentImagePreview({
   const [zoom, setZoom] = useState(1)
   const [shouldLoadPreview, setShouldLoadPreview] = useState(false)
   const previewContainerRef = useRef<HTMLElement | null>(null)
-  const previewIdentity = `${attachment.id}:${attachment.local_preview_url ?? ''}`
+  const previewIdentity = attachmentPreviewIdentity(attachment)
+  const attachmentRef = useRef(attachment)
   const setPreviewContainerRef = useCallback((element: HTMLElement | null) => {
     previewContainerRef.current = element
   }, [])
+  useEffect(() => {
+    attachmentRef.current = attachment
+  }, [attachment])
   const gallery = useMemo(
     () => (galleryAttachments?.length ? galleryAttachments : [attachment]),
     [attachment, galleryAttachments]
@@ -235,6 +243,7 @@ export function AttachmentImagePreview({
 
     let isMounted = true
     let objectUrl: string | null = null
+    const targetAttachment = attachmentRef.current
 
     async function loadPreview() {
       setPreviewUrl(null)
@@ -244,7 +253,7 @@ export function AttachmentImagePreview({
       setZoom(1)
 
       try {
-        const loaded = await loadAttachmentImageUrl(attachment)
+        const loaded = await loadAttachmentImageUrl(targetAttachment)
         objectUrl = loaded.objectUrl
         if (isMounted) {
           setPreviewUrl(loaded.url)
@@ -253,7 +262,7 @@ export function AttachmentImagePreview({
         }
       } catch {
         if (isMounted) {
-          rememberFailedAttachmentPreview(attachment)
+          rememberFailedAttachmentPreview(targetAttachment)
           setHasError(true)
         }
       }
@@ -267,7 +276,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [attachment, shouldLoadPreview])
+  }, [previewIdentity, shouldLoadPreview])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return
@@ -275,10 +284,10 @@ export function AttachmentImagePreview({
     let isMounted = true
     let objectUrl: string | null = null
     const nextIndex = clampIndex(lightboxIndex, gallery.length)
-    const selectedAttachment = gallery[nextIndex] ?? attachment
+    const currentAttachment = attachmentRef.current
+    const selectedAttachment = gallery[nextIndex] ?? currentAttachment
     const reusablePreviewUrl =
-      selectedAttachment.id === attachment.id &&
-      selectedAttachment.local_preview_url === attachment.local_preview_url
+      attachmentPreviewIdentity(selectedAttachment) === attachmentPreviewIdentity(currentAttachment)
         ? previewUrl
         : null
 
@@ -321,7 +330,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [attachment, disableLightbox, gallery, isLightboxOpen, lightboxIndex, previewUrl])
+  }, [disableLightbox, gallery, isLightboxOpen, lightboxIndex, previewIdentity, previewUrl])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return

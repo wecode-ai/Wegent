@@ -10,8 +10,9 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
-import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -20,12 +21,37 @@ const runtimeConfigMock = vi.hoisted(() => ({
   value: {
     appBasePath: '',
     apiBaseUrl: '/api',
+    socketBaseUrl: 'http://10.201.3.200:8000',
+    socketPath: '/socket.io',
     cloudDeviceScalingWikiUrl: '',
   },
 }))
 const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
+}))
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+const remoteDeviceOnboardingExtensionMock = vi.hoisted(() => ({
+  Notice: vi.fn(() => null),
+  CommandDetails: vi.fn(() => null),
+}))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
+
+vi.mock('@extensions/remote-device-onboarding', () => ({
+  remoteDeviceOnboardingExtension: remoteDeviceOnboardingExtensionMock,
 }))
 
 vi.mock('@/config/runtime', () => ({
@@ -75,16 +101,17 @@ vi.mock('@/api/users', () => ({
   createUserApi: vi.fn(),
 }))
 
-vi.mock('@/lib/local-terminal', () => ({
-  getLocalExecutorDeviceId: vi.fn(),
-  isLocalTerminalAvailable: vi.fn(),
-}))
-
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
 vi.mock('@/tauri/localExecutor', () => ({
+  ensureLocalExecutorStarted: vi.fn().mockResolvedValue({
+    running: true,
+    ready: true,
+    runtimeInstanceId: 'runtime-instance-1',
+  }),
+  getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
 
@@ -101,22 +128,22 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
-const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
-const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
     id: 1,
     device_id: 'device-1',
-    name: 'yunpeng7-executor-device-1',
+    name: 'device-1',
     status: 'online',
     is_default: false,
     device_type: 'cloud',
     bind_shell: 'claudecode',
     executor_version: '1.712',
+    client_ip: '10.201.3.200',
     cloud_config: {
       sandboxId: 'sandbox-1',
       deviceId: 'cloud-runtime-device-1',
+      deviceName: 'device-1',
       ubuntuInitialPassword: 'initial-password-1',
     },
     ...overrides,
@@ -142,6 +169,7 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     name: 'Docker Remote Device',
     device_type: 'remote',
     bind_shell: 'claudecode',
+    client_ip: '10.201.3.201',
     cloud_config: undefined,
     remote_config: {
       provider: 'docker',
@@ -158,7 +186,6 @@ describe('ConnectionsSettingsPage', () => {
     getAllDevices: vi.fn(),
     startTerminal: vi.fn(),
     startCodeServer: vi.fn(),
-    openLocalTerminal: vi.fn(),
     createCloudDevice: vi.fn(),
     createDockerRemoteDeviceCommand: vi.fn(),
     renameDevice: vi.fn(),
@@ -167,7 +194,6 @@ describe('ConnectionsSettingsPage', () => {
     deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
-    getVncConfig: vi.fn(),
   }
   const userApi = {
     updateCurrentUser: vi.fn(),
@@ -180,6 +206,7 @@ describe('ConnectionsSettingsPage', () => {
   }
 
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     vi.clearAllMocks()
     localStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
@@ -192,13 +219,25 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/settings/connections')
-    isLocalTerminalAvailableMock.mockReturnValue(true)
-    getLocalExecutorDeviceIdMock.mockResolvedValue('local-claude')
     openExternalUrlMock.mockResolvedValue(true)
-    api.openLocalTerminal.mockResolvedValue(undefined)
+    cloudDesktopExtensionMock.available = true
+    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+      ({ deviceId, disabled, onOpened }) => (
+        <button
+          type="button"
+          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          disabled={disabled}
+          onClick={onOpened}
+        >
+          桌面
+        </button>
+      )
+    )
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -209,20 +248,15 @@ describe('ConnectionsSettingsPage', () => {
       memory: [],
       disk: [],
     })
-    api.getVncConfig.mockResolvedValue({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
-    })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
-      codexHome: '/Users/crystal/.wegent-executor/codex',
-      configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+      codexHome: '/Users/crystal/.wework/codex',
+      configPath: '/Users/crystal/.wework/codex/config.toml',
       remoteAppsEnabled: false,
     })
     localCodexPluginApiMock.updateCodexLocalConfig.mockImplementation(patch =>
       Promise.resolve({
-        codexHome: '/Users/crystal/.wegent-executor/codex',
-        configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+        codexHome: '/Users/crystal/.wework/codex',
+        configPath: '/Users/crystal/.wework/codex/config.toml',
         remoteAppsEnabled: Boolean(patch.remoteAppsEnabled),
       })
     )
@@ -308,12 +342,20 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
+    const personalCategory = screen.getByTestId('settings-category-personal')
     const integrationsCategory = screen.getByTestId('settings-category-integrations')
     const codingCategory = screen.getByTestId('settings-category-coding')
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
+    const gitHostingNav = screen.getByTestId('settings-nav-git-hosting')
+    const harnessesNav = screen.getByTestId('settings-nav-harnesses')
+    expect(screen.getByTestId('settings-nav-harnesses-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
     const worktreesNav = screen.getByTestId('settings-nav-worktrees')
 
+    expect(personalCategory).toHaveClass('mt-2')
+    expect(integrationsCategory).toHaveClass('mt-5')
     expect(integrationsCategory).toHaveTextContent('集成')
     expect(codingCategory).toHaveTextContent('编码')
     expect(archivedCategory).toHaveTextContent('已归档')
@@ -321,10 +363,16 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(worktreesNav)
+    expect(codingCategory.parentElement).toContainElement(gitHostingNav)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      gitHostingNav.compareDocumentPosition(harnessesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -336,7 +384,30 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
   })
 
-  test('adds titlebar clearance for the settings back button in Tauri', () => {
+  test('hides harness settings and redirects direct routes while experimental features are off', async () => {
+    experimentalFeatures.enabled = false
+    window.history.pushState({}, '', '/settings/harnesses')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('general-settings-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nav-harnesses')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('harness-settings-page')).not.toBeInTheDocument()
+  })
+
+  test('settings page fills its container instead of the full viewport', async () => {
+    window.history.pushState({}, '', '/settings')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const settingsPage = await screen.findByTestId('wework-settings-page')
+    expect(settingsPage).toHaveClass('h-full')
+    expect(settingsPage).not.toHaveClass('h-screen')
+  })
+
+  test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -345,13 +416,36 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[52px]', 'mb-1')
+    expect(screen.getByTestId('settings-sidebar-topbar')).not.toHaveClass('h-[76px]', 'pt-6')
     expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('settings-main-titlebar-drag-region')).getByTestId(
-        'macos-titlebar-drag-region'
-      )
-    ).toHaveAttribute('data-tauri-drag-region')
+    expect(screen.queryByTestId('settings-main-titlebar-drag-region')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page').querySelector('main')).toHaveClass('pt-8')
+  })
+
+  test('opens the add device dialog from the cloud work route query', async () => {
+    window.history.pushState({}, '', '/settings/connections?addDevice=1')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-connections')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
+  })
+
+  test('keeps the settings navigation scrollable within the sidebar', () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('settings-sidebar-nav')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -399,6 +493,25 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
+  })
+
+  test('lets the configured workbench background show through the settings shell', () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({ backgroundImagePath: '/app-data/background.png' })
+    )
+
+    render(
+      <AppearanceProvider>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>
+    )
+
+    const settingsPage = screen.getByTestId('wework-settings-page')
+    expect(settingsPage).toHaveClass('bg-transparent')
+    expect(settingsPage.querySelector('aside')).toHaveClass('bg-background/25')
+    expect(settingsPage.querySelector('aside')).not.toHaveClass('backdrop-blur-xl')
+    expect(settingsPage.querySelector('main')).toHaveClass('bg-background/20')
   })
 
   test('opens about settings from desktop settings navigation', async () => {
@@ -474,14 +587,472 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
   })
 
+  test('waits for a provider selection before showing model fields', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+
+    expect(screen.getByTestId('local-model-provider-select')).toHaveValue('')
+    expect(screen.queryByTestId('local-model-api-format-select')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('local-model-save-button')).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+
+    expect(screen.getByTestId('local-model-api-format-select')).toBeInTheDocument()
+    expect(screen.getByTestId('local-model-save-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-model-catalog-json-input')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('local-model-context-window-input')).toHaveLength(1)
+  })
+
+  test('offers image-capable local models as vision proxies', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'vision',
+      displayName: 'Vision Model',
+      toolProfile: 'custom',
+    })
+    catalogEntry.input_modalities = ['text', 'image']
+    saveLocalModelConfig({
+      id: 'vision',
+      providerProfileId: 'custom',
+      displayName: 'Vision Model',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry,
+      enabled: true,
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'deepseek')
+
+    const visionSelect = screen.getByTestId('local-model-vision-proxy-select')
+    expect(visionSelect).toHaveTextContent('Vision Model')
+    await userEvent.selectOptions(visionSelect, 'vision')
+    expect(visionSelect).toHaveValue('vision')
+  })
+
+  test('persists custom catalog capabilities and silently restarts Codex when idle', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    vi.mocked(requestLocalExecutor).mockImplementation(async method =>
+      method === 'runtime.codex.catalog.custom.write'
+        ? { saved: true, modelCount: 1 }
+        : { restarted: true, requiresConfirmation: false, activeTaskCount: 0 }
+    )
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+    expect(
+      (screen.getByTestId('local-model-base-instructions-input') as HTMLTextAreaElement).value
+    ).toContain('# Working with the user')
+    await userEvent.clear(screen.getByTestId('local-model-context-window-input'))
+    await userEvent.type(screen.getByTestId('local-model-context-window-input'), '131072')
+    await userEvent.click(screen.getByTestId('local-model-parallel-tools-select'))
+    await userEvent.click(screen.getByTestId('local-model-input-modality-image'))
+    await userEvent.click(screen.getByTestId('local-model-image-generation-checkbox'))
+    await userEvent.click(screen.getByTestId('local-model-reasoning-level-high'))
+    const defaultReasoningSelect = screen.getByTestId('local-model-default-reasoning-input')
+    expect(
+      within(defaultReasoningSelect).getByRole('option', {
+        name: '高',
+      })
+    ).toHaveAttribute('value', 'high')
+    expect(within(defaultReasoningSelect).queryByRole('option', { name: 'high' })).toBeNull()
+    await userEvent.selectOptions(defaultReasoningSelect, 'high')
+    await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-toggle'))
+    await userEvent.click(screen.getByTestId('local-model-advanced-section-metadata'))
+    await userEvent.type(screen.getByTestId('local-model-speed-tiers-input'), 'fast')
+    await userEvent.click(screen.getByTestId('local-model-speed-tiers-add'))
+    await userEvent.click(screen.getByTestId('local-model-service-tiers-add'))
+    await userEvent.type(screen.getByTestId('local-model-service-tiers-0-id'), 'priority')
+    await userEvent.type(screen.getByTestId('local-model-service-tiers-0-name'), 'Priority')
+    await userEvent.type(
+      screen.getByTestId('local-model-service-tiers-0-description'),
+      'Faster requests'
+    )
+    expect(screen.getByTestId('local-model-service-tiers-0-delete').closest('label')).toBeNull()
+    await userEvent.selectOptions(
+      screen.getByTestId('local-model-default-service-tier-input'),
+      'priority'
+    )
+    await userEvent.click(screen.getByTestId('local-model-advanced-capabilities-close'))
+    await userEvent.type(screen.getByTestId('local-model-id-input'), 'custom-coder')
+    await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+    await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.codex.catalog.custom.write',
+        expect.objectContaining({ models: expect.any(Array) })
+      )
+    )
+    expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+      ifIdle: true,
+    })
+    const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+    expect(stored[0]).toMatchObject({
+      modelId: 'custom-coder',
+      codexCatalogModelId: expect.stringMatching(/^wework-custom-/),
+      catalogReady: true,
+      imageGenerationEnabled: true,
+    })
+    expect(stored[0].catalogEntry.base_instructions).toContain('# Rules for getting work done')
+    expect(stored[0].catalogEntry).toMatchObject({
+      context_window: 131072,
+      max_context_window: 131072,
+      supports_parallel_tool_calls: true,
+      input_modalities: ['text', 'image'],
+      supported_reasoning_levels: [{ effort: 'high', description: 'Deep reasoning' }],
+      default_reasoning_level: 'high',
+      service_tiers: [{ id: 'priority', name: 'Priority', description: 'Faster requests' }],
+      additional_speed_tiers: ['fast'],
+      default_service_tier: 'priority',
+    })
+  }, 15_000)
+
+  test('keeps a custom model pending when active tasks prevent a silent restart', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    vi.mocked(requestLocalExecutor)
+      .mockResolvedValueOnce({ saved: true, modelCount: 1 })
+      .mockResolvedValueOnce({
+        restarted: false,
+        requiresConfirmation: true,
+        activeTaskCount: 1,
+      })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+    await userEvent.type(screen.getByTestId('local-model-id-input'), 'pending-coder')
+    await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+    await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+    expect(await screen.findByTestId('local-model-catalog-restart-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('local-model-catalog-restart-later-button'))
+    expect(screen.getByTestId('local-model-settings')).toHaveTextContent('等待重启执行器')
+    const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+    expect(stored[0].catalogReady).toBe(false)
+  })
+
+  test('uses the built-in K3 catalog profile and verified model defaults', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'k3' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      ),
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-select'),
+        'kimi-coding'
+      )
+      const groupInput = screen.getByTestId('local-model-group-input')
+      expect(groupInput).toHaveValue('Kimi')
+      await userEvent.clear(groupInput)
+      await userEvent.type(groupInput, '月之暗面')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
+      await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select')).toHaveValue('k3')
+      )
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored[0]).toMatchObject({
+        providerProfileId: 'kimi-coding',
+        group: '月之暗面',
+        modelId: 'k3',
+        contextWindow: 262_144,
+        codexCatalogModelId: 'wework-kimi-k3',
+        catalogReady: true,
+      })
+      expect(requestLocalExecutor).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('adds multiple models from the same provider in one configuration flow', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'k3' }, { id: 'kimi-for-coding-highspeed' }],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [{ function: { name: 'wework_capability_probe', arguments: '{}' } }],
+                },
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      )
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: fetchMock,
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-select'),
+        'kimi-coding'
+      )
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'shared-key')
+      await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select')).toBeInTheDocument()
+      )
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-model-select'), 'k3')
+      await userEvent.click(screen.getByTestId('local-model-provider-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-model-select-1'),
+        'kimi-for-coding-highspeed'
+      )
+      await userEvent.click(screen.getByTestId('local-model-test-button-1'))
+      expect(await screen.findByTestId('local-model-test-result-1')).toHaveTextContent(
+        '模型连接正常'
+      )
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+        model: 'kimi-for-coding-highspeed',
+      })
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored).toHaveLength(2)
+      expect(stored).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            providerProfileId: 'kimi-coding',
+            modelId: 'k3',
+            apiKey: 'shared-key',
+            codexCatalogModelId: 'wework-kimi-k3',
+          }),
+          expect.objectContaining({
+            providerProfileId: 'kimi-coding',
+            modelId: 'kimi-for-coding-highspeed',
+            apiKey: 'shared-key',
+            codexCatalogModelId: 'wework-kimi-k2-7',
+          }),
+        ])
+      )
+      expect(new Set(stored.map((model: { id: string }) => model.id)).size).toBe(2)
+      expect(screen.getByTestId('local-model-settings')).toHaveTextContent('k3')
+      expect(screen.getByTestId('local-model-settings')).toHaveTextContent(
+        'kimi-for-coding-highspeed'
+      )
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('adds another model while editing an existing provider configuration', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    saveLocalModelConfig({
+      id: 'deepseek-flash',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek Flash',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'shared-key',
+      enabled: true,
+    })
+    const originalFetch = globalThis.fetch
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-pro' }],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      ),
+    })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-edit-deepseek-flash'))
+      await userEvent.click(screen.getByTestId('local-model-provider-model-add-button'))
+      await waitFor(() =>
+        expect(screen.getByTestId('local-model-provider-model-select-1')).toBeInTheDocument()
+      )
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-provider-model-select-1'),
+        'deepseek-v4-pro'
+      )
+      await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+      const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+      expect(stored).toHaveLength(2)
+      expect(stored).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'deepseek-flash',
+            providerProfileId: 'deepseek',
+            modelId: 'deepseek-v4-flash',
+            apiKey: 'shared-key',
+          }),
+          expect.objectContaining({
+            providerProfileId: 'deepseek',
+            modelId: 'deepseek-v4-pro',
+            apiKey: 'shared-key',
+          }),
+        ])
+      )
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test.each([
+    ['minimax', 'https://api.minimaxi.com/anthropic'],
+    ['minimax-global', 'https://api.minimax.io/anthropic'],
+  ] as const)(
+    'configures %s through the managed Anthropic-compatible profile',
+    async (providerProfileId, baseUrl) => {
+      api.getAllDevices.mockResolvedValue([localDevice()])
+      const originalFetch = globalThis.fetch
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: fetchMock,
+      })
+
+      try {
+        render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+        await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+        await screen.findByTestId('model-settings-page')
+        await userEvent.click(screen.getByTestId('local-model-add-button'))
+        await userEvent.selectOptions(
+          screen.getByTestId('local-model-provider-select'),
+          providerProfileId
+        )
+        expect(screen.getByTestId('local-model-group-input')).toHaveValue('MiniMax')
+        await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
+        await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
+        await waitFor(() =>
+          expect(screen.getByTestId('local-model-provider-model-select')).toHaveValue(
+            'MiniMax-M2.7'
+          )
+        )
+        await userEvent.click(screen.getByTestId('local-model-save-button'))
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          `${baseUrl}/v1/models`,
+          expect.objectContaining({ headers: { 'X-Api-Key': 'test-key' } })
+        )
+        const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
+        expect(stored[0]).toMatchObject({
+          providerProfileId,
+          group: 'MiniMax',
+          modelId: 'MiniMax-M2.7',
+          baseUrl,
+          apiFormat: 'anthropic-messages',
+          requestPath: '/v1/messages',
+          toolProfile: 'function',
+          contextWindow: 204_800,
+          catalogReady: true,
+        })
+        expect(requestLocalExecutor).not.toHaveBeenCalled()
+      } finally {
+        Object.defineProperty(globalThis, 'fetch', {
+          configurable: true,
+          value: originalFetch,
+        })
+      }
+    }
+  )
+
   test('tests a model before saving it', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'resp_1' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          id: 'resp_1',
+          output: [
+            {
+              type: 'custom_tool_call',
+              name: 'apply_patch',
+              input:
+                '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n',
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', {
       configurable: true,
@@ -494,6 +1065,7 @@ describe('ConnectionsSettingsPage', () => {
       await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
         '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
       )
@@ -527,6 +1099,122 @@ describe('ConnectionsSettingsPage', () => {
     }
   })
 
+  test('switches the endpoint and test payload for Chat Completions models', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [{ function: { name: 'wework_capability_probe', arguments: '{}' } }],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-api-format-select'),
+        'openai-chat-completions'
+      )
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/chat/completions')
+      await userEvent.type(
+        screen.getByTestId('local-model-url-input'),
+        'https://api.kimi.com/coding/v1'
+      )
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.kimi.com/coding/v1/chat/completions',
+        expect.any(Object)
+      )
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+        messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
+        stream: false,
+      })
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('switches the endpoint, headers, and test payload for Anthropic Messages models', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [{ type: 'tool_use', name: 'wework_capability_probe', id: 'tool_1', input: {} }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-api-format-select'),
+        'anthropic-messages'
+      )
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/v1/messages')
+      await userEvent.type(
+        screen.getByTestId('local-model-url-input'),
+        'https://api.kimi.com/coding/'
+      )
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.kimi.com/coding/v1/messages',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-api-key': 'local-secret',
+            'anthropic-version': '2023-06-01',
+          }),
+        })
+      )
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+        messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
+        stream: false,
+      })
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
   test('prompts before discarding an unsaved local model form', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
 
@@ -535,6 +1223,7 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
     await screen.findByTestId('model-settings-page')
     await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'custom')
     await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
 
     await userEvent.click(screen.getByTestId('local-model-add-button'))
@@ -553,7 +1242,8 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('local-model-discard-changes-confirm-button'))
 
     expect(screen.queryByTestId('local-model-discard-changes-dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('local-model-url-input')).toHaveValue('')
+    expect(screen.getByTestId('local-model-provider-select')).toHaveValue('')
+    expect(screen.queryByTestId('local-model-url-input')).not.toBeInTheDocument()
   })
 
   test('keeps cloud auth sync controls unavailable when cloud is disconnected', async () => {
@@ -672,7 +1362,9 @@ describe('ConnectionsSettingsPage', () => {
     expect(restartCodexButton).toHaveTextContent('重启 Codex')
     await userEvent.click(restartCodexButton)
     await waitFor(() =>
-      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart')
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+        proxyUrl: 'http://127.0.0.1:7890',
+      })
     )
     expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
     expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
@@ -758,6 +1450,48 @@ describe('ConnectionsSettingsPage', () => {
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
   })
 
+  test('keeps connection settings open after the cloud desktop extension opens', async () => {
+    const onBack = vi.fn()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={onBack} />)
+
+    const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        disabled: false,
+        onOpened: expect.any(Function),
+      }),
+      undefined
+    )
+    await userEvent.click(button)
+
+    expect(onBack).not.toHaveBeenCalled()
+  })
+
+  test('does not render a cloud desktop action when the extension is unavailable', async () => {
+    cloudDesktopExtensionMock.available = false
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    expect(screen.queryByTestId('connection-cloud-desktop-button-device-1')).not.toBeInTheDocument()
+  })
+
+  test('passes an offline device as disabled to the cloud desktop action', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: true }),
+      undefined
+    )
+  })
+
   test('shows cloud device connection info from the compact more menu and copies values', async () => {
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
@@ -841,7 +1575,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('ubuntu')
   })
 
-  test('lists local and cloud Claude Code devices while excluding unsupported shells', async () => {
+  test('lists cloud Claude Code devices while excluding local and unsupported devices', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
         device_id: 'cloud-claude',
@@ -864,27 +1598,28 @@ describe('ConnectionsSettingsPage', () => {
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
-    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
+    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-device-local-claude')).not.toBeInTheDocument()
     expect(screen.queryByText('Cloud OpenClaw Device')).not.toBeInTheDocument()
   })
 
   test('lists remote Claude Code devices in a separate section', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
-      remoteDevice({ device_id: 'remote-docker', name: 'Docker Remote Device' }),
+      remoteDevice({ device_id: 'remote-docker', name: 'Remote Alias' }),
       localDevice({ device_id: 'local-claude', name: 'Local Claude Device' }),
     ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
-    expect(screen.getByText('Docker Remote Device')).toBeInTheDocument()
-    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
+    expect(screen.getByText('Remote Alias')).toBeInTheDocument()
+    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
   })
 
-  test('groups the current app backend registration with local devices', async () => {
+  test('does not show the current app backend registration in cloud connections', async () => {
     api.getAllDevices.mockResolvedValue([
       localDevice({
         device_id: 'local-claude',
@@ -897,19 +1632,47 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    const localSection = screen.getByText('本地设备').closest('section')
-    expect(localSection).not.toBeNull()
-    expect(
-      within(localSection as HTMLElement).getByText('Current App Backend Registration')
-    ).toBeInTheDocument()
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('connection-device-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByText('Current App Backend Registration')).not.toBeInTheDocument()
+    expect(screen.queryByText('本地设备')).not.toBeInTheDocument()
     expect(screen.queryByText('远程设备')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent(/在线云设备.*0/)
+  })
 
-    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
+  test('shows device IP until the user assigns an alias', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice(),
+      remoteDevice(),
+      cloudDevice({
+        id: 4,
+        device_id: 'aliased-device',
+        name: 'Build Box',
+        client_ip: '10.201.3.202',
+      }),
+      cloudDevice({
+        id: 5,
+        device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',
+        name: 'sifang-executor-0341b231eb06',
+        client_ip: '10.201.3.203',
+        cloud_config: {
+          sandboxId: 'sandbox-generated-name',
+          deviceId: 'runtime-generated-name',
+          deviceName: 'sifang-executor-0341b231eb06',
+        },
+      }),
+    ])
 
-    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
-    expect(api.startTerminal).not.toHaveBeenCalled()
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByText('10.201.3.200')).toBeInTheDocument()
+    expect(screen.getByText('10.201.3.201')).toBeInTheDocument()
+    expect(screen.getByText('Build Box')).toBeInTheDocument()
+    expect(screen.getByText('10.201.3.203')).toBeInTheDocument()
+    expect(screen.queryByText('device-1')).not.toBeInTheDocument()
+    expect(screen.queryByText('Docker Remote Device')).not.toBeInTheDocument()
+    expect(screen.queryByText('sifang-executor-0341b231eb06')).not.toBeInTheDocument()
+    expect(screen.queryByText('10.201.3.202')).not.toBeInTheDocument()
   })
 
   test('generates and copies a remote Docker device command from the add device dialog', async () => {
@@ -921,9 +1684,11 @@ describe('ConnectionsSettingsPage', () => {
       env: {
         DEVICE_TYPE: 'remote',
         EXECUTOR_MODE: 'local',
+        WEGENT_BACKEND_URL: 'https://cloud.example.com/api',
+        WEGENT_SOCKET_URL: 'wss://cloud.example.com/socket.io',
       },
       command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
+        'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -935,16 +1700,43 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('add-remote-docker-button'))
 
     await waitFor(() => expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledTimes(1))
-    expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledWith({
-      client_origin: window.location.origin,
-    })
+    expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledWith()
     expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('DEVICE_TYPE=remote')
     expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('EXECUTOR_MODE=local')
 
     await userEvent.click(screen.getByTestId('copy-remote-docker-command'))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest'
+      'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest'
     )
+  })
+
+  test('refreshes the device list and closes the dialog when the generated remote device connects', async () => {
+    api.getAllDevices
+      .mockResolvedValueOnce([cloudDevice()])
+      .mockResolvedValue([cloudDevice(), remoteDevice()])
+    api.createDockerRemoteDeviceCommand.mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'Docker Remote Device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: {
+        DEVICE_TYPE: 'remote',
+        EXECUTOR_MODE: 'local',
+      },
+      command:
+        'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-add-device-button'))
+    await userEvent.click(screen.getByTestId('add-remote-docker-button'))
+
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      expect(screen.queryByTestId('add-cloud-device-dialog')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('connection-device-remote-device')).toHaveTextContent('10.201.3.201')
+    expect(screen.getByText('远程设备')).toBeInTheDocument()
   })
 
   test('disables cloud device creation when the user already has one cloud device', async () => {
@@ -958,7 +1750,7 @@ describe('ConnectionsSettingsPage', () => {
         EXECUTOR_MODE: 'local',
       },
       command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
+        'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -989,34 +1781,26 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
   })
 
-  test('launches a native terminal for online local devices without exposing cloud-only actions', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-    api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'local-claude',
-        name: 'Local Claude Device',
-      }),
-    ])
+  test('shows cloud device metrics while omitting local devices and scaling guidance', async () => {
+    runtimeConfigMock.value = {
+      appBasePath: '',
+      apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
+      cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
+    }
+    api.getAllDevices.mockResolvedValue([cloudDevice(), localDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    await waitFor(() => expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api'))
-    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
-    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
-
-    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
-    expect(api.startTerminal).not.toHaveBeenCalled()
-    expect(openSpy).not.toHaveBeenCalled()
-    expect(
-      screen.queryByTestId('connection-code-server-button-local-claude')
-    ).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-vnc-button-local-claude')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-more-button-local-claude')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-delete-button-local-claude')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
+    await screen.findByTestId('connection-device-device-1')
+    expect(screen.queryByTestId('connection-device-local-device')).not.toBeInTheDocument()
+    await waitFor(() => expect(api.getMetrics).toHaveBeenCalledWith('device-1'))
+    expect(screen.getByTestId('connection-device-metric-cpu-device-1')).toHaveTextContent('42%')
+    expect(screen.getByTestId('connection-device-metric-memory-device-1')).toHaveTextContent('68%')
+    expect(screen.getByTestId('connection-device-metric-disk-device-1')).toHaveTextContent('57%')
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
-    expect(api.getMetrics).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('connection-scale-wiki-link')).not.toBeInTheDocument()
   })
 
   test('embeds a remote terminal for socketio cloud device terminal sessions', async () => {
@@ -1065,69 +1849,38 @@ describe('ConnectionsSettingsPage', () => {
     expect(openSpy).not.toHaveBeenCalled()
   })
 
-  test('keeps local device terminal hidden outside the WeWork macOS app', async () => {
-    isLocalTerminalAvailableMock.mockReturnValue(false)
-    api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'local-claude',
-        name: 'Local Claude Device',
-      }),
-    ])
+  test('shows the actual IDE target before opening a remote device session', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: 'remote-device',
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: 'http://10.20.30.40:17888/session/code-server-1?token=secret',
+      transport: 'http',
+    })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    expect(screen.queryByTestId('connection-terminal-button-local-claude')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('connection-code-server-button-local-claude')
-    ).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
+    const target = await screen.findByTestId('connection-ide-target-remote-device')
+    expect(target).toHaveTextContent('http://10.20.30.40:17888')
+    expect(target).not.toHaveTextContent('token=secret')
+    expect(openExternalUrlMock).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('connection-ide-confirm-remote-device'))
+    await waitFor(() => {
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'http://10.20.30.40:17888/session/code-server-1?token=secret'
+      )
+    })
   })
 
-  test('keeps local device terminal hidden when the executor is on another device', async () => {
-    getLocalExecutorDeviceIdMock.mockResolvedValue('another-local-device')
+  test('allows deleting offline remote device registrations', async () => {
     api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'local-claude',
-        name: 'Local Claude Device',
-      }),
-    ])
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(
-        screen.queryByTestId('connection-terminal-button-local-claude')
-      ).not.toBeInTheDocument()
-    )
-    expect(api.openLocalTerminal).not.toHaveBeenCalled()
-  })
-
-  test('shows configured cloud device scaling wiki link in the cloud section guidance', async () => {
-    runtimeConfigMock.value = {
-      appBasePath: '',
-      apiBaseUrl: '/api',
-      cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
-    }
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    await screen.findByTestId('connection-device-device-1')
-    const link = screen.getByTestId('connection-scale-wiki-link')
-
-    expect(link).toHaveTextContent('详细见Wiki')
-    expect(link).toHaveAttribute('href', 'https://wiki.example.com/cloud-device-scaling')
-    expect(link).toHaveClass('text-text-secondary', 'hover:text-primary')
-    expect(link).toHaveClass('ml-2')
-    expect(link.closest('p')).toHaveTextContent('持续超过 80%')
-  })
-
-  test('allows deleting offline local device registrations', async () => {
-    api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'offline-local',
-        name: 'Offline Local Device',
+      remoteDevice({
+        device_id: 'offline-remote',
+        name: 'Offline Remote Device',
         status: 'offline',
       }),
     ])
@@ -1135,15 +1888,15 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-offline-local')).toBeInTheDocument()
-    expect(screen.queryByTestId('connection-more-button-offline-local')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('connection-device-offline-remote')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-more-button-offline-remote')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('connection-delete-button-offline-local'))
-    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('删除本地设备')
-    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('本地设备注册记录')
+    await userEvent.click(screen.getByTestId('connection-delete-button-offline-remote'))
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('删除远程设备')
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('远程设备注册记录')
     await userEvent.click(screen.getByTestId('confirm-delete-device-button'))
 
-    await waitFor(() => expect(api.deleteDevice).toHaveBeenCalledWith('offline-local'))
+    await waitFor(() => expect(api.deleteDevice).toHaveBeenCalledWith('offline-remote'))
     expect(api.deleteCloudDevice).not.toHaveBeenCalled()
   })
 })

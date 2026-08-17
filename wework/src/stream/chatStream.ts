@@ -8,8 +8,10 @@ import type {
   RuntimeGoalEventPayload,
   RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
+  RuntimeTaskTitleUpdatedPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
+  RuntimeSupervisorEventPayload,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
@@ -26,6 +28,11 @@ export interface ChatStreamScope {
   taskId?: string
 }
 
+export interface RuntimeTransportReplacedPayload {
+  previousRuntimeInstanceId: string
+  runtimeInstanceId: string
+}
+
 export interface ChatStreamHandlers {
   scope?: ChatStreamScope
   onChatStart?: (payload: ChatStartPayload) => void
@@ -35,11 +42,14 @@ export interface ChatStreamHandlers {
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
+  onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void

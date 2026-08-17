@@ -315,6 +315,16 @@ class XXLJobBackend(SchedulerBackend):
             from app.tasks.subscription_tasks import check_due_subscriptions
 
             check_due_subscriptions()
+        try:
+            from app.tasks.project_automation_tasks import (
+                check_due_project_automations_sync,
+            )
+
+            check_due_project_automations_sync()
+        except ImportError:
+            logger.exception(
+                "[XXLJobBackend] Project automation scheduler task is unavailable"
+            )
 
     def stop(self, wait: bool = True) -> None:
         """

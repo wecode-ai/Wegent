@@ -317,6 +317,7 @@ export interface UnifiedSkill {
   version?: string
   author?: string
   tags?: string[]
+  marketplaceTags?: string[]
   /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
   bindShells?: string[]
   /** Whether this skill is visible in user-facing skill lists */
@@ -324,6 +325,7 @@ export interface UnifiedSkill {
   is_active: boolean
   is_public: boolean
   user_id: number // ID of the user who uploaded this skill
+  publication_status?: 'published' | 'archived'
   availability?: SkillAvailability
   /** Source information for git-imported skills */
   source?: SkillSource
@@ -344,7 +346,7 @@ export interface SkillBindingException {
 
 export interface SkillBinding {
   id: number
-  target_type: 'user' | 'agent' | 'project' | 'message'
+  target_type: 'user' | 'group' | 'agent' | 'project' | 'message'
   target_id: string
   skill_ref: {
     skill_id: number
@@ -463,6 +465,48 @@ export async function addSkillToMyDefault(skillId: number): Promise<SkillBinding
   return response.json()
 }
 
+export async function addSkillToGroups(
+  skillId: number,
+  groupNames: string[]
+): Promise<SkillBinding[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/groups`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ group_names: groupNames }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to add Skill to groups')
+  }
+
+  return response.json()
+}
+
+export async function removeSkillFromGroup(skillId: number, groupName: string): Promise<void> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const params = new URLSearchParams({ group_name: groupName })
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/groups?${params}`
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to remove Skill from group')
+  }
+}
+
 export async function updateMyDefaultSkillBindingExceptions(
   skillId: number,
   exceptions: SkillBindingException[],
@@ -548,6 +592,7 @@ export async function invokeSkill(skillName: string): Promise<{ prompt: string }
 export async function uploadPublicSkill(
   file: File,
   name: string,
+  marketplaceTags: string[],
   onProgress?: (progress: number) => void
 ): Promise<UnifiedSkill> {
   const token = getToken()
@@ -556,6 +601,7 @@ export async function uploadPublicSkill(
   const formData = new FormData()
   formData.append('file', file)
   formData.append('name', name)
+  formData.append('marketplace_tags', JSON.stringify(marketplaceTags))
 
   const url = `${getApiUrl()}/v1/kinds/skills/public/upload`
 
@@ -955,6 +1001,7 @@ export interface GitImportRequest {
   skill_paths: string[]
   namespace?: string
   overwrite_names?: string[]
+  marketplace_tags?: string[]
 }
 
 /**
@@ -1119,7 +1166,8 @@ export async function importGitRepoPublicSkills(
 export interface UpdateFromGitResponse {
   id: number
   name: string
-  message: string
+  version?: string
+  source?: SkillSource
 }
 
 /**
@@ -1144,6 +1192,31 @@ export async function updateSkillFromGit(skillId: number): Promise<UpdateFromGit
     } catch {
       throw new Error(error || 'Failed to update skill from Git')
     }
+  }
+
+  return response.json()
+}
+
+export async function updateSkillFromGitRepository(
+  skillId: number,
+  repoUrl: string,
+  skillPath: string
+): Promise<UpdateFromGitResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const response = await fetch(`${getApiUrl()}/v1/kinds/skills/git/update/${skillId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ repo_url: repoUrl, skill_path: skillPath }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to update skill from Git' }))
+    throw new Error(error.detail || 'Failed to update skill from Git')
   }
 
   return response.json()

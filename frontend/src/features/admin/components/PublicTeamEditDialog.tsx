@@ -21,7 +21,13 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Loader2 } from 'lucide-react'
 
-import { Bot, Team, TaskType, type PipelineContextPassing } from '@/types/api'
+import {
+  Bot,
+  Team,
+  TaskType,
+  type PipelineContextPassing,
+  type TeamInputPlaceholder,
+} from '@/types/api'
 import {
   TeamMode,
   getAllowedAgentsForTeamMode,
@@ -35,13 +41,19 @@ import { UnifiedShell } from '@/apis/shells'
 import { BotEditRef } from '@/features/settings/components/BotEdit'
 import { adminApis, AdminPublicTeam, AdminPublicTeamCreate } from '@/apis/admin'
 import { publicResourceApis } from '@/apis/publicResources'
-import { buildPublicTeamUpdateData, resolvePublicTeamName } from '../utils/publicTeamPayload'
+import {
+  buildPublicTeamJson,
+  buildPublicTeamUpdateData,
+  resolvePublicTeamName,
+} from '../utils/publicTeamPayload'
 
 // Import sub-components from settings
 import TeamBasicInfoForm from '@/features/settings/components/team-edit/TeamBasicInfoForm'
 import TeamModeSelector from '@/features/settings/components/team-edit/TeamModeSelector'
 import TeamModeEditor from '@/features/settings/components/team-edit/TeamModeEditor'
 import TeamModeChangeDialog from '@/features/settings/components/team-edit/TeamModeChangeDialog'
+import { getModelCategoryTypeForBindMode } from '@/features/settings/components/team-edit/simple-team-edit-utils'
+import { normalizeInputPlaceholder } from '@/features/settings/components/team-edit/InputPlaceholderEditor'
 
 interface PublicTeamEditDialogProps {
   open: boolean
@@ -49,54 +61,6 @@ interface PublicTeamEditDialogProps {
   editingTeam: AdminPublicTeam | null
   onSuccess: () => void
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
-}
-
-/**
- * Convert basic form data to Team CRD JSON structure
- */
-function buildTeamJson(data: {
-  name: string
-  displayName: string
-  description: string
-  bindMode: TaskType[]
-  icon: string | null
-  requiresWorkspace: boolean | null
-  mode: TeamMode
-  members: {
-    botName: string
-    botPrompt: string
-    role?: string
-    requireConfirmation?: boolean
-    contextPassing?: PipelineContextPassing
-  }[]
-}): Record<string, unknown> {
-  return {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'Team',
-    metadata: {
-      name: data.name,
-      namespace: 'default',
-      displayName: data.displayName.trim() || undefined,
-    },
-    spec: {
-      collaborationModel: data.mode,
-      bind_mode: data.bindMode,
-      description: data.description || undefined,
-      icon: data.icon || undefined,
-      requiresWorkspace: data.requiresWorkspace ?? true,
-      members: data.members.map(m => ({
-        botRef: {
-          name: m.botName,
-          namespace: 'default',
-        },
-        botPrompt: m.botPrompt || undefined,
-        role: m.role || undefined,
-        requireConfirmation: m.requireConfirmation || undefined,
-        contextPassing:
-          m.contextPassing && m.contextPassing !== 'none' ? m.contextPassing : undefined,
-      })),
-    },
-  }
 }
 
 /**
@@ -112,6 +76,20 @@ function extractBotName(botRef: unknown): string {
   return ''
 }
 
+const PUBLIC_TEAM_ICON_ASSET_PATTERN = /^\/api\/resource-library\/assets\/team-icons\/(\d+)$/
+
+function getPublicTeamIconAssetId(iconUrl: string | null | undefined): number | null {
+  const match = iconUrl?.match(PUBLIC_TEAM_ICON_ASSET_PATTERN)
+  return match ? Number(match[1]) : null
+}
+
+function getTeamIconFromJson(teamJson: Record<string, unknown>): string | null {
+  const spec = teamJson.spec
+  if (!spec || typeof spec !== 'object') return null
+  const icon = (spec as Record<string, unknown>).icon
+  return typeof icon === 'string' ? icon : null
+}
+
 /**
  * Parse Team CRD JSON to basic form data
  */
@@ -122,6 +100,7 @@ function parseTeamJson(json: Record<string, unknown>): {
   bindMode: TaskType[]
   icon: string | null
   requiresWorkspace: boolean | null
+  inputPlaceholder: TeamInputPlaceholder
   mode: TeamMode
   members: {
     botName: string
@@ -141,6 +120,10 @@ function parseTeamJson(json: Record<string, unknown>): {
     const bindMode = (spec?.bind_mode as TaskType[]) || ['chat', 'code']
     const icon = (spec?.icon as string) || null
     const requiresWorkspace = (spec?.requiresWorkspace as boolean) ?? true
+    const inputPlaceholder =
+      spec?.inputPlaceholder && typeof spec.inputPlaceholder === 'object'
+        ? (spec.inputPlaceholder as TeamInputPlaceholder)
+        : {}
     const mode = (spec?.collaborationModel as TeamMode) || 'solo'
 
     const rawMembers = (spec?.members as Array<Record<string, unknown>>) || []
@@ -152,7 +135,17 @@ function parseTeamJson(json: Record<string, unknown>): {
       contextPassing: (m?.contextPassing as PipelineContextPassing) || 'none',
     }))
 
-    return { name, displayName, description, bindMode, icon, requiresWorkspace, mode, members }
+    return {
+      name,
+      displayName,
+      description,
+      bindMode,
+      icon,
+      requiresWorkspace,
+      inputPlaceholder,
+      mode,
+      members,
+    }
   } catch {
     return null
   }
@@ -181,6 +174,7 @@ export default function PublicTeamEditDialog({
   const [bindMode, setBindMode] = useState<TaskType[]>(['chat'])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(true)
+  const [inputPlaceholder, setInputPlaceholder] = useState<TeamInputPlaceholder>({})
 
   // Bot selection state
   const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([])
@@ -196,6 +190,43 @@ export default function PublicTeamEditDialog({
   const [bots, setBots] = useState<Bot[]>([])
   const [shells, setShells] = useState<UnifiedShell[]>([])
   const [loadingBots, setLoadingBots] = useState(false)
+  const initialIconRef = useRef<string | null>(null)
+  const uploadedIconAssetIdsRef = useRef<Set<number>>(new Set())
+
+  const handleUploadIcon = useCallback(async (file: File) => {
+    const uploaded = await adminApis.uploadPublicTeamIcon(file)
+    uploadedIconAssetIdsRef.current.add(uploaded.asset_id)
+    return uploaded.url
+  }, [])
+
+  const handleIconChange = useCallback(
+    (nextIcon: string | null) => {
+      const currentAssetId = getPublicTeamIconAssetId(icon)
+      const nextAssetId = getPublicTeamIconAssetId(nextIcon)
+      if (
+        currentAssetId &&
+        currentAssetId !== nextAssetId &&
+        uploadedIconAssetIdsRef.current.delete(currentAssetId)
+      ) {
+        void adminApis.deletePublicTeamIcon(currentAssetId)
+      }
+      setIcon(nextIcon)
+    },
+    [icon]
+  )
+
+  const cleanupUnsavedIconUploads = useCallback(() => {
+    const assetIds = [...uploadedIconAssetIdsRef.current]
+    uploadedIconAssetIdsRef.current.clear()
+    assetIds.forEach(assetId => {
+      void adminApis.deletePublicTeamIcon(assetId)
+    })
+  }, [])
+
+  const handleClose = useCallback(() => {
+    cleanupUnsavedIconUploads()
+    onClose()
+  }, [cleanupUnsavedIconUploads, onClose])
 
   // Bot editing related state
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
@@ -247,6 +278,15 @@ export default function PublicTeamEditDialog({
     fetchResources()
   }, [open, toast, t])
 
+  // Track the persisted icon independently from asynchronously loaded bots.
+  useEffect(() => {
+    if (!open) return
+
+    const parsed = editingTeam ? parseTeamJson(editingTeam.json) : null
+    initialIconRef.current = parsed?.icon ?? null
+    uploadedIconAssetIdsRef.current.clear()
+  }, [open, editingTeam])
+
   // Reset form when dialog opens
   useEffect(() => {
     if (!open) return
@@ -266,6 +306,7 @@ export default function PublicTeamEditDialog({
         setBindMode(parsed.bindMode)
         setIcon(parsed.icon)
         setRequiresWorkspace(parsed.requiresWorkspace)
+        setInputPlaceholder(parsed.inputPlaceholder)
         setMode(parsed.mode)
 
         // Map member bot names to bot IDs
@@ -320,6 +361,7 @@ export default function PublicTeamEditDialog({
       setBindMode(['chat'])
       setIcon(null)
       setRequiresWorkspace(true)
+      setInputPlaceholder({})
       setMode('solo')
       setSelectedBotKeys([])
       setLeaderBotId(null)
@@ -536,13 +578,15 @@ export default function PublicTeamEditDialog({
       }
     })
 
-    const json = buildTeamJson({
+    const json = buildPublicTeamJson({
+      baseJson: editingTeam?.json,
       name,
       displayName,
       description,
       bindMode,
       icon,
       requiresWorkspace,
+      inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
       mode,
       members,
     })
@@ -556,6 +600,7 @@ export default function PublicTeamEditDialog({
     bindMode,
     icon,
     requiresWorkspace,
+    inputPlaceholder,
     mode,
     leaderBotId,
     selectedBotKeys,
@@ -563,6 +608,7 @@ export default function PublicTeamEditDialog({
     requireConfirmationMap,
     contextPassingMap,
     bots,
+    editingTeam?.json,
   ])
 
   // Sync JSON to basic form when switching to basic tab
@@ -582,6 +628,7 @@ export default function PublicTeamEditDialog({
     setBindMode(parsed.bindMode)
     setIcon(parsed.icon)
     setRequiresWorkspace(parsed.requiresWorkspace)
+    setInputPlaceholder(parsed.inputPlaceholder)
     setMode(parsed.mode)
 
     // Map member bot names to bot IDs
@@ -703,13 +750,15 @@ export default function PublicTeamEditDialog({
             return
           }
 
-          teamJson = buildTeamJson({
+          teamJson = buildPublicTeamJson({
+            baseJson: editingTeam?.json,
             name,
             displayName,
             description,
             bindMode,
             icon,
             requiresWorkspace,
+            inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
             mode,
             members: [
               {
@@ -777,13 +826,15 @@ export default function PublicTeamEditDialog({
             })
           }
 
-          teamJson = buildTeamJson({
+          teamJson = buildPublicTeamJson({
+            baseJson: editingTeam?.json,
             name,
             displayName,
             description,
             bindMode,
             icon,
             requiresWorkspace,
+            inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
             mode,
             members,
           })
@@ -819,6 +870,20 @@ export default function PublicTeamEditDialog({
         toast({ title: t('public_teams.success.created') })
       }
 
+      const savedIcon = getTeamIconFromJson(teamJson)
+      const savedAssetId = getPublicTeamIconAssetId(savedIcon)
+      const previousAssetId = getPublicTeamIconAssetId(initialIconRef.current)
+      const unusedUploadedAssetIds = [...uploadedIconAssetIdsRef.current].filter(
+        assetId => assetId !== savedAssetId
+      )
+      uploadedIconAssetIdsRef.current.clear()
+      unusedUploadedAssetIds.forEach(assetId => {
+        void adminApis.deletePublicTeamIcon(assetId)
+      })
+      if (previousAssetId && previousAssetId !== savedAssetId) {
+        void adminApis.deletePublicTeamIcon(previousAssetId)
+      }
+
       onSuccess()
       onClose()
     } catch (error) {
@@ -852,14 +917,15 @@ export default function PublicTeamEditDialog({
       bind_mode: bindMode,
       icon: icon || undefined,
       requires_workspace: requiresWorkspace ?? true,
+      inputPlaceholder,
     }
-  }, [editingTeam, mode, bindMode, icon, requiresWorkspace])
+  }, [editingTeam, mode, bindMode, icon, requiresWorkspace, inputPlaceholder])
 
   const leaderOptions = useMemo(() => filteredBots, [filteredBots])
 
   return (
     <>
-      <Dialog open={open} onOpenChange={o => !o && onClose()}>
+      <Dialog open={open} onOpenChange={o => !o && handleClose()}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <div className="flex items-center justify-between">
@@ -912,9 +978,12 @@ export default function PublicTeamEditDialog({
                     bindMode={bindMode}
                     setBindMode={setBindMode}
                     icon={icon}
-                    setIcon={setIcon}
+                    setIcon={handleIconChange}
+                    onUploadIcon={handleUploadIcon}
                     requiresWorkspace={requiresWorkspace}
                     setRequiresWorkspace={setRequiresWorkspace}
+                    inputPlaceholder={inputPlaceholder}
+                    onInputPlaceholderChange={setInputPlaceholder}
                   />
 
                   {/* Mode Selection Section */}
@@ -940,6 +1009,7 @@ export default function PublicTeamEditDialog({
                     allowedAgentsForMode={allowedAgentsForMode}
                     botEditRef={botEditRef}
                     scope="public"
+                    modelCategoryType={getModelCategoryTypeForBindMode(bindMode)}
                     requireConfirmationMap={requireConfirmationMap}
                     setRequireConfirmationMap={setRequireConfirmationMap}
                     contextPassingMap={contextPassingMap}
@@ -983,7 +1053,7 @@ export default function PublicTeamEditDialog({
           </Tabs>
 
           <DialogFooter>
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="outline" onClick={handleClose}>
               {t('common.cancel')}
             </Button>
             <Button variant="primary" onClick={handleSave} disabled={saving}>

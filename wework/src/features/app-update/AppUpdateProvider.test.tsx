@@ -3,6 +3,7 @@ import { useAppUpdate, type AppUpdateContextValue } from './app-update-context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
+  APP_UPDATE_CHANNEL_KEY,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
   APP_UPDATE_LAST_AUTO_CHECK_KEY,
   APP_UPDATE_SIMULATE_EVENT,
@@ -10,10 +11,17 @@ import {
 } from './app-update-context'
 import { AppUpdateProvider } from './AppUpdateProvider'
 import { checkForWeworkUpdate, installPendingWeworkUpdate } from '@/lib/app-updater'
+import { APP_UPDATE_PENDING_RELEASE_NOTES_KEY } from './app-release-notes'
+
+const appVersionMock = vi.hoisted(() => ({ value: '0.1.0' }))
 
 vi.mock('@/lib/app-updater', () => ({
   checkForWeworkUpdate: vi.fn(),
   installPendingWeworkUpdate: vi.fn(),
+}))
+
+vi.mock('@/hooks/useAppVersion', () => ({
+  useAppVersion: () => appVersionMock.value,
 }))
 
 function enableTauri() {
@@ -33,6 +41,7 @@ describe('AppUpdateProvider', () => {
     vi.setSystemTime(new Date('2026-06-16T00:00:00Z'))
     localStorage.clear()
     enableTauri()
+    appVersionMock.value = '0.1.0'
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(null)
   })
 
@@ -52,7 +61,127 @@ describe('AppUpdateProvider', () => {
     await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
 
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(checkForWeworkUpdate).toHaveBeenCalledWith('stable')
     expect(localStorage.getItem(APP_UPDATE_LAST_AUTO_CHECK_KEY)).toBe(String(Date.now()))
+  })
+
+  test('persists the Beta channel and checks it immediately', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.setUpdateChannel('beta')
+    })
+
+    expect(localStorage.getItem(APP_UPDATE_CHANNEL_KEY)).toBe('beta')
+    expect(appUpdate?.updateChannel).toBe('beta')
+    expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
+  })
+
+  test('restores the persisted Beta channel for automatic checks', async () => {
+    localStorage.setItem(APP_UPDATE_CHANNEL_KEY, 'beta')
+
+    render(
+      <AppUpdateProvider>
+        <div />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+
+    expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
+    expect(localStorage.getItem(`${APP_UPDATE_LAST_AUTO_CHECK_KEY}:beta`)).toBe(String(Date.now()))
+  })
+
+  test('finishes a Beta check after an overlapping stable automatic check', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let finishStableCheck: (() => void) | undefined
+    vi.mocked(checkForWeworkUpdate).mockImplementation(channel =>
+      channel === 'stable'
+        ? new Promise(resolve => {
+            finishStableCheck = () => resolve(null)
+          })
+        : Promise.resolve({
+            currentVersion: '0.1.0',
+            version: '0.2.0-beta.1',
+          })
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    const channelChange = appUpdate?.setUpdateChannel('beta')
+    finishStableCheck?.()
+    await act(async () => {
+      await channelChange
+    })
+
+    expect(checkForWeworkUpdate).toHaveBeenNthCalledWith(1, 'stable')
+    expect(checkForWeworkUpdate).toHaveBeenNthCalledWith(2, 'beta')
+    expect(appUpdate?.updateChannel).toBe('beta')
+    expect(appUpdate?.availableUpdate?.version).toBe('0.2.0-beta.1')
+  })
+
+  test('shows manual feedback when reusing an in-flight automatic check', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let finishCheck: (() => void) | undefined
+    vi.mocked(checkForWeworkUpdate).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishCheck = () => resolve(null)
+        })
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    let manualCheck: Promise<unknown> | undefined
+    await act(async () => {
+      manualCheck = appUpdate?.checkNow()
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.status).toBe('checking')
+    expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
+
+    if (!finishCheck) {
+      throw new Error('Automatic update check resolver was not initialized')
+    }
+    finishCheck()
+    await act(async () => {
+      await manualCheck
+    })
+
+    expect(appUpdate?.status).toBe('upToDate')
+    expect(appUpdate?.message).toBe('upToDate')
   })
 
   test('wakes hourly but only checks the update source after 24 hours', async () => {
@@ -106,6 +235,143 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
   })
 
+  test('persists release notes before installing an available update', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+      body: '## Changes\n\n- Added release notes.',
+    })
+    vi.mocked(installPendingWeworkUpdate).mockResolvedValue()
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(JSON.parse(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY) ?? '{}')).toEqual({
+      version: '0.2.0',
+      body: '## Changes\n\n- Added release notes.',
+    })
+  })
+
+  test('restores release notes after the installed version starts', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    appVersionMock.value = '0.2.0'
+    localStorage.setItem(
+      APP_UPDATE_PENDING_RELEASE_NOTES_KEY,
+      JSON.stringify({
+        version: '0.2.0',
+        body: '## Changes\n\n- Added release notes.',
+      })
+    )
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.installedReleaseNotes).toEqual({
+      version: '0.2.0',
+      body: '## Changes\n\n- Added release notes.',
+    })
+
+    act(() => {
+      appUpdate?.dismissInstalledReleaseNotes()
+    })
+
+    expect(appUpdate?.installedReleaseNotes).toBeNull()
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+  })
+
+  test('discards release notes that do not match the running version', async () => {
+    appVersionMock.value = '0.1.0'
+    localStorage.setItem(
+      APP_UPDATE_PENDING_RELEASE_NOTES_KEY,
+      JSON.stringify({
+        version: '0.2.0',
+        body: '## Changes',
+      })
+    )
+
+    render(
+      <AppUpdateProvider>
+        <div />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+  })
+
+  test('refreshes a failed update so installation can be retried without restarting', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    const update = {
+      currentVersion: '0.0.18',
+      version: '0.0.19',
+      body: '## Changes\n\n- Fixed update retries.',
+    }
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue(update)
+    vi.mocked(installPendingWeworkUpdate)
+      .mockRejectedValueOnce(new Error('The signature verification failed'))
+      .mockResolvedValueOnce()
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
+    expect(appUpdate?.status).toBe('available')
+    expect(appUpdate?.error).toBe('The signature verification failed')
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(installPendingWeworkUpdate).toHaveBeenCalledTimes(2)
+  })
+
   test('simulates an update download from the developer command menu', async () => {
     let appUpdate: AppUpdateContextValue | null = null
 
@@ -133,5 +399,6 @@ describe('AppUpdateProvider', () => {
 
     expect(appUpdate?.availableUpdate).toBeNull()
     expect(appUpdate?.status).toBe('upToDate')
+    expect(appUpdate?.installedReleaseNotes?.body).toContain('changelog announcement')
   })
 })

@@ -1,6 +1,9 @@
 import { getToken } from '@/api/auth'
+import { createAttachmentApi } from '@/api/attachments'
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
+import { createFeedbackApi } from '@/api/feedback'
 import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
@@ -13,13 +16,18 @@ import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
+import { createProjectChatClient } from '@/api/backend/projectChatSocket'
+import { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import { createProjectAutomationApi } from '@/api/projectAutomations'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
 export interface BackendWorkbenchServicesOptions {
   apiBaseUrl: string
+  feedbackUrl: string
   socketBaseUrl: string
   socketPath: string
   getToken: () => string | null
@@ -32,6 +40,7 @@ export function createBackendWorkbenchServices(
 ): WorkbenchServices {
   const runtimeConfig = getRuntimeConfig()
   const apiBaseUrl = options.apiBaseUrl ?? runtimeConfig.apiBaseUrl
+  const feedbackUrl = options.feedbackUrl ?? runtimeConfig.feedbackUrl
   const socketBaseUrl = options.socketBaseUrl ?? runtimeConfig.socketBaseUrl
   const socketPath = options.socketPath ?? runtimeConfig.socketPath
   const resolveToken = options.getToken ?? getToken
@@ -42,8 +51,10 @@ export function createBackendWorkbenchServices(
     redirectOnUnauthorized: options.redirectOnUnauthorized,
   })
   const deviceApi = createDeviceApi(client)
+  const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
   const taskApi = createTaskApi(client)
+  const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
     socketBaseUrl: () => socketBaseUrl,
     path: socketPath,
@@ -52,17 +63,48 @@ export function createBackendWorkbenchServices(
     auth: { client_origin: WEWORK_CLIENT_ORIGIN },
     logger: console,
   })
+  const projectChatClient = createProjectChatClient({
+    socketBaseUrl,
+    socketPath,
+    getToken: resolveToken,
+  })
+
+  const teamApi = createTeamApi(client)
+  const modelApi = createModelApi(client)
+  const projectChatAgentApi = createProjectChatAgentApi(client)
+  const projectAutomationApi = createProjectAutomationApi(client)
 
   return {
-    teamApi: createTeamApi(client),
-    modelApi: createModelApi(client),
+    teamApi,
+    modelApi,
     skillApi: createSkillApi(client),
-    projectApi: createProjectApi(client),
+    projectApi,
     gitApi: createGitApi(client),
     taskApi,
     deviceApi,
+    deliveryApi,
+    feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
+    projectSpaceApis: {
+      cloud: deliveryApi,
+      defaultLocation: 'cloud',
+    },
+    projectSpaceDetailServices: {
+      cloud: {
+        deliveryApi,
+        projectChatClient,
+        projectChatAgentApi,
+        projectAutomationApi,
+        deviceApi,
+        modelApi,
+        teamApi,
+      },
+    },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    attachmentApi: createAttachmentApi({
+      apiBaseUrl,
+      getToken: resolveToken,
+    }),
     executorClient: createExecutorClientFromApis({
       transportKind,
       deviceApi,
@@ -73,6 +115,21 @@ export function createBackendWorkbenchServices(
     }),
     userApi: createUserApi(client),
     socketClient,
+    projectChatClient,
+    projectChatAgentApi,
+    projectAutomationApi,
+    workspaceSessionApi: {
+      startProjectTerminal: projectApi.startTerminalSession,
+      startProjectCodeServer: projectApi.startCodeServerSession,
+      startDeviceTerminal: deviceApi.startTerminal,
+      startDeviceCodeServer: deviceApi.startCodeServer,
+      createRemoteTerminalClient: sessionId =>
+        createRemoteTerminalClient(sessionId, {
+          socketBaseUrl,
+          socketPath,
+          getToken: resolveToken,
+        }),
+    },
     chatStream: createChatStream(socketClient.socket),
   }
 }

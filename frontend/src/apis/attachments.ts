@@ -146,6 +146,20 @@ export const SUPPORTED_EXTENSIONS = [
   '.gif',
   '.bmp',
   '.webp',
+  '.tif',
+  '.tiff',
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.webm',
+  '.mkv',
+  '.m4v',
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.flac',
 ]
 
 /**
@@ -323,7 +337,7 @@ export function getFileIcon(extension: string): string {
 /**
  * Image file extensions
  */
-export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tif', '.tiff']
 
 /**
  * Video file extensions supported for attachments / media analysis.
@@ -331,6 +345,8 @@ export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp
  * isVideoFileName / upload gating / reanalyze all agree with the pipeline.
  */
 export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv', '.webm', '.m4v']
+
+export const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']
 
 /**
  * HTML file extensions
@@ -360,6 +376,45 @@ export function isVideoFileName(filename: string): boolean {
   const dotIndex = filename.lastIndexOf('.')
   if (dotIndex < 0) return false
   return isVideoExtension(filename.slice(dotIndex))
+}
+
+export function isAudioExtension(extension: string): boolean {
+  const ext = extension.startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+  return AUDIO_EXTENSIONS.includes(ext)
+}
+
+const FORMAT_TO_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  avi: 'video/x-msvideo',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  m4v: 'video/x-m4v',
+  flv: 'video/x-flv',
+  wmv: 'video/x-ms-wmv',
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+}
+
+export function formatsToAcceptString(formats: string[] | undefined, fallback: string): string {
+  if (!formats?.length) return fallback
+  const acceptedTypes = formats.map(format => {
+    const normalized = format.toLowerCase().replace(/^\./, '')
+    return FORMAT_TO_MIME[normalized] ?? `.${normalized}`
+  })
+  return Array.from(new Set(acceptedTypes)).join(',')
 }
 
 /**
@@ -394,7 +449,8 @@ export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: strin
  */
 export async function uploadAttachment(
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  storagePurpose: 'default' | 'video_reference' = 'default'
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
@@ -453,7 +509,8 @@ export async function uploadAttachment(
       reject(new Error('Upload cancelled'))
     })
 
-    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload`)
+    const query = new URLSearchParams({ storage_purpose: storagePurpose })
+    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload?${query.toString()}`)
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     }
@@ -550,6 +607,87 @@ export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: stri
   return baseUrl
 }
 
+export async function createAttachmentDownloadUrl(attachmentId: number): Promise<string> {
+  const token = getToken()
+  if (!token) {
+    throw new Error('Authentication required')
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download-token`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to create attachment download token (${response.status})`)
+  }
+
+  const data = await response.json()
+  if (!data.download_token || typeof data.download_token !== 'string') {
+    throw new Error('Invalid attachment download token response')
+  }
+  return `${getAttachmentDownloadUrl(attachmentId)}?download_token=${encodeURIComponent(data.download_token)}`
+}
+
+interface FetchAttachmentFileOptions {
+  filename?: string
+  shareToken?: string
+  signal?: AbortSignal
+}
+
+function getAttachmentFilename(
+  response: Response,
+  attachmentId: number,
+  providedFilename?: string
+): string {
+  if (providedFilename) return providedFilename
+
+  const contentDisposition = response.headers.get('Content-Disposition')
+  if (contentDisposition) {
+    const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+    if (rfc5987Match?.[1]) {
+      try {
+        return decodeURIComponent(rfc5987Match[1])
+      } catch {
+        return rfc5987Match[1]
+      }
+    }
+
+    const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i)
+    if (standardMatch?.[1]) {
+      return standardMatch[1].replace(/['"]/g, '')
+    }
+  }
+
+  return `attachment-${attachmentId}.file`
+}
+
+/**
+ * Fetch an attachment as a named File without triggering a browser download.
+ */
+export async function fetchAttachmentFile(
+  attachmentId: number,
+  options: FetchAttachmentFileOptions = {}
+): Promise<File> {
+  const token = getToken()
+  const response = await fetch(getAttachmentDownloadUrl(attachmentId, options.shareToken), {
+    method: 'GET',
+    headers: {
+      ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
+    },
+    signal: options.signal,
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch attachment (${response.status})`)
+  }
+
+  const filename = getAttachmentFilename(response, attachmentId, options.filename)
+  const blob = await response.blob()
+  return new File([blob], filename, {
+    type: blob.type || response.headers.get('Content-Type') || 'application/octet-stream',
+  })
+}
+
 /**
  * Download attachment file
  *
@@ -562,62 +700,20 @@ export async function downloadAttachment(
   filename?: string,
   shareToken?: string
 ): Promise<void> {
-  const token = getToken()
-  const downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
+  let downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
 
-  const response = await fetch(downloadUrl, {
-    method: 'GET',
-    headers: {
-      // Only include Authorization header if we have a token and no shareToken
-      // shareToken-based access doesn't require JWT authentication
-      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to download attachment')
+  if (!shareToken) {
+    downloadUrl = await createAttachmentDownloadUrl(attachmentId)
   }
 
-  // Extract filename from Content-Disposition header if not provided
-  let downloadFilename = filename
-  if (!downloadFilename) {
-    const contentDisposition = response.headers.get('Content-Disposition')
-    if (contentDisposition) {
-      // Parse filename from Content-Disposition header
-      // Format: attachment; filename="example.pdf" or attachment; filename*=UTF-8''example.pdf
-      // Try RFC 5987 format first (filename*=UTF-8''encoded_filename)
-      const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
-      if (rfc5987Match && rfc5987Match[1]) {
-        downloadFilename = rfc5987Match[1]
-        // Decode URI component if it's encoded
-        try {
-          downloadFilename = decodeURIComponent(downloadFilename)
-        } catch {
-          // Keep original if decode fails
-        }
-      } else {
-        // Fallback to standard format (filename="example.pdf")
-        const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-        if (standardMatch && standardMatch[1]) {
-          downloadFilename = standardMatch[1].replace(/['"]/g, '')
-        }
-      }
-    }
-    // Fallback filename if extraction fails
-    if (!downloadFilename) {
-      downloadFilename = `attachment-${attachmentId}.file`
-    }
+  const link = document.createElement('a')
+  link.href = downloadUrl
+  if (filename) {
+    link.download = filename
   }
-
-  const blob = await response.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = downloadFilename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 /**
@@ -713,6 +809,7 @@ export const attachmentApis = {
   getAttachment,
   getAttachmentPreview,
   getAttachmentDownloadUrl,
+  createAttachmentDownloadUrl,
   downloadAttachment,
   deleteAttachment,
   getAttachmentBySubtask,

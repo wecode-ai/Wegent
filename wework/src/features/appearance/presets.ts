@@ -1,4 +1,5 @@
-import type { AppearanceConfig, ThemePalette } from './types'
+import type { AppearanceConfig, ThemePalette, WorkbenchBackgroundConfig } from './types'
+import { DEFAULT_CODE_FONT_SIZE, DEFAULT_UI_FONT_SIZE } from './typography'
 
 export const DEFAULT_ACCENT_COLOR = '#2563eb'
 
@@ -7,7 +8,7 @@ export const lightPalette: ThemePalette = {
   bgSurface: '247 247 248',
   bgMuted: '245 245 245',
   bgHover: '37 99 235 / 0.08',
-  sidebar: '229 229 231 / 0.72',
+  sidebar: '246 246 246 / 0.88',
   sidebarActive: '222 223 226',
   sidebarHover: '255 255 255 / 0.7',
   sidebarTextPrimary: '36 40 45',
@@ -29,7 +30,7 @@ export const darkPalette: ThemePalette = {
   bgSurface: '28 31 36',
   bgMuted: '38 42 48',
   bgHover: '96 165 250 / 0.12',
-  sidebar: '31 35 41 / 0.82',
+  sidebar: '40 40 40 / 0.92',
   sidebarActive: '52 58 66',
   sidebarHover: '255 255 255 / 0.08',
   sidebarTextPrimary: '232 238 246',
@@ -46,14 +47,35 @@ export const darkPalette: ThemePalette = {
   codeBg: '15 23 42',
 }
 
+const defaultBackground: WorkbenchBackgroundConfig = {
+  imagePath: null,
+  visibility: 24,
+  blur: 0,
+  inMain: true,
+  inSidebar: true,
+  inTopBar: true,
+}
+
 export const defaultAppearance: AppearanceConfig = {
   mode: 'system',
   accentColor: DEFAULT_ACCENT_COLOR,
   uiFont:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
   codeFont: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+  uiFontSize: DEFAULT_UI_FONT_SIZE,
+  codeFontSize: DEFAULT_CODE_FONT_SIZE,
   sidebarTranslucent: true,
   contrast: 50,
+  backgroundImagePath: null,
+  separateBackgroundsByTheme: false,
+  themeBackgroundsInitialized: false,
+  backgroundVisibility: 24,
+  backgroundBlur: 0,
+  backgroundInMain: true,
+  backgroundInSidebar: true,
+  backgroundInTopBar: true,
+  lightBackground: { ...defaultBackground },
+  darkBackground: { ...defaultBackground },
   light: lightPalette,
   dark: darkPalette,
 }

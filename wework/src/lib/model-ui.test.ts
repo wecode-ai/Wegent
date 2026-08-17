@@ -6,6 +6,9 @@ import {
   getControlsForModel,
   groupModelsByFamily,
   inferModelFamily,
+  isCodexOfficialModel,
+  isModelInterfaceModel,
+  isSameModelSelection,
   isSupportedModelFamily,
   normalizeModelOptions,
 } from './model-ui'
@@ -180,9 +183,9 @@ describe('model-ui', () => {
       'gpt',
     ])
     expect(groups.map(group => group.config.label)).toEqual([
-      'CodeX',
+      '我的CodeX',
       'wecode openai',
-      '接口模型',
+      '自定义模型',
       'GPT',
     ])
   })
@@ -211,6 +214,29 @@ describe('model-ui', () => {
       'collaborationMode',
       'speed',
     ])
+  })
+
+  test('adds catalog control to any model that supports the Responses API', () => {
+    const deepseekResponsesModel: UnifiedModel = {
+      name: 'huoshan-deepseek-v4-pro',
+      type: 'public',
+      displayName: 'DeepSeek V4 Pro',
+      modelId: 'huoshan-deepseek-v4-pro',
+      config: {
+        protocol: 'openai-responses',
+      },
+    }
+    const deepseekNonResponsesModel: UnifiedModel = {
+      name: 'huoshan-deepseek-v4',
+      type: 'public',
+      displayName: 'DeepSeek V4',
+      modelId: 'huoshan-deepseek-v4',
+    }
+
+    expect(inferModelFamily(deepseekResponsesModel)).toBe('deepseek')
+    expect(getControlsForModel(deepseekNonResponsesModel).map(control => control.id)).not.toContain(
+      'catalogModelId'
+    )
   })
 
   test('detects runtime family compatibility without changing display families', () => {
@@ -373,5 +399,95 @@ describe('model-ui', () => {
     expect(normalizeModelOptions(model, { reasoning: 'ultra' })).toEqual({
       reasoning: 'medium',
     })
+  })
+
+  test('uses every model-interface reasoning effort in its advertised order', () => {
+    const model: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      displayName: 'API Sol',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: [
+            'minimal',
+            'low',
+            'medium',
+            'high',
+            'xhigh',
+            'max',
+            'ultra',
+            'custom-heavy',
+          ],
+          defaultReasoningEffort: 'minimal',
+        },
+      },
+    }
+
+    const reasoningControl = getControlsForModel(model).find(control => control.id === 'reasoning')
+
+    expect(reasoningControl).toMatchObject({
+      defaultValue: 'minimal',
+      options: [
+        { value: 'minimal', label: 'Minimal' },
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+        { value: 'xhigh', label: 'Extra high' },
+        { value: 'max', label: 'Maximum' },
+        { value: 'ultra', label: 'Ultra' },
+        { value: 'custom-heavy', label: 'custom-heavy' },
+      ],
+    })
+    expect(normalizeModelOptions(model, { reasoning: 'max' })).toEqual({
+      reasoning: 'max',
+    })
+    expect(getSelectedModelDisplayLabel(model, { reasoning: 'ultra' })).toBe('API Sol Ultra')
+  })
+
+  test('omits model-interface reasoning when the model explicitly advertises no efforts', () => {
+    const model: UnifiedModel = {
+      name: 'local-model:no-reasoning',
+      type: 'runtime',
+      displayName: 'No reasoning API',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: {
+          family: 'model-interface',
+          reasoningEfforts: [],
+        },
+      },
+    }
+
+    expect(getControlsForModel(model).map(control => control.id)).not.toContain('reasoning')
+  })
+
+  test('keeps same-id API and Codex Auth models as distinct selections', () => {
+    const official: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: { family: 'codex-official' },
+      },
+    }
+    const api: UnifiedModel = {
+      name: 'local-model:api-sol',
+      type: 'runtime',
+      modelId: 'gpt-5.6-sol',
+      config: {
+        weworkModelKind: 'model-interface',
+        ui: { family: 'model-interface', reasoningEfforts: ['low', 'high'] },
+      },
+    }
+
+    expect(isCodexOfficialModel(official)).toBe(true)
+    expect(isCodexOfficialModel(api)).toBe(false)
+    expect(isModelInterfaceModel(api)).toBe(true)
+    expect(isSameModelSelection(official, api)).toBe(false)
+    expect(isSameModelSelection(api, { ...api })).toBe(true)
   })
 })

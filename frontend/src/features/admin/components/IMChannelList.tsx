@@ -54,11 +54,11 @@ import {
   IMChannelUpdate,
   IMChannelType,
   IMChannelStatus,
-  AdminPublicTeam,
   AdminPublicModel,
-  AdminPublicBot,
   AdminUser,
 } from '@/apis/admin'
+import { teamApis } from '@/apis/team'
+import type { Team } from '@/types/api'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 // User mapping mode type
@@ -71,9 +71,8 @@ const IMChannelList: React.FC = () => {
   const { t } = useTranslation()
   const { toast } = useToast()
   const [channels, setChannels] = useState<IMChannel[]>([])
-  const [teams, setTeams] = useState<AdminPublicTeam[]>([])
+  const [teams, setTeams] = useState<Team[]>([])
   const [models, setModels] = useState<AdminPublicModel[]>([])
-  const [bots, setBots] = useState<AdminPublicBot[]>([])
   const [users, setUsers] = useState<AdminUser[]>([])
   const [_total, setTotal] = useState(0)
   const [page, _setPage] = useState(1)
@@ -173,9 +172,12 @@ const IMChannelList: React.FC = () => {
 
   const fetchTeams = useCallback(async () => {
     try {
-      // Only fetch chat-type teams for IM channel selection
-      const response = await adminApis.getPublicTeams(1, 100, true)
-      setTeams(response.items.filter(team => team.is_active))
+      const response = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
+      setTeams(
+        response.items.filter(
+          team => team.is_active && (!team.bind_mode || team.bind_mode.includes('chat'))
+        )
+      )
     } catch {
       // Silently fail, teams are optional
     }
@@ -187,15 +189,6 @@ const IMChannelList: React.FC = () => {
       setModels(response.items.filter(model => model.is_active))
     } catch {
       // Silently fail, models are optional
-    }
-  }, [])
-
-  const fetchBots = useCallback(async () => {
-    try {
-      const response = await adminApis.getPublicBots(1, 100)
-      setBots(response.items.filter(bot => bot.is_active))
-    } catch {
-      // Silently fail, bots are optional
     }
   }, [])
 
@@ -212,41 +205,22 @@ const IMChannelList: React.FC = () => {
   const teamHasModel = useCallback(
     (teamId: number): boolean => {
       const team = teams.find(t => t.id === teamId)
-      if (!team) return false
-
-      // Get member bot refs from team's json spec
-      // botRef is an object: { name: string, namespace: string }
-      type BotRef = { name: string; namespace?: string }
-      type TeamMember = { botRef?: BotRef }
-      type TeamSpec = { members?: TeamMember[] }
-      const teamSpec = (team.json as { spec?: TeamSpec })?.spec
-      const memberBotRefs =
-        (teamSpec?.members?.map(m => m.botRef).filter(Boolean) as BotRef[]) || []
-
-      // Check if any referenced bot has a model
-      for (const botRef of memberBotRefs) {
-        const bot = bots.find(
-          b =>
-            b.name === botRef.name &&
-            (b.namespace === botRef.namespace || botRef.namespace === 'default')
-        )
-        if (bot?.model_name) {
-          return true
-        }
-      }
-
-      return false
+      return (
+        team?.bots?.some(teamBot => {
+          const agentConfig = teamBot.bot?.agent_config
+          return agentConfig && !!(agentConfig as Record<string, unknown>).bind_model
+        }) ?? false
+      )
     },
-    [teams, bots]
+    [teams]
   )
 
   useEffect(() => {
     fetchChannels()
     fetchTeams()
     fetchModels()
-    fetchBots()
     fetchUsers()
-  }, [fetchChannels, fetchTeams, fetchModels, fetchBots, fetchUsers])
+  }, [fetchChannels, fetchTeams, fetchModels, fetchUsers])
 
   const handleCreateChannel = async () => {
     if (!formData.name.trim()) {
@@ -591,7 +565,7 @@ const IMChannelList: React.FC = () => {
   const getTeamName = (teamId: number | null): string => {
     if (!teamId) return t('admin:im_channels.no_default_team')
     const team = teams.find(t => t.id === teamId)
-    return team?.display_name || team?.name || `Team #${teamId}`
+    return team?.displayName || team?.name || `Team #${teamId}`
   }
 
   const renderWeiboConfigFields = (isEdit: boolean) => {
@@ -917,7 +891,7 @@ const IMChannelList: React.FC = () => {
                 <SelectContent>
                   {teams.map(team => (
                     <SelectItem key={team.id} value={team.id.toString()}>
-                      {team.display_name || team.name}
+                      {team.displayName || team.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1136,7 +1110,7 @@ const IMChannelList: React.FC = () => {
                 <SelectContent>
                   {teams.map(team => (
                     <SelectItem key={team.id} value={team.id.toString()}>
-                      {team.display_name || team.name}
+                      {team.displayName || team.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

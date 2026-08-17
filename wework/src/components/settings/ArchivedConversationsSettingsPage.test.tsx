@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
@@ -7,12 +7,30 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import '@/i18n'
 import type { ArchivedConversationItem } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { notifyWorkbenchCloudArchivesChanged } from '@/features/workbench/workbenchCloudDataEvents'
+import {
+  deleteArchivedLocalHarnessSession,
+  listArchivedLocalHarnessSessions,
+  notifyLocalHarnessSessionsChanged,
+  unarchiveLocalHarnessSession,
+} from '@/lib/local-terminal'
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: vi.fn(),
 }))
 
+vi.mock('@/lib/local-terminal', () => ({
+  deleteArchivedLocalHarnessSession: vi.fn(),
+  listArchivedLocalHarnessSessions: vi.fn().mockResolvedValue([]),
+  notifyLocalHarnessSessionsChanged: vi.fn(),
+  unarchiveLocalHarnessSession: vi.fn(),
+}))
+
 const createLocalAppServicesMock = vi.mocked(createLocalAppServices)
+const deleteArchivedLocalHarnessSessionMock = vi.mocked(deleteArchivedLocalHarnessSession)
+const listArchivedLocalHarnessSessionsMock = vi.mocked(listArchivedLocalHarnessSessions)
+const notifyLocalHarnessSessionsChangedMock = vi.mocked(notifyLocalHarnessSessionsChanged)
+const unarchiveLocalHarnessSessionMock = vi.mocked(unarchiveLocalHarnessSession)
 
 const archivedItem: ArchivedConversationItem = {
   id: 'conversation-1',
@@ -58,6 +76,10 @@ describe('ArchivedConversationsSettingsPage', () => {
     deleteArchivedConversation.mockReset().mockResolvedValue({})
     deleteArchivedConversationsBulk.mockReset().mockResolvedValue({ results: [] })
     unarchiveConversation.mockReset().mockResolvedValue({})
+    deleteArchivedLocalHarnessSessionMock.mockReset().mockResolvedValue(undefined)
+    listArchivedLocalHarnessSessionsMock.mockReset().mockResolvedValue([])
+    notifyLocalHarnessSessionsChangedMock.mockReset()
+    unarchiveLocalHarnessSessionMock.mockReset().mockResolvedValue(undefined)
     createLocalAppServicesMock.mockReturnValue({
       runtimeWorkApi: {
         listArchivedConversations,
@@ -113,6 +135,81 @@ describe('ArchivedConversationsSettingsPage', () => {
     expect(createLocalAppServices).toHaveBeenCalledTimes(1)
   })
 
+  test('lists an archived OpenCode session and restores it to the workbench', async () => {
+    listArchivedConversations.mockResolvedValue({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })
+    listArchivedLocalHarnessSessionsMock
+      .mockResolvedValueOnce([
+        {
+          session_id: 'local-harness-1',
+          harness_id: 'opencode',
+          title: 'Inspect archive flow',
+          cwd: '/Users/test/Wegent',
+          created_at: 1_786_506_000_000,
+          archived_at: 1_786_506_100_000,
+          is_primary: true,
+          project_id: 7,
+          active: false,
+        },
+      ])
+      .mockResolvedValue([])
+    const onLeaveSettings = vi.fn()
+
+    render(<ArchivedConversationsSettingsPage onLeaveSettings={onLeaveSettings} />)
+
+    expect(await screen.findByText('Inspect archive flow')).toBeInTheDocument()
+    await userEvent.click(
+      screen.getByTestId('archived-unarchive-button-local-harness-local-harness-1')
+    )
+
+    await waitFor(() =>
+      expect(unarchiveLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-1')
+    )
+    expect(notifyLocalHarnessSessionsChangedMock).toHaveBeenCalledWith()
+    await userEvent.click(await screen.findByTestId('archived-view-now-button'))
+
+    expect(notifyLocalHarnessSessionsChangedMock).toHaveBeenLastCalledWith('local-harness-1')
+    expect(onLeaveSettings).toHaveBeenCalled()
+    expect(unarchiveConversation).not.toHaveBeenCalled()
+  })
+
+  test('deletes an archived OpenCode session without calling the runtime task API', async () => {
+    listArchivedConversations.mockResolvedValue({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })
+    listArchivedLocalHarnessSessionsMock.mockResolvedValue([
+      {
+        session_id: 'local-harness-2',
+        harness_id: 'opencode',
+        title: 'Delete archive flow',
+        cwd: '/Users/test/Wegent',
+        created_at: 1_786_506_000_000,
+        archived_at: 1_786_506_100_000,
+        is_primary: true,
+        project_id: 7,
+        active: false,
+      },
+    ])
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Delete archive flow')
+    await userEvent.click(
+      screen.getByTestId('archived-delete-button-local-harness-local-harness-2')
+    )
+    await userEvent.click(screen.getByTestId('archived-delete-confirm-dialog-confirm-button'))
+
+    await waitFor(() =>
+      expect(deleteArchivedLocalHarnessSessionMock).toHaveBeenCalledWith('local-harness-2')
+    )
+    expect(deleteArchivedConversation).not.toHaveBeenCalled()
+  })
+
   test('uses the injected hybrid API and offers View now after unarchiving', async () => {
     const onRefreshWorkLists = vi.fn().mockResolvedValue(undefined)
     const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
@@ -150,6 +247,33 @@ describe('ArchivedConversationsSettingsPage', () => {
     await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalled())
     expect(onRefreshWorkLists).toHaveBeenCalled()
     expect(onLeaveSettings).toHaveBeenCalled()
+  })
+
+  test('refreshes when background cloud archives become available', async () => {
+    const cloudItem = archivedItemAt(2, {
+      title: 'Cloud archive',
+      source: 'cloud',
+      deviceId: 'cloud-device',
+    })
+    listArchivedConversations
+      .mockReset()
+      .mockResolvedValueOnce({ items: [archivedItem], projectGroups: [], total: 1 })
+      .mockResolvedValue({
+        items: [archivedItem, cloudItem],
+        projectGroups: [],
+        total: 2,
+      })
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Greet user')
+    expect(screen.queryByText('Cloud archive')).not.toBeInTheDocument()
+
+    act(() => {
+      notifyWorkbenchCloudArchivesChanged()
+    })
+
+    expect(await screen.findByText('Cloud archive')).toBeInTheDocument()
   })
 
   test('combines source and sort choices in a checked popup menu', async () => {
@@ -338,6 +462,7 @@ describe('ArchivedConversationsSettingsPage', () => {
   })
 
   test('deletes all archived tasks regardless of source and search filters', async () => {
+    let resolveCloudDelete: (() => void) | undefined
     const localItem = archivedItemAt(1, {
       title: 'Local target',
       projectName: 'Local project',
@@ -353,9 +478,18 @@ describe('ArchivedConversationsSettingsPage', () => {
       .mockReset()
       .mockResolvedValueOnce({ items: [localItem, cloudItem], projectGroups: [], total: 2 })
       .mockResolvedValue({ items: [], projectGroups: [], total: 0 })
-    deleteArchivedConversationsBulk.mockReset().mockResolvedValueOnce({
-      results: [localItem, cloudItem].map(item => ({ taskId: item.taskId, deleted: true })),
-    })
+    deleteArchivedConversationsBulk
+      .mockReset()
+      .mockResolvedValueOnce({
+        results: [{ taskId: localItem.taskId, deleted: true }],
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveCloudDelete = () =>
+              resolve({ results: [{ taskId: cloudItem.taskId, deleted: true }] })
+          })
+      )
 
     render(<ArchivedConversationsSettingsPage />)
 
@@ -371,19 +505,33 @@ describe('ArchivedConversationsSettingsPage', () => {
     )
     await userEvent.click(screen.getByTestId('archived-bulk-delete-confirm-dialog-confirm-button'))
 
-    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(2))
     expect(deleteArchivedConversationsBulk.mock.calls[0][0].items).toEqual([
       {
         deviceId: 'device-1',
         workspacePath: '/Users/crystal/dev/git/weekly-report',
         taskId: 'codex-1',
       },
+    ])
+    expect(deleteArchivedConversationsBulk.mock.calls[1][0].items).toEqual([
       {
         deviceId: 'cloud-device',
         workspacePath: '/Users/crystal/dev/git/weekly-report',
         taskId: 'codex-2',
       },
     ])
+    expect(screen.getByTestId('archived-bulk-delete-background-progress')).toHaveTextContent(
+      '1 / 2'
+    )
+
+    await act(async () => {
+      resolveCloudDelete?.()
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('archived-bulk-delete-background-progress')).toHaveTextContent(
+        '2 / 2'
+      )
+    )
   })
 
   test('keeps background batch progress visible across remounts', async () => {

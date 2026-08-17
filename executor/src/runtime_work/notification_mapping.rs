@@ -14,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
-    codex_phase::{codex_item_id, codex_phase_is_process, codex_phase_name, normalize_codex_phase},
+    codex_phase::{codex_item_id, codex_phase_name},
     logging::log_executor_event,
 };
 
@@ -28,16 +28,12 @@ pub(crate) enum TextChunkMapping {
         item_id: Option<String>,
         delta: String,
     },
-    FinalDelta {
-        delta: String,
-    },
     ProcessCompleted {
         process_kind: &'static str,
         block_type: &'static str,
         item_id: Option<String>,
         text: String,
     },
-    FinalCompleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,10 +45,12 @@ pub(crate) struct ToolOutputDeltaMapping {
 pub(crate) fn map_text_chunk(
     method: &str,
     params: &Value,
-    resolved_phase: Option<&str>,
+    _resolved_phase: Option<&str>,
 ) -> Result<Option<TextChunkMapping>, &'static str> {
     match method {
-        "item/reasoning/delta" | "item/reasoningSummary/delta" => {
+        "item/reasoning/delta"
+        | "item/reasoningSummary/delta"
+        | "item/reasoning/summaryTextDelta" => {
             let delta = raw_string_field(params, "delta")
                 .or_else(|| string_field(params, "delta"))
                 .or_else(|| reasoning_content(params))
@@ -69,32 +67,35 @@ pub(crate) fn map_text_chunk(
             let delta = raw_string_field(params, "delta")
                 .filter(|delta| !delta.is_empty())
                 .ok_or("missing_agent_message_delta")?;
-            if codex_phase_is_process(resolved_phase) {
-                Ok(Some(TextChunkMapping::ProcessDelta {
-                    process_kind: "assistant_message",
-                    block_type: "text",
-                    item_id: notification_item_id(params),
-                    delta,
-                }))
-            } else {
-                Ok(Some(TextChunkMapping::FinalDelta { delta }))
-            }
+            Ok(Some(TextChunkMapping::ProcessDelta {
+                process_kind: "assistant_message",
+                block_type: "text",
+                item_id: notification_item_id(params),
+                delta,
+            }))
         }
         "item/completed" => {
-            let Some(kind) = completed_assistant_text_kind(params, resolved_phase) else {
+            let item = params.get("item").unwrap_or(params);
+            if item_type(item).as_str() == "reasoning" {
+                let text = reasoning_content(item)
+                    .filter(|content| !content.is_empty())
+                    .ok_or("missing_reasoning_content")?;
+                return Ok(Some(TextChunkMapping::ProcessCompleted {
+                    process_kind: "reasoning",
+                    block_type: "thinking",
+                    item_id: notification_item_id(params),
+                    text,
+                }));
+            }
+            let Some(text) = completed_assistant_text(params) else {
                 return Ok(None);
             };
-            match kind {
-                CompletedAssistantTextKind::Process(text) => {
-                    Ok(Some(TextChunkMapping::ProcessCompleted {
-                        process_kind: "assistant_message",
-                        block_type: "text",
-                        item_id: notification_item_id(params),
-                        text,
-                    }))
-                }
-                CompletedAssistantTextKind::Final => Ok(Some(TextChunkMapping::FinalCompleted)),
-            }
+            Ok(Some(TextChunkMapping::ProcessCompleted {
+                process_kind: "assistant_message",
+                block_type: "text",
+                item_id: notification_item_id(params),
+                text,
+            }))
         }
         _ => Ok(None),
     }
@@ -193,28 +194,44 @@ pub(crate) fn log_text_mapping(
     params: &Value,
     text: &str,
 ) {
-    log_executor_event(
-        "codex runtime text mapping",
-        &[
-            ("local_task_id", local_task_id.to_owned()),
-            ("method", method.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            (
-                "phase",
-                codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            (
-                "item_id",
-                notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(text, 160)),
-        ],
+    let mut fields = text_mapping_log_fields(
+        local_task_id,
+        method,
+        action,
+        resolved_phase,
+        params,
+        text.len(),
     );
+    fields.push(("text_preview", truncate_log_text(text, 160)));
+    log_executor_event("codex runtime text mapping", &fields);
+}
+
+fn text_mapping_log_fields(
+    local_task_id: &str,
+    method: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    text_len: usize,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("local_task_id", local_task_id.to_owned()),
+        ("method", method.to_owned()),
+        ("action", action.to_owned()),
+        (
+            "resolved_phase",
+            resolved_phase.unwrap_or("<none>").to_owned(),
+        ),
+        (
+            "phase",
+            codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        (
+            "item_id",
+            notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        ("text_len", text_len.to_string()),
+    ]
 }
 
 pub(crate) fn log_stream_text_mapping(
@@ -259,35 +276,12 @@ fn env_bool(name: &str, default_value: bool) -> bool {
         .unwrap_or(default_value)
 }
 
-enum CompletedAssistantTextKind {
-    Process(String),
-    Final,
-}
-
-fn completed_assistant_text_kind(
-    params: &Value,
-    resolved_phase: Option<&str>,
-) -> Option<CompletedAssistantTextKind> {
+fn completed_assistant_text(params: &Value) -> Option<String> {
     let item = params.get("item").unwrap_or(params);
     if !is_assistant_text_item(item) {
         return None;
     }
-    let text = extract_text(item).filter(|content| !content.is_empty())?;
-    let phase =
-        assistant_message_phase_name(item).or_else(|| resolved_phase.map(normalize_codex_phase));
-    if codex_phase_is_process(phase.as_deref()) {
-        Some(CompletedAssistantTextKind::Process(text))
-    } else {
-        Some(CompletedAssistantTextKind::Final)
-    }
-}
-
-fn assistant_message_phase_name(item: &Value) -> Option<String> {
-    codex_phase_name(item).or_else(|| {
-        item.get("message")
-            .and_then(codex_phase_name)
-            .or_else(|| item.get("payload").and_then(codex_phase_name))
-    })
+    extract_text(item).filter(|content| !content.is_empty())
 }
 
 fn is_assistant_text_item(item: &Value) -> bool {
@@ -339,7 +333,12 @@ fn truncate_log_text(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{codex_stream_debug_enabled, env_bool, set_codex_stream_debug_enabled};
+    use serde_json::json;
+
+    use super::{
+        codex_stream_debug_enabled, env_bool, map_text_chunk, set_codex_stream_debug_enabled,
+        TextChunkMapping,
+    };
 
     #[test]
     fn stream_debug_env_defaults_to_off_for_missing_values() {
@@ -355,5 +354,34 @@ mod tests {
 
         set_codex_stream_debug_enabled(false);
         assert!(!codex_stream_debug_enabled());
+    }
+
+    #[test]
+    fn maps_completed_reasoning_summary_to_thinking_block() {
+        let mapping = map_text_chunk(
+            "item/completed",
+            &json!({
+                "item": {
+                    "id": "reasoning-1",
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "Inspecting logs"},
+                        {"type": "summary_text", "text": "Running focused tests"}
+                    ]
+                }
+            }),
+            None,
+        )
+        .expect("reasoning summary should map");
+
+        assert_eq!(
+            mapping,
+            Some(TextChunkMapping::ProcessCompleted {
+                process_kind: "reasoning",
+                block_type: "thinking",
+                item_id: Some("reasoning-1".to_owned()),
+                text: "Inspecting logsRunning focused tests".to_owned(),
+            })
+        );
     }
 }

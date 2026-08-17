@@ -10,6 +10,7 @@ import { hasImplementationPlanText } from './requestUserInputMessages'
 interface RequestUserInputOption {
   label?: string
   description?: string
+  value?: string
 }
 
 interface RequestUserInputQuestion {
@@ -27,6 +28,15 @@ export interface RequestUserInputPayload {
   requestId?: number | string
   item_id?: string
   itemId?: string
+  interactionKind?: string
+  interaction_kind?: string
+  approvalKind?: string
+  approval_kind?: string
+  command?: string
+  cwd?: string
+  reason?: string
+  grantRoot?: string
+  grant_root?: string
   questions?: RequestUserInputQuestion[]
   response?: RequestUserInputResponse
   requestUserInputResponse?: RequestUserInputResponse
@@ -48,7 +58,10 @@ export function RequestUserInputCard({
 }: RequestUserInputCardProps) {
   const { t } = useTranslation('chat')
   const formRef = useRef<HTMLFormElement | null>(null)
-  const questions = useMemo(() => normalizeQuestions(payload.questions), [payload.questions])
+  const questions = useMemo(
+    () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
+    [payload, t]
+  )
   const isImplementationPlanRequest = isImplementationPlanQuestions(questions)
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>(() =>
     initialAnswers(questions)
@@ -99,7 +112,7 @@ export function RequestUserInputCard({
   ) => {
     const nextAnswers = {
       ...selectedAnswers,
-      [question.id]: option.label ?? '',
+      [question.id]: option.value ?? '',
       ...emptyCustomAnswersForImplementationPlan(questions),
     }
     setActiveQuestionId(question.id)
@@ -140,10 +153,10 @@ export function RequestUserInputCard({
         data-testid="request-user-input-ignore-button"
         disabled={isDisabled}
         onClick={onIgnore}
-        className="inline-flex h-9 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
       >
         {t('request_user_input.ignore')}
-        <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+        <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
           ESC
         </kbd>
       </button>
@@ -152,10 +165,10 @@ export function RequestUserInputCard({
         data-testid="request-user-input-submit-button"
         disabled={isDisabled || questions.length === 0}
         onClick={() => handleSubmit()}
-        className="inline-flex h-9 min-w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-[#2f9bff] px-4 text-sm font-semibold text-white shadow-sm hover:bg-[#1d8af0] disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex h-11 min-w-[68px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
       >
         {t('request_user_input.submit')}
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/15">
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/15">
           <CornerDownLeft className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       </button>
@@ -169,7 +182,7 @@ export function RequestUserInputCard({
       onSubmit={handleFormSubmit}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
-      className="flex max-h-[min(60dvh,36rem)] w-full flex-col rounded-[1.5rem] border border-border bg-background px-4 py-2.5 shadow-[0_18px_42px_rgba(15,23,42,0.10)]"
+      className="mx-auto flex max-h-[min(60dvh,36rem)] w-full max-w-2xl flex-col rounded-2xl border border-border/70 bg-base px-3 py-3 shadow-sm"
     >
       <div
         data-testid="request-user-input-questions"
@@ -179,12 +192,12 @@ export function RequestUserInputCard({
           {questions.map(question => (
             <div key={question.id} className="min-w-0">
               {question.header ? (
-                <div className="mb-1 text-[13px] font-semibold leading-5 text-text-primary">
+                <div className="mb-1 text-sm font-medium leading-5 text-text-primary">
                   {question.header}
                 </div>
               ) : null}
               {!customQuestionIds.has(question.id) ? (
-                <div className="mb-1.5 text-[13px] font-semibold leading-5 text-text-primary">
+                <div className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary">
                   {question.question}
                 </div>
               ) : null}
@@ -192,7 +205,7 @@ export function RequestUserInputCard({
                 <div className="flex flex-col gap-1">
                   {question.options.map((option, index) => {
                     const isSelected =
-                      selectedAnswers[question.id] === option.label &&
+                      selectedAnswers[question.id] === option.value &&
                       (!isImplementationPlanRequest || activeQuestionId === question.id)
                     return (
                       <button
@@ -202,8 +215,8 @@ export function RequestUserInputCard({
                         disabled={isDisabled}
                         onClick={() => selectOption(question, option)}
                         className={cn(
-                          'flex min-h-9 w-full min-w-0 items-start gap-2.5 rounded-2xl px-3 py-2 text-left transition-colors',
-                          isSelected ? 'bg-surface' : 'hover:bg-surface',
+                          'flex min-h-9 w-full min-w-0 items-start gap-2.5 rounded-xl px-2.5 py-1.5 text-left transition-colors',
+                          isSelected ? 'bg-muted' : 'hover:bg-muted/70',
                           isDisabled && 'cursor-not-allowed opacity-60'
                         )}
                       >
@@ -212,17 +225,17 @@ export function RequestUserInputCard({
                             'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none',
                             isSelected
                               ? 'bg-text-primary text-background'
-                              : 'bg-surface text-text-muted'
+                              : 'bg-muted text-text-muted'
                           )}
                         >
                           {index + 1}
                         </span>
                         <span className="min-w-0 flex-1 whitespace-normal break-words">
-                          <span className="text-[13px] font-semibold leading-5 text-text-primary">
+                          <span className="text-sm font-medium leading-5 text-text-primary">
                             {option.label}
                           </span>
                           {option.description ? (
-                            <span className="ml-2 text-[13px] leading-5 text-text-muted">
+                            <span className="ml-2 text-sm leading-5 text-text-muted">
                               {option.description}
                             </span>
                           ) : null}
@@ -233,7 +246,7 @@ export function RequestUserInputCard({
                 </div>
               ) : null}
               {question.allowCustom ? (
-                <div className="mt-1 flex min-w-0 items-center gap-2.5 px-3">
+                <div className="mt-1 flex min-w-0 items-center gap-2.5 rounded-xl bg-muted/60 px-2.5 py-1.5">
                   <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted">
                     <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                   </span>
@@ -248,7 +261,7 @@ export function RequestUserInputCard({
                         [question.id]: event.target.value,
                       }))
                     }}
-                    className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-[13px] font-semibold leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm font-medium leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
                     placeholder={question.question || t('request_user_input.custom_placeholder')}
                   />
                 </div>
@@ -264,21 +277,27 @@ export function RequestUserInputCard({
 
 export function RequestUserInputSummary({ payload }: { payload: RequestUserInputPayload }) {
   const { t } = useTranslation('chat')
-  const questions = useMemo(() => normalizeQuestions(payload.questions), [payload.questions])
+  const questions = useMemo(
+    () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
+    [payload, t]
+  )
   const response =
     payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
-  const rows = questions.map(question => ({
-    id: question.id,
-    question: question.question,
-    answer: responseAnswerText(response, question.id),
-  }))
+  const rows = questions.map(question => {
+    const answer = responseAnswerText(response, question.id)
+    return {
+      id: question.id,
+      question: question.question,
+      answer: question.options.find(option => option.value === answer)?.label ?? answer,
+    }
+  })
 
   if (rows.length === 0) return null
 
   return (
     <div
       data-testid="request-user-input-summary"
-      className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-sm leading-6 text-text-secondary"
     >
       <div className="mb-1.5 inline-flex max-w-full items-center gap-1.5 text-text-muted">
         <MessageCircleQuestion className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
@@ -306,6 +325,7 @@ function normalizeQuestions(questions: RequestUserInputQuestion[] | undefined) {
       .map(option => ({
         label: option.label?.trim() ?? '',
         description: option.description?.trim() ?? '',
+        value: option.value?.trim() || option.label?.trim() || '',
       }))
       .filter(option => option.label)
     return {
@@ -320,12 +340,85 @@ function normalizeQuestions(questions: RequestUserInputQuestion[] | undefined) {
 
 function initialAnswers(questions: ReturnType<typeof normalizeQuestions>): Record<string, string> {
   return Object.fromEntries(
-    questions.map(question => [question.id, question.options[0]?.label ?? ''])
+    questions.map(question => [question.id, question.options[0]?.value ?? ''])
   )
 }
 
 function initialActiveQuestionId(questions: ReturnType<typeof normalizeQuestions>): string | null {
   return implementationPlanOptionQuestion(questions)?.id ?? questions[0]?.id ?? null
+}
+
+const CODEX_APPROVAL_QUESTION_ID = '__codex_approval'
+
+function localizeApprovalQuestions(
+  payload: RequestUserInputPayload,
+  t: ReturnType<typeof useTranslation>['t']
+): RequestUserInputQuestion[] | undefined {
+  const interactionKind = payload.interactionKind ?? payload.interaction_kind
+  if (interactionKind !== 'approval') return payload.questions
+
+  const approvalKind = payload.approvalKind ?? payload.approval_kind ?? 'command'
+  const detail =
+    approvalKind === 'command'
+      ? payload.command
+      : approvalKind === 'file_change'
+        ? (payload.grantRoot ?? payload.grant_root ?? payload.reason)
+        : (payload.reason ?? payload.cwd)
+  const questionKey =
+    approvalKind === 'file_change'
+      ? 'request_user_input.approval_file_change'
+      : approvalKind === 'permissions'
+        ? 'request_user_input.approval_permissions'
+        : 'request_user_input.approval_command'
+
+  return [
+    {
+      id: CODEX_APPROVAL_QUESTION_ID,
+      header: t('request_user_input.approval_title'),
+      question: t(questionKey, {
+        detail: detail || t('request_user_input.approval_no_detail'),
+      }),
+      options: (payload.questions?.[0]?.options ?? []).map(option => {
+        const value = option.label?.trim() ?? ''
+        const localized = localizeApprovalOption(value, option.description ?? '', t)
+        return {
+          value,
+          label: localized.label,
+          description: localized.description,
+        }
+      }),
+    },
+  ]
+}
+
+function localizeApprovalOption(
+  value: string,
+  detail: string,
+  t: ReturnType<typeof useTranslation>['t']
+): { label: string; description: string } {
+  if (value === 'allow_execpolicy' || value.startsWith('allow_execpolicy:')) {
+    return {
+      label: t('request_user_input.approval_allow_execpolicy'),
+      description: t('request_user_input.approval_allow_execpolicy_description', { detail }),
+    }
+  }
+  if (value.startsWith('apply_network_policy:')) {
+    const separator = detail.indexOf(':')
+    const action = separator >= 0 ? detail.slice(0, separator) : 'allow'
+    const host = separator >= 0 ? detail.slice(separator + 1) : detail
+    const key =
+      action === 'deny'
+        ? 'request_user_input.approval_deny_network_host'
+        : 'request_user_input.approval_allow_network_host'
+    return {
+      label: t(key, { host }),
+      description: t(`${key}_description`, { host }),
+    }
+  }
+  return {
+    label: t(`request_user_input.approval_${value}`),
+    description: t(`request_user_input.approval_${value}_description`),
+  }
 }
 
 function responseAnswers(
@@ -353,7 +446,7 @@ function responseAnswers(
 
   return {
     [implementQuestion.id]: {
-      answers: [selectedAnswers[implementQuestion.id] ?? implementQuestion.options[0]?.label ?? ''],
+      answers: [selectedAnswers[implementQuestion.id] ?? implementQuestion.options[0]?.value ?? ''],
     },
   }
 }

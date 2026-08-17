@@ -22,7 +22,7 @@ export interface DeviceFolderPickerResult {
 interface DeviceFolderPickerProps {
   device: DeviceInfo
   mode: DeviceFolderPickerMode
-  variant?: 'light' | 'remoteDark'
+  variant?: 'default' | 'remote'
   disabled?: boolean
   initialPath?: string
   confirmLabel?: string
@@ -36,7 +36,7 @@ interface DeviceFolderPickerProps {
 export function DeviceFolderPicker({
   device,
   mode,
-  variant = 'light',
+  variant = 'default',
   disabled = false,
   initialPath,
   confirmLabel,
@@ -47,7 +47,7 @@ export function DeviceFolderPicker({
   onCancel,
 }: DeviceFolderPickerProps) {
   const { t } = useTranslation('common')
-  const dark = variant === 'remoteDark'
+  const remoteLayout = variant === 'remote'
   const pickerDisabled = disabled || !device.device_id
   const [currentPath, setCurrentPath] = useState('')
   const [pathInput, setPathInput] = useState('')
@@ -74,12 +74,17 @@ export function DeviceFolderPicker({
           setSelectedPath(nextPath)
           setDirectoryQuery('')
         }
-      } catch {
+      } catch (loadError) {
         if (!cancelled) {
-          setCurrentPath('/')
-          setPathInput('/')
-          setSelectedPath('/')
+          setCurrentPath('')
+          setPathInput('')
+          setSelectedPath('')
           setDirectoryQuery('')
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : t('workbench.project_home_directory_load_failed', '无法读取 home 目录')
+          )
         }
       }
     }
@@ -88,7 +93,7 @@ export function DeviceFolderPicker({
     return () => {
       cancelled = true
     }
-  }, [device.device_id, initialPath, onGetDeviceHomeDirectory, pickerDisabled])
+  }, [device.device_id, initialPath, onGetDeviceHomeDirectory, pickerDisabled, t])
 
   useEffect(() => {
     if (pickerDisabled || !currentPath) return
@@ -229,21 +234,27 @@ export function DeviceFolderPicker({
     (mode === 'select' ? !selectedPath && !currentPath : !folderName.trim() || !currentPath)
 
   return (
-    <div className={dark ? 'space-y-4' : 'rounded-lg border border-[#d8d8d8] bg-white'}>
+    <div
+      className={
+        remoteLayout
+          ? 'space-y-3'
+          : 'rounded-lg border border-border bg-background text-text-primary'
+      }
+    >
       <div
         className={
-          dark
+          remoteLayout
             ? 'flex items-center gap-3'
-            : 'flex items-center justify-between gap-3 border-b border-[#e5e5e5] px-3 py-2'
+            : 'flex items-center justify-between gap-3 border-b border-border px-3 py-2'
         }
       >
-        {dark && (
+        {remoteLayout && (
           <button
             type="button"
             data-testid="device-folder-parent-button"
             disabled={pickerDisabled || submitting || !currentPath || currentPath === '/'}
             onClick={() => browsePath(getParentPath(currentPath))}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-[#9a9a9a] hover:bg-white/5 hover:text-white disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-40"
             aria-label={t('workbench.project_directory_parent', '返回上级目录')}
           >
             <ChevronLeft className="h-5 w-5" />
@@ -251,8 +262,8 @@ export function DeviceFolderPicker({
         )}
         <label
           className={
-            dark
-              ? 'min-w-0 flex-1 rounded-[16px] border border-[#555] bg-[#2b2b2b] px-4'
+            remoteLayout
+              ? 'min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3'
               : 'min-w-0 flex-1'
           }
         >
@@ -274,22 +285,22 @@ export function DeviceFolderPicker({
               }
             }}
             className={
-              dark
-                ? 'h-12 w-full border border-transparent bg-transparent font-mono text-lg text-white outline-none disabled:opacity-60'
-                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-[13px] text-[#3c4043] outline-none focus:border-[#14b8a6] focus:bg-white focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60'
+              remoteLayout
+                ? 'h-10 w-full border border-transparent bg-transparent font-mono text-sm text-text-primary outline-none disabled:opacity-60'
+                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-sm text-text-primary outline-none focus:border-focus focus:bg-background focus:ring-2 focus:ring-focus/20 disabled:opacity-60'
             }
             placeholder={t('workbench.project_directory_loading', '正在加载目录...')}
           />
         </label>
-        {!dark && (
-          <label className="flex shrink-0 items-center gap-2 text-xs font-medium text-[#606368]">
+        {!remoteLayout && (
+          <label className="flex shrink-0 items-center gap-2 text-xs font-medium text-text-secondary">
             <input
               data-testid="device-folder-hidden-toggle"
               type="checkbox"
               checked={showHiddenDirectories}
               disabled={pickerDisabled || submitting}
               onChange={event => setShowHiddenDirectories(event.target.checked)}
-              className="h-4 w-4 rounded border-[#d8d8d8] accent-[#22c7b8] disabled:opacity-50"
+              className="h-4 w-4 rounded border-border accent-primary disabled:opacity-50"
             />
             {t('workbench.project_show_hidden_directories', '显示隐藏目录')}
           </label>
@@ -297,16 +308,8 @@ export function DeviceFolderPicker({
       </div>
 
       {mode === 'create' && (
-        <div
-          className={
-            dark
-              ? 'flex items-center gap-2 border-b border-[#454545] px-3 py-2'
-              : 'flex items-center gap-2 border-b border-[#e5e5e5] px-3 py-2'
-          }
-        >
-          <FolderPlus
-            className={dark ? 'h-4 w-4 shrink-0 text-[#a8a8a8]' : 'h-4 w-4 shrink-0 text-[#606368]'}
-          />
+        <div className={'flex items-center gap-2 border-b border-border px-3 py-2'}>
+          <FolderPlus className="h-4 w-4 shrink-0 text-text-secondary" />
           <input
             data-testid="device-folder-name-input"
             value={folderName}
@@ -323,9 +326,9 @@ export function DeviceFolderPicker({
               }
             }}
             className={
-              dark
-                ? 'h-10 min-w-0 flex-1 rounded-xl border border-[#454545] bg-[#303030] px-3 text-sm text-white outline-none focus:border-[#707070] disabled:opacity-60'
-                : 'h-9 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/10 disabled:opacity-60'
+              remoteLayout
+                ? 'h-10 min-w-0 flex-1 rounded-xl border border-border bg-muted px-3 text-sm text-text-primary outline-none focus:border-text-secondary disabled:opacity-60'
+                : 'h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60'
             }
             placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
           />
@@ -335,44 +338,33 @@ export function DeviceFolderPicker({
       {error && (
         <p
           data-testid="device-folder-picker-error"
-          className={
-            dark
-              ? 'border-b border-[#454545] px-3 py-2 text-xs text-red-300'
-              : 'border-b border-[#e5e5e5] px-3 py-2 text-xs text-[#c44]'
-          }
+          className="border-b border-border px-3 py-2 text-xs text-red-500"
         >
           {error}
         </p>
       )}
 
       <div
+        data-testid="device-folder-directory-list"
         className={
-          dark
-            ? 'max-h-[470px] overflow-auto rounded-[16px] border border-[#454545] bg-[#2b2b2b] p-4'
+          remoteLayout
+            ? 'h-[280px] overflow-auto rounded-[10px] border border-border bg-background p-2'
             : 'max-h-[320px] overflow-auto p-2'
         }
       >
-        {!dark && !pickerDisabled && currentPath && currentPath !== '/' && (
+        {!remoteLayout && !pickerDisabled && currentPath && currentPath !== '/' && (
           <button
             type="button"
             data-testid="device-folder-parent-button"
             onClick={() => browsePath(getParentPath(currentPath))}
-            className={
-              dark
-                ? 'flex h-10 w-full items-center gap-3 rounded-lg px-2 text-left text-base text-[#d8d8d8] hover:bg-white/5'
-                : 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#3c4043] hover:bg-[#f1f3f4]'
-            }
+            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-text-primary hover:bg-muted"
           >
             <ChevronLeft className="h-4 w-4" />
             ..
           </button>
         )}
         {loadingDirectories && (
-          <p
-            className={
-              dark ? 'px-2 py-3 text-sm text-[#9a9a9a]' : 'px-2 py-3 text-[13px] text-[#8a8f98]'
-            }
-          >
+          <p className="px-2 py-3 text-sm text-text-secondary">
             {t('workbench.project_directory_loading', '正在加载目录...')}
           </p>
         )}
@@ -387,34 +379,19 @@ export function DeviceFolderPicker({
                 data-testid="device-folder-entry-button"
                 onClick={() => setSelectedPath(childPath)}
                 onDoubleClick={() => browsePath(childPath)}
-                className={
-                  dark
-                    ? [
-                        'flex h-10 w-full items-center gap-3 rounded-lg px-2 text-left text-lg',
-                        selected ? 'bg-white/10 text-white' : 'text-[#f2f2f2] hover:bg-white/5',
-                      ].join(' ')
-                    : [
-                        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px]',
-                        selected
-                          ? 'bg-[#e5f6f4] text-[#0f766e]'
-                          : 'text-[#3c4043] hover:bg-[#f1f3f4]',
-                      ].join(' ')
-                }
+                className={[
+                  'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm',
+                  selected ? 'bg-muted text-text-primary' : 'text-text-primary hover:bg-muted',
+                ].join(' ')}
               >
-                <Folder className={dark ? 'h-5 w-5 shrink-0 text-[#a8a8a8]' : 'h-4 w-4 shrink-0'} />
+                <Folder className="h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="min-w-0 flex-1 truncate">{directory}</span>
                 {selected && <Check className="h-4 w-4 shrink-0" />}
               </button>
             )
           })}
         {!pickerDisabled && !loadingDirectories && !error && filteredDirectories.length === 0 && (
-          <p
-            className={
-              dark
-                ? 'px-2 py-8 text-center text-sm text-[#9a9a9a]'
-                : 'px-2 py-8 text-center text-[13px] text-[#8a8f98]'
-            }
-          >
+          <p className="px-2 py-8 text-center text-sm text-text-secondary">
             {t('workbench.project_directory_empty', '当前目录下没有子目录')}
           </p>
         )}
@@ -422,9 +399,9 @@ export function DeviceFolderPicker({
 
       <div
         className={
-          dark
-            ? 'flex justify-end gap-4 px-0 pb-0 pt-5'
-            : 'flex justify-end gap-2 border-t border-[#e5e5e5] px-3 py-3'
+          remoteLayout
+            ? 'flex justify-end gap-2 px-0 pb-0 pt-1'
+            : 'flex justify-end gap-2 border-t border-border px-3 py-3'
         }
       >
         <button
@@ -433,9 +410,9 @@ export function DeviceFolderPicker({
           disabled={submitting}
           onClick={onCancel}
           className={
-            dark
-              ? 'h-12 rounded-xl px-6 text-base font-medium text-[#a8a8a8] hover:bg-white/5 hover:text-white disabled:opacity-50'
-              : 'h-10 rounded-md border border-[#d8d8d8] px-3 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:opacity-50'
+            remoteLayout
+              ? 'h-9 rounded-[10px] px-4 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50'
+              : 'h-10 rounded-md border border-border px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50'
           }
         >
           {t('workbench.cancel', '取消')}
@@ -446,8 +423,8 @@ export function DeviceFolderPicker({
           disabled={confirmDisabled}
           onClick={() => void handleConfirm()}
           className={
-            dark
-              ? 'inline-flex h-12 items-center gap-2 rounded-2xl bg-white px-7 text-base font-semibold text-[#1f1f1f] hover:bg-white/90 disabled:opacity-50'
+            remoteLayout
+              ? 'inline-flex h-9 items-center gap-2 rounded-[10px] bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50'
               : 'inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50'
           }
         >

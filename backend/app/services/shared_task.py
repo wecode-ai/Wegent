@@ -824,15 +824,27 @@ class SharedTaskService:
             users = db.query(User).filter(User.id.in_(sender_ids)).all()
             user_name_map = {u.id: u.user_name for u in users}
 
+        contexts_by_subtask_id: dict[int, list[SubtaskContext]] = {}
+        subtask_ids = [sub.id for sub in subtasks]
+        if subtask_ids:
+            contexts = (
+                db.query(SubtaskContext)
+                .filter(
+                    SubtaskContext.subtask_id.in_(subtask_ids),
+                    SubtaskContext.context_type != ContextType.KNOWLEDGE_BASE.value,
+                )
+                .all()
+            )
+            for context in contexts:
+                contexts_by_subtask_id.setdefault(context.subtask_id, []).append(
+                    context
+                )
+
         # Convert to public subtask data (exclude sensitive fields)
         public_subtasks = []
         for sub in subtasks:
-            # Get ALL contexts for this subtask (attachments and knowledge bases)
-            contexts = (
-                db.query(SubtaskContext)
-                .filter(SubtaskContext.subtask_id == sub.id)
-                .all()
-            )
+            # Knowledge base contexts are runtime metadata and are not public.
+            contexts = contexts_by_subtask_id.get(sub.id, [])
 
             # Convert contexts to public format (exclude binary data and image base64)
             public_contexts = []
@@ -851,12 +863,6 @@ class SharedTaskService:
                             "file_extension": ctx.file_extension,
                             "file_size": ctx.file_size,
                             "mime_type": ctx.mime_type,
-                        }
-                    )
-                elif ctx.context_type == ContextType.KNOWLEDGE_BASE.value:
-                    ctx_dict.update(
-                        {
-                            "document_count": ctx.document_count,
                         }
                     )
 
@@ -888,6 +894,22 @@ class SharedTaskService:
                     reply_to_subtask_id=sub.reply_to_subtask_id,
                 )
             )
+
+        from app.services.execution.agents.video.extensions import (
+            refresh_extended_video_result_urls,
+        )
+
+        result_wrapper = {
+            "subtasks": [
+                {"result": public_subtask.result} for public_subtask in public_subtasks
+            ]
+        }
+        refresh_extended_video_result_urls(result_wrapper, user_id)
+        for public_subtask, refreshed in zip(
+            public_subtasks,
+            result_wrapper["subtasks"],
+        ):
+            public_subtask.result = refreshed["result"]
 
         return PublicSharedTaskResponse(
             task_title=task.name or "Untitled Task",

@@ -15,6 +15,30 @@ import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
 import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutocomplete'
 import SkillFlyAnimation from '../chat/SkillFlyAnimation'
+import { useToast } from '@/hooks/use-toast'
+
+type PlaceholderLanguage = 'zh' | 'en'
+
+export function resolveTeamInputPlaceholder(
+  team: Team | null,
+  language: PlaceholderLanguage,
+  isMobile: boolean
+): string | null {
+  const inputPlaceholder = team?.inputPlaceholder
+  if (!inputPlaceholder) return null
+
+  const languageOrder: PlaceholderLanguage[] = language === 'zh' ? ['zh', 'en'] : ['en', 'zh']
+  const devicePlaceholder = isMobile ? inputPlaceholder.mobile : inputPlaceholder.desktop
+
+  for (const source of [devicePlaceholder, inputPlaceholder]) {
+    for (const locale of languageOrder) {
+      const value = source?.[locale]?.trim()
+      if (value) return value
+    }
+  }
+
+  return null
+}
 
 interface ChatInputProps {
   message: string
@@ -26,6 +50,7 @@ interface ChatInputProps {
   autoFocus?: boolean
   // Controls whether the message can be submitted (e.g., model selection required)
   canSubmit?: boolean
+  submitBlockedReason?: string | null
   tipText?: ChatTipItem | null
   // Optional badge element to render inline with text
   badge?: React.ReactNode
@@ -71,6 +96,7 @@ export default function ChatInput({
   taskType: _taskType = 'code',
   autoFocus = false,
   canSubmit = true,
+  submitBlockedReason,
   tipText,
   badge,
   isGroupChat = false,
@@ -92,7 +118,9 @@ export default function ChatInput({
   compactSpacing = false,
   focusAtEndSignal,
 }: ChatInputProps) {
+  const { toast } = useToast()
   const { t, i18n } = useTranslation()
+  const isMobile = useIsMobile()
 
   // Get current language for tip text
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en'
@@ -107,6 +135,10 @@ export default function ChatInput({
     if (hasNoTeams) {
       return t('chat:input.no_team_placeholder')
     }
+    const teamPlaceholder = resolveTeamInputPlaceholder(team, currentLang, isMobile)
+    if (teamPlaceholder) {
+      return teamPlaceholder
+    }
     if (tipText) {
       return tipText[currentLang] || tipText.en || t('chat:placeholder.input')
     }
@@ -115,7 +147,7 @@ export default function ChatInput({
       return t('chat:groupChat.mentionToTrigger', { teamName: team.name })
     }
     return t('chat:placeholder.input')
-  }, [disabledReason, tipText, currentLang, t, isGroupChat, team?.name, hasNoTeams])
+  }, [disabledReason, tipText, currentLang, t, isGroupChat, team, hasNoTeams, isMobile])
 
   // Combine disabled, hasNoTeams and disabledReason for input disabled state
   const isInputDisabled = disabled || hasNoTeams || !!disabledReason
@@ -123,7 +155,6 @@ export default function ChatInput({
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false)
-  const isMobile = useIsMobile()
   const { user } = useUser()
   const editableRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLSpanElement>(null)
@@ -315,6 +346,8 @@ export default function ChatInput({
         // Check if submission is allowed (e.g., model is selected when required)
         if (canSubmit) {
           handleSendMessage()
+        } else if (submitBlockedReason) {
+          toast({ variant: 'destructive', title: submitBlockedReason })
         }
       } else if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
         // Enter without modifier creates new line
@@ -330,6 +363,8 @@ export default function ChatInput({
         // Check if submission is allowed (e.g., model is selected when required)
         if (canSubmit) {
           handleSendMessage()
+        } else if (submitBlockedReason) {
+          toast({ variant: 'destructive', title: submitBlockedReason })
         }
       } else if (e.key === 'Enter' && e.shiftKey) {
         // Shift+Enter creates new line

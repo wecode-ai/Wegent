@@ -98,6 +98,22 @@ describe('toolBlockActivity', () => {
     ).toBe('已读取 1 个文件 已搜索代码 已运行 1 条命令')
   })
 
+  test('classifies node_repl js calls as command activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'node-repl-js',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'mcp__node_repl__js',
+          toolInput: { code: "nodeRepl.write('hello')" },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已运行 1 条命令')
+  })
+
   test('classifies commandLine aliases as shell command activity', () => {
     expect(
       summarizeToolBlocks([
@@ -182,6 +198,17 @@ describe('toolBlockActivity', () => {
     ).toBe('已引导对话')
   })
 
+  test('keeps disk usage commands out of file-read activity groups', () => {
+    const rows = buildProcessingDisplayRows([
+      tool('read-1', 'cat package.json'),
+      tool('disk-usage-1', 'du -sh "$HOME/.bun" "$HOME/.cargo"'),
+    ])
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ type: 'activity_group', label: '已读取 1 个文件' })
+    expect(rows[1]).toMatchObject({ type: 'activity_group', label: '已运行 1 条命令' })
+  })
+
   test('hides internal stdin polling tools from activity rows', () => {
     const rows = buildProcessingDisplayRows([
       {
@@ -211,7 +238,7 @@ describe('toolBlockActivity', () => {
     })
   })
 
-  test('merges consecutive file changes into a single display row', () => {
+  test('merges consecutive file changes into a single display row with a stable id', () => {
     const rows = buildProcessingDisplayRows([
       fileChangesBlock('file-changes-1', 'src/config.ts', 3, 3),
       fileChangesBlock('file-changes-2', 'src/config.ts', 3, 0, 1770000000001),
@@ -220,7 +247,7 @@ describe('toolBlockActivity', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
       type: 'block',
-      id: 'file-changes-file-changes-1-file-changes-2',
+      id: 'file-changes-file-changes-1',
       block: {
         type: 'file_changes',
         fileChanges: {

@@ -33,6 +33,11 @@ export interface RuntimeConfig {
   enableWiki: boolean
   /** Enable Code Knowledge add repository feature */
   enableCodeKnowledgeAddRepo: boolean
+  /**
+   * Enable creating code wikis. Disabled by default for staged rollout. Gates
+   * creation only: existing wikis stay readable and stay able to regenerate.
+   */
+  enableCodeWiki: boolean
   /** Enable workspace project UI. Disabled by default for dark launch. */
   enableProjectWorkspace: boolean
   /** Comma-separated user_name whitelist for workspace projects. Empty means all users (when enabled). */
@@ -119,6 +124,9 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
         enableCodeKnowledgeAddRepo:
           process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
+        // Runtime-only flag: nothing to read at build time, and false is the
+        // safe default for a rollout that has not been switched on.
+        enableCodeWiki: false,
         enableProjectWorkspace: process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
         projectWorkspaceWhitelist: process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST || '',
         vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
@@ -163,6 +171,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
     enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
     enableCodeKnowledgeAddRepo: process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
+    enableCodeWiki: false,
     enableProjectWorkspace: process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
     projectWorkspaceWhitelist: process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST || '',
     vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',

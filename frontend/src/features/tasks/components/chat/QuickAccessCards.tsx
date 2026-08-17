@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
+import { useRouter } from 'next/navigation'
 import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { ArrowLeft, List, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
@@ -17,13 +18,15 @@ import { useToast } from '@/hooks/use-toast'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from '../selector/team-selector-popover'
 import TeamSelectorList from '../selector/TeamSelectorList'
 import {
+  buildTeamTargetHref,
   filterTeamsByMode,
   getTeamDisplayName,
+  getTeamTargetPage,
   type SelectableTeam,
   type TeamModeFilter,
 } from '../selector/team-selector-utils'
 import { useTeamFavorites } from '../selector/useTeamFavorites'
-import type { QuickLaunchIntent } from './quick-launch/launch-intent'
+import { getCurrentTargetPageByMode, type QuickLaunchIntent } from './quick-launch/launch-intent'
 import { QuickLaunchPanel } from './quick-launch/quick-launch-panel'
 import type { QuickPresetSelection } from './quick-launch/types'
 
@@ -64,6 +67,7 @@ export function QuickAccessCards({
   onLaunchIntentConsumed,
 }: QuickAccessCardsProps) {
   const { t } = useTranslation('common')
+  const router = useRouter()
   const { toast } = useToast()
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [quickAccessResponse, setQuickAccessResponse] = useState<QuickAccessResponse | null>(null)
@@ -113,6 +117,7 @@ export function QuickAccessCards({
   }, [teams])
 
   const filteredTeams = filterTeamsByMode(teams, currentMode)
+  const allModeTeams = filterTeamsByMode(teams, 'all')
   const systemRecommendedQuickAccessIds = quickAccessResponse?.system_team_ids ?? []
   const systemRecommendedQuickAccessIdSet = new Set(systemRecommendedQuickAccessIds)
 
@@ -142,7 +147,7 @@ export function QuickAccessCards({
     return true
   })
 
-  const allSelectableTeams: DisplayTeam[] = filteredTeams.map(team => {
+  const allSelectableTeams: DisplayTeam[] = allModeTeams.map(team => {
     const quickAccessTeam = quickAccessTeams.find(qa => qa.id === team.id)
     return {
       ...team,
@@ -156,7 +161,10 @@ export function QuickAccessCards({
   const hasTeamsOutsideQuickAccess = allSelectableTeams.some(
     team => !quickAccessTeamIds.has(team.id)
   )
-  const morePopoverTeams = showAllTeamsInMore ? allSelectableTeams : displayTeams
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase()
+  const isSearchingAllTeams = normalizedSearchQuery.length > 0
+  const isShowingAllTeams = showAllTeamsInMore || isSearchingAllTeams
+  const morePopoverTeams = isShowingAllTeams ? allSelectableTeams : displayTeams
   const favoriteQuickAccessTeamIds = quickAccessTeams
     .filter(team => !team.is_system && !systemRecommendedQuickAccessIdSet.has(team.id))
     .map(team => team.id)
@@ -174,10 +182,9 @@ export function QuickAccessCards({
 
   // Filter teams by search query for the more popover
   const filteredTeamsBySearch = morePopoverTeams.filter(team => {
-    const normalizedSearch = searchQuery.toLowerCase()
     return (
-      getTeamDisplayName(team).toLowerCase().includes(normalizedSearch) ||
-      team.name.toLowerCase().includes(normalizedSearch)
+      getTeamDisplayName(team).toLowerCase().includes(normalizedSearchQuery) ||
+      team.name.toLowerCase().includes(normalizedSearchQuery)
     )
   })
 
@@ -190,6 +197,19 @@ export function QuickAccessCards({
   }
 
   const handleSelectTeamFromMore = (team: Team) => {
+    if (isShowingAllTeams) {
+      const targetPage = getTeamTargetPage(team, 'all')
+      const currentPage = getCurrentTargetPageByMode(currentMode)
+      if (targetPage !== currentPage) {
+        router.push(
+          buildTeamTargetHref(targetPage, new URLSearchParams({ teamId: String(team.id) }))
+        )
+        setMorePopoverOpen(false)
+        setSearchQuery('')
+        setShowAllTeamsInMore(false)
+        return
+      }
+    }
     onTeamSelect(team)
     setMorePopoverOpen(false)
     setSearchQuery('')
@@ -406,9 +426,7 @@ export function QuickAccessCards({
     const popoverDescription = showAllTeamsInMore
       ? t('common:teams.all_agents_description')
       : t('common:teams.quick_access_description')
-    const searchPlaceholder = showAllTeamsInMore
-      ? t('common:teams.search_all_agents')
-      : t('common:teams.search_quick_access')
+    const searchPlaceholder = t('common:teams.search_all_agents')
 
     return (
       <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
@@ -469,7 +487,7 @@ export function QuickAccessCards({
               favoriteUpdatingTeamId={favoriteUpdatingTeamId}
               onToggleFavorite={handleToggleFavorite}
               optionTestIdPrefix="quick-access-more-team"
-              showReorderHandle={!showAllTeamsInMore}
+              showReorderHandle={!isShowingAllTeams}
               canReorder={displayTeams.length > 1}
               dragOverTeamId={dragOverTeamId}
               onTeamDragStart={handleQuickAccessDragStart}

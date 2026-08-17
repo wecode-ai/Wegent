@@ -16,15 +16,17 @@ from starlette.routing import Route
 
 from app.core.config import settings
 from app.core.rate_limit import ExternalMcpRateLimitStatus
-from app.main import _get_mcp_lifespan_servers, create_app
+from app.main import create_app
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import (
+    MCP_APP_SPECS,
     ExternalKnowledgeUser,
     _build_external_knowledge_mcp_app,
     _create_knowledge_mcp_app,
     _default_external_auth_handler,
     external_knowledge_mcp_server,
     get_mcp_knowledge_config,
+    get_mcp_lifespan_servers,
     knowledge_mcp_server,
     set_external_knowledge_auth_handler,
 )
@@ -159,8 +161,12 @@ def test_external_knowledge_mcp_docs_cover_metadata_tools_and_file_endpoint():
     metadata = client.get("/").json()
     repo_root = Path(__file__).resolve().parents[3]
     docs = [
-        (repo_root / "docs/zh/developer-guide/external-knowledge-mcp.md").read_text(),
-        (repo_root / "docs/en/developer-guide/external-knowledge-mcp.md").read_text(),
+        (
+            repo_root / "docs/zh/wegent/developer-guide/external-knowledge-mcp.md"
+        ).read_text(),
+        (
+            repo_root / "docs/en/wegent/developer-guide/external-knowledge-mcp.md"
+        ).read_text(),
     ]
 
     for doc in docs:
@@ -1203,9 +1209,43 @@ def test_main_app_mounts_external_knowledge_route_when_enabled():
     assert response.text == "ok"
 
 
+def test_main_app_mounts_registered_custom_mcp_app(monkeypatch):
+    fake_streamable_app = Starlette(
+        routes=[Route("/", lambda request: PlainTextResponse("ok"), methods=["GET"])]
+    )
+    fake_custom_app = Starlette(
+        routes=[
+            Route("/sse", lambda request: PlainTextResponse("custom"), methods=["GET"])
+        ]
+    )
+    spec = mcp_server_module.CustomMcpAppSpec(
+        name="demo",
+        mount_path="/mcp/demo",
+        transport_path="/sse",
+        build_app=lambda mount_path: fake_custom_app,
+    )
+    monkeypatch.setitem(mcp_server_module._custom_mcp_app_specs, spec.name, spec)
+
+    with (
+        patch.object(settings, "API_PREFIX", "/api"),
+        patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False),
+        patch(
+            "app.mcp_server.server._build_mcp_app",
+            return_value=fake_streamable_app,
+        ),
+    ):
+        app = create_app()
+
+    client = TestClient(app)
+    response = client.get("/api/mcp/demo/sse", follow_redirects=False)
+
+    assert response.status_code == 200
+    assert response.text == "custom"
+
+
 def test_main_lifespan_skips_external_knowledge_mcp_by_default():
     with patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False):
-        mcp_lifespan_servers = _get_mcp_lifespan_servers()
+        mcp_lifespan_servers = get_mcp_lifespan_servers()
 
     assert not any(
         mcp_server is external_knowledge_mcp_server
@@ -1213,9 +1253,18 @@ def test_main_lifespan_skips_external_knowledge_mcp_by_default():
     )
 
 
+def test_main_lifespan_includes_every_mounted_mcp_server():
+    with patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", False):
+        mcp_lifespan_servers = get_mcp_lifespan_servers()
+
+    assert [server for _, server in mcp_lifespan_servers] == [
+        spec.server for spec in MCP_APP_SPECS
+    ]
+
+
 def test_main_lifespan_starts_external_knowledge_mcp_when_enabled():
     with patch.object(settings, "EXTERNAL_KNOWLEDGE_MCP_ENABLED", True):
-        mcp_lifespan_servers = _get_mcp_lifespan_servers()
+        mcp_lifespan_servers = get_mcp_lifespan_servers()
 
     assert any(
         mcp_server is external_knowledge_mcp_server

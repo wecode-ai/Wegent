@@ -1,8 +1,15 @@
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  harnessLaunchThroughMessagesProxy,
+  type HarnessProxyRegistration,
+  type LocalHarnessModelOption,
+} from '@/features/local-harness/localHarnessModels'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
+import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
+  Attachment,
   DeleteDeviceWorkspaceRequest,
   DeleteDeviceWorkspaceResponse,
   DeviceCommandResponse,
@@ -20,12 +27,24 @@ import type {
   RuntimeFileChangesRevertResponse,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
+  RuntimeProjectSpaceRef,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
+  RuntimeSupervisorSetRequest,
+  RuntimeGoalStatus,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
   RuntimeTaskCancelResponse,
@@ -33,7 +52,10 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTranscriptRequest,
@@ -44,8 +66,10 @@ import type {
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
   RuntimeProjectTaskReorderRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskPinRequest,
@@ -65,11 +89,14 @@ import type {
 } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import type {
-  WorkspaceFileEntry,
-  WorkspaceFileChunkResponse,
-  WorkspaceTextFileResponse,
-  WorkspaceTreeResponse,
-} from '@/types/workspace-files'
+  Automation,
+  AutomationListResponse,
+  AutomationMutation,
+  AutomationRun,
+  AutomationRunListResponse,
+  AutomationSource,
+} from '@/types/automation'
+import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
   ensureLocalExecutorStarted,
   requestLocalExecutor,
@@ -77,8 +104,18 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
+import {
+  listLocalWorkspaceEntries,
+  readLocalWorkspaceFileChunk,
+  readLocalWorkspaceTextFile,
+} from '@/tauri/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  runtimePermissionMode,
+  runtimePermissionProfile,
+} from '@/features/workbench/runtimePermissionMode'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
   codexModelPickerLabel,
@@ -91,21 +128,44 @@ import {
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
+  DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
+  DEEPSEEK_V4_PRO_CATALOG_MODEL_ID,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
   localModelName,
+  markLocalModelCatalogReady,
+  reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
+  VISION_SIDECAR_CATALOG_MODEL_ID,
 } from '@/features/model-settings/localModelSettings'
+import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
-import { createLocalChatStream } from './localChatStream'
+import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
+import {
+  createExternalIssueApi,
+  createLocalDeliveryApi,
+  createLocalLoopItemExecutionApi,
+  createLocalProjectChatAgentApi,
+} from './localDelivery'
+import { createLocalProjectChatClient } from './localProjectChatClient'
+import { createLocalAITableApi } from '@/api/aitable'
+import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
+import type { LocalHarnessId } from '@/lib/local-harness'
 import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
+  CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
+  CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+  CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+  CLOUD_MODEL_VISION_SIDECAR_OPTION,
+  selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -122,6 +182,19 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
+const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
+const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
+const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
+const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
+const DEEPSEEK_V4_REASONING_EFFORTS = ['low', 'high', 'max']
+const DEEPSEEK_V4_DEFAULT_REASONING_EFFORT = 'high'
+
+function isDeepSeekCodexCatalogModel(catalogModelId?: string): boolean {
+  return (
+    catalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID ||
+    catalogModelId === DEEPSEEK_V4_PRO_CATALOG_MODEL_ID
+  )
+}
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -210,6 +283,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
   const family = group
     ? `model-interface:${encodeURIComponent(group.toLowerCase())}`
     : 'model-interface'
+  const reasoningEfforts = localModelReasoningEfforts(config)
+  const defaultReasoningEffort = localModelDefaultReasoningEffort(config)
   return {
     name: localModelName(config),
     type: 'runtime',
@@ -218,12 +293,15 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     modelId: config.modelId,
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
-      apiFormat: RESPONSES_API_FORMAT,
+      apiFormat: config.apiFormat,
+      upstreamApiFormat: config.apiFormat,
       ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
         modelLabel: config.displayName,
+        reasoningEfforts,
+        ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
         controls: ['speed'],
         sortOrder: 20,
       },
@@ -237,38 +315,148 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
   }
 }
 
+function localModelReasoningEfforts(config: LocalModelConfig): string[] {
+  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
+    return KIMI_K3_REASONING_EFFORTS
+  }
+  if (isDeepSeekCodexCatalogModel(config.codexCatalogModelId)) {
+    return DEEPSEEK_V4_REASONING_EFFORTS
+  }
+  const values = config.catalogEntry?.supported_reasoning_levels
+  if (!Array.isArray(values)) return []
+  return values.flatMap(value => {
+    if (typeof value === 'string') return [value]
+    if (!value || typeof value !== 'object') return []
+    const effort = (value as Record<string, unknown>).effort
+    return typeof effort === 'string' ? [effort] : []
+  })
+}
+
+function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
+  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
+    return KIMI_K3_DEFAULT_REASONING_EFFORT
+  }
+  if (isDeepSeekCodexCatalogModel(config.codexCatalogModelId)) {
+    return DEEPSEEK_V4_DEFAULT_REASONING_EFFORT
+  }
+  const value = config.catalogEntry?.default_reasoning_level
+  return typeof value === 'string' ? value : null
+}
+
 function localRuntimeModels(
   codexOfficialModels: CodexOfficialModel[] = [],
   codexOfficialError: string | null = null,
   codexAuthConfigured = false
 ): UnifiedModel[] {
-  const officialModels =
-    codexOfficialError || codexOfficialModels.length === 0
+  const officialCatalogModels = codexOfficialModels.filter(
+    model => model.providerType === 'official'
+  )
+  const officialModels = !codexAuthConfigured
+    ? []
+    : codexOfficialError || officialCatalogModels.length === 0
       ? [
           unavailableCodexModel(
             codexOfficialError || 'Codex model list returned no available models'
           ),
         ]
-      : codexOfficialModels.map(model => localCodexModel(model, codexAuthConfigured))
+      : officialCatalogModels.map(model => localCodexModel(model, true))
+  const providerModels = codexOfficialModels
+    .filter(model => model.providerType === 'provider')
+    .map(model => localCodexModel(model, codexAuthConfigured))
 
   return [
     ...officialModels,
+    ...providerModels,
     ...listLocalModelConfigs()
-      .filter(config => config.enabled)
+      .filter(config => config.enabled && config.catalogReady)
       .map(localModelConfigToUnifiedModel),
   ]
 }
 
+type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
-  request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+  request?: LocalExecutorRequest
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
+  user?: User
+  readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
+  readWorkspaceFileChunk?: typeof readLocalWorkspaceFileChunk
+  listWorkspaceEntries?: typeof listLocalWorkspaceEntries
+}
+
+interface CatalogReconciliationTracker {
+  attemptedAt: number
+  inFlight: Promise<void> | null
+  key: string
+}
+
+const catalogReconciliationTrackers = new WeakMap<
+  LocalExecutorRequest,
+  CatalogReconciliationTracker
+>()
+
+function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
+  const existing = catalogReconciliationTrackers.get(request)
+  if (existing) return existing
+  const tracker = { attemptedAt: 0, inFlight: null, key: '' }
+  catalogReconciliationTrackers.set(request, tracker)
+  return tracker
+}
+
+async function reconcilePendingLocalModelCatalog(
+  request: LocalExecutorRequest,
+  runtimeInstanceId?: string
+): Promise<void> {
+  const tracker = catalogReconciliationTracker(request)
+  if (tracker.inFlight) {
+    try {
+      await tracker.inFlight
+    } catch {
+      return
+    }
+    return reconcilePendingLocalModelCatalog(request, runtimeInstanceId)
+  }
+
+  const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+  const pendingCatalogModels = catalogModels.filter(
+    model => !model.catalogReady && model.catalogEntry
+  )
+  const reconciliationKey = pendingCatalogModels
+    .map(model => `${runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
+    .sort()
+    .join('|')
+  const now = Date.now()
+  const shouldReconcile =
+    reconciliationKey && (reconciliationKey !== tracker.key || now - tracker.attemptedAt >= 30_000)
+  if (!shouldReconcile) return
+
+  tracker.key = reconciliationKey
+  tracker.attemptedAt = now
+  const reconciliation = (async () => {
+    await request('runtime.codex.catalog.custom.write', {
+      models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
+    })
+    const restart = await request<{
+      restarted?: boolean
+    }>('runtime.codex.app_server.restart', { ifIdle: true })
+    if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
+  })()
+  tracker.inFlight = reconciliation
+  try {
+    await reconciliation
+  } catch (error) {
+    console.error('Local model catalog reconciliation failed', error)
+  } finally {
+    if (tracker.inFlight === reconciliation) tracker.inFlight = null
+  }
 }
 
 interface CloudModelGateway {
   baseUrl: string
   apiKey: string
+  backendUrl?: string
 }
 
 interface RuntimeWorkIpcOptions {
@@ -276,6 +464,16 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
+  user?: User
+  transportLabel?: 'Local' | 'Cloud'
+  syncConfiguredModelCatalog?: boolean
+  requestModelCatalogSync?: (request: {
+    deviceId: string
+    deviceName: string
+    modelName: string
+    sync: () => Promise<void>
+  }) => Promise<boolean>
+  resolveDeviceName?: (deviceId: string) => string | undefined
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -507,6 +705,11 @@ function normalizeRuntimeTaskSummary(
   const modelSelection =
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
+  const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
+  const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
+  const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
+  const continuableValue = taskRecord.continuable
+  const continuable = typeof continuableValue === 'boolean' ? continuableValue : undefined
 
   const normalized = {
     ...taskRecord,
@@ -523,9 +726,24 @@ function normalizeRuntimeTaskSummary(
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(goalStatus ? { goalStatus } : {}),
+    ...(threadStatus ? { threadStatus } : {}),
+    ...(turnStatus ? { turnStatus } : {}),
+    ...(continuable !== undefined ? { continuable } : {}),
   }
 
   return normalized as RuntimeTaskSummary
+}
+
+function runtimeGoalStatusValue(value: unknown): RuntimeGoalStatus | undefined {
+  return value === 'active' ||
+    value === 'paused' ||
+    value === 'blocked' ||
+    value === 'complete' ||
+    value === 'usageLimited' ||
+    value === 'budgetLimited'
+    ? value
+    : undefined
 }
 
 function normalizeRuntimeTaskSummaries(
@@ -625,22 +843,128 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
   return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
 }
 
+function localVisionSidecarConfig(config: LocalModelConfig): Record<string, unknown> | null {
+  if (!config.visionModelConfigId) return null
+  const visionModel = listLocalModelConfigs().find(
+    candidate => candidate.id === config.visionModelConfigId
+  )
+  if (!visionModel?.enabled) {
+    throw new Error('Vision proxy model is missing or disabled')
+  }
+  if (!localModelSupportsImageInput(visionModel)) {
+    throw new Error('Vision proxy model does not declare image input support')
+  }
+  return {
+    enabled: true,
+    request_url: buildLocalModelRequestUrl(
+      visionModel.baseUrl,
+      visionModel.requestPath,
+      visionModel.apiFormat
+    ),
+    api_format: visionModel.apiFormat,
+    api_key: visionModel.apiKey || 'dummy',
+    model_id: visionModel.modelId,
+    max_descriptions_per_turn: 8,
+    timeout_ms: 45_000,
+  }
+}
+
+function cloudVisionSidecarConfig(
+  runtime: string,
+  modelOptions: Record<string, string> | undefined,
+  cloudModelGateway: CloudModelGateway
+): Record<string, unknown> | null {
+  const raw = modelOptions?.[CLOUD_MODEL_VISION_SIDECAR_OPTION]
+  if (!raw) return null
+
+  let sidecar: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Cloud vision sidecar reference is invalid')
+    }
+    sidecar = parsed as Record<string, unknown>
+  } catch (error) {
+    throw new Error('Cloud vision sidecar reference is invalid', { cause: error })
+  }
+
+  const modelName = stringValue(sidecar.modelName)
+  const modelType = stringValue(sidecar.modelType)
+  const namespace = stringValue(sidecar.namespace)
+  const resourceUserId = sidecar.resourceUserId
+  const apiFormat = stringValue(sidecar.apiFormat)
+  if (
+    !modelName ||
+    !isCloudModelType(modelType) ||
+    !namespace ||
+    typeof resourceUserId !== 'number' ||
+    !Number.isInteger(resourceUserId) ||
+    resourceUserId < 0 ||
+    !apiFormat ||
+    !['openai-responses', 'openai-chat-completions', 'anthropic-messages'].includes(apiFormat)
+  ) {
+    throw new Error('Cloud vision sidecar reference is incomplete')
+  }
+
+  return {
+    enabled: true,
+    request_url: `${cloudModelGateway.baseUrl.replace(/\/+$/, '')}/responses`,
+    api_format: apiFormat,
+    api_key: cloudModelGateway.apiKey,
+    model_id: modelName,
+    default_headers: {
+      'X-Wegent-Model-Type': modelType,
+      'X-Wegent-Model-Namespace': namespace,
+      'X-Wegent-Model-User-Id': String(resourceUserId),
+      'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
+      'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+    },
+    max_descriptions_per_turn: 8,
+    timeout_ms: 45_000,
+  }
+}
+
+function wecodeExecutorForRuntime(runtime: string): string {
+  const normalized = runtime
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+  return normalized === 'claude' || normalized === 'claudecode' ? 'claudecode' : normalized
+}
+
 function localRuntimeModelConfig(
+  runtime: string,
   modelName?: string,
   modelType?: string | null,
   modelOptions?: Record<string, string>,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway?: CloudModelGateway,
+  requireCodexCatalog = true
 ): Record<string, unknown> {
   const localModel = findLocalModelConfigByModelName(modelName)
   if (localModel) {
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
-    const requestUrl = buildLocalModelRequestUrl(localModel.baseUrl, localModel.requestPath)
+    if (requireCodexCatalog && !localModel.catalogReady) {
+      throw new Error('Local model requires a Codex restart')
+    }
+    const requestUrl = buildLocalModelRequestUrl(
+      localModel.baseUrl,
+      localModel.requestPath,
+      localModel.apiFormat
+    )
+    const visionSidecar = localVisionSidecarConfig(localModel)
+    const codexCatalogModelId = visionSidecar
+      ? VISION_SIDECAR_CATALOG_MODEL_ID
+      : localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: localModel.modelId,
+      wework_model_kind: 'model-interface',
+      codex_catalog_model_id: codexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: localModel.apiFormat,
+      tool_profile: localModel.toolProfile,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
       responses_url: requestUrl,
@@ -651,6 +975,10 @@ function localRuntimeModelConfig(
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
+      ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
+      ...(localModelDefaultReasoningEffort(localModel)
+        ? { reasoning: { effort: localModelDefaultReasoningEffort(localModel) } }
+        : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {
@@ -679,10 +1007,27 @@ function localRuntimeModelConfig(
       throw new Error('Cloud model identity is incomplete')
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
+    const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
+    const upstreamApiFormat =
+      modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const nativeToolSearch =
+      modelOptions?.[CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION]?.trim().toLowerCase() === 'true'
+    const nativeNamespaceTools =
+      modelOptions?.[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION]?.trim().toLowerCase() === 'true'
+    const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
+    const codexCatalogModelId = visionSidecar
+      ? VISION_SIDECAR_CATALOG_MODEL_ID
+      : modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: modelName,
+      wework_model_kind: 'cloud',
+      codex_catalog_model_id: codexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: upstreamApiFormat,
+      native_tool_search: nativeToolSearch,
+      native_namespace_tools: nativeNamespaceTools,
+      tool_profile: 'custom',
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,
@@ -690,10 +1035,16 @@ function localRuntimeModelConfig(
         'X-Wegent-Model-Type': modelType,
         'X-Wegent-Model-Namespace': namespace,
         'X-Wegent-Model-User-Id': resourceUserId,
+        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
+        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }
         : {}),
+      ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+        ? { max_output_tokens: maxOutputTokens }
+        : {}),
+      ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {
@@ -706,9 +1057,11 @@ function localRuntimeModelConfig(
 
   const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
   const codexProviderName = modelOptions?.codexProviderName || modelOptions?.codex_provider_name
+  const codexProviderType = modelOptions?.codexProviderType || modelOptions?.codex_provider_type
   return {
     model: 'openai',
     model_id: builtInCodexModelId(modelName),
+    wework_model_kind: codexProviderType === 'provider' ? 'codex-provider' : 'codex-official',
     api_format: RESPONSES_API_FORMAT,
     protocol: OPENAI_RESPONSES_PROTOCOL,
     ...(codexProviderId ? { model_provider: codexProviderId } : {}),
@@ -719,6 +1072,58 @@ function localRuntimeModelConfig(
         configured: true,
       },
     },
+  }
+}
+
+function recordString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function recordNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function harnessProxyUpstream(
+  runtime: string,
+  option: LocalHarnessModelOption,
+  cloudModelGateway?: CloudModelGateway
+): Record<string, unknown> {
+  const execution = selectedModelExecutionFields(option.model, option.options)
+  const config = localRuntimeModelConfig(
+    runtime,
+    execution.modelId,
+    execution.modelType,
+    execution.modelOptions,
+    cloudModelGateway,
+    false
+  )
+  const baseUrl = recordString(config.base_url)
+  const apiFormat = recordString(config.upstream_api_format)
+  const apiKey = recordString(config.api_key)
+  if (!baseUrl || !apiFormat || !apiKey) {
+    throw new Error('Harness model proxy configuration is incomplete')
+  }
+  const headers =
+    config.default_headers &&
+    typeof config.default_headers === 'object' &&
+    !Array.isArray(config.default_headers)
+      ? Object.entries(config.default_headers as Record<string, unknown>).flatMap(
+          ([name, value]) => (typeof value === 'string' ? [[name, value]] : [])
+        )
+      : []
+  return {
+    base_url: baseUrl,
+    request_url: recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`,
+    api_format: apiFormat,
+    convert_custom_tools: config.tool_profile === 'function',
+    native_tool_search: false,
+    native_namespace_tools: false,
+    api_key: apiKey,
+    default_headers: headers,
+    proxy_url: getLocalProxyUrl() || null,
+    model_id: recordString(config.model_id),
+    routing_model_id: null,
+    max_output_tokens: recordNumber(config.max_output_tokens),
   }
 }
 
@@ -765,10 +1170,11 @@ type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
   original_filename: string
   file_size: number
   mime_type: string
+  status: Attachment['status']
   subtask_id: string
   file_extension: string
-  local_path: string
-  local_preview_url: string
+  local_path?: string
+  local_preview_url?: string
   text_length?: number
   text_preview?: string
 }
@@ -782,7 +1188,7 @@ function localRuntimeAttachments(
 
   attachments.forEach(attachment => {
     const localPath = stringValue(attachment.local_path)
-    if (!localPath) return
+    if (!localPath && attachment.id <= 0) return
 
     runtimeAttachments.push({
       id: attachment.id,
@@ -790,10 +1196,15 @@ function localRuntimeAttachments(
       original_filename: attachment.filename,
       file_size: attachment.file_size,
       mime_type: attachment.mime_type,
+      status: attachment.status,
       subtask_id: attachment.subtask_id ?? subtaskId,
       file_extension: attachment.file_extension,
-      local_path: localPath,
-      local_preview_url: attachment.local_preview_url ?? localPath,
+      ...(localPath
+        ? {
+            local_path: localPath,
+            local_preview_url: attachment.local_preview_url ?? localPath,
+          }
+        : {}),
       ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
       ...(attachment.text_preview ? { text_preview: attachment.text_preview } : {}),
     })
@@ -834,60 +1245,10 @@ function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): str
   return `/${normalizedSegments.join('/')}`
 }
 
-function isWorkspacePathWithin(path: string, rootPath: string): boolean {
-  return path === rootPath || path.startsWith(`${rootPath.replace(/\/+$/, '')}/`)
-}
-
-function requireWorkspacePathWithin(path: string, rootPath: string, errorMessage: string) {
-  if (!isWorkspacePathWithin(path, rootPath)) {
-    throw new Error(errorMessage)
-  }
-}
-
 function normalizeModifiedAt(value: unknown, errorMessage: string): string | null {
   if (value === undefined || value === null) return null
   if (typeof value === 'string') return value
   throw new Error(errorMessage)
-}
-
-function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFileEntry {
-  const record = recordValue(value)
-  if (
-    typeof record.name !== 'string' ||
-    typeof record.path !== 'string' ||
-    typeof record.is_directory !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace tree response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  requireWorkspacePathWithin(path, rootPath, 'Invalid workspace tree response')
-  return {
-    name: record.name,
-    path,
-    isDirectory: record.is_directory,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
-  }
-}
-
-function normalizeWorkspaceTree(output: unknown, requestedPath: string): WorkspaceTreeResponse {
-  const normalizedRequestedPath = normalizeAbsoluteWorkspacePath(
-    requestedPath,
-    'Workspace path must be absolute'
-  )
-  const record = recordValue(output)
-  if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
-    throw new Error('Invalid workspace tree response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  if (path !== normalizedRequestedPath) {
-    throw new Error('Invalid workspace tree response')
-  }
-  return {
-    path,
-    entries: record.entries.map(entry => normalizeWorkspaceEntry(entry, path)),
-  }
 }
 
 function normalizeWorkspaceTextFile(
@@ -908,52 +1269,23 @@ function normalizeWorkspaceTextFile(
   ) {
     throw new Error('Invalid workspace text file response')
   }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace text file response')
-  if (path !== normalizedRequestedFilePath) {
+  const responsePath = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace text file response'
+  )
+  const requestedName = normalizedRequestedFilePath.split('/').pop()
+  if (record.name !== requestedName || responsePath.split('/').pop() !== requestedName) {
     throw new Error('Invalid workspace text file response')
   }
   return {
-    path,
+    path: normalizedRequestedFilePath,
     name: record.name,
     content: record.content,
+    editable: record.editable === true && typeof record.revision === 'string',
+    revision: typeof record.revision === 'string' ? record.revision : '',
     truncated: record.truncated,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
-  }
-}
-
-function normalizeWorkspaceFileChunk(
-  output: unknown,
-  requestedFilePath: string,
-  requestedOffset: number
-): WorkspaceFileChunkResponse {
-  const record = recordValue(output)
-  if (
-    typeof record.path !== 'string' ||
-    typeof record.name !== 'string' ||
-    typeof record.content_base64 !== 'string' ||
-    typeof record.offset !== 'number' ||
-    typeof record.eof !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace file chunk response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace file chunk response')
-  if (
-    path !==
-      normalizeAbsoluteWorkspacePath(requestedFilePath, 'Workspace file path must be absolute') ||
-    record.offset !== requestedOffset
-  ) {
-    throw new Error('Invalid workspace file chunk response')
-  }
-  return {
-    path,
-    name: record.name,
-    contentBase64: record.content_base64,
-    offset: record.offset,
-    eof: record.eof,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace file chunk response'),
   }
 }
 
@@ -1009,22 +1341,64 @@ function executionWithWorkspace(
 interface BuildLocalRuntimeExecutionRequestInput {
   taskId?: string | null
   runtime: string
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: RuntimeTaskCreateRequest['runtimePermissionMode']
   teamId: number
   title: string
   message: string
+  bot?: Array<Record<string, unknown>>
   turnSeed: number
   modelId?: string
   modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
+  additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
   workspacePath?: string | null
+  standaloneChatWorkspace?: boolean
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
+  cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
+  clientUserMessageId?: string
   ephemeral?: boolean
+  user: User
+}
+
+function messageWithApplicationContext(
+  message: string,
+  context?: RuntimeTaskCreateRequest['additionalContext'],
+  includeImplicitProjectSpaceCapability = true
+): string {
+  const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
+  if (
+    includeImplicitProjectSpaceCapability &&
+    message.includes('cloud://projects') &&
+    !context?.projectSpaceCapability
+  ) {
+    entries.push([
+      'projectSpaceCapability',
+      {
+        kind: 'application',
+        value: [
+          'Use wework_space as the only interface for WeWork project spaces, board items, files, attachments, and deliveries.',
+          'Storage and task providers are internal implementation details.',
+          'Do not use git commands or call GitHub, GitLab, or object-storage APIs to inspect or modify project-space data.',
+          'Use list_spaces to discover spaces, get_board_item for item details, and read_item_attachment for attachment contents.',
+        ].join('\n'),
+      },
+    ])
+  }
+  if (entries.length === 0) return message
+  const contextText = entries.map(([name, entry]) => `[${name}]\n${entry.value}`).join('\n\n')
+  return `<application_context>\n${contextText}\n</application_context>\n\n${message}`
 }
 
 function buildLocalRuntimeExecutionRequest(
@@ -1035,18 +1409,34 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
-  const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(
-      input.modelId,
-      input.modelType,
-      input.modelOptions,
-      input.cloudModelGateway
-    ),
-    input.modelOptions
+  // The backend resolves gateway routing for cloud/public models in the claim
+  // payload; when present that config is authoritative and must not be
+  // rebuilt from the catalog entry (which would fall back to the local Codex
+  // account and route to chatgpt.com).
+  const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
+    input.runtime.trim().toLowerCase()
   )
+  const modelConfig =
+    input.modelConfig ??
+    (claudeRuntime && !input.modelId
+      ? {}
+      : applyRuntimeModelOptions(
+          localRuntimeModelConfig(
+            input.runtime,
+            input.modelId,
+            input.modelType,
+            input.modelOptions,
+            input.cloudModelGateway,
+            !claudeRuntime
+          ),
+          input.modelOptions
+        ))
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+  const requiredSkillNames = input.additionalContext?.dingtalkAITableProject ? ['dws'] : []
+  const deployedSkillNames = Array.from(new Set([...skillNames, ...requiredSkillNames]))
+  const preloadSkills = [...(input.additionalSkills ?? []), ...requiredSkillNames]
   const workspaceProject = input.workspacePath
     ? {
         source: input.workspaceSource,
@@ -1064,21 +1454,36 @@ function buildLocalRuntimeExecutionRequest(
     task_title: input.title,
     subtask_title: `${input.title} - Assistant`,
     user: {
-      id: LOCAL_USER.id,
-      name: LOCAL_USER.user_name,
-      user_name: LOCAL_USER.user_name,
-      email: LOCAL_USER.email,
+      id: input.user.id,
+      name: input.user.user_name,
+      user_name: input.user.user_name,
+      email: input.user.email,
     },
-    user_id: LOCAL_USER.id,
-    user_name: LOCAL_USER.user_name,
-    bot: [],
+    user_id: input.user.id,
+    user_name: input.user.user_name,
+    ...(input.cloudModelGateway?.backendUrl
+      ? {
+          backend_url: input.cloudModelGateway.backendUrl,
+          auth_token: input.cloudModelGateway.apiKey,
+        }
+      : {}),
+    bot: input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }],
+    ...(input.runtimeExecutablePath
+      ? { runtime_executable_path: input.runtimeExecutablePath }
+      : {}),
+    ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
+    mcp_servers: [],
     model_config: modelConfig,
-    prompt: input.message,
+    prompt: messageWithApplicationContext(
+      input.message,
+      input.additionalContext,
+      input.origin?.type !== 'project_automation'
+    ),
     enable_tools: true,
     enable_deep_thinking: true,
-    skill_names: skillNames,
-    preload_skills: input.additionalSkills ?? [],
-    user_selected_skills: input.additionalSkills ?? [],
+    skill_names: deployedSkillNames,
+    preload_skills: preloadSkills,
+    user_selected_skills: preloadSkills,
     ...(workspaceProject
       ? {
           workspace: {
@@ -1088,9 +1493,17 @@ function buildLocalRuntimeExecutionRequest(
           project_workspace_path: input.workspacePath,
         }
       : {}),
+    ...(input.standaloneChatWorkspace ? { standalone_chat_workspace: true } : {}),
+    ...(input.runtimeProjectKey ? { runtime_project_key: input.runtimeProjectKey } : {}),
+    ...(input.runtimeProjectName ? { runtime_project_name: input.runtimeProjectName } : {}),
+    ...(input.runtimeWorkspaceRoots?.length
+      ? { runtime_workspace_roots: input.runtimeWorkspaceRoots }
+      : {}),
+    ...(input.cloudProjectId ? { cloudProjectId: input.cloudProjectId } : {}),
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
+    ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
     collaboration_model: 'single',
@@ -1099,6 +1512,7 @@ function buildLocalRuntimeExecutionRequest(
     task_mode: 'code',
     attachments: localRuntimeAttachments(input.attachments, subtaskId),
     reasoning_config: reasoning,
+    runtime_permission_profile: runtimePermissionProfile(runtimePermissionMode(input.modelOptions)),
   }
 }
 
@@ -1112,6 +1526,7 @@ async function executeLocalDeviceCommand(
   data: {
     deviceId?: string
     command_key: string
+    path?: string
     args?: string[]
     timeout_seconds?: number
     max_output_bytes?: number
@@ -1145,8 +1560,12 @@ async function loadLocalCodexAuthConfigured(
 async function prepareLocalRuntimeWorkspace(
   data: RuntimeTaskCreateRequest,
   requestWithLocalDevice: RequestWithLocalDevice
-): Promise<LocalRuntimeWorkspace> {
-  const sourceWorkspacePath = requiredRuntimeWorkspacePath(data)
+): Promise<LocalRuntimeWorkspace | null> {
+  const sourceWorkspacePath = runtimeWorkspacePath(data)
+  if (!sourceWorkspacePath) {
+    if (data.standaloneChatWorkspace) return null
+    throw new Error('workspacePath is required')
+  }
   const requestedSource = runtimeWorkspaceSource(data)
   const branch = runtimeWorkspaceBranch(data)
   if (requestedSource !== 'git_worktree') {
@@ -1170,19 +1589,8 @@ async function prepareLocalRuntimeWorkspace(
     throw new Error('Project directory is not a Git repository')
   }
 
-  const [taskId] = createRuntimeExecutionIds(data)
-  const response = await requestWithLocalDevice<
-    RuntimeWorktreeMutationResponse,
-    RuntimeWorktreePrepareRequest
-  >('runtime.worktrees.prepare', {
-    deviceId: data.deviceId ?? LOCAL_DEVICE_ID,
-    sourcePath: sourceWorkspacePath,
-    worktreeId: taskId,
-    ...(branch ? { ref: branch } : {}),
-  })
-
   return {
-    workspacePath: response.path ?? response.worktree.path,
+    workspacePath: sourceWorkspacePath,
     workspaceSource: 'git_worktree',
     branch,
   }
@@ -1192,44 +1600,102 @@ async function createLocalRuntimeTaskPayload(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway: CloudModelGateway | undefined,
+  user: User
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
-  const execution = executionWithWorkspace(data, runtimeWorkspace)
+  const execution = runtimeWorkspace ? executionWithWorkspace(data, runtimeWorkspace) : null
   const normalizedData: RuntimeTaskCreateRequest = {
     ...data,
     deviceId: localDeviceId,
-    workspacePath: runtimeWorkspace.workspacePath,
+    ...(runtimeWorkspace ? { workspacePath: runtimeWorkspace.workspacePath } : {}),
     ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   if (execution) normalizedData.execution = execution
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
+  const initialSupervisor = normalizedData.initialSupervisor
+  if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
+    payload.initialSupervisor = {
+      ...initialSupervisor,
+      modelConfig: applyRuntimeModelOptions(
+        localRuntimeModelConfig(
+          'codex',
+          initialSupervisor.modelSelection.modelName,
+          initialSupervisor.modelSelection.modelType,
+          initialSupervisor.modelSelection.options,
+          cloudModelGateway
+        ),
+        initialSupervisor.modelSelection.options
+      ),
+    }
+  }
+  const friendlyTitleExecutionRequest = normalizedData.friendlyTitle
+    ? buildLocalRuntimeExecutionRequest({
+        taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
+        runtime: 'codex',
+        teamId: normalizedData.teamId,
+        title: 'Generate friendly task title',
+        message: [
+          '为下面的用户请求生成一个简洁、具体、适合作为任务标题的中文标题。',
+          '只输出标题本身，不要引号、标点、解释或换行；最多 24 个汉字。',
+          '',
+          `用户请求：${normalizedData.message}`,
+        ].join('\n'),
+        turnSeed: createRuntimeTurnSeed(),
+        modelId: normalizedData.friendlyTitle.modelId,
+        modelType: normalizedData.friendlyTitle.modelType,
+        modelOptions: normalizedData.friendlyTitle.modelOptions,
+        cloudModelGateway,
+        localDeviceId,
+        workspacePath: runtimeWorkspace?.workspacePath,
+        standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
+        workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
+        branch: runtimeWorkspace?.branch,
+        newSession: true,
+        ephemeral: true,
+        user,
+      })
+    : null
 
   return {
     ...payload,
     ...(collaborationMode ? { collaborationMode } : {}),
+    ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId: normalizedData.taskId,
       runtime: normalizedData.runtime,
+      runtimeExecutablePath: normalizedData.runtimeExecutablePath,
+      runtimePermissionMode: normalizedData.runtimePermissionMode,
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
+      bot: normalizedData.bot,
       turnSeed,
       modelId: normalizedData.modelId,
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
+      additionalContext: normalizedData.additionalContext,
       attachments: normalizedData.attachments,
       localDeviceId,
-      workspacePath: runtimeWorkspace.workspacePath,
-      workspaceSource: runtimeWorkspace.workspaceSource,
-      branch: runtimeWorkspace.branch,
+      workspacePath: runtimeWorkspace?.workspacePath,
+      standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
+      runtimeProjectKey: normalizedData.runtimeProjectKey,
+      runtimeProjectName: normalizedData.runtimeProjectName,
+      runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+      cloudProjectId: normalizedData.cloudProjectId,
+      origin: normalizedData.origin,
+      workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
+      branch: runtimeWorkspace?.branch,
       newSession: true,
+      clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: normalizedData.ephemeral,
+      user,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1237,7 +1703,8 @@ async function createLocalRuntimeTaskPayload(
 function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
-  cloudModelGateway?: CloudModelGateway
+  cloudModelGateway: CloudModelGateway | undefined,
+  user: User
 ): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
@@ -1262,6 +1729,10 @@ function createLocalRuntimeSendPayload(
     taskId,
     ...(workspacePath ? { workspacePath } : {}),
   }
+  const runtime =
+    stringValue(normalizedAddress.runtime) ??
+    stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
+    'codex'
 
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
@@ -1274,7 +1745,7 @@ function createLocalRuntimeSendPayload(
       ...(collaborationMode ? { collaborationMode } : {}),
       executionRequest: buildLocalRuntimeExecutionRequest({
         taskId,
-        runtime: 'codex',
+        runtime,
         teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
         message: normalizedData.message,
@@ -1284,11 +1755,14 @@ function createLocalRuntimeSendPayload(
         modelOptions: normalizedData.modelOptions,
         cloudModelGateway,
         attachments: normalizedData.attachments,
+        additionalContext: normalizedData.additionalContext,
         localDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
+        clientUserMessageId: normalizedData.clientUserMessageId,
         ephemeral: data.ephemeral,
+        user,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1300,10 +1774,19 @@ function createLocalRuntimeSendPayload(
     ...payload,
     taskId,
     address: normalizedAddress,
+    ...(normalizedData.modelId
+      ? {
+          modelSelection: {
+            modelName: normalizedData.modelId,
+            modelType: normalizedData.modelType ?? null,
+            options: normalizedData.modelOptions ?? {},
+          },
+        }
+      : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
-      runtime: 'codex',
+      runtime,
       teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
       message: normalizedData.message,
@@ -1313,11 +1796,14 @@ function createLocalRuntimeSendPayload(
       modelOptions: normalizedData.modelOptions,
       cloudModelGateway,
       attachments: normalizedData.attachments,
+      additionalContext: normalizedData.additionalContext,
       localDeviceId,
       workspacePath,
       workspaceSource: 'local_path',
       newSession: false,
+      clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: data.ephemeral,
+      user,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1482,22 +1968,26 @@ function adaptRuntimeWorkListResponse(
     const label = workspaceLabel(workspacePath, workspace.label)
     const workspaceSource =
       stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    const remoteHostId =
+      stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id)
+    const workspaceDeviceId =
+      workspaceSource === 'remote' && remoteHostId ? remoteHostId : localDeviceId
     if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
       continue
     }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
-      id: null,
+      id: stableLocalId(`${workspaceDeviceId}\0${workspacePath}`),
       projectId: null,
-      deviceId: localDeviceId,
-      deviceName: 'Local Executor',
-      deviceStatus: 'online',
-      available: true,
+      deviceId: workspaceDeviceId,
+      deviceName: remoteHostId ?? 'Local Executor',
+      deviceStatus: workspaceDeviceId === localDeviceId ? 'online' : 'offline',
+      available: workspaceDeviceId === localDeviceId,
       workspacePath,
       workspaceKind,
       worktreeId,
       label,
       workspaceSource,
-      remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
+      remoteHostId,
       mapped: true,
       tasks,
     }
@@ -1522,25 +2012,43 @@ function adaptRuntimeWorkListResponse(
       : Array.isArray(workspace.project_roots)
         ? workspace.project_roots
         : [workspacePath]
+    const projectKind =
+      stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
+    const projectSource =
+      stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
+    const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
+    const rawDefaultProjectSpace = recordValue(
+      workspace.defaultProjectSpace ?? workspace.default_project_space
+    )
+    const defaultProjectStore = stringValue(rawDefaultProjectSpace.projectStore)
+    const defaultProjectId = stringValue(rawDefaultProjectSpace.projectId)
+    const defaultProjectSpace: RuntimeProjectSpaceRef | null =
+      (defaultProjectStore === 'local' || defaultProjectStore === 'backend') && defaultProjectId
+        ? { projectStore: defaultProjectStore, projectId: defaultProjectId }
+        : null
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
+        ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
         id: stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
-        kind: stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local',
-        source:
-          stringValue(workspace.projectSource) ??
-          stringValue(workspace.project_source) ??
-          'legacy_root',
+        kind: projectKind,
+        source: projectSource,
         stateDeviceId: localDeviceId,
         roots: rawRoots
           .map(root => stringValue(root))
           .filter((root): root is string => Boolean(root))
           .map(path => ({ kind: 'local', path })),
         pinned: workspace.projectPinned === true || workspace.project_pinned === true,
+        pinnedOrder:
+          typeof projectPinnedOrder === 'number' && Number.isInteger(projectPinnedOrder)
+            ? projectPinnedOrder
+            : null,
+        active: workspace.projectActive === true || workspace.project_active === true,
         appearance: (workspace.projectAppearance ?? workspace.project_appearance ?? null) as
           | RuntimeWorkListResponse['projects'][number]['project']['appearance']
           | null,
+        ...(defaultProjectSpace ? { defaultProjectSpace } : {}),
       },
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,
@@ -1557,9 +2065,14 @@ export function createRuntimeWorkApiFromIpc(
   getDefaultDeviceId: () => Promise<string>,
   options: RuntimeWorkIpcOptions = {}
 ) {
+  const transportLabel = options.transportLabel ?? 'Local'
+  const user = options.user ?? LOCAL_USER
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
+  const syncedModelCatalogKeys = new Set<string>()
+  const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
+  const modelCatalogSyncQueues = new Map<string, Promise<void>>()
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -1578,14 +2091,14 @@ export function createRuntimeWorkApiFromIpc(
     const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript request', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript request`, {
           address: runtimeAddressDebug(normalizedData),
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
       const response = await request<TResponse>(method, normalizedData, deviceId)
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript response', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           messageCount: runtimeTranscriptMessageCount(response),
@@ -1594,7 +2107,7 @@ export function createRuntimeWorkApiFromIpc(
       return response
     } catch (error) {
       if (method === 'runtime.tasks.transcript') {
-        console.error('[Wework] Local runtime IPC transcript failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC transcript failed`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
@@ -1604,7 +2117,196 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
 
+  const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    const selectedModel = findLocalModelConfigByModelName(data.modelId)
+    if (!options.syncConfiguredModelCatalog) return true
+    if (!selectedModel?.catalogEntry) return true
+
+    const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+    const catalogKey = catalogModels
+      .map(model => `${model.id}:${model.updatedAt}`)
+      .sort()
+      .join('|')
+    const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+    const deviceCatalogKey = `${deviceId}\0${catalogKey}`
+    console.info('[Wework] Cloud model catalog preparation started', {
+      deviceId,
+      modelId: data.modelId,
+      catalogModelCount: catalogModels.length,
+      alreadySynced: syncedModelCatalogKeys.has(deviceCatalogKey),
+      syncInFlight: modelCatalogSyncInFlight.has(deviceCatalogKey),
+    })
+    if (syncedModelCatalogKeys.has(deviceCatalogKey)) {
+      console.info('[Wework] Cloud model catalog preparation reused synced catalog', {
+        deviceId,
+        modelId: data.modelId,
+      })
+      return true
+    }
+    const pendingSync = modelCatalogSyncInFlight.get(deviceCatalogKey)
+    if (pendingSync) {
+      console.info('[Wework] Cloud model catalog preparation joined pending sync', {
+        deviceId,
+        modelId: data.modelId,
+      })
+      return pendingSync
+    }
+    let appliedCatalogKey = ''
+    const sync = async () => {
+      const previousSync = modelCatalogSyncQueues.get(deviceId) ?? Promise.resolve()
+      const queuedSync = previousSync
+        .catch(() => undefined)
+        .then(async () => {
+          console.info('[Wework] Cloud model catalog sync started', {
+            deviceId,
+            modelId: data.modelId,
+          })
+          const currentCatalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+          const currentCatalogKey = currentCatalogModels
+            .map(model => `${model.id}:${model.updatedAt}`)
+            .sort()
+            .join('|')
+          const currentDeviceCatalogKey = `${deviceId}\0${currentCatalogKey}`
+          if (syncedModelCatalogKeys.has(currentDeviceCatalogKey)) {
+            appliedCatalogKey = currentCatalogKey
+            console.info('[Wework] Cloud model catalog sync reused queued result', {
+              deviceId,
+              modelId: data.modelId,
+            })
+            return
+          }
+          const currentSelectedModel = findLocalModelConfigByModelName(data.modelId)
+          const expectedModelId =
+            currentSelectedModel?.codexCatalogModelId ??
+            (typeof currentSelectedModel?.catalogEntry?.slug === 'string'
+              ? currentSelectedModel.catalogEntry.slug
+              : undefined)
+          await request(
+            'runtime.codex.catalog.custom.write',
+            {
+              models: currentCatalogModels.flatMap(model =>
+                model.catalogEntry ? [model.catalogEntry] : []
+              ),
+            },
+            deviceId
+          )
+          console.info('[Wework] Cloud model catalog write completed', {
+            deviceId,
+            modelId: data.modelId,
+            catalogModelCount: currentCatalogModels.length,
+          })
+          let restart: {
+            restarted?: boolean
+            requiresConfirmation?: boolean
+          }
+          try {
+            restart = await request('runtime.codex.app_server.restart', { ifIdle: true }, deviceId)
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('codex_catalog_not_loaded')) {
+              throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'), {
+                cause: error,
+              })
+            }
+            throw error
+          }
+          console.info('[Wework] Cloud Codex app server restart completed', {
+            deviceId,
+            modelId: data.modelId,
+            restarted: restart.restarted === true,
+            requiresConfirmation: restart.requiresConfirmation === true,
+          })
+          if (!restart.restarted) {
+            throw new Error(
+              restart.requiresConfirmation
+                ? i18n.t('workbench.cloud_model_catalog_sync_busy')
+                : i18n.t('workbench.cloud_model_catalog_sync_failed')
+            )
+          }
+          const models = await request<{
+            data?: Array<{ id?: string }>
+          }>('runtime.codex.models.list', { includeHidden: true }, deviceId)
+          const expectedModelAvailable = Boolean(
+            expectedModelId && models.data?.some(model => model.id === expectedModelId)
+          )
+          console.info('[Wework] Cloud model catalog verification completed', {
+            deviceId,
+            modelId: data.modelId,
+            expectedModelId: expectedModelId ?? null,
+            expectedModelAvailable,
+            availableModelCount: models.data?.length ?? 0,
+          })
+          if (!expectedModelAvailable) {
+            throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
+          }
+          appliedCatalogKey = currentCatalogKey
+          syncedModelCatalogKeys.add(currentDeviceCatalogKey)
+        })
+      const queueTail = queuedSync.then(
+        () => undefined,
+        () => undefined
+      )
+      modelCatalogSyncQueues.set(deviceId, queueTail)
+      try {
+        await queuedSync
+      } finally {
+        if (modelCatalogSyncQueues.get(deviceId) === queueTail) {
+          modelCatalogSyncQueues.delete(deviceId)
+        }
+      }
+    }
+
+    const confirmation = options.requestModelCatalogSync
+    if (!confirmation) {
+      throw new Error(i18n.t('workbench.cloud_model_catalog_sync_failed'))
+    }
+    console.info('[Wework] Cloud model catalog confirmation requested', {
+      deviceId,
+      modelId: data.modelId,
+      modelName: selectedModel.displayName,
+    })
+    const syncPromise = confirmation({
+      deviceId,
+      deviceName: options.resolveDeviceName?.(deviceId) ?? deviceId,
+      modelName: selectedModel.displayName,
+      sync,
+    }).then(confirmed => {
+      console.info('[Wework] Cloud model catalog confirmation settled', {
+        deviceId,
+        modelId: data.modelId,
+        confirmed,
+        catalogApplied: Boolean(appliedCatalogKey),
+      })
+      const currentCatalogKey = listLocalModelConfigs()
+        .filter(model => model.catalogEntry)
+        .map(model => `${model.id}:${model.updatedAt}`)
+        .sort()
+        .join('|')
+      if (confirmed && appliedCatalogKey && currentCatalogKey === appliedCatalogKey) {
+        syncedModelCatalogKeys.add(`${deviceId}\0${appliedCatalogKey}`)
+      }
+      return confirmed
+    })
+    modelCatalogSyncInFlight.set(deviceCatalogKey, syncPromise)
+    try {
+      const confirmed = await syncPromise
+      console.info('[Wework] Cloud model catalog preparation completed', {
+        deviceId,
+        modelId: data.modelId,
+        confirmed,
+      })
+      return confirmed
+    } finally {
+      if (modelCatalogSyncInFlight.get(deviceCatalogKey) === syncPromise) {
+        modelCatalogSyncInFlight.delete(deviceCatalogKey)
+      }
+    }
+  }
+
+  const modelCatalogSyncCancelled = () =>
+    new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
+
   return {
+    prepareRuntimeModel,
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -1613,7 +2315,7 @@ export function createRuntimeWorkApiFromIpc(
         const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
-        console.error('[Wework] Local runtime IPC list failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
         })
@@ -1622,6 +2324,14 @@ export function createRuntimeWorkApiFromIpc(
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return request('runtime.keybindings.get', {})
+    },
+    getRuntimeSettings(): Promise<RuntimeSettings> {
+      return request('runtime.settings.get', {})
+    },
+    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
+      return request('runtime.settings.update', {
+        maxConcurrentTasks: data.maxConcurrentTasks,
+      })
     },
     updateKeybindings(data: {
       keybindings: KeybindingOverride[]
@@ -1652,14 +2362,59 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeWorkspaceSearchResponse> {
       return requestWithLocalDevice('runtime.workspace.search', data)
     },
-    revertRuntimeFileChanges(
+    async revertRuntimeFileChanges(
       data: RuntimeFileChangesRevertRequest
     ): Promise<RuntimeFileChangesRevertResponse> {
-      return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
+      const summary = data.fileChanges
+      if (summary.status === 'reverted') {
+        return { fileChanges: summary }
+      }
+      const response = await executeLocalDeviceCommand(
+        requestWithLocalDevice,
+        {
+          deviceId: data.address.deviceId,
+          command_key: 'turn_file_changes_revert',
+          path: summary.workspace_path,
+          args: [summary.artifact_id],
+          timeout_seconds: 30,
+          max_output_bytes: 5 * 1024 * 1024,
+        },
+        'Failed to revert runtime file changes'
+      )
+      const payload = recordValue(response.stdout)
+      const status = stringValue(payload.status)
+      if (status === 'conflicted' || status === 'artifact_missing') {
+        return {
+          fileChanges: {
+            ...summary,
+            status,
+          },
+        }
+      }
+      if (payload.success !== true || status !== 'reverted') {
+        throw new Error(
+          stringValue(payload.error) ?? 'Local executor returned an invalid file changes result'
+        )
+      }
+      return {
+        fileChanges: {
+          ...summary,
+          status: 'reverted',
+          reverted_at: new Date().toISOString(),
+        },
+      }
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1677,7 +2432,15 @@ export function createRuntimeWorkApiFromIpc(
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1726,6 +2489,34 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId
       )
     },
+    async interruptAndSendRuntimeMessage(
+      data: RuntimeInterruptAndSendRequest
+    ): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      const payload = createLocalRuntimeSendPayload(
+        data,
+        localDeviceId,
+        options.cloudModelGateway,
+        user
+      )
+      if (!payload.executionRequest) {
+        console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
+          taskId: payload.taskId,
+          address: runtimeAddressDebug(payload),
+          payloadKeys: Object.keys(payload).sort(),
+        })
+        throw new Error('Runtime interrupt payload missing executionRequest')
+      }
+      console.debug('[Wework] Local runtime interrupt payload', {
+        taskId: payload.taskId,
+        address: runtimeAddressDebug(payload),
+        payloadKeys: Object.keys(payload).sort(),
+      })
+      return request('runtime.tasks.interrupt_and_send', payload, localDeviceId)
+    },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
     },
@@ -1735,8 +2526,69 @@ export function createRuntimeWorkApiFromIpc(
     clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.clear', data)
     },
+    getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.get', data)
+    },
+    async setRuntimeSupervisor(
+      data: RuntimeSupervisorSetRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      const selection = data.modelSelection
+      if (selection?.modelType !== 'runtime') {
+        return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+      }
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      if (
+        !(await prepareRuntimeModel({
+          deviceId: localDeviceId,
+          modelId: selection.modelName,
+        }))
+      ) {
+        throw modelCatalogSyncCancelled()
+      }
+      const modelConfig = applyRuntimeModelOptions(
+        localRuntimeModelConfig(
+          'codex',
+          selection.modelName,
+          selection.modelType,
+          selection.options,
+          options.cloudModelGateway
+        ),
+        selection.options
+      )
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.supervisor.set',
+        {
+          ...data,
+          address: normalizedAddress,
+          modelConfig,
+        },
+        localDeviceId
+      )
+    },
+    clearRuntimeSupervisor(
+      data: RuntimeSupervisorClearRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.clear', data)
+    },
+    runRuntimeSupervisorNow(
+      data: RuntimeSupervisorRunNowRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.run_now', data)
+    },
+    resolveRuntimeSupervisor(
+      data: RuntimeSupervisorResolveRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.resolve', data)
+    },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)
+    },
+    upsertLocalRuntimeProject(
+      data: RuntimeLocalProjectUpsertRequest
+    ): Promise<RuntimeLocalProjectUpsertResponse> {
+      return requestWithLocalDevice('runtime.projects.upsert_local', data)
     },
     renameRuntimeWorkspace(
       data: RuntimeWorkspaceRenameRequest
@@ -1762,6 +2614,16 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeProjectAppearanceRequest
     ): Promise<RuntimeSidebarMutationResponse> {
       return requestWithLocalDevice('runtime.sidebar.projects.appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.sync_remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.activate', data)
     },
     reorderRuntimeProjectTasks(
       data: RuntimeProjectTaskReorderRequest
@@ -1800,6 +2662,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     updateGlobalImNotification() {
       return cloudConnectionRequired('updateGlobalImNotification')
+    },
+    updateImNotificationPresence() {
+      return cloudConnectionRequired('updateImNotificationPresence')
     },
     subscribeRuntimeTaskNotifications() {
       return cloudConnectionRequired('subscribeRuntimeTaskNotifications')
@@ -1855,22 +2720,89 @@ export function createRuntimeWorkApiFromIpc(
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage('local-create-started', {
+        taskId: data.taskId ?? null,
+        deviceId: data.deviceId ?? null,
+        runtime: data.runtime,
+      })
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      logRuntimeTaskCreateStage('local-device-resolved', {
+        taskId: data.taskId ?? null,
+        requestedDeviceId: data.deviceId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      logRuntimeTaskCreateStage('local-primary-model-prepared', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        modelId: data.modelId ?? null,
+        elapsedMs: Date.now() - startedAt,
+      })
+      const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
+      if (
+        supervisorModelId &&
+        !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: supervisorModelId }))
+      ) {
+        throw modelCatalogSyncCancelled()
+      }
+      logRuntimeTaskCreateStage('local-supervisor-model-prepared', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        supervisorModelId: supervisorModelId ?? null,
+        elapsedMs: Date.now() - startedAt,
+      })
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,
         requestWithLocalDevice,
-        options.cloudModelGateway
+        options.cloudModelGateway,
+        user
       )
+      logRuntimeTaskCreateStage('local-payload-built', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
       debugLocalRuntimeCreatePayload(data, payload)
+      const executionRequest = recordValue(payload.executionRequest)
+      console.info('[Wework] Friendly task title request', {
+        taskId: data.taskId,
+        enabled: Boolean(data.friendlyTitle),
+        executionRequestIncluded: Boolean(payload.friendlyTitleExecutionRequest),
+        modelId: data.friendlyTitle?.modelId ?? null,
+      })
+      console.info('[Wework] Local runtime execution identity', {
+        taskId: stringValue(executionRequest.task_id),
+        userId: executionRequest.user_id ?? null,
+        userName: stringValue(executionRequest.user_name),
+      })
+      logRuntimeTaskCreateStage('local-rpc-dispatched', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        method: 'runtime.tasks.create',
+        elapsedMs: Date.now() - startedAt,
+      })
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload,
         localDeviceId
       )
-      const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
-      const executionRequest = recordValue(payload.executionRequest)
+      logRuntimeTaskCreateStage('local-rpc-resolved', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+        accepted: response.accepted ?? true,
+      })
       const responseRecord = recordValue(response)
+      const workspacePath =
+        stringValue(responseRecord.workspacePath) ??
+        stringValue(responseRecord.workspace_path) ??
+        stringValue(payload.workspacePath) ??
+        requiredRuntimeWorkspacePath(data)
       const taskId =
         stringValue(responseRecord.taskId) ??
         stringValue(responseRecord.task_id) ??
@@ -1884,12 +2816,26 @@ export function createRuntimeWorkApiFromIpc(
         accepted: response.accepted ?? true,
         deviceId: localDeviceId,
         taskId,
-        workspacePath: response.workspacePath ?? workspacePath,
+        workspacePath,
         runtime: response.runtime ?? data.runtime,
         ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
     },
+    forceStartRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return requestWithLocalDevice('runtime.tasks.force_start', address)
+    },
+    reorderQueuedRuntimeTask(
+      data: RuntimeTaskQueueReorderRequest
+    ): Promise<RuntimeTaskQueueReorderResponse> {
+      return requestWithLocalDevice('runtime.tasks.queue.reorder', data)
+    },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
+      if (data.lastTurnId) {
+        return requestWithLocalDevice('runtime.tasks.fork_at_turn', {
+          ...data,
+          taskId: data.source.taskId,
+        })
+      }
       return requestWithLocalDevice('runtime.tasks.import_fork', data)
     },
   }
@@ -1912,6 +2858,165 @@ function debugLocalRuntimeCreatePayload(
   })
 }
 
+function normalizeLocalAutomationSchedule(
+  schedule: Automation['schedule'] | { type: 'one_time'; execute_at: string }
+): Automation['schedule'] {
+  if (schedule.type !== 'one_time') return schedule
+  return {
+    type: 'one_time',
+    executeAt: 'executeAt' in schedule ? schedule.executeAt : schedule.execute_at,
+  }
+}
+
+function serializeLocalAutomationSchedule(
+  schedule: AutomationMutation['schedule']
+): AutomationMutation['schedule'] | { type: 'one_time'; execute_at: string } {
+  if (schedule.type !== 'one_time') return schedule
+  return { type: 'one_time', execute_at: schedule.executeAt }
+}
+
+function withAutomationSource(automation: Automation, source: AutomationSource): Automation {
+  return {
+    ...automation,
+    source,
+    schedule: normalizeLocalAutomationSchedule(
+      automation.schedule as Automation['schedule'] | { type: 'one_time'; execute_at: string }
+    ),
+  }
+}
+
+function withAutomationRunSource(
+  run: AutomationRun,
+  source: AutomationSource,
+  deviceId: string
+): AutomationRun {
+  return { ...run, source, deviceId: run.deviceId ?? deviceId }
+}
+
+export function createAutomationApiFromIpc(
+  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
+  requestWithLocalDevice: RequestWithLocalDevice,
+  options: RuntimeWorkIpcOptions,
+  automationDeviceId = LOCAL_DEVICE_ID,
+  source: AutomationSource = 'local'
+): NonNullable<WorkbenchServices['automationApi']> {
+  const user = options.user ?? LOCAL_USER
+  const resolveDeviceId =
+    options.resolveDeviceId ??
+    (async (data?: Record<string, unknown>) => stringValue(data?.deviceId) ?? LOCAL_DEVICE_ID)
+
+  const prepareAutomation = async (data: AutomationMutation) => {
+    const localDeviceId = await resolveDeviceId(
+      data.taskRequest as unknown as Record<string, unknown>
+    )
+    const taskPayload = await createLocalRuntimeTaskPayload(
+      data.taskRequest,
+      localDeviceId,
+      requestWithLocalDevice,
+      options.cloudModelGateway,
+      user
+    )
+    const continuationPayload =
+      data.conversationMode === 'continue_thread' && data.continuationPayload
+        ? createLocalRuntimeSendPayload(
+            data.continuationPayload as unknown as RuntimeSendRequest,
+            localDeviceId,
+            options.cloudModelGateway,
+            user
+          )
+        : null
+    return {
+      id: data.id ?? '',
+      version: data.version ?? 0,
+      name: data.name,
+      description: data.description ?? '',
+      prompt: data.prompt,
+      schedule: serializeLocalAutomationSchedule(data.schedule),
+      timezone: data.timezone,
+      enabled: data.enabled,
+      conversationMode: data.conversationMode,
+      taskPayload,
+      continuationPayload,
+    }
+  }
+
+  return {
+    async listAutomations(): Promise<AutomationListResponse> {
+      const response = await request<{ items?: Automation[] }>(
+        'runtime.automations.list',
+        {},
+        automationDeviceId
+      )
+      return { items: (response.items ?? []).map(item => withAutomationSource(item, source)) }
+    },
+    async getAutomation(automationId: string) {
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.get',
+        { automationId },
+        automationDeviceId
+      )
+      return { automation: withAutomationSource(response.automation, source) }
+    },
+    async createAutomation(data: AutomationMutation) {
+      const automation = await prepareAutomation(data)
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.create',
+        { automation },
+        automationDeviceId
+      )
+      return { automation: withAutomationSource(response.automation, source) }
+    },
+    async updateAutomation(_automationId: string, data: AutomationMutation) {
+      const automation = await prepareAutomation(data)
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.update',
+        { automation },
+        automationDeviceId
+      )
+      return { automation: withAutomationSource(response.automation, source) }
+    },
+    deleteAutomation(automationId: string) {
+      return request<{ deleted: boolean }>(
+        'runtime.automations.delete',
+        { automationId },
+        automationDeviceId
+      )
+    },
+    async toggleAutomation(automationId: string, enabled: boolean) {
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.toggle',
+        { automationId, enabled },
+        automationDeviceId
+      )
+      return { automation: withAutomationSource(response.automation, source) }
+    },
+    async runAutomationNow(automationId: string) {
+      const response = await request<{ run: AutomationRun | null }>(
+        'runtime.automations.run_now',
+        { automationId },
+        automationDeviceId
+      )
+      return {
+        run: response.run
+          ? withAutomationRunSource(response.run, source, automationDeviceId)
+          : null,
+      }
+    },
+    async listAutomationRuns(automationId?: string): Promise<AutomationRunListResponse> {
+      const response = await request<{ items?: AutomationRun[] }>(
+        'runtime.automation_runs.list',
+        automationId ? { automationId } : {},
+        automationDeviceId
+      )
+      return {
+        items: (response.items ?? []).map(item =>
+          withAutomationRunSource(item, source, automationDeviceId)
+        ),
+      }
+    },
+  }
+}
+
 function summarizeLocalModelOptions(
   modelOptions: Record<string, unknown> | undefined
 ): Record<string, unknown> {
@@ -1930,14 +3035,19 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
+  const readWorkspaceTextFile = deps.readWorkspaceTextFile ?? readLocalWorkspaceTextFile
+  const readWorkspaceFileChunk = deps.readWorkspaceFileChunk ?? readLocalWorkspaceFileChunk
+  const listWorkspaceEntries = deps.listWorkspaceEntries ?? listLocalWorkspaceEntries
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
       ensurePromise = ensure()
-        .then(status => {
+        .then(async status => {
           lastStatus = status
+          reconcileLocalModelCatalogRuntime(status.runtimeInstanceId)
+          await reconcilePendingLocalModelCatalog(request, status.runtimeInstanceId)
           return status
         })
         .finally(() => {
@@ -1956,6 +3066,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       path?: string
       cwd?: string
       args?: string[]
+      stdin?: string
       env?: Record<string, unknown>
       timeout_seconds?: number
       max_output_bytes?: number
@@ -2026,43 +3137,45 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to list skills')
       return commandSkills(response)
     },
-    async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
-      const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_tree',
-        path: normalizedPath,
-        timeout_seconds: 15,
-        max_output_bytes: 1024 * 512,
-      })
-      assertCommandSuccess(response, 'Failed to list workspace files')
-      return normalizeWorkspaceTree(response.stdout, normalizedPath)
+    async listWorkspaceEntries(
+      _deviceId: string,
+      path: string,
+      workspaceRoot = path
+    ): Promise<WorkspaceTreeResponse> {
+      return listWorkspaceEntries(workspaceRoot, path)
     },
     async readWorkspaceTextFile(
-      deviceId: string,
-      filePath: string
+      _deviceId: string,
+      filePath: string,
+      workspaceRoot: string
     ): Promise<WorkspaceTextFileResponse> {
+      return readWorkspaceTextFile(workspaceRoot, filePath)
+    },
+    async readWorkspaceFileChunk(
+      _deviceId: string,
+      filePath: string,
+      offset: number,
+      workspaceRoot: string
+    ) {
+      return readWorkspaceFileChunk(workspaceRoot, filePath, offset)
+    },
+    async writeWorkspaceTextFile(
+      deviceId: string,
+      filePath: string,
+      content: string,
+      expectedRevision: string
+    ) {
       const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
       const response = await executeCommand(deviceId, {
-        command_key: 'workspace_read_text_file',
+        command_key: 'workspace_write_text_file',
         path: parentPath,
-        args: [fileName],
+        args: [fileName, expectedRevision],
+        stdin: content,
         timeout_seconds: 15,
         max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
       })
-      assertCommandSuccess(response, 'Failed to read workspace file')
+      assertCommandSuccess(response, 'Failed to save workspace file')
       return normalizeWorkspaceTextFile(response.stdout, filePath)
-    },
-    async readWorkspaceFileChunk(deviceId: string, filePath: string, offset: number) {
-      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_read_file_chunk',
-        path: parentPath,
-        args: [fileName, String(offset)],
-        timeout_seconds: 30,
-        max_output_bytes: 1024 * 1024 * 2,
-      })
-      assertCommandSuccess(response, 'Failed to read workspace file')
-      return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
@@ -2070,44 +3183,67 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
+      user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+  const automationApi = createAutomationApiFromIpc(
+    request,
+    (method, params) => request(method, params as Record<string, unknown>),
+    {
+      cloudModelGateway: deps.cloudModelGateway,
+      user: deps.user,
+    }
+  )
+  const deliveryApi = createLocalDeliveryApi(request)
+  const externalIssueApi = createExternalIssueApi(request)
+  // Local project-space identity is the local session user, not the connected
+  // cloud account. The approval/creator checks compare against LOCAL_USER, so
+  // robots created with the cloud user id would never be approvable locally.
+  const localProjectChatAgentApi = createLocalProjectChatAgentApi(request, LOCAL_USER.id)
+  const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
+  const localProjectChatClient = createLocalProjectChatClient(request, {
+    currentUser: LOCAL_USER,
+  })
+  const aitableApi = createLocalAITableApi(request)
+  const dwsApi = createDwsApi(request)
+  const teamApi = {
+    listTeams: async () => [LOCAL_WORKBENCH_TEAM],
+    getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
+  }
+  const modelApi = {
+    listModels: async () => {
+      let codexOfficialModels: CodexOfficialModel[]
+      let codexOfficialError: string | null
+      let codexAuthConfigured: boolean
+      try {
+        await ensureStatus()
+        const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
+          requestLocalCodexOfficialModels(request).then(
+            value => ({ value, error: null }),
+            error => ({
+              value: null,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          ),
+          loadLocalCodexAuthConfigured(request),
+        ])
+        codexOfficialModels = codexOfficialResult.value?.models ?? []
+        codexOfficialError = codexOfficialResult.error
+        codexAuthConfigured = nextCodexAuthConfigured
+      } catch (error) {
+        codexOfficialModels = []
+        codexOfficialError = error instanceof Error ? error.message : String(error)
+        codexAuthConfigured = false
+      }
+      return {
+        data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
+      }
+    },
+  }
 
   return {
-    teamApi: {
-      listTeams: async () => [LOCAL_WORKBENCH_TEAM],
-      getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
-    },
-    modelApi: {
-      listModels: async () => {
-        let codexOfficialModels: CodexOfficialModel[]
-        let codexOfficialError: string | null
-        let codexAuthConfigured: boolean
-        try {
-          await ensureStatus()
-          const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
-            requestLocalCodexOfficialModels(request).then(
-              value => ({ value, error: null }),
-              error => ({
-                value: null,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            ),
-            loadLocalCodexAuthConfigured(request),
-          ])
-          codexOfficialModels = codexOfficialResult.value?.models ?? []
-          codexOfficialError = codexOfficialResult.error
-          codexAuthConfigured = nextCodexAuthConfigured
-        } catch (error) {
-          codexOfficialModels = []
-          codexOfficialError = error instanceof Error ? error.message : String(error)
-          codexAuthConfigured = false
-        }
-        return {
-          data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
-        }
-      },
-    },
+    teamApi,
+    modelApi,
     skillApi: {
       listSkills: async () => [],
       getTeamSkills: async () => ({ skills: [], preload_skills: [] }),
@@ -2124,7 +3260,47 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       revertTurnFileChanges: () => cloudConnectionRequired('revertTurnFileChanges'),
     },
     deviceApi,
+    deliveryApi,
+    externalIssueApi,
+    localProjectChatAgentApi,
+    localLoopItemExecutionApi,
+    localHarnessModelApi: {
+      async resolveLaunch(harnessId: LocalHarnessId, option: LocalHarnessModelOption | null) {
+        if (!option) return null
+        await ensureStatus()
+        const registration = await request<HarnessProxyRegistration>(
+          'runtime.harness_proxy.register',
+          {
+            scope: `harness:${harnessId}:${crypto.randomUUID()}`,
+            upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
+          }
+        )
+        return harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+      },
+      async unregisterProxy(token: string) {
+        await request('runtime.harness_proxy.unregister', { token })
+      },
+    },
+    localProjectChatClient,
+    aitableApi,
+    dwsApi,
+    projectSpaceApis: {
+      local: deliveryApi,
+      defaultLocation: 'local',
+    },
+    projectSpaceDetailServices: {
+      local: {
+        deliveryApi,
+        projectChatClient: localProjectChatClient,
+        projectChatAgentApi: localProjectChatAgentApi,
+        loopItemExecutionApi: localLoopItemExecutionApi,
+        deviceApi,
+        modelApi,
+        teamApi,
+      },
+    },
     runtimeWorkApi,
+    automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({
       transportKind: 'local-ipc',
@@ -2141,6 +3317,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       uploadRuntimeAuthJson: () => cloudConnectionRequired('uploadRuntimeAuthJson'),
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
-    chatStream: createLocalChatStream({ subscribe, request }),
+    chatStream: createRuntimeChatStream({ subscribe, request }),
   } as unknown as WorkbenchServices
 }

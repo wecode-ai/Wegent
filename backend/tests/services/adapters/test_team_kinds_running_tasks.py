@@ -5,10 +5,12 @@
 from datetime import datetime
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
+from app.models.marketplace_resource import MarketplaceResource
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.adapters.team_kinds import team_kinds_service
@@ -136,7 +138,7 @@ def test_check_running_tasks_ignores_other_users_default_team_tasks(
 
 @pytest.mark.integration
 def test_delete_with_user_allows_deleting_default_team_when_only_other_user_has_running_task(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, monkeypatch
 ):
     owner_team = _create_team(test_db, user_id=test_user.id, team_name="deletable-team")
     other_user = _create_user(test_db, "anotheruser", "another@example.com")
@@ -151,10 +153,60 @@ def test_delete_with_user_allows_deleting_default_team_when_only_other_user_has_
         team_owner_user_id=other_user.id,
         status="RUNNING",
     )
+    monkeypatch.setattr(
+        team_kinds_service,
+        "_get_running_tasks_for_team",
+        lambda *_args, **_kwargs: pytest.fail("delete must not scan running tasks"),
+    )
 
     team_kinds_service.delete_with_user(
-        test_db, team_id=owner_team.id, user_id=test_user.id
+        test_db,
+        team_id=owner_team.id,
+        user_id=test_user.id,
+        force=True,
+        confirm_name=owner_team.name,
     )
 
     deleted_team = test_db.query(Kind).filter(Kind.id == owner_team.id).first()
     assert deleted_team is None
+
+
+def test_delete_with_user_requires_current_technical_name(
+    test_db: Session, test_user: User
+):
+    team = _create_team(test_db, user_id=test_user.id, team_name="protected-team")
+
+    with pytest.raises(HTTPException) as exc_info:
+        team_kinds_service.delete_with_user(
+            test_db,
+            team_id=team.id,
+            user_id=test_user.id,
+            force=True,
+            confirm_name="wrong-name",
+        )
+
+    assert exc_info.value.status_code == 409
+    assert test_db.get(Kind, team.id) is not None
+
+
+def test_delete_with_user_removes_marketplace_index(test_db: Session, test_user: User):
+    team = _create_team(test_db, user_id=test_user.id, team_name="published-team")
+    test_db.add(
+        MarketplaceResource(
+            kind_id=team.id,
+            owner_user_id=test_user.id,
+            resource_type="agent",
+        )
+    )
+    test_db.commit()
+
+    team_kinds_service.delete_with_user(
+        test_db,
+        team_id=team.id,
+        user_id=test_user.id,
+        force=True,
+        confirm_name=team.name,
+    )
+
+    assert test_db.get(Kind, team.id) is None
+    assert test_db.get(MarketplaceResource, team.id) is None

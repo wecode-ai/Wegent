@@ -234,6 +234,42 @@ async def test_runtime_task_update_uses_global_im_notification_target(
 
 
 @pytest.mark.asyncio
+async def test_runtime_task_update_suppresses_global_target_while_client_is_active(
+    test_db: Session,
+    test_user,
+) -> None:
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9412,
+        channel_type="telegram",
+        sender_id="100200300",
+    )
+    await im_session_service.save_session(session)
+    await im_session_service.enable_global_notification(test_db, session=session)
+    await im_session_service.update_im_notification_presence(
+        user_id=test_user.id,
+        client_id="wework-client",
+        away=False,
+    )
+
+    result = await im_notification_dispatcher.send_runtime_task_update(
+        test_db,
+        user_id=test_user.id,
+        address={
+            "deviceId": "device-1",
+            "localTaskId": "codex-thread-1",
+        },
+        title="Native Codex task",
+        status="updated",
+        content="Foreground update",
+        source="codex_watcher",
+    )
+
+    assert result["sent"] == 0
+    assert result["results"] == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_task_update_uses_subscribed_native_codex_task(
     test_db: Session,
     test_user,
@@ -257,6 +293,11 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
         "workspacePath": "/repo/Wegent",
     }
     await im_session_service.save_session(session)
+    await im_session_service.update_im_notification_presence(
+        user_id=test_user.id,
+        client_id="wework-client",
+        away=False,
+    )
     await im_session_service.subscribe_runtime_task_notification(
         test_db,
         session=session,

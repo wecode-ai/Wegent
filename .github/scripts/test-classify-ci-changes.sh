@@ -1,0 +1,700 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+classifier="$script_dir/classify-ci-changes.sh"
+desktop_classifier="$script_dir/classify-wework-desktop-e2e.sh"
+
+assert_invalid_desktop_shards_rejected() {
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  local broken_classifier="$temp_dir/classify-wework-desktop-e2e.sh"
+  sed \
+    's/rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview/rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes/' \
+    "$desktop_classifier" > "$broken_classifier"
+  chmod +x "$broken_classifier"
+
+  if GITHUB_OUTPUT="$temp_dir/output" "$broken_classifier" --all \
+    >"$temp_dir/stdout" 2>"$temp_dir/stderr"; then
+    printf 'Desktop classifier accepted a core shard mapping with a missing segment\n' >&2
+    rm -rf "$temp_dir"
+    exit 1
+  fi
+  if ! grep -Fq 'Core segment missing from core_shards: local-file-preview' \
+    "$temp_dir/stderr"; then
+    printf 'Desktop classifier did not explain the missing core segment\n' >&2
+    cat "$temp_dir/stderr" >&2
+    rm -rf "$temp_dir"
+    exit 1
+  fi
+  rm -rf "$temp_dir"
+}
+
+assert_invalid_desktop_shards_rejected
+
+workflow_has_top_level_trigger() {
+  local workflow_path="$1"
+  local trigger="$2"
+
+  awk -v target="$trigger" '
+    function normalize_token(token) {
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", token)
+      gsub(/^\047+|\047+$/, "", token)
+      return token
+    }
+
+    function inline_has_target(value, tokens, token_count, token_index) {
+      sub(/[[:space:]]+#.*/, "", value)
+      gsub(/[\[\],]/, " ", value)
+      token_count = split(value, tokens, /[[:space:]]+/)
+      for (token_index = 1; token_index <= token_count; token_index++) {
+        if (normalize_token(tokens[token_index]) == target) return 1
+      }
+      return 0
+    }
+
+    /^[[:space:]]*(#|$)/ {
+      next
+    }
+
+    {
+      line = $0
+      if (!in_on) {
+        if (line !~ /^on:[[:space:]]*/) next
+        sub(/^on:[[:space:]]*/, "", line)
+        sub(/^[[:space:]]*#.*/, "", line)
+        if (line != "") {
+          found = inline_has_target(line)
+          exit
+        }
+        in_on = 1
+        child_indent = -1
+        next
+      }
+
+      if (line ~ /^[^[:space:]]/) exit
+
+      indentation = line
+      sub(/[^[:space:]].*$/, "", indentation)
+      indent = length(indentation)
+      if (child_indent == -1) child_indent = indent
+      if (indent != child_indent) next
+
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*/, "", line)
+      sub(/^-[[:space:]]*/, "", line)
+      sub(/:.*/, "", line)
+      if (normalize_token(line) == target) {
+        found = 1
+        exit
+      }
+    }
+
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$workflow_path"
+}
+
+assert_workflow_trigger_case() {
+  local name="$1"
+  local expected="$2"
+  local workflow="$3"
+  local actual="false"
+
+  if workflow_has_top_level_trigger <(printf '%s\n' "$workflow") "push"; then
+    actual="true"
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'Workflow trigger case "%s" failed.\n' "$name" >&2
+    exit 1
+  fi
+}
+
+extract_named_workflow_step() {
+  local workflow_path="$1"
+  local step_name="$2"
+
+  awk -v target="$step_name" '
+    found && /^      - name:/ {
+      exit
+    }
+    $0 == "      - name: " target {
+      found = 1
+    }
+    found {
+      print
+    }
+  ' "$workflow_path"
+}
+
+assert_case() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$classifier" "$@")"
+  if [[ "$output" != "$expected" ]]; then
+    printf 'Case "%s" failed.\nExpected:\n%s\nActual:\n%s\n' "$name" "$expected" "$output" >&2
+    exit 1
+  fi
+}
+
+all_false=$(
+  cat <<'EOF'
+backend=false
+executor=false
+executor_manager=false
+shared=false
+knowledge_engine=false
+frontend=false
+wework=false
+wework_rust=false
+wegent_cli=false
+platform_e2e=false
+wework_e2e=false
+EOF
+)
+
+assert_case "docs only" "$all_false" "docs/zh/index.md"
+
+wework_expected="${all_false/wework=false/wework=true}"
+wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
+assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
+
+wework_rust_expected="${wework_expected/wework_rust=false/wework_rust=true}"
+assert_case "wework Rust only" "$wework_rust_expected" \
+  "wework/src-tauri/src/lib.rs"
+
+shared_expected=$(
+  cat <<'EOF'
+backend=true
+executor=false
+executor_manager=true
+shared=true
+knowledge_engine=true
+frontend=false
+wework=false
+wework_rust=false
+wegent_cli=true
+platform_e2e=true
+wework_e2e=false
+EOF
+)
+assert_case "shared dependencies" "$shared_expected" "shared/utils/example.py"
+
+all_true="${all_false//false/true}"
+assert_case "explicit all modules" "$all_true" --all
+
+assert_case "workflow changes validate all modules" "$all_true" \
+  ".github/workflows/test.yml"
+
+assert_case "shared CI actions validate all modules" "$all_true" \
+  ".github/actions/setup-sccache/action.yml"
+
+assert_case "shared apt helper validates all modules" "$all_true" \
+  ".github/scripts/lib/apt-packages.sh"
+
+assert_case "cache policy helper validates all modules" "$all_true" \
+  ".github/scripts/lib/validate-ci-cache-policy.rb"
+
+assert_case "cache warmup classifier validates all modules" "$all_true" \
+  ".github/scripts/classify-ci-cache-warmup.sh"
+
+assert_case "cache policy changes validate all modules" "$all_true" \
+  ".github/scripts/test-ci-cache-policy.sh"
+
+assert_case "release workflow changes validate all modules" "$all_true" \
+  ".github/workflows/publish-image.yml"
+
+assert_case "cache warmup changes validate all modules" "$all_true" \
+  ".github/workflows/ci-cache-warmup.yml"
+
+assert_case "ci:all label forces all modules" "$all_true" --all
+
+platform_e2e_expected="${all_false/platform_e2e=false/platform_e2e=true}"
+assert_case "docker changes run platform E2E" "$platform_e2e_expected" \
+  "docker/docker-compose.yml"
+
+executor_dependency_expected="${platform_e2e_expected/executor=false/executor=true}"
+assert_case "executor dependency setup changes run executor and platform E2E" \
+  "$executor_dependency_expected" \
+  ".github/scripts/install-executor-rust-system-dependencies.sh"
+
+wework_e2e_expected="${all_false/wework_e2e=false/wework_e2e=true}"
+assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
+  ".github/workflows/wework-e2e.yml"
+
+assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
+  ".github/scripts/archive-wework-core-e2e-build.sh"
+
+assert_case "Wework dependency setup runs Wework E2E" "$wework_e2e_expected" \
+  ".github/scripts/install-wework-tauri-system-dependencies.sh"
+
+assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
+  "docker/wework-e2e/desktop.Dockerfile"
+
+assert_desktop_case() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  if [[ "$expected" != *"wework_desktop_cloud_e2e="* ]]; then
+    local cloud_defaults
+    cloud_defaults='wework_desktop_cloud_e2e=false
+wework_desktop_cloud_e2e_matrix={"include":[]}
+wework_desktop_other_e2e='
+    expected="${expected/wework_desktop_other_e2e=/$cloud_defaults}"
+  fi
+  local output
+  output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
+  if [[ "$output" != "$expected" ]]; then
+    printf 'Desktop case "%s" failed.\nExpected:\n%s\nActual:\n%s\n' \
+      "$name" "$expected" "$output" >&2
+    exit 1
+  fi
+}
+
+assert_desktop_case "conversation cache selects guidance and conversation segments" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeConversationCache.ts"
+
+assert_desktop_case "independent features select the union of minimum segments" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"goal-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/lib/runtime-goal.ts" \
+  "wework/src/components/chat/blocks/ToolBlockItem.tsx"
+
+assert_desktop_case "runner coverage does not broaden a classified feature" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/task-flow.e2e.mjs" \
+  "wework/src/components/chat/MessageList.tsx"
+
+assert_desktop_case "turn lifecycle changes select supervisor and resilience coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"resilience,supervisor-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeTaskLifecycle/reducer.ts"
+
+assert_desktop_case "runtime pane events select supervisor and conversation coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"conversation-state"},{"id":"core-4","name":"Core / shard 4","segments":"supervisor-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimePaneMessages.ts"
+
+assert_desktop_case "temporary chat files select temporary chat coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"temporary-chat"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx"
+
+full_desktop_expected='wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"model-routing,embedded-browser,claude-runtime,local-harness"},{"id":"core-3","name":"Core / shard 3","segments":"window-lifecycle,conversation-state,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,permission-modes,local-file-preview"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,embedded-browser,telemetry-consent"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle,conversation-state,browser-multi-tabs"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}'
+
+assert_desktop_case "runner-only changes retain full coverage" \
+  "$full_desktop_expected" \
+  "wework/e2e/desktop/task-flow.e2e.mjs"
+
+assert_desktop_case "embedded browser files select embedded browser coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"embedded-browser"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/lib/browser-url.ts"
+
+assert_desktop_case "local harness files select local harness coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"claude-runtime,local-harness"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/lib/local-harness.ts"
+
+assert_desktop_case "Claude runtime messaging selects task and Claude coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"claude-runtime"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/useWorkbenchRuntimeMessaging.ts"
+
+assert_desktop_case "local file preview files select the shared preview checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"local-file-preview"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/layout/workspace-panels/WorkspaceFilePreview.tsx"
+
+assert_desktop_case "Core artifact changes retain full coverage" \
+  "$full_desktop_expected" \
+  ".github/scripts/archive-wework-core-e2e-build.sh"
+
+assert_desktop_case "skill mention files select plugin and core coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-skill-mention-rendering","name":"Plugins / skill-mention-rendering","command":"e2e:desktop:plugins","segment":"skill-mention-rendering"}]}' \
+  "wework/src/components/chat/composer/ComposerMentionMenu.tsx"
+
+assert_desktop_case "model settings select task launch and model routing coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"model-routing"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/model-settings/localModelSettings.ts"
+
+assert_desktop_case "automation files select only automation lifecycle coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"automation-lifecycle"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/automations/AutomationDetailWorkspace.tsx"
+
+assert_desktop_case "project automation files select lifecycle and project coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"automation-lifecycle,project-automation"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/todo/ProjectAutomationRulesSection.tsx"
+
+assert_desktop_case "browser E2E changes avoid desktop jobs" \
+  'wework_desktop_e2e=false
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/tests/workbench.spec.ts"
+
+assert_desktop_case "cloud files select only the cloud suite" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,embedded-browser,telemetry-consent"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"window-lifecycle,conversation-state,browser-multi-tabs"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,goal-lifecycle,supervisor-lifecycle"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle,project-automation,plugin-auto-update"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/cloud-connection/CloudConnectionProvider.tsx"
+
+assert_desktop_case "plugin files select only their plugin segment" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-plugin-lifecycle","name":"Plugins / plugin-lifecycle","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
+  "wework/src/components/plugins/PluginsWorkspace.tsx"
+
+assert_desktop_case "desktop sidebar selects all owned checkpoints" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"workspace-attachments,priority-filter"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/layout/DesktopSidebar.tsx"
+
+assert_desktop_case "priority section selects only its dedicated checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"priority-filter"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/components/layout/DesktopSidebarPrioritySection.tsx"
+
+assert_desktop_case "shared desktop infrastructure remains full coverage" \
+  "$full_desktop_expected" \
+  "wework/src/App.tsx"
+
+test_workflow="$script_dir/../workflows/test.yml"
+if ! sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$test_workflow" |
+  grep -q -- "- labeled"; then
+  printf 'test.yml must run when the ci:all label is applied\n' >&2
+  exit 1
+fi
+
+if ! grep -q "ci:all" "$test_workflow"; then
+  printf 'test.yml must force all module tests for the ci:all label\n' >&2
+  exit 1
+fi
+
+for workflow in e2e-tests.yml wework-e2e.yml; do
+  workflow_path="$script_dir/../workflows/$workflow"
+  pull_request_config="$(
+    sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$workflow_path"
+  )"
+  if ! grep -q "ready_for_review" <<<"$pull_request_config"; then
+    printf '%s must run E2E when a draft PR becomes ready for review\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "labeled" <<<"$pull_request_config"; then
+    printf '%s must run when the ci:all label is applied\n' "$workflow" >&2
+    exit 1
+  fi
+  if grep -q "paths:" <<<"$pull_request_config"; then
+    printf '%s must not path-filter ci:all label events\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "ci:all" "$workflow_path"; then
+    printf '%s must force E2E for the ci:all label\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "merge_group:" "$workflow_path"; then
+    printf '%s must run for merge queue groups\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "checks_requested" "$workflow_path"; then
+    printf '%s must limit merge group runs to checks_requested\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -Fq \
+    "FORCE_ALL: \${{ github.event_name != 'pull_request'" \
+    "$workflow_path"; then
+    printf '%s must force all E2E outside pull request events\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+done
+
+for workflow in test.yml lint.yml; do
+  workflow_path="$script_dir/../workflows/$workflow"
+  if ! grep -q "classify-ci-changes.sh --all" "$workflow_path"; then
+    printf '%s must classify every module for merge groups\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "merge_group:" "$workflow_path"; then
+    printf '%s must run for merge queue groups\n' "$workflow" >&2
+    exit 1
+  fi
+  if ! grep -q "GITHUB_EVENT_NAME.*merge_group\\|github.event_name == 'merge_group'" \
+    "$workflow_path"; then
+    printf '%s must classify every module for merge groups\n' "$workflow" >&2
+    exit 1
+  fi
+done
+
+assert_workflow_trigger_case "block mapping push trigger" "true" $'on:\n  push:\n  pull_request:'
+assert_workflow_trigger_case "block mapping with on comment" "true" $'on: # workflow triggers\n  push:\n  pull_request:'
+assert_workflow_trigger_case "block sequence push trigger" "true" $'on:\n  - push\n  - pull_request'
+assert_workflow_trigger_case "inline scalar push trigger" "true" "on: push"
+assert_workflow_trigger_case "inline array push trigger" "true" "on: [push, pull_request]"
+assert_workflow_trigger_case "push job is not a trigger" "false" $'on: pull_request\njobs:\n  push:\n    runs-on: ubuntu-latest'
+
+for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
+  workflow_path="$script_dir/../workflows/$workflow"
+  if workflow_has_top_level_trigger "$workflow_path" "push"; then
+    printf '%s must not repeat merge queue validation after entering main\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  # GitHub expressions are matched literally in workflow source.
+  # shellcheck disable=SC2016
+  if ! grep -Fq 'git diff --name-only "$BASE_SHA...$HEAD_SHA"' "$workflow_path"; then
+    printf '%s must classify pull request changes from the merge base\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+done
+
+wework_workflow="$script_dir/../workflows/wework-e2e.yml"
+if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
+  printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2
+  exit 1
+fi
+
+if ! grep -q "github.event.label.name || 'code'" "$wework_workflow"; then
+  printf 'Wework label events must not cancel code-change E2E runs\n' >&2
+  exit 1
+fi
+
+if ! grep -q "name: Platform E2E Summary" \
+  "$script_dir/../workflows/e2e-tests.yml"; then
+  printf 'Platform E2E must expose a stable summary check\n' >&2
+  exit 1
+fi
+
+if ! grep -q "name: Wework E2E Summary" "$wework_workflow"; then
+  printf 'Wework E2E must expose a stable summary check\n' >&2
+  exit 1
+fi
+
+if ! grep -q "wework_desktop_core_e2e_matrix" "$wework_workflow" ||
+  ! grep -q "wework_desktop_other_e2e_matrix" "$wework_workflow"; then
+  printf 'Wework desktop E2E must use the split changed-feature matrices\n' >&2
+  exit 1
+fi
+
+core_cache_step="$(
+  extract_named_workflow_step \
+    <(sed -n \
+      '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
+      "$wework_workflow") \
+    "Restore shared Wework desktop E2E Cargo dependencies"
+)"
+desktop_cache_step="$(
+  extract_named_workflow_step \
+    <(sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' \
+      "$wework_workflow") \
+    "Restore shared Wework desktop E2E Cargo dependencies"
+)"
+core_cache_key="$(
+  sed -n 's/^          key:[[:space:]]*//p' <<<"$core_cache_step"
+)"
+desktop_cache_key="$(
+  sed -n 's/^          key:[[:space:]]*//p' <<<"$desktop_cache_step"
+)"
+core_cache_restore_keys="$(
+  awk '
+    /^          restore-keys:/ {
+      in_restore_keys = 1
+      next
+    }
+    in_restore_keys && /^          [[:alnum:]_-]+:/ {
+      exit
+    }
+    in_restore_keys {
+      print
+    }
+  ' <<<"$core_cache_step"
+)"
+desktop_cache_restore_keys="$(
+  awk '
+    /^          restore-keys:/ {
+      in_restore_keys = 1
+      next
+    }
+    in_restore_keys && /^          [[:alnum:]_-]+:/ {
+      exit
+    }
+    in_restore_keys {
+      print
+    }
+  ' <<<"$desktop_cache_step"
+)"
+if [[ "$(grep -c \
+  "name: Restore shared Wework desktop E2E Cargo dependencies" \
+  "$wework_workflow")" -ne 2 ]]; then
+  printf 'Wework desktop E2E build jobs must restore the shared Cargo cache\n' >&2
+  exit 1
+fi
+
+if [[ "$core_cache_key" != "$desktop_cache_key" ]] ||
+  [[ "$core_cache_restore_keys" != "$desktop_cache_restore_keys" ]]; then
+  printf 'Wework desktop E2E build jobs must share one Cargo cache key\n' >&2
+  exit 1
+fi
+
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v3-' \
+  <<<"$desktop_cache_key" ||
+  ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
+    <<<"$desktop_cache_key" ||
+  grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_key"; then
+  printf 'Wework desktop E2E Cargo cache key must follow the desktop image\n' >&2
+  exit 1
+fi
+
+desktop_cache_save_step="$(
+  extract_named_workflow_step \
+    "$wework_workflow" \
+    "Save shared Wework desktop E2E Cargo dependencies"
+)"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if [[ "$(grep -c \
+  "name: Save shared Wework desktop E2E Cargo dependencies" \
+  "$wework_workflow")" -ne 1 ]] ||
+  ! grep -Fq "if: github.ref == 'refs/heads/main'" \
+    <<<"$desktop_cache_save_step" ||
+  ! grep -Fq \
+    'key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}' \
+    <<<"$desktop_cache_save_step"; then
+  printf 'Only main may save the shared Wework desktop E2E Cargo cache\n' >&2
+  exit 1
+fi
+
+wework_browser_job="$(
+  sed -n '/^  wework-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
+)"
+if ! grep -q "needs.changes.outputs.wework_e2e == 'true'" <<<"$wework_browser_job"; then
+  printf 'Wework browser E2E must use the broad Wework change classification\n' >&2
+  exit 1
+fi
+
+wework_desktop_job="$(
+  sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' "$wework_workflow"
+)"
+if ! grep -q \
+  "needs.changes.outputs.wework_desktop_other_e2e == 'true'" \
+  <<<"$wework_desktop_job"; then
+  printf 'Wework non-Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+
+wework_desktop_cloud_job="$(
+  sed -n '/^  wework-desktop-cloud-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
+)"
+if ! grep -q \
+  "needs.changes.outputs.wework_desktop_cloud_e2e == 'true'" \
+  <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix)" \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq -- "--parallel-segments" <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq 'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"' \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq 'WEWORK_E2E_ISOLATED_XVFB: "true"' \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "name: Download shared Wework desktop E2E build" \
+    <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "WEWORK_E2E_APP_BIN:" <<<"$wework_desktop_cloud_job" ||
+  ! grep -Fq "WEWORK_E2E_EXECUTOR_BIN:" <<<"$wework_desktop_cloud_job"; then
+  printf 'Wework Cloud desktop E2E must use five prebuilt shards with local parallelism\n' >&2
+  exit 1
+fi
+
+wework_desktop_core_job="$(
+  sed -n '/^  wework-desktop-core-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
+)"
+if ! grep -q \
+  "needs.changes.outputs.wework_desktop_core_e2e == 'true'" \
+  <<<"$wework_desktop_core_job"; then
+  printf 'Wework Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+
+if ! grep -q "github.event_name != 'merge_group'" "$wework_workflow"; then
+  printf 'Wework memory E2E must remain outside regular merge groups\n' >&2
+  exit 1
+fi
+
+printf 'CI change classifier tests passed\n'

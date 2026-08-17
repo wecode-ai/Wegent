@@ -22,6 +22,7 @@ fn response_created_event_matches_callback_envelope_contract() {
             message_id: None,
             executor_name: Some("executor-1".to_owned()),
             executor_namespace: Some("default".to_owned()),
+            validation_id: None,
             data: json!({
                 "type": "response.created",
                 "shell_type": "ClaudeCode",
@@ -36,6 +37,18 @@ fn response_created_event_matches_callback_envelope_contract() {
             })
         }
     );
+}
+
+#[test]
+fn callback_events_include_validation_id() {
+    let builder = ResponsesEventBuilder::new("1", "2", "ImageValidator")
+        .with_validation_id(Some("validation-1"));
+
+    let completed = builder.response_completed("{}");
+    let error = builder.error("failed", "runtime_error");
+
+    assert_eq!(completed.validation_id.as_deref(), Some("validation-1"));
+    assert_eq!(error.validation_id.as_deref(), Some("validation-1"));
 }
 
 #[test]

@@ -26,7 +26,7 @@ pub async fn fetch_task_skills(
     auth_token: &str,
 ) -> Result<TaskSkillsInfo, String> {
     let url = format!(
-        "{}/api/v1/tasks/{}/skills",
+        "{}/api/tasks/{}/skills",
         api_base_url.trim_end_matches('/'),
         task_id.trim()
     );

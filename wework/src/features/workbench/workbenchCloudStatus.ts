@@ -5,6 +5,7 @@ import {
   isCloudDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
+import { raceWithTimeout } from '@/lib/promise-timeout'
 import type {
   DeviceInfo,
   DeviceRuntimeRoute,
@@ -15,6 +16,10 @@ import type {
   RuntimeWorkListResponse,
   Team,
 } from '@/types/api'
+import {
+  normalizeRuntimeTaskSummary,
+  shouldReplaceRuntimeTaskProjection,
+} from './runtimeTaskLifecycle/projection'
 import type {
   CloudRuntimeSnapshot,
   CloudRuntimeState,
@@ -102,6 +107,46 @@ function cloneChecks(
   }
 }
 
+function resetSyncingChecks(
+  checks: Record<CloudWorkCheckKey, SyncCheckState>,
+  previous: CloudRuntimeSnapshot | null
+): Record<CloudWorkCheckKey, SyncCheckState> {
+  const next = cloneChecks(checks)
+  ;(Object.keys(next) as CloudWorkCheckKey[]).forEach(key => {
+    if (next[key].status === 'syncing') {
+      next[key] = previous?.checks[key] ?? EMPTY_SYNC_CHECKS[key]
+    }
+  })
+  return next
+}
+
+export function abandonCloudRuntimeSync(
+  state: CloudRuntimeState,
+  revision: number
+): CloudRuntimeState {
+  if (state.inFlightRevision !== revision) return state
+  return {
+    ...state,
+    availability: state.lastGood ? 'stale' : 'idle',
+    inFlightRevision: null,
+    current: state.current
+      ? { ...state.current, checks: resetSyncingChecks(state.current.checks, state.lastGood) }
+      : state.current,
+  }
+}
+
+export function clearCloudRuntimeSync(state: CloudRuntimeState): CloudRuntimeState {
+  if (state.inFlightRevision == null) return state
+  return {
+    ...state,
+    availability: state.lastGood ? 'stale' : 'idle',
+    inFlightRevision: null,
+    current: state.current
+      ? { ...state.current, checks: resetSyncingChecks(state.current.checks, state.lastGood) }
+      : state.current,
+  }
+}
+
 function syncCheckResult<T>(
   result: PromiseSettledResult<T> | undefined,
   previous: SyncCheckState,
@@ -175,6 +220,10 @@ function cloudWorkErrorMessage(
   return `${label}: ${String(result.reason || 'failed')}`
 }
 
+function hasCompletedCloudRuntimeSync(snapshot: CloudRuntimeSnapshot | null): boolean {
+  return snapshot?.fetchedAt != null
+}
+
 export function startCloudRuntimeSync(
   state: CloudRuntimeState,
   trigger: CloudSyncTrigger,
@@ -182,22 +231,21 @@ export function startCloudRuntimeSync(
 ): CloudRuntimeState {
   const revision = state.nextRevision
   const current = state.current ?? state.lastGood ?? createBaseCloudSnapshot(revision)
-  const checks = cloneChecks(current.checks)
-  keys.forEach(key => {
-    checks[key] = {
-      status: 'syncing',
-      updatedAt: new Date().toISOString(),
-      error: null,
-    }
-  })
+  const isInitialSync = !hasCompletedCloudRuntimeSync(state.current)
+  const checks = isInitialSync ? cloneChecks(current.checks) : current.checks
+  if (isInitialSync) {
+    keys.forEach(key => {
+      checks[key] = {
+        status: 'syncing',
+        updatedAt: new Date().toISOString(),
+        error: null,
+      }
+    })
+  }
   return {
     ...state,
     availability: 'syncing',
-    current: {
-      ...current,
-      revision,
-      checks,
-    },
+    current: isInitialSync ? { ...current, revision, checks } : current,
     inFlightRevision: revision,
     lastTrigger: trigger,
     nextRevision: revision + 1,
@@ -271,10 +319,7 @@ export function selectCloudRuntimeSnapshot(state: CloudRuntimeState): CloudRunti
 }
 
 export function selectCloudWorkStatus(state: CloudRuntimeState): CloudWorkStatus {
-  const snapshot =
-    state.inFlightRevision != null && state.lastGood
-      ? state.lastGood
-      : (state.current ?? state.lastGood)
+  const snapshot = state.current
   if (!snapshot) return EMPTY_CLOUD_WORK_STATUS
   const checks = {
     teams: cloudRuntimeCheckToLegacyStatus(snapshot.checks.teams.status),
@@ -318,6 +363,62 @@ export function selectRuntimeWorkView(
     : localRuntimeWork
 }
 
+function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
+  return workspace.workspaceSource === 'remote' || Boolean(workspace.remoteHostId)
+}
+
+function isRemoteRuntimeProject(project: RuntimeProjectWork): boolean {
+  return (
+    project.project.kind === 'remote' ||
+    project.project.source === 'remote_project' ||
+    (project.deviceWorkspaces.length > 0 &&
+      project.deviceWorkspaces.every(isRemoteRuntimeWorkspace))
+  )
+}
+
+export function filterDisconnectedRemoteRuntimeWork(
+  runtimeWork: RuntimeWorkListResponse
+): RuntimeWorkListResponse {
+  let changed = false
+  const projects = runtimeWork.projects.flatMap(project => {
+    if (isRemoteRuntimeProject(project)) {
+      changed = true
+      return []
+    }
+
+    const deviceWorkspaces = project.deviceWorkspaces.filter(
+      workspace => !isRemoteRuntimeWorkspace(workspace)
+    )
+    if (deviceWorkspaces.length === project.deviceWorkspaces.length) {
+      return [project]
+    }
+
+    changed = true
+    if (deviceWorkspaces.length === 0) return []
+    return [
+      {
+        ...project,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      },
+    ]
+  })
+  const chats = runtimeWork.chats.filter(workspace => !isRemoteRuntimeWorkspace(workspace))
+  if (chats.length !== runtimeWork.chats.length) changed = true
+  if (!changed) return runtimeWork
+
+  return {
+    ...runtimeWork,
+    projects,
+    chats,
+    totalTasks:
+      projects.reduce(
+        (total, project) => total + countWorkspaceTasks(project.deviceWorkspaces),
+        0
+      ) + countWorkspaceTasks(chats),
+  }
+}
+
 export function createDeviceResolver(input: {
   localDevices: DeviceInfo[]
   cloudState: CloudRuntimeState
@@ -356,47 +457,6 @@ function resolveDeviceSource(device: DeviceInfo): DeviceRoute['source'] {
   return 'local'
 }
 
-export function startCloudWorkSync(keys: CloudWorkCheckKey[]): CloudWorkStatus {
-  const checks = { ...EMPTY_CLOUD_WORK_STATUS.checks }
-  keys.forEach(key => {
-    checks[key] = 'syncing'
-  })
-  return {
-    availability: cloudWorkAvailability(checks),
-    checks,
-    error: null,
-    updatedAt: new Date().toISOString(),
-  }
-}
-
-export function finishCloudWorkCheck(
-  current: CloudWorkStatus,
-  key: CloudWorkCheckKey,
-  label: string,
-  result: PromiseSettledResult<unknown>,
-  options?: {
-    isEmpty?: (value: unknown) => boolean
-  }
-): CloudWorkStatus {
-  const status =
-    result.status === 'rejected'
-      ? 'unavailable'
-      : options?.isEmpty?.(result.value)
-        ? 'empty'
-        : 'available'
-  const checks = {
-    ...current.checks,
-    [key]: status,
-  }
-  const nextError = cloudWorkErrorMessage(label, result)
-  return {
-    availability: cloudWorkAvailability(checks),
-    checks,
-    error: nextError ?? (status === 'available' || status === 'empty' ? current.error : null),
-    updatedAt: new Date().toISOString(),
-  }
-}
-
 export function readCachedDeviceList(): DeviceInfo[] {
   try {
     const value = window.sessionStorage.getItem(DEVICE_LIST_CACHE_KEY)
@@ -425,11 +485,23 @@ function writeCachedDeviceList(devices: DeviceInfo[]) {
   }
 }
 
-export function resolveDeviceListWithCache(devices: DeviceInfo[]): DeviceInfo[] {
+export function resolveDeviceListWithCache(
+  devices: DeviceInfo[],
+  options: { useCacheFallback?: boolean } = {}
+): DeviceInfo[] {
   const claudeCodeDevices = filterClaudeCodeDevices(devices)
   if (claudeCodeDevices.length > 0) {
     writeCachedDeviceList(claudeCodeDevices)
     return claudeCodeDevices
+  }
+
+  if (options.useCacheFallback === false) {
+    try {
+      window.sessionStorage.removeItem(DEVICE_LIST_CACHE_KEY)
+    } catch {
+      // The authoritative empty result still applies when storage is unavailable.
+    }
+    return devices
   }
 
   const cachedDevices = readCachedDeviceList()
@@ -486,7 +558,7 @@ function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): D
 }
 
 function preferDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
-  return deviceRoutePriority(incoming) < deviceRoutePriority(existing) ? incoming : existing
+  return deviceRoutePriority(incoming) <= deviceRoutePriority(existing) ? incoming : existing
 }
 
 function deviceRoutePriority(device: DeviceInfo): number {
@@ -553,20 +625,14 @@ export function mergeRuntimeWorkLists(
   secondaryWork: RuntimeWorkListResponse,
   context: RuntimeWorkMergeContext = {}
 ): RuntimeWorkListResponse {
-  const taskOwners = new Map<string, string>()
   const canonicalizer = createRuntimeWorkDeviceCanonicalizer(context.devices ?? [])
-  const projects = mergeRuntimeProjects(
+  const mergedProjects = mergeRuntimeProjects(
     primaryWork.projects,
     secondaryWork.projects,
-    taskOwners,
     canonicalizer
   )
-  const chats = mergeRuntimeWorkspaces(
-    primaryWork.chats,
-    secondaryWork.chats,
-    taskOwners,
-    canonicalizer
-  )
+  const mergedChats = mergeRuntimeWorkspaces(primaryWork.chats, secondaryWork.chats, canonicalizer)
+  const { projects, chats } = dedupeRuntimeTaskProjections(mergedProjects, mergedChats)
   const totalTasks =
     projects.reduce((total, project) => total + countWorkspaceTasks(project.deviceWorkspaces), 0) +
     countWorkspaceTasks(chats)
@@ -581,45 +647,99 @@ export function mergeRuntimeWorkLists(
 function mergeRuntimeProjects(
   primaryProjects: RuntimeProjectWork[],
   secondaryProjects: RuntimeProjectWork[],
-  taskOwners: Map<string, string>,
   canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeProjectWork[] {
   const projects = new Map<string, RuntimeProjectWork>()
+  const remoteProjectAliases = new Map<string, string>()
+  const workspaceProjectAliases = new Map<string, string>()
 
   const upsertProject = (project: RuntimeProjectWork) => {
     const normalizedProject: RuntimeProjectWork = {
       ...project,
-      deviceWorkspaces: mergeRuntimeWorkspaces(
-        [],
-        project.deviceWorkspaces,
-        taskOwners,
-        canonicalizer
-      ),
+      deviceWorkspaces: mergeRuntimeWorkspaces([], project.deviceWorkspaces, canonicalizer),
     }
     normalizedProject.totalTasks = countWorkspaceTasks(normalizedProject.deviceWorkspaces)
 
-    const key = runtimeProjectKey(normalizedProject)
+    const defaultKey = runtimeProjectKey(normalizedProject)
+    const workspaceIdentity = normalizedProject.deviceWorkspaces
+      .map(runtimeWorkspaceRouteIdentity)
+      .find(identity => workspaceProjectAliases.has(identity))
+    const remoteIdentity = normalizedProject.deviceWorkspaces
+      .map(runtimeRemoteWorkspaceIdentity)
+      .find(identity => remoteProjectAliases.has(identity))
+    const key = workspaceIdentity
+      ? (workspaceProjectAliases.get(workspaceIdentity) ?? defaultKey)
+      : remoteIdentity
+        ? (remoteProjectAliases.get(remoteIdentity) ?? defaultKey)
+        : defaultKey
+    if (isRuntimeRemoteProjectDescriptor(normalizedProject)) {
+      normalizedProject.deviceWorkspaces.forEach(workspace => {
+        remoteProjectAliases.set(runtimeRemoteWorkspaceIdentity(workspace), key)
+      })
+    }
     const existing = projects.get(key)
     if (!existing) {
-      projects.set(key, normalizedProject)
+      const deviceWorkspaces = mergeRuntimeWorkspaces(
+        [],
+        normalizedProject.deviceWorkspaces,
+        canonicalizer
+      )
+      const registeredProject = {
+        ...normalizedProject,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      }
+      projects.set(key, registeredProject)
+      deviceWorkspaces.forEach(workspace => {
+        workspaceProjectAliases.set(runtimeWorkspaceRouteIdentity(workspace), key)
+      })
       return
     }
 
+    const existingIsRemoteDescriptor = isRuntimeRemoteProjectDescriptor(existing)
+    const incomingIsRemoteDescriptor = isRuntimeRemoteProjectDescriptor(normalizedProject)
+    const incomingWorkspaces = existingIsRemoteDescriptor
+      ? normalizedProject.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          workspaceSource: 'remote',
+          remoteHostId: workspace.remoteHostId ?? workspace.deviceId,
+        }))
+      : normalizedProject.deviceWorkspaces
     const deviceWorkspaces = mergeRuntimeWorkspaces(
-      existing.deviceWorkspaces,
-      normalizedProject.deviceWorkspaces,
-      taskOwners,
+      existingIsRemoteDescriptor && !incomingIsRemoteDescriptor ? [] : existing.deviceWorkspaces,
+      incomingWorkspaces,
       canonicalizer
     )
-    projects.set(key, {
+    const projectRef =
+      existingIsRemoteDescriptor && !incomingIsRemoteDescriptor
+        ? {
+            ...existing.project,
+            ...normalizedProject.project,
+            key: normalizedProject.project.key,
+            sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
+            stateDeviceId: existing.project.stateDeviceId,
+            kind: 'remote',
+            source: 'remote_project',
+            name: existing.project.name,
+            pinned: existing.project.pinned,
+            pinnedOrder: existing.project.pinnedOrder,
+            active: existing.project.active,
+            appearance: existing.project.appearance,
+          }
+        : {
+            ...normalizedProject.project,
+            ...existing.project,
+          }
+    const mergedProject = {
       ...existing,
       ...normalizedProject,
-      project: {
-        ...normalizedProject.project,
-        ...existing.project,
-      },
+      project: projectRef,
       deviceWorkspaces,
       totalTasks: countWorkspaceTasks(deviceWorkspaces),
+    }
+    projects.set(key, mergedProject)
+    deviceWorkspaces.forEach(workspace => {
+      workspaceProjectAliases.set(runtimeWorkspaceRouteIdentity(workspace), key)
     })
   }
 
@@ -629,38 +749,57 @@ function mergeRuntimeProjects(
   return Array.from(projects.values())
 }
 
+function isRuntimeRemoteProjectDescriptor(project: RuntimeProjectWork): boolean {
+  return project.project.source === 'remote_project' && Boolean(project.project.sidebarStateKey)
+}
+
+function runtimeRemoteWorkspaceIdentity(workspace: RuntimeDeviceWorkspace): string {
+  const normalizedPath = workspace.workspacePath.trim().replace(/\/+$/u, '') || '/'
+  return `${workspace.remoteHostId ?? workspace.deviceId}\0${normalizedPath}`
+}
+
+function runtimeWorkspaceRouteIdentity(workspace: RuntimeDeviceWorkspace): string {
+  const normalizedPath = workspace.workspacePath.trim().replace(/\/+$/u, '') || '/'
+  return [
+    workspace.deviceId,
+    normalizedPath,
+    workspace.workspaceKind ?? '',
+    workspace.worktreeId ?? '',
+  ].join('\0')
+}
+
 function mergeRuntimeWorkspaces(
   primaryWorkspaces: RuntimeDeviceWorkspace[],
   secondaryWorkspaces: RuntimeDeviceWorkspace[],
-  taskOwners: Map<string, string>,
   canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeDeviceWorkspace[] {
   const workspaces = new Map<
     string,
     { workspace: RuntimeDeviceWorkspace; inputTaskCount: number }
   >()
+  const workspaceRouteAliases = new Map<string, string>()
 
   const upsertWorkspace = (workspace: RuntimeDeviceWorkspace) => {
     const canonicalWorkspace = canonicalizeRuntimeWorkspace(workspace, canonicalizer)
-    const key = runtimeWorkspaceKey(canonicalWorkspace)
+    const routeIdentity = runtimeWorkspaceRouteIdentity(canonicalWorkspace)
+    const key = workspaceRouteAliases.get(routeIdentity) ?? runtimeWorkspaceKey(canonicalWorkspace)
     const existingEntry = workspaces.get(key)
     const existing = existingEntry?.workspace
-    const tasks = mergeRuntimeTasks(
-      existing?.tasks ?? [],
-      canonicalWorkspace.tasks,
-      canonicalWorkspace,
-      key,
-      taskOwners
-    )
+    const tasks = mergeRuntimeTasks(existing?.tasks ?? [], canonicalWorkspace.tasks)
     workspaces.set(key, {
       workspace: {
         ...canonicalWorkspace,
         ...(existing ?? {}),
+        deviceName:
+          existing?.workspaceSource === 'remote' && canonicalWorkspace.workspaceSource === 'remote'
+            ? (canonicalWorkspace.deviceName ?? existing.deviceName)
+            : (existing?.deviceName ?? canonicalWorkspace.deviceName),
         available: (existing?.available ?? false) || canonicalWorkspace.available,
         tasks,
       },
       inputTaskCount: (existingEntry?.inputTaskCount ?? 0) + canonicalWorkspace.tasks.length,
     })
+    workspaceRouteAliases.set(routeIdentity, key)
   }
 
   primaryWorkspaces.forEach(upsertWorkspace)
@@ -732,25 +871,98 @@ function isRuntimeWorkspaceDeviceAvailable(device: DeviceInfo): boolean {
 
 function mergeRuntimeTasks(
   primaryTasks: RuntimeTaskSummary[],
-  secondaryTasks: RuntimeTaskSummary[],
-  workspace: RuntimeDeviceWorkspace,
-  workspaceKey: string,
-  taskOwners: Map<string, string>
+  secondaryTasks: RuntimeTaskSummary[]
 ): RuntimeTaskSummary[] {
   const tasks = new Map<string, RuntimeTaskSummary>()
 
   const upsertTask = (task: RuntimeTaskSummary) => {
-    const key = runtimeTaskKey(workspace, task)
-    const owner = taskOwners.get(key)
-    if (owner && owner !== workspaceKey) return
-    taskOwners.set(key, workspaceKey)
-    tasks.set(task.taskId, task)
+    const candidate = normalizeRuntimeTaskSummary(task)
+    const current = tasks.get(candidate.taskId)
+    if (!current || shouldReplaceRuntimeTaskProjection(current, candidate)) {
+      tasks.set(candidate.taskId, candidate)
+    }
   }
 
   primaryTasks.forEach(upsertTask)
   secondaryTasks.forEach(upsertTask)
 
   return Array.from(tasks.values())
+}
+
+interface RuntimeTaskProjection {
+  workspace: RuntimeDeviceWorkspace
+  task: RuntimeTaskSummary
+  aliases: Set<string>
+}
+
+function dedupeRuntimeTaskProjections(
+  projects: RuntimeProjectWork[],
+  chats: RuntimeDeviceWorkspace[]
+): Pick<RuntimeWorkListResponse, 'projects' | 'chats'> {
+  const winners = new Set<RuntimeTaskProjection>()
+  const winnersByAlias = new Map<string, RuntimeTaskProjection>()
+  const workspaces = [...projects.flatMap(project => project.deviceWorkspaces), ...chats]
+
+  workspaces.forEach(workspace => {
+    workspace.tasks.forEach(task => {
+      const aliases = runtimeTaskProjectionAliases(workspace, task)
+      const matches = new Set(
+        [...aliases]
+          .map(alias => winnersByAlias.get(alias))
+          .filter((projection): projection is RuntimeTaskProjection => Boolean(projection))
+      )
+      const candidate = { workspace, task, aliases }
+      const winner = [...matches, candidate].reduce((current, projection) =>
+        shouldReplaceRuntimeTaskProjection(current.task, projection.task) ? projection : current
+      )
+      const mergedAliases = new Set([
+        ...aliases,
+        ...[...matches].flatMap(projection => [...projection.aliases]),
+      ])
+
+      matches.forEach(projection => winners.delete(projection))
+      winner.aliases = mergedAliases
+      winners.add(winner)
+      mergedAliases.forEach(alias => winnersByAlias.set(alias, winner))
+    })
+  })
+
+  const winningTasks = new Set([...winners].map(projection => projection.task))
+  const retainWinningTasks = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace | null => {
+    const inputTaskCount = workspace.tasks.length
+    const tasks = workspace.tasks.filter(task => winningTasks.has(task))
+    const filteredWorkspace = tasks.length === inputTaskCount ? workspace : { ...workspace, tasks }
+    return shouldKeepRuntimeWorkspace(filteredWorkspace, inputTaskCount) ? filteredWorkspace : null
+  }
+  const dedupedProjects = projects
+    .map(project => {
+      const deviceWorkspaces = project.deviceWorkspaces.flatMap(workspace => {
+        const retained = retainWinningTasks(workspace)
+        return retained ? [retained] : []
+      })
+      return {
+        ...project,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      }
+    })
+    .filter(project => project.deviceWorkspaces.length > 0)
+  const dedupedChats = chats.flatMap(workspace => {
+    const retained = retainWinningTasks(workspace)
+    return retained ? [retained] : []
+  })
+
+  return {
+    projects: dedupedProjects,
+    chats: dedupedChats,
+  }
+}
+
+function runtimeTaskProjectionAliases(
+  workspace: RuntimeDeviceWorkspace,
+  task: RuntimeTaskSummary
+): Set<string> {
+  return new Set([`${task.taskId}\0device:${workspace.deviceId}`])
 }
 
 function runtimeProjectKey(project: RuntimeProjectWork): string {
@@ -771,15 +983,6 @@ function runtimeWorkspaceKey(workspace: RuntimeDeviceWorkspace): string {
   ].join('\0')
 }
 
-function runtimeTaskKey(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): string {
-  return [
-    task.taskId,
-    task.workspacePath || workspace.workspacePath,
-    task.workspaceKind ?? workspace.workspaceKind ?? '',
-    task.worktreeId ?? workspace.worktreeId ?? '',
-  ].join('\0')
-}
-
 function countWorkspaceTasks(workspaces: RuntimeDeviceWorkspace[]): number {
   return workspaces.reduce((total, workspace) => total + workspace.tasks.length, 0)
 }
@@ -790,19 +993,48 @@ export function nowMs(): number {
 
 export async function timedWorkbenchBootstrapRequest<T>(
   label: string,
-  request: Promise<T>
+  request: Promise<T> | (() => Promise<T>),
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<PromiseSettledResult<T>> {
   const startedAt = nowMs()
   try {
-    const value = await request
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error(`${label} request was aborted`)
+    }
+    const value = await raceWithTimeout(
+      typeof request === 'function' ? request() : request,
+      timeoutMs,
+      timeout => {
+        return new Error(`${label} timed out after ${timeout}ms`)
+      }
+    )
     const elapsedMs = Math.round(nowMs() - startedAt)
     if (elapsedMs > 5000) {
       console.warn(`[Wework] Workbench bootstrap ${label} completed slowly in ${elapsedMs}ms.`)
     }
     return { status: 'fulfilled', value }
   } catch (reason) {
+    if (signal?.aborted) {
+      return { status: 'rejected', reason }
+    }
     const elapsedMs = Math.round(nowMs() - startedAt)
-    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, reason)
+    const error =
+      reason instanceof Error
+        ? { name: reason.name, message: reason.message }
+        : reason && typeof reason === 'object'
+          ? (() => {
+              const record = reason as Record<string, unknown>
+              return {
+                ...(typeof record.name === 'string' ? { name: record.name } : {}),
+                ...(typeof record.message === 'string' ? { message: record.message } : {}),
+                ...(typeof record.name !== 'string' && typeof record.message !== 'string'
+                  ? { message: String(reason) }
+                  : {}),
+              }
+            })()
+          : { message: String(reason) }
+    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, error)
     return { status: 'rejected', reason }
   }
 }

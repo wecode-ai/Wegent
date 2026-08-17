@@ -34,6 +34,33 @@ from app.services.git_skill.utils import (
 )
 
 
+def _resolve_skill_directory(repo_root: str, skill_path: str) -> str:
+    """Resolve a repository-relative skill path without allowing path escape."""
+    if os.path.isabs(skill_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Skill path must be relative to the repository",
+        )
+
+    resolved_repo_root = os.path.realpath(repo_root)
+    resolved_skill_dir = os.path.realpath(os.path.join(resolved_repo_root, skill_path))
+    try:
+        is_within_repo = (
+            os.path.commonpath([resolved_repo_root, resolved_skill_dir])
+            == resolved_repo_root
+        )
+    except ValueError:
+        is_within_repo = False
+
+    if not is_within_repo:
+        raise HTTPException(
+            status_code=400,
+            detail="Skill path must be inside the repository",
+        )
+
+    return resolved_skill_dir
+
+
 class GitSkillService:
     """Service for scanning and importing skills from Git repositories."""
 
@@ -286,7 +313,6 @@ class GitSkillService:
             HTTPException: If skill not found, not from git, or update fails
         """
         from app.models.kind import Kind
-        from app.services.adapters.skill_kinds import skill_kinds_service
 
         # Get the skill
         skill_kind = (
@@ -320,51 +346,102 @@ class GitSkillService:
                 detail="Skill source information is incomplete",
             )
 
-        # Get authentication info
-        provider, owner, repo, auth_info = get_auth_for_repo(repo_url, user_id, db)
+        return self._update_skill_from_repository_source(
+            skill_id=skill_id,
+            skill_owner_user_id=user_id,
+            auth_user_id=user_id,
+            repo_url=repo_url,
+            skill_path=skill_path,
+            db=db,
+        )
 
-        # Download repository ZIP with auth
+    def update_skill_from_repository(
+        self,
+        *,
+        skill_id: int,
+        skill_owner_user_id: int,
+        auth_user_id: int,
+        repo_url: str,
+        skill_path: str,
+        db: Session,
+    ) -> Dict[str, Any]:
+        """Update an exact skill from a user-selected repository path."""
+        from app.models.kind import Kind
+
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == skill_owner_user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if not skill_kind:
+            raise HTTPException(status_code=404, detail="Skill not found")
+
+        return self._update_skill_from_repository_source(
+            skill_id=skill_id,
+            skill_owner_user_id=skill_owner_user_id,
+            auth_user_id=auth_user_id,
+            repo_url=repo_url,
+            skill_path=skill_path,
+            db=db,
+            expected_skill_name=skill_kind.name,
+        )
+
+    def _update_skill_from_repository_source(
+        self,
+        *,
+        skill_id: int,
+        skill_owner_user_id: int,
+        auth_user_id: int,
+        repo_url: str,
+        skill_path: str,
+        db: Session,
+        expected_skill_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Download, validate, package, and update a Git-backed skill."""
+        from app.services.adapters.skill_kinds import skill_kinds_service
+
+        provider, owner, repo, auth_info = get_auth_for_repo(repo_url, auth_user_id, db)
         zip_content = download_repo_zip(provider, owner, repo, auth_info)
 
-        # Extract to temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             extract_zip_safely(zip_content, temp_dir)
             repo_root = find_repo_root(temp_dir)
-
-            # Find the skill directory
-            skill_dir = os.path.join(repo_root, skill_path)
-            skill_name = os.path.basename(skill_path)
+            skill_dir = _resolve_skill_directory(repo_root, skill_path)
+            skill_name = os.path.basename(os.path.normpath(skill_path))
+            if expected_skill_name and skill_name != expected_skill_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Repository skill name does not match the current skill",
+                )
 
             validate_skill_directory(skill_dir, skill_path)
-
-            # Package skill directory into ZIP
             skill_zip = package_skill_directory(skill_dir, skill_name)
-            file_name = f"{skill_name}.zip"
-
-            # Update source info with new timestamp
             source_info = {
                 "type": "git",
                 "repo_url": repo_url,
                 "skill_path": skill_path,
                 "imported_at": datetime.utcnow().isoformat() + "Z",
             }
-
-            # Update the skill
             updated_skill = skill_kinds_service.update_skill(
                 db=db,
                 skill_id=skill_id,
-                user_id=user_id,
+                user_id=skill_owner_user_id,
                 file_content=skill_zip,
-                file_name=file_name,
+                file_name=f"{skill_name}.zip",
                 source=source_info,
             )
 
-            return {
-                "id": int(updated_skill.metadata.labels.get("id", 0)),
-                "name": updated_skill.metadata.name,
-                "version": updated_skill.spec.version,
-                "source": source_info,
-            }
+        return {
+            "id": int(updated_skill.metadata.labels.get("id", 0)),
+            "name": updated_skill.metadata.name,
+            "version": updated_skill.spec.version,
+            "source": source_info,
+        }
 
     def batch_update_skills_from_git(
         self,

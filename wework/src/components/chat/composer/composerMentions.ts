@@ -1,12 +1,24 @@
+import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
+import {
+  currentPluginLogoAppearanceMode,
+  resolvePluginLogo,
+} from '@/components/plugins/plugin-assets'
+import { getComposerApps } from './composerAppsSnapshot'
+
 const LOCAL_MENTION_REFERENCE_PATTERN =
-  /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+))\)/g
+  /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
+const composerMentionIcons = new Map<string, { url: string; contrastPad: boolean }>()
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const COMPOSER_MENTION_ICON_PATHS = [
   'M16.5 9.4 7.55 4.24',
   'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z',
   'M3.29 7 12 12l8.71-5',
   'M12 22V12',
+]
+const COMPOSER_CONVERSATION_ICON_PATHS = [
+  'M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z',
 ]
 
 export interface ComposerMentionPayload {
@@ -18,6 +30,92 @@ export interface ComposerMentionPayload {
 export interface ParsedComposerMention extends ComposerMentionPayload {
   start: number
   end: number
+}
+
+export type ComposerMentionIconRegistration = {
+  url: string
+  contrastPad?: boolean
+}
+
+export function registerComposerMentionIcon(
+  reference: string,
+  icon?: string | ComposerMentionIconRegistration | null
+): void {
+  const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
+  if (!href || !icon) return
+  const entry =
+    typeof icon === 'string'
+      ? { url: icon.trim(), contrastPad: false }
+      : { url: icon.url.trim(), contrastPad: Boolean(icon.contrastPad) }
+  if (!entry.url) return
+  composerMentionIcons.set(href, entry)
+}
+
+export function getComposerMentionIconUrl(href: string): string | undefined {
+  return composerMentionIcons.get(href)?.url
+}
+
+function getComposerMentionIcon(href: string): { url: string; contrastPad: boolean } | undefined {
+  return composerMentionIcons.get(href)
+}
+
+function logoFromComposerAppInventory(href: string): { url: string; contrastPad: boolean } | null {
+  const pluginReference = parsePluginUri(href)
+  const appId = href.startsWith('app://') ? href.slice('app://'.length).trim() : ''
+  const pluginKey = (pluginReference?.pluginName || appId).trim().toLowerCase()
+  if (!pluginKey) return null
+
+  const apps = getComposerApps()
+  const app =
+    apps.find(item => composerAppPluginKey(item).trim().toLowerCase() === pluginKey) ||
+    apps.find(item => (item.pluginKey || '').trim().toLowerCase() === pluginKey) ||
+    apps.find(item => item.id.replace(/^(plugin:|wegent:)/, '').toLowerCase() === pluginKey)
+  if (!app) return null
+
+  const logo = resolvePluginLogo({
+    pluginKey: composerAppPluginKey(app),
+    logo: app.logoUrl,
+    logoDark: app.logoUrlDark,
+    appearanceMode: currentPluginLogoAppearanceMode(),
+  })
+  if (logo.source !== 'provided' || !logo.url) return null
+  return { url: logo.url, contrastPad: logo.contrastPad }
+}
+
+/** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
+export function resolveComposerMentionBrandIconUrl(href: string): string | null {
+  return resolveComposerMentionBrandIcon(href)?.url ?? null
+}
+
+export function resolveComposerMentionBrandIcon(
+  href: string
+): { url: string; contrastPad: boolean } | null {
+  const registered = getComposerMentionIcon(href)
+  if (registered) return registered
+
+  const fromInventory = logoFromComposerAppInventory(href)
+  if (fromInventory) return fromInventory
+
+  const appearanceMode = currentPluginLogoAppearanceMode()
+  const pluginReference = parsePluginUri(href)
+  if (pluginReference) {
+    const logo = resolvePluginLogo({
+      pluginKey: pluginReference.pluginName,
+      appearanceMode,
+    })
+    if (logo.source !== 'provided' || !logo.url) return null
+    return { url: logo.url, contrastPad: logo.contrastPad }
+  }
+
+  if (href.startsWith('app://')) {
+    const appId = href.slice('app://'.length).trim()
+    if (!appId) return null
+    const logo = resolvePluginLogo({ pluginKey: appId, appearanceMode })
+    if (logo.source !== 'provided' || !logo.url) return null
+    return { url: logo.url, contrastPad: logo.contrastPad }
+  }
+
+  return null
 }
 
 export function localSkillTestId(name: string): string {
@@ -39,9 +137,10 @@ export function parseComposerMentions(value: string): ParsedComposerMention[] {
     const name = match[1]
     const uri = match[2]
     const isPathReference = uri.startsWith('file://') || uri.startsWith('folder://')
+    const isConversationReference = uri.startsWith('wework-conversation://')
     return {
       name,
-      label: isPathReference ? name : displaySkillNameFromName(name),
+      label: isPathReference || isConversationReference ? name : displaySkillNameFromName(name),
       reference,
       start,
       end: start + reference.length,
@@ -136,12 +235,18 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   const element = document.createElement('span')
   element.className = 'composer-mention-node composer-mention-link'
   const pathReference = composerPathReference(payload.reference)
+  const pluginReference = parsePluginMentionReference(payload.reference)
+  const conversationReference = payload.reference.includes('](wework-conversation://')
   const displayLabel = pathReference ? composerPathDisplayName(pathReference.path) : payload.label
   element.setAttribute(
     'data-testid',
     pathReference
       ? `composer-path-chip-${localSkillTestId(payload.name)}`
-      : `local-skill-chip-${localSkillTestId(payload.name)}`
+      : pluginReference
+        ? `composer-plugin-chip-${localSkillTestId(pluginReference.pluginName)}`
+        : conversationReference
+          ? `conversation-chip-${localSkillTestId(payload.name)}`
+          : `local-skill-chip-${localSkillTestId(payload.name)}`
   )
   element.setAttribute('data-composer-skill-reference', payload.reference)
   element.setAttribute('data-composer-skill-name', payload.name)
@@ -152,16 +257,32 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
     element.setAttribute('data-composer-path', pathReference.path)
     element.setAttribute('data-composer-path-kind', pathReference.directory ? 'folder' : 'file')
   }
+  if (pluginReference) {
+    element.setAttribute('data-composer-plugin-name', pluginReference.pluginName)
+    element.setAttribute('data-composer-plugin-marketplace', pluginReference.marketplaceName)
+    element.setAttribute('role', 'link')
+  }
   element.setAttribute('contenteditable', 'false')
   element.setAttribute('aria-label', displayLabel)
   element.setAttribute('spellcheck', 'false')
-  element.setAttribute('tabindex', '-1')
+  element.setAttribute('tabindex', pluginReference ? '0' : '-1')
 
   const iconSlot = document.createElement('span')
   iconSlot.className = 'composer-mention-icon-slot'
   iconSlot.setAttribute('aria-hidden', 'true')
+  const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
+  const brandIcon = mentionHref ? resolveComposerMentionBrandIcon(mentionHref) : null
+  if (brandIcon?.contrastPad) {
+    iconSlot.classList.add('composer-mention-icon-slot--contrast-pad')
+  }
   iconSlot.append(
-    pathReference?.directory ? createComposerFolderIcon() : createComposerMentionIcon()
+    pathReference?.directory
+      ? createComposerFolderIcon()
+      : conversationReference
+        ? createComposerConversationIcon()
+        : brandIcon
+          ? createComposerBrandIcon(brandIcon.url)
+          : createComposerMentionIcon()
   )
 
   const label = document.createElement('span')
@@ -170,6 +291,14 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
 
   element.append(iconSlot, label)
   return element
+}
+
+function createComposerBrandIcon(iconUrl: string): HTMLImageElement {
+  const icon = document.createElement('img')
+  icon.className = 'composer-mention-icon composer-mention-brand-icon'
+  icon.src = iconUrl
+  icon.alt = ''
+  return icon
 }
 
 function composerPathDisplayName(path: string): string {
@@ -205,6 +334,23 @@ function createComposerMentionIcon(): SVGSVGElement {
   icon.setAttribute('stroke-linecap', 'round')
   icon.setAttribute('stroke-linejoin', 'round')
   COMPOSER_MENTION_ICON_PATHS.forEach(pathData => {
+    const path = document.createElementNS(SVG_NAMESPACE, 'path')
+    path.setAttribute('d', pathData)
+    icon.append(path)
+  })
+  return icon
+}
+
+function createComposerConversationIcon(): SVGSVGElement {
+  const icon = document.createElementNS(SVG_NAMESPACE, 'svg')
+  icon.classList.add('composer-mention-icon')
+  icon.setAttribute('viewBox', '0 0 24 24')
+  icon.setAttribute('fill', 'none')
+  icon.setAttribute('stroke', 'currentColor')
+  icon.setAttribute('stroke-width', '2')
+  icon.setAttribute('stroke-linecap', 'round')
+  icon.setAttribute('stroke-linejoin', 'round')
+  COMPOSER_CONVERSATION_ICON_PATHS.forEach(pathData => {
     const path = document.createElementNS(SVG_NAMESPACE, 'path')
     path.setAttribute('d', pathData)
     icon.append(path)

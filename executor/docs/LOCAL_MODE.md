@@ -1,6 +1,6 @@
 # Executor Local Mode
 
-Executor 本地模式允许在用户本地机器上运行任务执行器，通过 WebSocket 与 Backend 通信，无需 Docker 环境。
+Executor 本地模式允许在用户本地机器上运行任务执行器，通过 Socket.IO 与 Backend 通信，无需 Docker 环境。
 
 ## 目录结构
 
@@ -90,7 +90,7 @@ sudo cp dist/wegent-executor /usr/local/bin/
 
 ### 连接配置
 
-Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device-config.json`、默认值。无参数启动且没有远端地址时，executor 监听 `~/.wegent-executor/app-ipc.sock` 并且不连接 Backend。设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后，executor 会继续保留本机 socket，同时以本地设备模式连接远端 Backend。`~/.wegent-executor/app-ipc.lock` 会限制同一用户目录下最多一个 executor 进程，避免网页版看到重复设备连接。日志写入 `~/.wegent-executor/logs/executor.log`。
+Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device-config.json`、默认值。Wework 启动 executor 时会设置 `WEGENT_APP_IPC_DEVICE_ID`，此时 executor 通过 stdin/stdout 提供本地 JSONL IPC；stdout 仅输出协议帧，日志写入 stderr 和 `~/.wegent-executor/logs/executor.log`。直接设置 `WEGENT_BACKEND_URL` 和 `WEGENT_AUTH_TOKEN` 启动的独立 Local Executor 仍沿用原有 Socket.IO 远端设备链路，不切换到 stdio。Wework 同时配置远端 Backend 时，本地控制面保持 stdio，远端设备功能仍通过 Socket.IO 连接 Backend。
 
 | 配置 | 说明 | 示例 |
 |------|------|------|
@@ -160,7 +160,7 @@ pnpm exec playwright test e2e/tests/tasks/agent-conversation-regression.spec.ts
 ### 查看日志
 
 ```bash
-# 本地开发时直接查看进程标准输出
+# 本地开发时直接查看终端日志（stderr）
 WEGENT_BACKEND_URL=http://localhost:8000 \
 WEGENT_AUTH_TOKEN=your-auth-token \
 cargo run --release --locked
@@ -190,7 +190,7 @@ cargo run --release --locked
 |------|------|------|
 | LocalBackendRunner | `src/local/backend.rs` | 主运行器，管理 Socket.IO 连接、注册、心跳和任务事件 |
 | SocketIoTransport | `src/local/backend.rs` | Socket.IO 客户端 transport |
-| AppIpcServer | `src/local/app_ipc.rs` | 本地 app IPC sidecar |
+| AppIpcServer | `src/local/app_ipc.rs` | 通过 stdin/stdout 服务本地 app IPC |
 | AgentProcessEngine | `src/agents/mod.rs` | Claude Code / Codex / Dify / ImageValidator 执行入口 |
 | LocalBackendEventSink | `src/local/backend.rs` | OpenAI Responses API 事件回传 |
 

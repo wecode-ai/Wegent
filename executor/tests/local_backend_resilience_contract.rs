@@ -33,7 +33,9 @@ fn local_backend_config_uses_heartbeat_call_timeout_env() {
         bind_shell: "claudecode".to_owned(),
         connection: ConnectionConfig {
             backend_url: "http://localhost:8000".to_owned(),
+            socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
+            runtime_auth_token: "runtime-wg-token".to_owned(),
         },
         ..DeviceConfig::default()
     });
@@ -131,7 +133,7 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
     config.heartbeat_timeout = Duration::from_millis(10);
     config.reconnect_delay = Duration::from_millis(1);
     config.reconnect_delay_max = Duration::from_millis(1);
-    let runner = LocalBackendRunner::new(config, transport.clone());
+    let runner = LocalBackendRunner::new(config, transport.clone()).without_session_gateway();
 
     let task = tokio::spawn(runner.run_forever());
 
@@ -270,7 +272,9 @@ impl LocalBackendTransport for ScriptedTransport {
 fn local_backend_config() -> LocalBackendConfig {
     LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
+        socket_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
+        runtime_auth_token: "runtime-wg-token".to_owned(),
         device_id: "device-1".to_owned(),
         runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),

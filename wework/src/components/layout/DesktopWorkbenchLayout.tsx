@@ -6,11 +6,12 @@ import { useAuth } from '@/features/auth/useAuth'
 import type {
   IMPrivateSession,
   ProjectWithTasks,
+  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -33,12 +34,75 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
+import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
+import { WorkbenchBackground } from '@/features/appearance'
+import { useResizableSidebar } from './useResizableSidebar'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import {
+  archiveLocalHarnessSession,
+  closeLocalTerminal,
+  isLocalHarnessAvailable,
+  listLocalHarnessSessions,
+  updateLocalHarnessSessionTitle,
+  WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT,
+} from '@/lib/local-terminal'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
+import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
 
-export function DesktopWorkbenchLayout() {
+function getPermanentWorktreeError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = String(error.message).trim()
+    if (message) return message
+  }
+  return fallback
+}
+
+function isSameRuntimeTask(
+  current: RuntimeTaskAddress | null | undefined,
+  next: RuntimeTaskAddress
+): boolean {
+  const currentPath = current?.workspacePath?.trim()
+  const nextPath = next.workspacePath?.trim()
+  return (
+    current?.deviceId === next.deviceId &&
+    current.taskId === next.taskId &&
+    (!currentPath || !nextPath || currentPath === nextPath)
+  )
+}
+
+function boardRouteParam(contentRoute: string, name: string): string | null {
+  const searchIndex = contentRoute.indexOf('?')
+  if (searchIndex < 0) return null
+  return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get(name)
+}
+
+function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | null {
+  const projectId = boardRouteParam(contentRoute, 'projectId')
+  const projectStore = boardRouteParam(contentRoute, 'projectStore')
+  if (!projectId || (projectStore !== 'local' && projectStore !== 'backend')) return null
+  return { projectId, projectStore }
+}
+
+interface DesktopWorkbenchLayoutProps {
+  routeActive?: boolean
+}
+
+export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
   const {
@@ -49,6 +113,7 @@ export function DesktopWorkbenchLayout() {
     selectStandaloneDevice,
     openStandaloneWorkspace: onOpenStandaloneWorkspace,
     startNewChat: onNewChat,
+    startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
     openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
@@ -57,7 +122,6 @@ export function DesktopWorkbenchLayout() {
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
-    rememberExecutionDevice: onRememberExecutionDevice,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
@@ -68,6 +132,7 @@ export function DesktopWorkbenchLayout() {
     listGitRepositories: onListGitRepositories,
     listGitBranches: onListGitBranches,
     updateProjectName: onUpdateProjectName,
+    updateLocalRuntimeProject: onUpdateLocalRuntimeProject,
     removeProject: onRemoveProject,
     reorderRuntimeProjects: onReorderRuntimeProjects,
     setRuntimeProjectPinned: onSetRuntimeProjectPinned,
@@ -86,16 +151,252 @@ export function DesktopWorkbenchLayout() {
     runtimeTaskReminders,
     services,
     refreshWorkLists,
+    workspaceTabId,
   } = useWorkbench()
-  const activeItem = 'chat'
+  const localTodoProjects = useMemo(
+    () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
+    [state.projects, state.runtimeWork]
+  )
+  const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const activePane = useMemo<WorkbenchPaneIdentity>(
+    () => ({
+      currentRuntimeTask: state.currentRuntimeTask,
+      currentProject: state.currentProject,
+      standaloneChatKey: state.standaloneChatKey,
+    }),
+    [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
+  )
+  const activePaneKey = getWorkbenchPaneKey(activePane)
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const splitGroups = useWorkbenchSplitGroups({
+    ...workbenchSplitStorageKeys(workspaceTabId ?? 'main'),
+    activePaneKey,
+    validRuntimeKeys: runtimePaneKeys,
+    runtimeKeysReady: state.runtimeWork !== null,
+  })
+  const { activatePane: activateSplitPane } = splitGroups
+  const initialPath = stripAppBasePath(window.location.pathname)
+  const [currentPath, setCurrentPath] = useState(initialPath)
+  const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
+    []
+  )
+  const [activeLocalHarnessSessionId, setActiveLocalHarnessSessionId] = useState<string | null>(
+    null
+  )
+  const loadLocalHarnessSessions = useCallback(async () => {
+    const sessions = await listLocalHarnessSessions()
+    return sessions.map(session => ({
+      sessionId: session.session_id,
+      harnessId: session.harness_id,
+      title: session.title,
+      cwd: session.cwd,
+      createdAt: session.created_at,
+      isPrimary: session.is_primary,
+      projectId: session.project_id,
+      active: session.active,
+      modelKey: session.model_key,
+      pluginRoots: session.plugin_roots?.length ? session.plugin_roots : undefined,
+      proxyToken: session.proxy_token,
+    }))
+  }, [])
+
+  useEffect(() => {
+    if (!isLocalHarnessAvailable()) return
+
+    let cancelled = false
+    void loadLocalHarnessSessions()
+      .then(restored => {
+        if (cancelled) return
+        setLocalHarnessSessions(restored)
+      })
+      .catch(error => {
+        console.error('Failed to restore local harness sessions:', error)
+      })
+    const handleSessionsChanged = (event: Event) => {
+      const openSessionId = (event as CustomEvent<{ openSessionId?: string | null }>).detail
+        ?.openSessionId
+      void loadLocalHarnessSessions()
+        .then(restored => {
+          setLocalHarnessSessions(restored)
+          if (!openSessionId || !restored.some(session => session.sessionId === openSessionId))
+            return
+          setActiveLocalHarnessSessionId(openSessionId)
+          navigateTo('/')
+        })
+        .catch(error => {
+          console.error('Failed to refresh local Harness sessions:', error)
+        })
+    }
+    window.addEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
+    }
+  }, [loadLocalHarnessSessions])
+  const todoOpen = currentPath === '/todo'
+  const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const startNewChatOutsideHarness = useCallback(() => {
+    setActiveLocalHarnessSessionId(null)
+    onNewChat()
+  }, [onNewChat])
+  const startStandaloneChatOutsideHarness = useCallback(() => {
+    setActiveLocalHarnessSessionId(null)
+    onStartStandaloneChat()
+  }, [onStartStandaloneChat])
+  const selectProjectOutsideHarness = useCallback(
+    (projectId: number) => {
+      setActiveLocalHarnessSessionId(null)
+      onSelectProject(projectId)
+    },
+    [onSelectProject]
+  )
+  const startNewProjectChatOutsideHarness = useCallback(
+    (projectId: number) => {
+      setActiveLocalHarnessSessionId(null)
+      onStartNewProjectChat(projectId)
+    },
+    [onStartNewProjectChat]
+  )
+  const openRuntimeTaskOutsideHarness = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      setActiveLocalHarnessSessionId(null)
+      activateSplitPane(
+        getWorkbenchPaneKey({
+          currentRuntimeTask: address,
+          currentProject: null,
+        })
+      )
+      if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
+      await onOpenRuntimeTask(address)
+    },
+    [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
+  )
+  const registerLocalHarnessSession = useCallback(
+    (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
+      setLocalHarnessSessions(current => [
+        session,
+        ...current.filter(candidate => candidate.sessionId !== session.sessionId),
+      ])
+      if (options?.activate !== false) {
+        setActiveLocalHarnessSessionId(session.sessionId)
+      }
+    },
+    []
+  )
+  const updateHarnessSessionTitle = useCallback((sessionId: string, title: string) => {
+    const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
+    if (!normalized) return
+    setLocalHarnessSessions(current =>
+      current.map(session =>
+        session.sessionId === sessionId && session.title !== normalized
+          ? { ...session, title: normalized }
+          : session
+      )
+    )
+    void updateLocalHarnessSessionTitle(sessionId, normalized).catch(error => {
+      console.warn('Failed to persist local Harness session title:', error)
+    })
+  }, [])
+  const openLocalHarnessSession = useCallback((sessionId: string) => {
+    setActiveLocalHarnessSessionId(sessionId)
+    navigateTo('/')
+  }, [])
+  const removeLocalHarnessSession = useCallback(
+    (sessionId: string) => {
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) {
+        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
+      setLocalHarnessSessions(current => current.filter(session => session.sessionId !== sessionId))
+      setActiveLocalHarnessSessionId(current => (current === sessionId ? null : current))
+    },
+    [localHarnessSessions, services?.localHarnessModelApi]
+  )
+  const markLocalHarnessSessionInactive = useCallback(
+    (sessionId: string) => {
+      const proxyToken = localHarnessSessions.find(
+        session => session.sessionId === sessionId
+      )?.proxyToken
+      if (proxyToken) {
+        void services?.localHarnessModelApi?.unregisterProxy(proxyToken)
+      }
+      setLocalHarnessSessions(current =>
+        current.map(session =>
+          session.sessionId === sessionId
+            ? { ...session, active: false, proxyToken: undefined }
+            : session
+        )
+      )
+    },
+    [localHarnessSessions, services?.localHarnessModelApi]
+  )
+  const closeLocalHarnessSession = useCallback(
+    async (sessionId: string) => {
+      const session = localHarnessSessions.find(candidate => candidate.sessionId === sessionId)
+      if (!session || (session.isPrimary && session.harnessId !== 'opencode')) return
+      if (session.harnessId === 'opencode') {
+        await archiveLocalHarnessSession(sessionId)
+      } else {
+        await closeLocalTerminal(sessionId)
+      }
+      removeLocalHarnessSession(sessionId)
+    },
+    [localHarnessSessions, removeLocalHarnessSession]
+  )
+  const createPermanentWorktree = useCallback(
+    async ({
+      deviceId,
+      sourcePath,
+      name,
+    }: {
+      deviceId: string
+      sourcePath: string
+      name: string
+    }) => {
+      const runtimeWorkApi = services?.runtimeWorkApi
+      if (!runtimeWorkApi) {
+        throw new Error(t('workbench.create_permanent_worktree_unavailable'))
+      }
+      const worktreeId = `permanent-${crypto.randomUUID()}`
+      let prepared
+      try {
+        prepared = await runtimeWorkApi.prepareWorktree({
+          deviceId,
+          sourcePath,
+          worktreeId,
+          permanent: true,
+        })
+      } catch (error) {
+        throw new Error(
+          getPermanentWorktreeError(error, t('workbench.create_permanent_worktree_failed')),
+          { cause: error }
+        )
+      }
+      const workspacePath = prepared.path ?? prepared.worktree.path
+      try {
+        await onOpenStandaloneWorkspace(deviceId, workspacePath, name)
+      } catch (error) {
+        await runtimeWorkApi
+          .deleteWorktree({ deviceId, path: workspacePath, preserveSnapshot: false })
+          .catch(() => undefined)
+        throw error
+      }
+    },
+    [onOpenStandaloneWorkspace, services?.runtimeWorkApi, t]
+  )
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    isSettingsRoute(stripAppBasePath(window.location.pathname))
-  )
+  const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -105,6 +406,20 @@ export function DesktopWorkbenchLayout() {
   const [standalonePreferNativeLocalPicker, setStandalonePreferNativeLocalPicker] = useState(true)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
+  )
+  const openProjectSpaceRuntimeTask = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      await openRuntimeTaskOutsideHarness(address)
+      if (!workspaceTabs) return
+      const contentRoute = buildRuntimeTaskRoute(address)
+      const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
+      if (taskTab) {
+        workspaceTabs.selectTab(taskTab.id, { contentRoute })
+        return
+      }
+      workspaceTabs.openTab('task', { contentRoute })
+    },
+    [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
   const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
@@ -123,7 +438,9 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+      const path = stripAppBasePath(window.location.pathname)
+      setCurrentPath(path)
+      setSettingsOpen(isSettingsRoute(path))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -131,6 +448,7 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (todoOpen) return
       if (event.key.toLowerCase() !== 'k') return
       if (!event.metaKey && !event.ctrlKey) return
       event.preventDefault()
@@ -139,7 +457,7 @@ export function DesktopWorkbenchLayout() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [todoOpen])
 
   useEffect(() => {
     const syncAutoCollapse = () => {
@@ -250,6 +568,11 @@ export function DesktopWorkbenchLayout() {
   const collapseSidebar = useCallback(() => {
     updateSidebarCollapsed(true)
   }, [updateSidebarCollapsed])
+
+  const { sidebarWidth, handleResizeStart: handleSidebarResizeStart } = useResizableSidebar({
+    onCollapse: collapseSidebar,
+    onResizeStateChange: setSidebarResizing,
+  })
 
   useDesktopSidebarToggleRequest(() => {
     updateSidebarCollapsed(!effectiveSidebarCollapsed)
@@ -455,12 +778,14 @@ export function DesktopWorkbenchLayout() {
     hideResizeHandle = false,
     onPointerEnter,
     onPointerLeave,
+    onToggleSidebar,
   }: {
     collapsed: boolean
     containerTestId?: string
     hideResizeHandle?: boolean
     onPointerEnter?: PointerEventHandler<HTMLElement>
     onPointerLeave?: PointerEventHandler<HTMLElement>
+    onToggleSidebar?: () => void
   }) => (
     <DesktopSidebar
       user={state.user}
@@ -468,7 +793,8 @@ export function DesktopWorkbenchLayout() {
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
-      currentRuntimeTask={state.currentRuntimeTask}
+      currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
+      splitGroupMemberships={splitGroups.memberships}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
@@ -477,21 +803,27 @@ export function DesktopWorkbenchLayout() {
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
       activeItem={activeItem}
+      localHarnessSessions={localHarnessSessions}
+      activeLocalHarnessSessionId={activeLocalHarnessSessionId}
       collapsed={collapsed}
       containerTestId={containerTestId}
       hideResizeHandle={hideResizeHandle}
+      sidebarWidth={sidebarWidth}
+      resizing={sidebarResizing}
+      onResizeStart={handleSidebarResizeStart}
       onResizeCollapse={collapseSidebar}
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
-      onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
-      onOpenWorkbench={() => navigateTo('/')}
-      onOpenApps={() => navigateTo('/apps')}
-      onNewChat={onNewChat}
+      onToggleSidebar={onToggleSidebar ?? (() => updateSidebarCollapsed(!collapsed))}
+      onNewChat={startNewChatOutsideHarness}
+      onStartStandaloneChat={startStandaloneChatOutsideHarness}
+      onOpenLocalHarnessSession={openLocalHarnessSession}
+      onCloseLocalHarnessSession={closeLocalHarnessSession}
       onOpenSearch={() => setSearchOpen(true)}
-      onSelectProject={onSelectProject}
-      onStartNewProjectChat={onStartNewProjectChat}
-      onOpenRuntimeTask={onOpenRuntimeTask}
+      onSelectProject={selectProjectOutsideHarness}
+      onStartNewProjectChat={startNewProjectChatOutsideHarness}
+      onOpenRuntimeTask={openRuntimeTaskOutsideHarness}
       onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
       onRenameRuntimeTask={onRenameRuntimeTask}
       onArchiveRuntimeTask={onArchiveRuntimeTask}
@@ -502,18 +834,17 @@ export function DesktopWorkbenchLayout() {
       onToggleGlobalImNotification={toggleGlobalImNotification}
       onOpenGlobalImNotificationSettings={() => openImNotificationTargetDialog({ type: 'global' })}
       onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => navigateTo('/plugins')}
+      onOpenAutomation={() => navigateTo('/automations')}
       onRefreshDevices={onRefreshDevices}
-      onOpenBlankStandaloneProject={() => {
-        setBlankProjectDialogOpen(true)
-        setStandaloneWorkspaceDialogMode(null)
-      }}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
       }}
       onUpdateProjectName={onUpdateProjectName}
+      onUpdateLocalRuntimeProject={onUpdateLocalRuntimeProject}
       onRemoveProject={onRemoveProject}
       onReorderRuntimeProjects={onReorderRuntimeProjects}
       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
@@ -523,13 +854,16 @@ export function DesktopWorkbenchLayout() {
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
+      projectSpaceApis={availableProjectSpaceApis}
       onOpenSettings={options => {
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)
         navigateTo(
-          options?.autoOpenAddCloudDeviceDialog || options?.settingsPage === 'connections'
+          options?.autoOpenAddCloudDeviceDialog
             ? '/settings/connections'
-            : '/settings'
+            : options?.settingsPage
+              ? `/settings/${options.settingsPage}`
+              : '/settings'
         )
       }}
       onLogout={onLogout}
@@ -538,62 +872,130 @@ export function DesktopWorkbenchLayout() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-      {!settingsOpen && effectiveSidebarCollapsed && (
-        <>
-          <div
-            data-testid="desktop-sidebar-hover-edge"
-            aria-hidden="true"
-            onPointerEnter={openSidebarPreview}
-            className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {!todoOpen && <WorkbenchBackground />}
+        {!settingsOpen &&
+          !todoOpen &&
+          renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+        {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
+          <>
+            <div
+              data-testid="desktop-sidebar-hover-edge"
+              aria-hidden="true"
+              onPointerEnter={openSidebarPreview}
+              className="absolute left-0 top-0 z-popover h-full w-4"
+            />
+            <div
+              data-testid="desktop-sidebar-preview"
+              aria-hidden={!sidebarPreviewOpen}
+              onPointerEnter={openSidebarPreview}
+              onPointerLeave={closeSidebarPreview}
+              className={cn(
+                'absolute left-0 top-0 z-popover h-full overflow-hidden rounded-tl-xl transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
+                sidebarPreviewOpen
+                  ? 'pointer-events-auto translate-x-0 opacity-100'
+                  : 'pointer-events-none -translate-x-full opacity-100'
+              )}
+            >
+              {renderDesktopSidebar({
+                collapsed: false,
+                containerTestId: 'desktop-sidebar-preview-panel',
+                hideResizeHandle: true,
+                onPointerEnter: openSidebarPreview,
+                onPointerLeave: closeSidebarPreview,
+                onToggleSidebar: () => updateSidebarCollapsed(false),
+              })}
+            </div>
+          </>
+        )}
+        {settingsOpen && (
+          <ConnectionsSettingsPage
+            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+            services={services}
+            devices={state.devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={refreshWorkLists}
+            onBack={() => {
+              setSettingsOpen(false)
+              setAutoOpenAddCloudDeviceDialog(false)
+              navigateTo('/')
+            }}
           />
-          <div
-            data-testid="desktop-sidebar-preview"
-            aria-hidden={!sidebarPreviewOpen}
-            onPointerEnter={openSidebarPreview}
-            onPointerLeave={closeSidebarPreview}
-            className={cn(
-              'absolute left-0 top-0 z-popover h-full bg-background transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
-              sidebarPreviewOpen
-                ? 'pointer-events-auto translate-x-0 opacity-100 shadow-[6px_0_24px_rgba(15,23,42,0.10)]'
-                : 'pointer-events-none -translate-x-full opacity-100'
-            )}
-          >
-            {renderDesktopSidebar({
-              collapsed: false,
-              containerTestId: 'desktop-sidebar-preview-panel',
-              hideResizeHandle: true,
-              onPointerEnter: openSidebarPreview,
-              onPointerLeave: closeSidebarPreview,
-            })}
+        )}
+        <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
+          {todoOpen &&
+            (state.user && services.deliveryApi ? (
+              <CloudTodoWorkspace
+                user={state.user}
+                localProjects={localTodoProjects}
+                runtimeWork={state.runtimeWork}
+                services={services}
+                onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                activeProjectRef={
+                  workspaceTabs?.activeTab.kind === 'board'
+                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
+                    : undefined
+                }
+                focusedItemId={
+                  workspaceTabs?.activeTab.kind === 'board'
+                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'itemId')
+                    : undefined
+                }
+                onFocusedItemHandled={() => {
+                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
+                  const projectRef = boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
+                  const params = new URLSearchParams()
+                  if (projectRef) {
+                    params.set('projectStore', projectRef.projectStore)
+                    params.set('projectId', projectRef.projectId)
+                  }
+                  workspaceTabs.updateActiveTab({
+                    contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
+                  })
+                }}
+                onActiveProjectChange={project => {
+                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
+                  if (!project) {
+                    workspaceTabs.updateActiveTab({
+                      title: t('workbench.workspace_tab_board', '项目空间'),
+                      contentRoute: '/todo',
+                    })
+                    return
+                  }
+                  const params = new URLSearchParams()
+                  params.set('projectStore', project.project_store)
+                  params.set('projectId', project.id)
+                  workspaceTabs.updateActiveTab({
+                    title: project.name,
+                    contentRoute: `/todo?${params.toString()}`,
+                  })
+                }}
+              />
+            ) : (
+              <div
+                data-testid="cloud-board-loading"
+                className="flex h-full flex-1 items-center justify-center text-sm text-text-muted"
+              >
+                {t('workbench.cloud_board_loading', '正在加载云端看板…')}
+              </div>
+            ))}
+          <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
+            <DesktopWorkbenchMain
+              visible={routeActive && !settingsOpen && !todoOpen}
+              sidebarCollapsed={effectiveSidebarCollapsed}
+              sidebarResizing={sidebarResizing}
+              onSidebarCollapsedChange={updateSidebarCollapsed}
+              activePane={activePane}
+              splitGroups={splitGroups}
+              localHarnessSessions={localHarnessSessions}
+              activeLocalHarnessSessionId={activeLocalHarnessSessionId}
+              onLocalHarnessSessionStarted={registerLocalHarnessSession}
+              onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
+              onLocalHarnessSessionClose={closeLocalHarnessSession}
+              onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
+            />
           </div>
-        </>
-      )}
-      {settingsOpen && (
-        <ConnectionsSettingsPage
-          autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
-          services={services}
-          devices={state.devices}
-          onOpenRuntimeTask={onOpenRuntimeTask}
-          onRefreshWorkLists={refreshWorkLists}
-          onBack={() => {
-            setSettingsOpen(false)
-            setAutoOpenAddCloudDeviceDialog(false)
-            navigateTo('/')
-          }}
-        />
-      )}
-      <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-        <DesktopWorkbenchMain
-          sidebarCollapsed={effectiveSidebarCollapsed}
-          sidebarResizing={sidebarResizing}
-          onSidebarCollapsedChange={updateSidebarCollapsed}
-          activePane={{
-            currentRuntimeTask: state.currentRuntimeTask,
-            currentProject: state.currentProject,
-            standaloneChatKey: state.standaloneChatKey,
-          }}
-        />
+        </div>
       </div>
       <StandaloneBlankProjectDialog
         open={blankProjectDialogOpen}
@@ -644,7 +1046,6 @@ export function DesktopWorkbenchLayout() {
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
-        onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}
         onUpgradeDevice={onUpgradeDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
@@ -689,8 +1090,7 @@ export function DesktopWorkbenchLayout() {
         onClose={() => setSearchOpen(false)}
         onSearchRuntimeWork={onSearchRuntimeWork}
         onOpenRuntimeTask={async address => {
-          if (!onOpenRuntimeTask) return
-          await onOpenRuntimeTask(address)
+          await openRuntimeTaskOutsideHarness(address)
         }}
       />
     </div>

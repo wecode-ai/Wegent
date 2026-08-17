@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Import app configuration and models
 from app.core.config import settings
 from app.db.base import Base
+from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Import all models to ensure they are registered with SQLAlchemy
 from app.models import *  # noqa: F401,F403
@@ -208,7 +209,7 @@ def run_migrations_online() -> None:
         # MySQL configuration
         configuration["sqlalchemy.connect_args"] = {
             "charset": "utf8mb4",
-            "init_command": "SET time_zone = '+08:00'",
+            "init_command": f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'",
         }
 
     connectable = engine_from_config(

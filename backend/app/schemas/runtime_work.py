@@ -10,7 +10,6 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
-LocalTaskStatus = Literal["active", "archived"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
 
@@ -28,6 +27,16 @@ class RuntimeTaskAddress(BaseModel):
         validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
         min_length=1,
     )
+
+
+class RuntimeModelSelection(BaseModel):
+    """Model selection persisted with a device-local runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    model_name: str = Field(..., alias="modelName", min_length=1)
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
@@ -112,13 +121,23 @@ class LocalTaskSummary(BaseModel):
         alias="runtimeHandle",
         exclude=True,
     )
+    queue_position: Optional[int] = Field(default=None, alias="queuePosition", ge=1)
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
-    created_at: Optional[str] = Field(default=None, alias="createdAt")
-    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+    created_at: Optional[str | int] = Field(default=None, alias="createdAt")
+    updated_at: Optional[str | int] = Field(default=None, alias="updatedAt")
+    completed_at: Optional[str | int] = Field(default=None, alias="completedAt")
     running: bool = False
-    status: Optional[LocalTaskStatus] = None
+    continuable: Optional[bool] = None
+    thread_status: Optional[str] = Field(default=None, alias="threadStatus")
+    turn_status: Optional[str] = Field(default=None, alias="turnStatus")
+    goal_status: Optional[str] = Field(default=None, alias="goalStatus")
+    supervisor: Optional[dict[str, Any]] = None
+    pinned: Optional[bool] = None
+    pinned_order: Optional[int] = Field(default=None, alias="pinnedOrder")
+    sidebar_order: Optional[int] = Field(default=None, alias="sidebarOrder")
+    status: Optional[str] = None
 
 
 class DeviceWorkspaceUpsert(BaseModel):
@@ -427,6 +446,10 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     source: Optional[RuntimeMessageSource] = None
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
@@ -516,6 +539,7 @@ class RuntimeWorkspaceRemoveRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     device_id: str = Field(..., alias="deviceId", min_length=1)
+    project_key: Optional[str] = Field(default=None, alias="projectKey")
     workspace_path: str = Field(..., alias="workspacePath", min_length=1)
     runtime: RuntimeName = "codex"
 
@@ -570,6 +594,10 @@ class BindRuntimeTaskIMSessionsRequest(BaseModel):
 
     address: RuntimeTaskAddress
     session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
 
 
 class BindRuntimeTaskIMSessionsResponse(BaseModel):
@@ -637,6 +665,30 @@ class RuntimeGlobalIMNotificationUpdateRequest(BaseModel):
     session_key: Optional[str] = Field(default=None, alias="sessionKey")
 
 
+class RuntimeIMNotificationPresenceUpdateRequest(BaseModel):
+    """Refresh one Wework client's foreground or away presence."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    client_id: str = Field(
+        ...,
+        alias="clientId",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    away: bool
+
+
+class RuntimeIMNotificationPresenceResponse(BaseModel):
+    """Aggregated away state after refreshing one Wework client."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    away: bool
+    ttl_seconds: int = Field(..., alias="ttlSeconds")
+
+
 class RuntimeTaskIMNotificationSubscriptionRequest(BaseModel):
     """Subscribe a runtime task to one or more private IM sessions."""
 
@@ -687,6 +739,18 @@ class RuntimeTaskCancelResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeTaskQueueReorderRequest(RuntimeTaskAddress):
+    """Move one queued runtime task to a one-based queue position."""
+
+    queue_position: int = Field(..., alias="queuePosition", ge=1)
+
+
+class RuntimeTaskQueueReorderResponse(RuntimeTaskCancelResponse):
+    """Acknowledgement and resulting task order for a queue reorder."""
+
+    ordered_task_ids: list[str] = Field(default_factory=list, alias="orderedTaskIds")
+
+
 class RuntimeTaskCreateRequest(BaseModel):
     """Request to create a device-local runtime task without DB Task rows."""
 
@@ -711,12 +775,25 @@ class RuntimeTaskCreateRequest(BaseModel):
         default_factory=dict,
         alias="modelOptions",
     )
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     additional_skills: list[Any] = Field(
         default_factory=list,
         alias="additionalSkills",
     )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     execution: Optional[dict[str, Any]] = None
+    delivery_id: Optional[str] = Field(
+        default=None, alias="deliveryId", min_length=36, max_length=36
+    )
+    cloud_project_id: Optional[int] = Field(default=None, alias="cloudProjectId", ge=1)
+    additional_context: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        alias="additionalContext",
+        validation_alias=AliasChoices("additionalContext", "additional_context"),
+    )
 
 
 class RuntimeTaskCreateResponse(BaseModel):

@@ -1,0 +1,170 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import '@testing-library/jest-dom'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+
+import { adminApis } from '@/apis/admin'
+import ConnectorAppList from '@/features/admin/components/ConnectorAppList'
+
+const mockToast = jest.fn()
+
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({ toast: mockToast }),
+}))
+
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}))
+
+jest.mock('@/components/ui/dialog', () => ({
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
+    open ? <div>{children}</div> : null,
+  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+
+jest.mock('@/components/ui/select', () => ({
+  Select: ({
+    value,
+    onValueChange,
+    children,
+  }: {
+    value: string
+    onValueChange: (value: string) => void
+    children: React.ReactNode
+  }) => (
+    <select value={value} onChange={event => onValueChange(event.currentTarget.value)}>
+      {children}
+    </select>
+  ),
+  SelectContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectItem: ({ value, children }: { value: string; children: React.ReactNode }) => (
+    <option value={value}>{children}</option>
+  ),
+  SelectTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectValue: () => null,
+}))
+
+jest.mock('@/components/ui/switch', () => ({
+  Switch: ({
+    checked,
+    onCheckedChange,
+  }: {
+    checked: boolean
+    onCheckedChange: (checked: boolean) => void
+  }) => (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={event => onCheckedChange(event.currentTarget.checked)}
+    />
+  ),
+}))
+
+jest.mock('@/apis/admin', () => ({
+  adminApis: {
+    getConnectorApps: jest.fn(),
+    createConnectorApp: jest.fn(),
+    updateConnectorApp: jest.fn(),
+    disableConnectorApp: jest.fn(),
+  },
+}))
+
+const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
+
+describe('ConnectorAppList', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockedAdminApis.getConnectorApps.mockResolvedValue([])
+    mockedAdminApis.createConnectorApp.mockResolvedValue({} as never)
+  })
+
+  test('creates a public connector with policy fields', async () => {
+    render(<ConnectorAppList />)
+
+    await screen.findByText('connector_apps.empty')
+    fireEvent.click(screen.getByTestId('create-connector-app-button'))
+    fireEvent.change(screen.getByTestId('connector-app-name'), {
+      target: { value: 'Internal Docs' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-slug'), {
+      target: { value: 'internal-docs' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-mcp-url'), {
+      target: { value: 'https://mcp.example.test/docs' },
+    })
+
+    fireEvent.change(screen.getByTestId('connector-app-provider-headers'), {
+      target: { value: '{"X-Tenant":"internal"}' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-tool-allowlist'), {
+      target: { value: 'search\nread' },
+    })
+    fireEvent.click(screen.getByTestId('save-connector-app-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createConnectorApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slug: 'internal-docs',
+          auth_type: 'none',
+          provider_headers: { 'X-Tenant': 'internal' },
+          tool_allowlist: ['search', 'read'],
+        })
+      )
+    })
+  })
+
+  test('creates an HTTP API connector with tool definitions', async () => {
+    render(<ConnectorAppList />)
+
+    await screen.findByText('connector_apps.empty')
+    fireEvent.click(screen.getByTestId('create-connector-app-button'))
+    fireEvent.change(screen.getByTestId('connector-app-name'), {
+      target: { value: 'Ticket API' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-slug'), {
+      target: { value: 'ticket-api' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-mcp-url'), {
+      target: { value: 'https://tickets.example.test/api' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'http' },
+    })
+    const definition = [
+      {
+        name: 'get_ticket',
+        description: 'Get a ticket',
+        method: 'GET',
+        path: '/tickets/{id}',
+        input_schema: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+          required: ['id'],
+        },
+        argument_locations: { id: 'path' },
+        timeout_seconds: 30,
+      },
+    ]
+    fireEvent.change(screen.getByTestId('connector-app-http-tools'), {
+      target: { value: JSON.stringify(definition) },
+    })
+    fireEvent.click(screen.getByTestId('save-connector-app-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createConnectorApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slug: 'ticket-api',
+          transport: 'http',
+          mcp_url: 'https://tickets.example.test/api',
+          http_tools: definition,
+        })
+      )
+    })
+  })
+})

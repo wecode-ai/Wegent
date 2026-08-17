@@ -376,6 +376,13 @@ class PublicTeamListResponse(BaseModel):
     items: List[PublicTeamResponse]
 
 
+class PublicTeamIconUploadResponse(BaseModel):
+    """Uploaded public team icon."""
+
+    asset_id: int
+    url: str
+
+
 # Public Bot Management Schemas
 class PublicBotCreate(BaseModel):
     """Public bot creation model - supports both raw JSON and form data modes"""

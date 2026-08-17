@@ -16,7 +16,7 @@ interface AuthGuardProps {
 }
 
 export default function AuthGuard({ children }: AuthGuardProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -55,7 +55,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
         <div className="bg-surface rounded-xl px-8 py-8 flex flex-col items-center shadow-lg">
           <Spinner size="lg" center />
           <div className="mt-4 text-text-secondary text-base font-medium tracking-wide">
-            {t('common:auth.loading')}
+            {t('loading')}
           </div>
         </div>
       </div>

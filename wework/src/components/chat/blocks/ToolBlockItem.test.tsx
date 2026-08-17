@@ -1,19 +1,10 @@
 import '@/i18n'
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
-
-const streamingThinkingBlock: ProcessingBlock = {
-  id: 'thinking-1',
-  subtaskId: 1,
-  type: 'thinking',
-  content: 'First step. Latest visible thought',
-  status: 'streaming',
-  createdAt: 1770000000000,
-}
 
 const streamingTextBlock: ProcessingBlock = {
   id: 'text-1',
@@ -25,45 +16,58 @@ const streamingTextBlock: ProcessingBlock = {
 }
 
 describe('ToolBlockItem', () => {
-  test('renders streaming thinking as a single live preview row', () => {
-    render(<ToolBlockItem block={streamingThinkingBlock} />)
-
-    const preview = screen.getByTestId('thinking-live-preview')
-
-    expect(preview).toHaveTextContent('正在思考')
-    expect(preview.firstElementChild).toHaveTextContent('正在思考')
-    expect(preview.firstElementChild?.tagName).toBe('SPAN')
-    expect(preview).toHaveTextContent('Latest visible thought')
-    expect(screen.queryByText('First step. Latest visible thought')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
-  })
-
-  test('renders completed thinking collapsed and expands on click', async () => {
-    const user = userEvent.setup()
-
+  test('renders a completed tool duration with 0.1 second precision', () => {
     render(
       <ToolBlockItem
         block={{
-          ...streamingThinkingBlock,
+          id: 'tool-duration',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { command: 'sleep 3' },
           status: 'done',
-          content: 'I will inspect the repository before answering.',
+          createdAt: 1770000000000,
+          completedAt: 1770000003278,
         }}
       />
     )
 
-    const toggle = screen.getByTestId('thinking-toggle-button')
+    expect(screen.getByText('3.3s')).toBeInTheDocument()
+  })
 
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle.firstElementChild).toHaveTextContent('思考过程')
-    expect(toggle.firstElementChild?.tagName).toBe('SPAN')
-    expect(screen.queryByTestId('thinking-detail')).not.toBeInTheDocument()
-
-    await user.click(toggle)
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByTestId('thinking-detail')).toHaveTextContent(
-      'I will inspect the repository before answering.'
+  test('uses the standard tool row height for file changes', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'file-change-height',
+          subtaskId: 1,
+          type: 'file_changes',
+          status: 'done',
+          createdAt: 1770000000000,
+          fileChanges: {
+            version: 1,
+            status: 'completed',
+            artifact_id: 'artifact-1',
+            device_id: 'device-1',
+            workspace_path: '/workspace',
+            file_count: 1,
+            additions: 1,
+            deletions: 0,
+            files: [
+              {
+                path: 'src/example.ts',
+                change_type: 'modified',
+                additions: 1,
+                deletions: 0,
+                binary: false,
+              },
+            ],
+          },
+        }}
+      />
     )
+
+    expect(screen.getByRole('button')).toHaveClass('min-h-8')
   })
 
   test('renders streaming process text directly in the timeline', () => {
@@ -106,8 +110,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
-    expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
+    expect(screen.getByText('搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('运行 web_search')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -143,7 +147,66 @@ describe('ToolBlockItem', () => {
     expect(screen.getByText('cwd: /Users/crystal/project')).toBeInTheDocument()
   })
 
-  test('renders unknown tool as a non-expandable activity row', () => {
+  test('renders terminal control sequences as stable plain shell output', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-ansi',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: { cmd: 'npm install' },
+          toolOutput:
+            '\u001b[1G\u001b[0K⠙\u001b[1G\u001b[0K⠹\u001b[1G\u001b[0Kadded 703 packages\n\u001b[32msuccess\u001b[0m',
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByText(/added 703 packages/)).toHaveTextContent('added 703 packages success')
+    expect(screen.queryByText(/⠙|⠹/)).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('\u001b')
+  })
+
+  test('keeps the latest shell output lines in terminal-style scrollback', async () => {
+    const user = userEvent.setup()
+    const toolOutput = Array.from({ length: 201 }, (_, index) => `line ${index}`).join('\n')
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400)
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-scrollback',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: { cmd: 'long-running-command' },
+          toolOutput,
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    const outputElement = screen.getByTestId('shell-tool-output')
+    const renderedOutput = outputElement.textContent
+    expect(renderedOutput).not.toContain('line 0\n')
+    expect(renderedOutput).toContain('line 1\n')
+    expect(renderedOutput).toContain('line 200')
+    expect(outputElement.scrollTop).toBe(400)
+    scrollHeight.mockRestore()
+  })
+
+  test('renders unknown tool with generic input and output details', async () => {
+    const user = userEvent.setup()
+
     render(
       <ToolBlockItem
         block={{
@@ -155,16 +218,109 @@ describe('ToolBlockItem', () => {
             action: 'inspect',
             payload: 'raw details should stay hidden',
           },
+          toolOutput: {
+            status: 'ok',
+          },
           status: 'done',
           createdAt: 1770000000002,
         }}
       />
     )
 
-    expect(screen.getByText('已执行')).toBeInTheDocument()
-    expect(screen.queryByText('custom_agent_tool')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
-    expect(screen.queryByText(/raw details should stay hidden/)).not.toBeInTheDocument()
+    expect(screen.getByText('调用 custom agent tool')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('generic-tool-block-detail')).toHaveTextContent('custom_agent_tool')
+    expect(screen.getByTestId('generic-tool-input')).toHaveTextContent(
+      'raw details should stay hidden'
+    )
+    expect(screen.getByTestId('generic-tool-output')).toHaveTextContent('"status": "ok"')
+  })
+
+  test('renders node_repl js as JavaScript command activity with details', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'node-repl-js',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'node_repl.js',
+          toolInput: {
+            code: "nodeRepl.write('hello')",
+          },
+          toolOutput: 'hello',
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('运行 JavaScript')).toBeInTheDocument()
+    expect(screen.queryByText('调用 js')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('generic-tool-block-detail')).toHaveTextContent('node_repl.js')
+    expect(screen.getByTestId('generic-tool-input')).toHaveTextContent("nodeRepl.write('hello')")
+    expect(screen.getByTestId('generic-tool-output')).toHaveTextContent('hello')
+  })
+
+  test('expands view_image tool details with an image preview', async () => {
+    const user = userEvent.setup()
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'view-image-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'functions.view_image',
+          toolInput: { path: '/tmp/screenshot.png' },
+          toolOutput: { image_url: imageUrl, detail: 'high' },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('查看 screenshot.png')).toBeInTheDocument()
+    expect(screen.queryByTestId('image-view-preview')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('image-view-preview')).toHaveAttribute('src', imageUrl)
+    expect(screen.getByTestId('image-view-preview')).toHaveAttribute('alt', '工具查看的图片')
+  })
+
+  test('keeps view_image details expanded after remounting', async () => {
+    const user = userEvent.setup()
+    const block: ProcessingBlock = {
+      id: 'view-image-remount',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'view_image',
+      toolInput: { path: '/tmp/remount.png' },
+      toolOutput: { image_url: 'data:image/png;base64,aW1hZ2U=' },
+      status: 'done',
+      createdAt: 1770000000002,
+    }
+    const stateKey = 'view-image-remount-expansion'
+    const firstRender = render(<ToolBlockItem block={block} stateKey={stateKey} />)
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+    expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<ToolBlockItem block={block} stateKey={stateKey} />)
+
+    expect(screen.getByRole('button', { name: /收起工具详情/ })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
   })
 
   test('uses Codex filePath aliases for file tool labels and open actions', async () => {
@@ -186,7 +342,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /已读取 package.json/ }))
+    await user.click(screen.getByRole('button', { name: /读取 package.json/ }))
 
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
   })
@@ -216,7 +372,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑 config.ts')).toBeInTheDocument()
+    expect(screen.getByText('编辑 config.ts')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -251,7 +407,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑 mod.rs')).toBeInTheDocument()
+    expect(screen.getByText('编辑 mod.rs')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -273,8 +429,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑文件')).toBeInTheDocument()
-    expect(screen.queryByText('已编辑 文件')).not.toBeInTheDocument()
+    expect(screen.getByText('编辑文件')).toBeInTheDocument()
+    expect(screen.queryByText('编辑 文件')).not.toBeInTheDocument()
   })
 
   test('renders process text code blocks with shared syntax highlighting', () => {
@@ -299,6 +455,33 @@ describe('ToolBlockItem', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('.collapsible')
     expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('css')
     expect(screen.queryByTestId('markdown-code-wrap-button')).not.toBeInTheDocument()
+  })
+
+  test('opens streaming process text file links with line numbers in the workspace', () => {
+    const onOpenWorkspaceFile = vi.fn()
+
+    render(
+      <ToolBlockItem
+        block={{
+          ...streamingTextBlock,
+          content:
+            '[workbenchPaneStack.test.tsx](/Users/dev/Wegent/wework/src/components/layout/workbenchPaneStack.test.tsx:184)',
+        }}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
+
+    expect(
+      screen.queryByRole('link', { name: /workbenchPaneStack\.test\.tsx/ })
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 184)')
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/Wegent/wework/src/components/layout/workbenchPaneStack.test.tsx',
+      { lineStart: 184, lineEnd: undefined }
+    )
   })
 
   test('renders markdown code labels as md and toggles line wrapping', async () => {

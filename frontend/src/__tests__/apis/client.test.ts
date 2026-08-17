@@ -56,4 +56,25 @@ describe('apiClient', () => {
       } satisfies Partial<ApiError>
     )
   })
+
+  test('preserves structured capability reference errors for localized messages', async () => {
+    const detail = {
+      code: 'CAPABILITY_REFERENCE_IN_USE',
+      message: "Cannot unbind Shell 'shared-shell' because it is used by Bots",
+      referenced_bots: [{ name: '智能体 A' }, { name: '智能体 B' }],
+    }
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      text: jest.fn().mockResolvedValue(JSON.stringify({ detail })),
+    })
+
+    await expect(apiClient.delete('/resource-library/listings/1/install')).rejects.toMatchObject({
+      name: 'ApiError',
+      message: detail.message,
+      status: 409,
+      errorCode: 'CAPABILITY_REFERENCE_IN_USE',
+      detail,
+    } satisfies Partial<ApiError>)
+  })
 })

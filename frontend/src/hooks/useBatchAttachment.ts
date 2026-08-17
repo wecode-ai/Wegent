@@ -74,6 +74,10 @@ interface UseBatchAttachmentReturn {
   reset: () => void
   /** Get successfully uploaded attachments */
   getSuccessfulAttachments: () => { attachment: Attachment; file: File }[]
+  /** Remove created documents and retain attachment-backed failures for retry */
+  applyDocumentCreationResults: (
+    results: Array<{ attachmentId: number; documentId?: number; error?: string }>
+  ) => void
 }
 
 /** Generate unique ID for file tracking */
@@ -327,7 +331,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
   const retryFile = useCallback(
     async (id: string) => {
       const fileItem = state.files.find(f => f.id === id)
-      if (!fileItem || fileItem.status !== 'error') return
+      if (!fileItem || fileItem.status !== 'error' || fileItem.attachment) return
 
       // Reset the file status to pending
       setState(prev => ({
@@ -387,9 +391,36 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
   // This is important for rename operations where state updates may be pending
   const getSuccessfulAttachments = () => {
     return state.files
-      .filter(f => f.status === 'success' && f.attachment)
+      .filter(f => f.attachment)
       .map(f => ({ attachment: f.attachment!, file: f.file }))
   }
+
+  const applyDocumentCreationResults = useCallback(
+    (results: Array<{ attachmentId: number; documentId?: number; error?: string }>) => {
+      const resultByAttachmentId = new Map(results.map(result => [result.attachmentId, result]))
+
+      setState(prev => ({
+        ...prev,
+        files: prev.files.flatMap(file => {
+          if (!file.attachment) return [file]
+
+          const result = resultByAttachmentId.get(file.attachment.id)
+          if (!result) return [file]
+          if (result.documentId !== undefined) return []
+
+          return [
+            {
+              ...file,
+              status: 'error' as FileUploadStatus,
+              error: result.error || t('knowledge:document.document.createFailed'),
+            },
+          ]
+        }),
+        summary: null,
+      }))
+    },
+    [t]
+  )
 
   return {
     state,
@@ -401,5 +432,6 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
     renameFile,
     reset,
     getSuccessfulAttachments,
+    applyDocumentCreationResults,
   }
 }

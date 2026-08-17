@@ -12,6 +12,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Database connection URL (using sync driver)
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
@@ -46,7 +47,7 @@ def _create_engine():
             pool_recycle=3600,  # Recycle connections after 1 hour to avoid stale connections
             connect_args={
                 "charset": "utf8mb4",
-                "init_command": "SET time_zone = '+08:00'",
+                "init_command": f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'",
             },
         )
 

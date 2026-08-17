@@ -103,6 +103,7 @@ export interface RemoteDeviceStartupCommand {
 }
 
 export interface CreateDockerRemoteDeviceCommandRequest {
+  container_name?: string
   client_origin?: string
 }
 
@@ -116,10 +117,4 @@ export interface MetricsHistoryResponse {
   cpu: [number, number][]
   memory: [number, number][]
   disk: [number, number][]
-}
-
-export interface VncConfigResponse {
-  wss_url: string
-  signature: string
-  sandbox_id: string
 }

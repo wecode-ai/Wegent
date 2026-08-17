@@ -5,7 +5,7 @@ endpoints that the knowledge_doc_converter microservice uses to
 communicate with the backend.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -13,10 +13,16 @@ from pydantic import BaseModel
 class ConversionStatusRequest(BaseModel):
     """Request body for conversion status callback (started/failed)."""
 
-    action: str  # "conversion_started" | "conversion_failed"
+    action: Literal["conversion_started", "conversion_failed"]
     document_id: int
     generation: int
     error_message: Optional[str] = None
+    error_code: Optional[str] = None
+    user_message: Optional[str] = None
+    retryable: Optional[bool] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    request_id: Optional[str] = None
 
 
 class ConversionCompletedRequest(BaseModel):

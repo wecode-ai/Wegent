@@ -6,6 +6,7 @@ import type { UserProxyConfig } from '@/api/users'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
   getLocalProxyConfig,
+  getLocalProxyUrl,
   saveLocalProxyUrl,
   type LocalProxyConfig,
 } from '@/features/model-settings/localProxySettings'
@@ -142,7 +143,9 @@ export function ProxySettingsPage() {
     setLocalRestarting(true)
     setLocalError(null)
     try {
-      await requestLocalExecutor(RESTART_CODEX_APP_SERVER_METHOD)
+      await requestLocalExecutor(RESTART_CODEX_APP_SERVER_METHOD, {
+        proxyUrl: getLocalProxyConfig().configured ? getLocalProxyUrl() : null,
+      })
       setLocalRestartRequired(false)
       setLocalNotice(t('workbench.proxy_config_local_restart_success'))
     } catch (restartError) {

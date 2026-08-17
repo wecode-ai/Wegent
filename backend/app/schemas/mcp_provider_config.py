@@ -39,6 +39,7 @@ class ResponseMappingConfig(BaseModel):
     size_param: str = "pageSize"  # Page size param name
     page_size: int = 20  # Default page size
     success_field: Optional[str] = "success"  # API success indicator field
+    success_value: Any = True  # Expected value of the success indicator
     error_message_field: Optional[str] = "message"  # Error message field
 
 

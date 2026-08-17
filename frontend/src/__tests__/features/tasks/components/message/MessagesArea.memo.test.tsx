@@ -4,11 +4,17 @@
 
 import React from 'react'
 import { act, render, screen } from '@testing-library/react'
-import MessagesArea from '@/features/tasks/components/message/MessagesArea'
+import MessagesArea, {
+  deriveSaveToKnowledgeTitle,
+} from '@/features/tasks/components/message/MessagesArea'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 import type { TaskStateSnapshot } from '@wegent/chat-core'
+import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/knowledge'
 
 const messageBubbleRenderSpy = jest.fn()
+const saveToKnowledgeDialogRenderSpy = jest.fn()
+const documentDetailDialogRenderSpy = jest.fn()
+const mockToast = jest.fn()
 
 let mockMessages: DisplayMessage[] = [
   {
@@ -30,6 +36,10 @@ let mockMessages: DisplayMessage[] = [
 ]
 let mockStreamingSubtaskIds: number[] = []
 let mockPresentedIsStreaming = false
+let mockUser: { id: number; user_name: string } | null = {
+  id: 1,
+  user_name: 'tester',
+}
 let mockTaskSession = {
   selectedTaskDetail: null as { id: number; title: string; status: string } | null,
   refreshSelectedTaskDetail: jest.fn(),
@@ -114,7 +124,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
-    toast: jest.fn(),
+    toast: mockToast,
   }),
 }))
 
@@ -123,9 +133,7 @@ jest.mock('@/features/theme/ThemeProvider', () => ({
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
-  useUser: () => ({
-    user: { id: 1, user_name: 'tester' },
-  }),
+  useUser: () => ({ user: mockUser }),
 }))
 
 jest.mock('@/hooks/useTraceAction', () => ({
@@ -172,6 +180,43 @@ jest.mock('@/features/inbox/components/ForwardMessageDialog', () => ({
   ForwardMessageDialog: () => null,
 }))
 
+jest.mock('@/features/tasks/components/message/SaveToKnowledgeDialog', () => ({
+  SaveToKnowledgeDialog: (props: unknown) => {
+    saveToKnowledgeDialogRenderSpy(props)
+    return null
+  },
+}))
+
+jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
+  DocumentDetailDialog: (props: unknown) => {
+    documentDetailDialogRenderSpy(props)
+    return null
+  },
+}))
+
+describe('deriveSaveToKnowledgeTitle', () => {
+  it('uses the nearest previous user message first line', () => {
+    const messages: DisplayMessage[] = [
+      {
+        id: 'user-title',
+        type: 'user',
+        content: '\n  Deployment guide  \nwith details',
+        timestamp: 1,
+        status: 'completed',
+      },
+      {
+        id: 'ai-answer',
+        type: 'ai',
+        content: 'answer',
+        timestamp: 2,
+        status: 'completed',
+      },
+    ]
+
+    expect(deriveSaveToKnowledgeTitle(messages, 1, 'fallback')).toBe('Deployment guide')
+  })
+})
+
 describe('MessagesArea memoization', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -195,6 +240,7 @@ describe('MessagesArea memoization', () => {
     ]
     mockStreamingSubtaskIds = []
     mockPresentedIsStreaming = false
+    mockUser = { id: 1, user_name: 'tester' }
     mockTaskSession = {
       selectedTaskDetail: null,
       refreshSelectedTaskDetail: jest.fn(),
@@ -219,6 +265,99 @@ describe('MessagesArea memoization', () => {
     rerender(<MessagesArea {...props} />)
 
     expect(messageBubbleRenderSpy).toHaveBeenCalledTimes(firstRenderCount)
+  })
+
+  it('only supplies save-to-knowledge actions to authenticated users', () => {
+    const props = {
+      selectedTeam: null,
+      selectedRepo: null,
+      isGroupChat: false,
+    }
+    const { rerender } = render(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'authenticated', protected: false, default: false }}
+      />
+    )
+    const getLatestAiBubbleProps = () =>
+      [...messageBubbleRenderSpy.mock.calls]
+        .reverse()
+        .map(call => call[0])
+        .find(messageProps => messageProps.msg.type === 'ai') as {
+        onSaveToKnowledge?: (content: string) => void
+      }
+
+    expect(getLatestAiBubbleProps().onSaveToKnowledge).toEqual(expect.any(Function))
+
+    mockUser = null
+    rerender(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'anonymous', protected: false, default: false }}
+      />
+    )
+
+    expect(getLatestAiBubbleProps().onSaveToKnowledge).toBeUndefined()
+
+    mockUser = { id: 1, user_name: 'tester' }
+    rerender(
+      <MessagesArea
+        {...props}
+        selectedBranch={{ name: 'authenticated-again', protected: false, default: false }}
+      />
+    )
+
+    expect(getLatestAiBubbleProps().onSaveToKnowledge).toEqual(expect.any(Function))
+  })
+
+  it('binds each success toast to the document created by that save', () => {
+    render(
+      <MessagesArea
+        selectedTeam={null}
+        selectedRepo={null}
+        selectedBranch={null}
+        isGroupChat={false}
+      />
+    )
+    const aiBubbleProps = messageBubbleRenderSpy.mock.calls
+      .map(call => call[0])
+      .find(props => props.msg.type === 'ai') as {
+      onSaveToKnowledge: (content: string) => void
+    }
+
+    act(() => aiBubbleProps.onSaveToKnowledge('# Answer'))
+
+    const dialogProps = saveToKnowledgeDialogRenderSpy.mock.lastCall?.[0] as {
+      onCreated: (document: KnowledgeDocument, knowledgeBase: KnowledgeBaseWithGroupInfo) => void
+    }
+    const knowledgeBase = {
+      id: 7,
+      name: 'Knowledge',
+      namespace: 'default',
+      kb_type: 'notebook',
+      group_type: 'personal',
+    } as KnowledgeBaseWithGroupInfo
+    const documentA = { id: 101, name: 'A' } as KnowledgeDocument
+    const documentB = { id: 102, name: 'B' } as KnowledgeDocument
+
+    act(() => {
+      dialogProps.onCreated(documentA, knowledgeBase)
+      dialogProps.onCreated(documentB, knowledgeBase)
+    })
+    const firstToastAction = mockToast.mock.calls[0][0].action as React.ReactElement<{
+      onClick: () => void
+    }>
+    documentDetailDialogRenderSpy.mockClear()
+
+    act(() => firstToastAction.props.onClick())
+
+    expect(documentDetailDialogRenderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document: documentA,
+        knowledgeBaseId: knowledgeBase.id,
+        open: true,
+      })
+    )
   })
 
   it('shows a sync indicator while the current task has no messages yet', () => {

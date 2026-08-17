@@ -1,23 +1,16 @@
 import { useEffect, useState } from 'react'
-import { createPortal, flushSync } from 'react-dom'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
-import type { RuntimeWorkListResponse } from '@/types/api'
 
-interface RuntimeTaskCloseGuardProps {
-  runtimeWork: RuntimeWorkListResponse | null
-}
-
-export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProps) {
+export function RuntimeTaskCloseGuard() {
   const { t } = useTranslation('common')
   const [closeDialogOpen, setCloseDialogOpen] = useState(false)
   const [closing, setClosing] = useState(false)
-
-  void runtimeWork
 
   useEffect(() => {
     if (!isTauriRuntime()) return undefined
@@ -31,7 +24,7 @@ export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProp
     })
       .then(nextUnlisten => {
         if (cancelled) {
-          nextUnlisten()
+          disposeTauriListener(nextUnlisten, 'runtime task close guard')
           return
         }
         unlisten = nextUnlisten
@@ -42,7 +35,7 @@ export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProp
 
     return () => {
       cancelled = true
-      unlisten?.()
+      if (unlisten) disposeTauriListener(unlisten, 'runtime task close guard')
     }
   }, [])
 
@@ -60,12 +53,8 @@ export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProp
       }}
       onConfirm={async () => {
         setClosing(true)
+        setCloseDialogOpen(false)
         try {
-          await updateAppPreferences({ closeToTrayHintSeen: true })
-          flushSync(() => {
-            setCloseDialogOpen(false)
-            setClosing(false)
-          })
           await closeMainWindowToTray()
         } catch (error) {
           console.error('Failed to hide window after close-to-tray hint confirmation:', error)
@@ -121,7 +110,7 @@ function RuntimeTaskCloseConfirmDialog({
         >
           {title}
         </h2>
-        <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">{description}</p>
+        <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-6 flex justify-end gap-2">
           <Button
             type="button"

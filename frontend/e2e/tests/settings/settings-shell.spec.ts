@@ -31,7 +31,7 @@ test.describe('Settings - Shell Management', () => {
   test('should access shell management page', async ({ page }) => {
     expect(shellsPage.isOnResourceLibraryPage()).toBe(true)
     await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
-    await expect(page.locator('[data-testid="managed-resource-shell-tab"]')).toHaveAttribute(
+    await expect(page.locator('[data-testid="resource-type-shell-filter"]')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
@@ -51,9 +51,9 @@ test.describe('Settings - Shell Management', () => {
     const shellData = DataBuilders.shell()
     testShellName = shellData.metadata.name
 
-    const createButton = page.locator('[data-testid="create-shell-button"]')
+    const createButton = page.locator('[data-testid="new-capability-button"]')
     if (await createButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createButton.click()
+      await shellsPage.clickCreateShell()
 
       // Wait for dialog
       const dialogVisible = await page

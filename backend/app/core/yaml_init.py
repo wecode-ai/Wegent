@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
+from packaging.version import InvalidVersion, Version
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -26,6 +27,35 @@ from app.services.admin_password_bootstrap import (
 from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
+
+
+def _is_newer_skill_version(existing: Any, candidate_version: Any) -> bool:
+    """Return whether a versioned built-in Skill should replace its prior package."""
+    current_version = str(getattr(existing.spec, "version", "") or "").strip()
+    next_version = str(candidate_version or "").strip()
+    if not current_version or not next_version:
+        return False
+
+    try:
+        return Version(next_version) > Version(current_version)
+    except InvalidVersion:
+        logger.warning(
+            "Skipping built-in Skill version comparison: current=%s candidate=%s",
+            current_version,
+            next_version,
+        )
+        return False
+
+
+def _package_skill_directory(skill_folder: Path) -> bytes:
+    """Create the ZIP package consumed by the Skill service."""
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in skill_folder.rglob("*"):
+            if file_path.is_file():
+                arcname = f"{skill_folder.name}/{file_path.relative_to(skill_folder)}"
+                zip_file.write(file_path, arcname)
+    return zip_buffer.getvalue()
 
 
 def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
@@ -390,6 +420,7 @@ def apply_skills_from_directory(
         List of operation results
     """
     from app.services.adapters.skill_kinds import skill_kinds_service
+    from app.services.skill_service import SkillValidator
 
     if not skills_dir.exists() or not skills_dir.is_dir():
         logger.info(f"Skills directory does not exist: {skills_dir}")
@@ -417,6 +448,10 @@ def apply_skills_from_directory(
         namespace = "default"
 
         try:
+            zip_content = _package_skill_directory(skill_folder)
+            zip_filename = f"{skill_name}.zip"
+            metadata = SkillValidator.validate_zip(zip_content, zip_filename)
+
             # Check if public skill already exists (user_id=0)
             existing = skill_kinds_service.get_skill_by_name(
                 db, name=skill_name, namespace=namespace, user_id=public_user_id
@@ -433,6 +468,32 @@ def apply_skills_from_directory(
                     logger.info(
                         f"Deleted existing public skill for force update: {skill_name}"
                     )
+                elif _is_newer_skill_version(existing, metadata.get("version")):
+                    skill_id = int(existing.metadata.labels.get("id"))
+                    skill_kinds_service.update_skill(
+                        db,
+                        skill_id=skill_id,
+                        user_id=public_user_id,
+                        file_content=zip_content,
+                        file_name=zip_filename,
+                    )
+                    logger.info(
+                        "Updated versioned public skill: %s (%s -> %s)",
+                        skill_name,
+                        existing.spec.version,
+                        metadata.get("version"),
+                    )
+                    results.append(
+                        {
+                            "kind": "Skill",
+                            "name": skill_name,
+                            "namespace": namespace,
+                            "operation": "updated",
+                            "success": True,
+                        }
+                    )
+                    updated_count += 1
+                    continue
                 else:
                     logger.info(f"Skipping existing public skill: {skill_name}")
                     results.append(
@@ -447,18 +508,6 @@ def apply_skills_from_directory(
                     )
                     skipped_count += 1
                     continue
-
-            # Create ZIP file in memory from skill folder
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for file_path in skill_folder.rglob("*"):
-                    if file_path.is_file():
-                        # Archive path should be: skill_name/filename
-                        arcname = f"{skill_name}/{file_path.relative_to(skill_folder)}"
-                        zip_file.write(file_path, arcname)
-
-            zip_content = zip_buffer.getvalue()
-            zip_filename = f"{skill_name}.zip"
 
             # Create skill as PUBLIC (user_id=0) using skill_kinds_service
             skill = skill_kinds_service.create_skill(
@@ -487,7 +536,7 @@ def apply_skills_from_directory(
                 created_count += 1
 
         except Exception as e:
-            logger.error(f"Failed to create public skill {skill_name}: {e}")
+            logger.error(f"Failed to apply public skill {skill_name}: {e}")
             results.append(
                 {
                     "kind": "Skill",

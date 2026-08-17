@@ -38,6 +38,7 @@ from app.api.ws.events import (
     ChatSendAck,
     ChatSendPayload,
     ClientEvents,
+    GenerateParams,
     GenericAck,
     HistorySyncAck,
     HistorySyncPayload,
@@ -77,7 +78,7 @@ from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.task_device_resolution import (
-    resolve_chat_task_dispatch_device_id,
+    resolve_chat_task_device_id,
 )
 from app.services.chat.trigger import (
     collect_completed_result,
@@ -93,6 +94,74 @@ from shared.telemetry.context import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams]:
+    """Restore persisted generation options when retrying the same user message."""
+    result = getattr(user_subtask, "result", None)
+    if not isinstance(result, dict):
+        return None
+
+    video_config = result.get("video_config")
+    if isinstance(video_config, dict):
+        return GenerateParams(
+            resolution=video_config.get("resolution"),
+            ratio=video_config.get("ratio"),
+            duration=video_config.get("duration"),
+            generation_mode_id=video_config.get("generation_mode_id"),
+        )
+
+    image_config = result.get("image_config")
+    if isinstance(image_config, dict):
+        return GenerateParams(size=image_config.get("size"))
+    return None
+
+
+def _apply_artifact_node_scope(
+    *,
+    db: Session,
+    user: User,
+    payload: ChatSendPayload,
+) -> None:
+    """Replace client-selected sources with the validated Artifact source scope."""
+    if payload.artifact_context is None:
+        return
+    if payload.task_type != "knowledge" or payload.knowledge_base_id is None:
+        raise ValueError("Artifact node questions require a knowledge base task")
+
+    from app.api.ws.events import ContextItem
+    from app.services.knowledge.artifact_repository import (
+        KnowledgeArtifactRepository,
+    )
+    from app.services.knowledge.artifact_service import ArtifactService
+
+    artifact_context = payload.artifact_context
+    service = ArtifactService(
+        db,
+        user,
+        KnowledgeArtifactRepository(db),
+    )
+    _, document_ids = service.resolve_mind_map_node(
+        payload.knowledge_base_id,
+        artifact_context.artifact_id,
+        artifact_context.node_id,
+    )
+    knowledge_base_name = service.resolve_knowledge_base_name(payload.knowledge_base_id)
+
+    knowledge_base_id = payload.knowledge_base_id
+    payload.attachment_id = None
+    payload.attachment_ids = None
+    payload.contexts = [
+        ContextItem(
+            type="knowledge_base",
+            data={
+                "knowledge_id": knowledge_base_id,
+                "name": knowledge_base_name,
+                "document_ids": document_ids,
+                "scope_restricted": True,
+            },
+        )
+    ]
 
 
 async def _finalize_failed_ai_trigger(
@@ -739,6 +808,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                         "message": form_validation.message,
                     }
 
+            _apply_artifact_node_scope(
+                db=db,
+                user=user,
+                payload=payload,
+            )
+
             # Get task JSON for group chat check
             task_json = {}
             existing_task = None
@@ -805,6 +880,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "resolution": payload.generate_params.resolution,
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
+                    "generation_mode_id": payload.generate_params.generation_mode_id,
+                    "size": payload.generate_params.size,
                 }
 
             execution_workspace = None
@@ -862,14 +939,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                     user=user,
                     params=params,
                 )
-            resolved_device_id = await resolve_chat_task_dispatch_device_id(
+            resolved_device_id = resolve_chat_task_device_id(
                 db,
                 user_id=user_id,
                 params=params,
                 task=existing_task,
             )
-            if resolved_device_id:
-                params.device_id = resolved_device_id
+            params.device_id = resolved_device_id
 
             result = await create_chat_task(
                 db=db,
@@ -1839,6 +1915,7 @@ def _prepare_chat_retry_dispatch(
         team_id=team.id,
         message=user_message,
         attachment_id=attachment_id,
+        generate_params=_get_retry_generate_params(user_subtask),
         force_override_bot_model=model_id,
         force_override_bot_model_type=model_type,
         is_group_chat=False,

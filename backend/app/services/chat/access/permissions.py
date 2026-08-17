@@ -13,10 +13,12 @@ database operations in a thread pool without blocking the event loop.
 """
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.db.timezone import database_datetime_timezone
 from app.models.subtask import SubtaskStatus
 from app.services.chat.storage.db import with_session_in_executor
 from app.stores.tasks import subtask_store, task_access_store
@@ -30,6 +32,16 @@ _ACTIVE_STREAMING_SUBTASK_STATUSES = {
 _ACTIVE_STREAMING_STATUS_VALUES = {
     status.value for status in _ACTIVE_STREAMING_SUBTASK_STATUSES
 }
+
+
+def _serialize_database_datetime(db: Session, value: datetime | None) -> str | None:
+    """Serialize a database datetime with an explicit timezone offset."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.isoformat()
+
+    return value.replace(tzinfo=database_datetime_timezone(db)).isoformat()
 
 
 @with_session_in_executor
@@ -175,9 +187,7 @@ def _get_active_streaming_from_db(
         return {
             "subtask_id": subtask.id,
             "user_id": subtask.user_id,
-            "started_at": (
-                subtask.created_at.isoformat() if subtask.created_at else None
-            ),
+            "started_at": _serialize_database_datetime(db, subtask.created_at),
         }
 
     logger.info(

@@ -300,6 +300,12 @@ fn callback_payload(event: &EventEnvelope) -> Result<Value, String> {
             Value::String(executor_namespace.clone()),
         );
     }
+    if let Some(validation_id) = &event.validation_id {
+        object.insert(
+            "validation_id".to_owned(),
+            Value::String(validation_id.clone()),
+        );
+    }
     Ok(Value::Object(object))
 }
 

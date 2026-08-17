@@ -39,6 +39,23 @@ describe('cloudConnectionStorage', () => {
     expect(normalizeCloudBackendUrl('localhost:8000').apiBaseUrl).toBe('http://localhost:8000/api')
   })
 
+  it('uses an optional Socket URL override', () => {
+    expect(
+      normalizeCloudBackendUrl('https://cloud.example.com/api', 'wss://wss-cloud.example.com/')
+    ).toEqual({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://wss-cloud.example.com',
+      socketPath: '/socket.io',
+    })
+  })
+
+  it('rejects an invalid Socket URL override', () => {
+    expect(() => normalizeCloudBackendUrl('https://cloud.example.com', 'not-a-url')).toThrow(
+      'Socket URL is invalid'
+    )
+  })
+
   it('persists and clears the cloud connection independently from auth_token', () => {
     localStorage.setItem('auth_token', 'local-token')
     const token = tokenWithExp(2_000_000_000)

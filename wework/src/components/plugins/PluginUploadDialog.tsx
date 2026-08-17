@@ -43,9 +43,10 @@ export function PluginUploadDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
+    <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-4">
       <form
-        className="w-full max-w-[480px] rounded-2xl border border-border bg-background p-5 shadow-xl"
+        data-testid="plugin-upload-dialog"
+        className="plugin-dialog-surface w-full max-w-[480px] p-5"
         onSubmit={event => {
           event.preventDefault()
           if (!file) {
@@ -63,7 +64,7 @@ export function PluginUploadDialog({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold">
+            <h2 className="heading-subsection">
               {t('workbench.plugins_plugin_upload_title', '上传 Claude Code 插件')}
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
@@ -83,9 +84,9 @@ export function PluginUploadDialog({
           </button>
         </div>
 
-        <label className="mt-5 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface px-4 text-center hover:border-primary">
+        <label className="mt-5 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border/45 bg-surface px-4 text-center transition-colors hover:border-focus/60 focus-within:border-focus/70 focus-within:ring-2 focus-within:ring-focus/15">
           <Upload className="h-8 w-8 text-text-secondary" />
-          <span className="mt-3 text-sm font-semibold">
+          <span className="mt-3 text-sm font-medium">
             {file ? file.name : t('workbench.plugins_plugin_upload_drop_title', '选择插件 ZIP 包')}
           </span>
           <span className="mt-1 text-xs text-text-muted">
@@ -100,12 +101,12 @@ export function PluginUploadDialog({
           />
         </label>
 
-        {visibleError && <p className="mt-3 text-sm font-semibold text-red-500">{visibleError}</p>}
+        {visibleError && <p className="mt-3 text-sm font-medium text-red-500">{visibleError}</p>}
 
         <div className="mt-5 flex justify-end gap-3">
           <button
             type="button"
-            className="h-10 rounded-xl border border-border px-4 text-sm font-semibold"
+            className="h-9 rounded-lg border border-border/30 px-4 text-sm font-medium hover:bg-surface"
             onClick={onCancel}
           >
             {t('workbench.plugins_uninstall_cancel', '取消')}
@@ -114,7 +115,7 @@ export function PluginUploadDialog({
             type="submit"
             data-testid="plugin-upload-confirm-button"
             disabled={isUploading}
-            className="h-10 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:bg-text-primary/90 disabled:opacity-50"
+            className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {isUploading
               ? t('workbench.plugins_plugin_uploading', '上传中')

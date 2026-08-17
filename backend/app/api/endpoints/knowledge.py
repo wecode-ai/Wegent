@@ -13,7 +13,14 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +29,7 @@ from app.api.endpoints._knowledge_multimodal import (
     multimodal_create_kwargs,
     multimodal_update_kwargs,
 )
+from app.api.endpoints.knowledge_code_wiki import router as code_wiki_router
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
@@ -35,6 +43,7 @@ from app.schemas.knowledge import (
     AllGroupedKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    ContentOrigin,
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
@@ -79,6 +88,11 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Registered before any route defined here, which is load-bearing rather than tidy:
+# code wiki paths sit under the same prefix, and `/{knowledge_base_id}` below would
+# match `/code-wikis` first and try to read "code-wikis" as an id.
+router.include_router(code_wiki_router)
 
 
 def _serialize_standalone_document_detail(
@@ -432,6 +446,7 @@ def create_knowledge_base(
             name=data.name,
             description=data.description,
             namespace=data.namespace or "default",
+            direct_access_requirement=data.direct_access_requirement,
             kb_type=data.kb_type or "notebook",
             summary_enabled=data.summary_enabled,
             rag_config_mode=data.rag_config_mode,
@@ -518,6 +533,7 @@ def update_knowledge_base(
             knowledge_base_id=knowledge_base_id,
             name=data.name,
             description=data.description,
+            direct_access_requirement=data.direct_access_requirement,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
@@ -645,6 +661,10 @@ def list_documents(
         default=SortOrder.DESC,
         description="Document sort order",
     ),
+    origin: Optional[ContentOrigin] = Query(
+        default=None,
+        description="Filter documents by content origin",
+    ),
     limit: int = Query(
         default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
         ge=1,
@@ -673,6 +693,7 @@ def list_documents(
             keyword=keyword,
             sort_by=sort_by.value,
             sort_order=sort_order.value,
+            content_origin=origin.value if origin is not None else None,
         )
     except ValueError as e:
         raise HTTPException(
@@ -733,6 +754,27 @@ async def create_document(
 
 # Document-specific endpoints (without knowledge_base_id in path)
 document_router = APIRouter()
+
+
+@document_router.get("/{document_id}", response_model=KnowledgeDocumentResponse)
+@trace_sync("get_document", "knowledge.api")
+def get_document(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Get current document metadata and processing state by ID."""
+    try:
+        return knowledge_orchestrator.get_document(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
 
 
 @document_router.put("/{document_id}", response_model=KnowledgeDocumentResponse)
@@ -1062,6 +1104,10 @@ def create_folder(
 @trace_sync("get_folder_tree", "knowledge.api")
 def get_folder_tree(
     knowledge_base_id: int,
+    origin: Optional[ContentOrigin] = Query(
+        default=None,
+        description="Filter folders by content origin",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> List[KnowledgeFolderResponse]:
@@ -1071,6 +1117,7 @@ def get_folder_tree(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=current_user.id,
+            content_origin=origin.value if origin is not None else None,
         )
     except ValueError as e:
         _raise_document_detail_http_error(e)

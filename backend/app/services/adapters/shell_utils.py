@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Shell
+from app.services.capability_reference_service import get_referenced_capability
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,15 @@ def find_shell_json(
     )
     if shell_row and isinstance(shell_row[0], dict):
         return shell_row[0]
+    referenced_shell = get_referenced_capability(
+        db,
+        kind="Shell",
+        name=shell_name,
+        user_id=user_id,
+        namespace="default",
+    )
+    if referenced_shell and isinstance(referenced_shell.json, dict):
+        return referenced_shell.json
 
     # Try group namespaces
     from app.services.group_permission import get_user_groups
@@ -84,6 +94,15 @@ def find_shell_json(
         )
         if shell_row and isinstance(shell_row[0], dict):
             return shell_row[0]
+        referenced_shell = get_referenced_capability(
+            db,
+            kind="Shell",
+            name=shell_name,
+            user_id=user_id,
+            namespace=group_name,
+        )
+        if referenced_shell and isinstance(referenced_shell.json, dict):
+            return referenced_shell.json
 
     return None
 
@@ -122,6 +141,15 @@ def get_shell_by_name(
     if user_shell:
         logger.debug(f"Found user shell '{shell_name}' for user {user_id}")
         return user_shell
+    referenced_shell = get_referenced_capability(
+        db,
+        kind="Shell",
+        name=shell_name,
+        user_id=user_id,
+        namespace=namespace,
+    )
+    if referenced_shell:
+        return referenced_shell
 
     # Then, try to find in user's accessible groups (if namespace != 'default')
     if namespace != "default":
@@ -226,6 +254,26 @@ def get_shell_info_by_name(
         )
         return result
 
+    referenced_shell = get_referenced_capability(
+        db,
+        kind="Shell",
+        name=shell_name,
+        user_id=user_id,
+        namespace="default",
+    )
+    if referenced_shell and isinstance(referenced_shell.json, dict):
+        shell_crd = Shell.model_validate(referenced_shell.json)
+        labels = shell_crd.metadata.labels or {}
+        return {
+            "shell_type": shell_crd.spec.shellType,
+            "support_model": shell_crd.spec.supportModel or [],
+            "execution_type": labels.get("type", "local_engine"),
+            "base_image": shell_crd.spec.baseImage,
+            "is_custom": True,
+            "is_reference": True,
+            "namespace": "default",
+        }
+
     # Then, try to find in user's accessible groups
     # If namespace is specified and not 'default', only search that namespace
     # If namespace is 'default', search all user's groups
@@ -263,6 +311,25 @@ def get_shell_info_by_name(
                 f"base_image={result['base_image']}, namespace={result['namespace']}"
             )
             return result
+        referenced_shell = get_referenced_capability(
+            db,
+            kind="Shell",
+            name=shell_name,
+            user_id=user_id,
+            namespace=ns,
+        )
+        if referenced_shell and isinstance(referenced_shell.json, dict):
+            shell_crd = Shell.model_validate(referenced_shell.json)
+            labels = shell_crd.metadata.labels or {}
+            return {
+                "shell_type": shell_crd.spec.shellType,
+                "support_model": shell_crd.spec.supportModel or [],
+                "execution_type": labels.get("type", "local_engine"),
+                "base_image": shell_crd.spec.baseImage,
+                "is_custom": True,
+                "is_reference": True,
+                "namespace": ns,
+            }
 
     # Finally, try to find in public shells (user_id=0, namespace='default')
     public_shell = (

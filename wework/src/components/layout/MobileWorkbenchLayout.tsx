@@ -1,7 +1,9 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -12,6 +14,7 @@ import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import {
@@ -31,11 +34,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
-import {
-  CachedWorkbenchPaneStack,
-  getRunningRuntimeWorkbenchPaneKeys,
-  type WorkbenchPaneIdentity,
-} from './workbenchPaneStack'
+import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
@@ -44,32 +43,42 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
+import type { WorkbenchMessage } from '@/types/workbench'
+import {
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+  WorkbenchBackground,
+} from '@/features/appearance'
+import { cn } from '@/lib/utils'
+import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import { isWorktreeCreationPending } from './worktreeCreationState'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
     standaloneChatKey: state.standaloneChatKey,
   }
-  const pinnedPaneKeys = useMemo(
-    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
-    [state.runtimeWork]
-  )
-
   return (
-    <CachedWorkbenchPaneStack
-      activePane={activePane}
-      maxPanes={1}
-      pinnedKeys={pinnedPaneKeys}
-      className="h-dvh"
-      renderPane={renderMobileWorkbenchPane}
-    />
+    <div className="relative h-dvh overflow-hidden bg-background">
+      <WorkbenchBackground />
+      <div
+        className={cn(
+          'relative flex min-w-0 flex-1 overflow-hidden',
+          background.imagePath && background.inMain ? 'h-dvh bg-background/20' : 'h-dvh'
+        )}
+      >
+        <MobileWorkbenchPane key={getWorkbenchPaneKey(activePane)} pane={activePane} />
+      </div>
+    </div>
   )
-}
-
-function renderMobileWorkbenchPane(pane: WorkbenchPaneIdentity) {
-  return <MobileWorkbenchPane pane={pane} />
 }
 
 const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
@@ -77,12 +86,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
 }: {
   pane: WorkbenchPaneIdentity
 }) {
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const {
     state,
     upgradingDevices,
     projectChat,
     upgradeDevice,
-    retryFailedMessage,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -112,6 +123,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
+  const pendingModelRetryRef = useRef<WorkbenchMessage | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
@@ -121,9 +133,36 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     tone: 'success' | 'error'
   } | null>(null)
   const currentRuntimeTask = pane.currentRuntimeTask
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
-  const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const activePaneProject = pane.currentProject
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: activePaneProject,
+  })
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: async input => {
+      await paneSession.send(input)
+    },
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+  const submitPaneInput = useCallback(
+    async (value?: string) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          // Keep composer text so cancel does not discard the draft; resume
+          // send still uses pendingInput and clears after a successful send.
+          return
+        }
+      }
+      return paneSession.send(value)
+    },
+    [connectorAuthGate, paneSession]
+  )
+  const retryFailedMessage = paneSession.retryFailedMessage
+  const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const paneMessages = paneSession.messages
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
@@ -131,8 +170,16 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   )
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
-  const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
+  const paneIsBusy = paneSession.status.isBusy
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const runtimeTaskSummary = findRuntimeTask(state.runtimeWork, currentRuntimeTask)
+  const currentRuntimeUsesCodex =
+    (runtimeTaskSummary?.runtime ?? currentRuntimeTask?.runtime ?? 'codex').toLowerCase() ===
+    'codex'
+  const isCreatingWorktree = isWorktreeCreationPending(
+    runtimeTaskSummary,
+    paneSession.status.sendPhase
+  )
   const activeConversationProject = activePaneProject
   const effectiveProjectChat = projectChat ?? {
     models: [],
@@ -143,9 +190,31 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     setSelectedModel: () => {},
     setSelectedModelOption: () => {},
   }
+  const retryFailedMessageAfterModelSelect = useCallback(() => {
+    const message = pendingModelRetryRef.current
+    if (!message) return
+    pendingModelRetryRef.current = null
+    queueMicrotask(() => {
+      void retryFailedMessage(message)
+    })
+  }, [retryFailedMessage])
   const projectChatWithModelSelectorSignal: ProjectChatControls = {
     ...effectiveProjectChat,
     modelSelectorOpenSignal,
+    setSelectedModel: model => {
+      effectiveProjectChat.setSelectedModel(model)
+      if (model) retryFailedMessageAfterModelSelect()
+    },
+    setSelectedModelAndOptions: effectiveProjectChat.setSelectedModelAndOptions
+      ? (model, options) => {
+          effectiveProjectChat.setSelectedModelAndOptions?.(model, options)
+          retryFailedMessageAfterModelSelect()
+        }
+      : undefined,
+    onModelSelectorOpenChange: open => {
+      if (!open) pendingModelRetryRef.current = null
+    },
+    onRefineTrialPrompt: refinePluginTrialPrompt,
   }
   const emptyTitle = activeConversationProject
     ? t('workbench.project_empty_title', {
@@ -167,6 +236,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
   const canEditLastUserMessage = Boolean(
     currentRuntimeTask &&
+    currentRuntimeUsesCodex &&
     (activeDevice?.device_type === 'local' || activeDeviceId === 'local-device') &&
     !paneSession.status.isBusy
   )
@@ -182,13 +252,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    paneSession.status.isSubmitting ||
-    activeDeviceUnavailable ||
-    activeDeviceVersionUnsupported ||
-    noStandaloneCompatibleDevice
+    activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -238,13 +307,23 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-text-primary">
+    <div
+      className={cn(
+        'flex h-full overflow-hidden text-text-primary',
+        background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
+      )}
+    >
       <main className="flex h-full min-h-0 w-full flex-col overflow-hidden">
         {hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
               data-testid="mobile-conversation-header"
-              className="pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+              className={cn(
+                'pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
+                background.imagePath && background.inTopBar
+                  ? 'bg-background/20'
+                  : 'bg-background/95 backdrop-blur'
+              )}
             >
               <button
                 type="button"
@@ -263,8 +342,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
                     openSignal={modelSelectorOpenSignal}
                     disabled={false}
-                    onSelectModel={effectiveProjectChat.setSelectedModel}
+                    onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
                     onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
                     menuPlacement="below"
                     buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
@@ -281,15 +361,17 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     availableWidth={0}
                     compact
                   />
-                  <button
-                    type="button"
-                    data-testid="mobile-fork-runtime-task-button"
-                    className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
-                    aria-label={t('workbench.task_fork_title', '复制任务')}
-                    onClick={() => setForkDialogOpen(true)}
-                  >
-                    <ArrowLeftRight className="h-5 w-5" />
-                  </button>
+                  {currentRuntimeUsesCodex && (
+                    <button
+                      type="button"
+                      data-testid="mobile-fork-runtime-task-button"
+                      className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                      aria-label={t('workbench.task_fork_title', '复制任务')}
+                      onClick={() => setForkDialogOpen(true)}
+                    >
+                      <ArrowLeftRight className="h-5 w-5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     data-testid="mobile-continue-in-im-button"
@@ -307,10 +389,13 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
             <ScrollableMessageArea
               messages={paneMessages}
               loading={paneSession.transcriptLoading}
-              isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
+              isWaitingForAssistant={
+                !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
+              }
               hasMoreBefore={paneSession.transcriptHasMoreBefore}
               loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
               turnNavigation={paneSession.turnNavigation}
+              loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
               onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
               onLoadFullTranscript={paneSession.loadFullTranscript}
               loadingFullTranscript={paneSession.transcriptLoadingFullContent}
@@ -322,17 +407,23 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   : null
               }
               className="h-full"
-              scrollerClassName="pb-28 pt-16"
+              scrollerClassName={isCreatingWorktree ? 'pt-16' : 'pb-28 pt-16'}
+              contentFooter={
+                isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+              }
               devices={state.devices}
               onRetryFailedMessage={message => {
-                void retryFailedMessage(message.id, paneMessages)
+                void paneSession.retryFailedMessage(message)
               }}
-              onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
+              onSwitchModelForFailedMessage={message => {
+                pendingModelRetryRef.current = message
+                setModelSelectorOpenSignal(signal => signal + 1)
+              }}
               onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
               onRevertFileChanges={(subtaskId, fileChanges) =>
-                revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}
@@ -341,88 +432,113 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
               hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
             />
-            <div
-              data-testid="mobile-chat-input-dock"
-              className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
-            >
-              <div className="pointer-events-auto">
-                {showConversationDeviceBanner ? (
-                  <ConversationDeviceOfflineBanner
-                    device={activeDevice}
-                    deviceId={activeDeviceId}
-                    className="mb-2"
-                  />
-                ) : (
-                  <DeviceStatusPrompt
-                    devices={state.devices}
-                    upgradingDevices={upgradingDevices}
-                    onUpgradeDevice={upgradeDevice}
-                    onOpenCloudDeviceSettings={() => navigateTo('/settings/connections')}
-                    activeDeviceId={activeDeviceId}
-                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                    compact
-                    className="mb-2"
-                  />
-                )}
-                {pendingRequestUserInput ? (
-                  <RequestUserInputCard
-                    key={
-                      requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
-                    }
-                    payload={pendingRequestUserInput}
-                    onSubmit={response => {
-                      const isImplementationPlanRequest =
-                        isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                      const shouldImplementPlan =
-                        isImplementationPlanRequest &&
-                        isImplementationPlanConfirmationResponse(response)
-                      return paneSession.sendRequestUserInputResponse(response, {
-                        appendUserMessage: isImplementationPlanRequest,
-                        forceDefaultCollaborationMode: shouldImplementPlan,
-                      })
-                    }}
-                    onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
-                  />
-                ) : (
-                  <BufferedChatInput
-                    value={paneSession.input}
-                    onChange={paneSession.setInput}
-                    onSubmit={paneSession.send}
-                    disabled={composerDisabled}
-                    error={paneSession.error}
-                    disabledReason={inlineComposerDisabledReason}
-                    placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                    projectChat={projectChatWithModelSelectorSignal}
-                    projectWork={effectiveProjectWork}
-                    workspaceTarget={workspaceTarget}
-                    workspaceFileApi={workspaceFileApi}
-                    queuedMessages={paneQueuedMessages}
-                    guidanceMessages={paneGuidanceMessages}
-                    codeComments={paneSession.codeCommentContexts}
-                    isStreaming={paneIsResponseStreaming}
-                    onPause={() => void paneSession.pauseCurrentResponse()}
-                    onCompactContext={() => void paneSession.compactContext()}
-                    taskPlan={paneSession.taskPlan}
-                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                    queuePaused={paneSession.queuedMessagesPaused}
-                    onResumeQueue={paneSession.resumeQueuedMessages}
-                    onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
-                    onClearQueue={paneSession.clearQueuedMessages}
-                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                    onEditQueuedMessage={paneSession.editQueuedMessage}
-                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                    onClearCodeComments={paneSession.clearCodeComments}
-                  />
-                )}
+            {!isCreatingWorktree && (
+              <div
+                data-testid="mobile-chat-input-dock"
+                className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
+              >
+                <div className="pointer-events-auto">
+                  {showConversationDeviceBanner ? (
+                    <ConversationDeviceOfflineBanner
+                      device={activeDevice}
+                      deviceId={activeDeviceId}
+                      className="mb-2"
+                    />
+                  ) : (
+                    <DeviceStatusPrompt
+                      devices={state.devices}
+                      upgradingDevices={upgradingDevices}
+                      onUpgradeDevice={upgradeDevice}
+                      onOpenCloudDeviceSettings={() => navigateTo('/settings/connections')}
+                      activeDeviceId={activeDeviceId}
+                      requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                      compact
+                      className="mb-2"
+                    />
+                  )}
+                  {connectorAuthGate.pending ? (
+                    <ConnectorAuthCard
+                      target={connectorAuthGate.pending.target}
+                      title={connectorAuthGate.pending.title}
+                      onSuccess={() => {
+                        void connectorAuthGate.completePending()
+                      }}
+                      onCancel={connectorAuthGate.clearPending}
+                    />
+                  ) : pendingRequestUserInput ? (
+                    <RequestUserInputCard
+                      key={
+                        requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
+                      }
+                      payload={pendingRequestUserInput}
+                      onSubmit={response => {
+                        const isImplementationPlanRequest =
+                          isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                        const shouldImplementPlan =
+                          isImplementationPlanRequest &&
+                          isImplementationPlanConfirmationResponse(response)
+                        return paneSession.sendRequestUserInputResponse(response, {
+                          appendUserMessage: isImplementationPlanRequest,
+                          forceDefaultCollaborationMode: shouldImplementPlan,
+                        })
+                      }}
+                      onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
+                    />
+                  ) : (
+                    <BufferedChatInput
+                      value={paneSession.input}
+                      onChange={paneSession.setInput}
+                      onDraftEdit={paneSession.clearError}
+                      onSubmit={submitPaneInput}
+                      disabled={composerDisabled}
+                      submitDisabled={paneSession.status.isSubmitting}
+                      error={paneSession.error}
+                      disabledReason={inlineComposerDisabledReason}
+                      placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                      projectChat={projectChatWithModelSelectorSignal}
+                      projectWork={effectiveProjectWork}
+                      workspaceTarget={workspaceTarget}
+                      workspaceFileApi={workspaceFileApi}
+                      queuedMessages={paneQueuedMessages}
+                      guidanceMessages={paneGuidanceMessages}
+                      codeComments={paneSession.codeCommentContexts}
+                      isStreaming={paneIsBusy}
+                      onPause={() => void paneSession.pauseCurrentResponse()}
+                      onCompactContext={
+                        currentRuntimeUsesCodex
+                          ? () => void paneSession.compactContext()
+                          : undefined
+                      }
+                      taskPlan={paneSession.taskPlan}
+                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                      onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                      queuePaused={paneSession.queuedMessagesPaused}
+                      onResumeQueue={paneSession.resumeQueuedMessages}
+                      onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                      onClearQueue={paneSession.clearQueuedMessages}
+                      onSendQueuedAsGuidance={
+                        currentRuntimeUsesCodex ? paneSession.sendQueuedAsGuidance : undefined
+                      }
+                      onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
+                      onEditQueuedMessage={paneSession.editQueuedMessage}
+                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                      onClearCodeComments={paneSession.clearCodeComments}
+                    />
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         ) : (
           <div className="flex h-full min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
             <header
               data-testid="mobile-empty-header"
-              className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"
+              className={cn(
+                'flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
+                background.imagePath && background.inTopBar
+                  ? 'bg-background/20'
+                  : 'bg-background/95'
+              )}
             >
               <button
                 type="button"
@@ -441,8 +557,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
                     openSignal={modelSelectorOpenSignal}
                     disabled={false}
-                    onSelectModel={effectiveProjectChat.setSelectedModel}
+                    onSelectModel={projectChatWithModelSelectorSignal.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    onOpenChange={projectChatWithModelSelectorSignal.onModelSelectorOpenChange}
                     onBlockedModelSelect={effectiveProjectChat.onBlockedModelSelect}
                     menuPlacement="below"
                     buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
@@ -461,7 +578,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 className="flex w-full max-w-[360px] flex-col items-center gap-6"
               >
                 <Bot className="h-8 w-8 text-text-muted" />
-                <h1 className="text-center text-2xl font-semibold tracking-normal">{emptyTitle}</h1>
+                <h1 className="heading-lg text-center tracking-normal">{emptyTitle}</h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
                   className="min-h-0 flex-col justify-center gap-1 px-0"
@@ -485,8 +602,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               <BufferedChatInput
                 value={paneSession.input}
                 onChange={paneSession.setInput}
-                onSubmit={paneSession.send}
+                onDraftEdit={paneSession.clearError}
+                onSubmit={submitPaneInput}
                 disabled={composerDisabled}
+                submitDisabled={paneSession.status.isSubmitting}
                 error={paneSession.error}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
@@ -497,9 +616,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 queuedMessages={paneQueuedMessages}
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
-                isStreaming={paneIsResponseStreaming}
+                isStreaming={paneIsBusy}
                 onPause={() => void paneSession.pauseCurrentResponse()}
-                onCompactContext={() => void paneSession.compactContext()}
+                onCompactContext={
+                  currentRuntimeUsesCodex ? () => void paneSession.compactContext() : undefined
+                }
                 taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onReorderQueuedMessages={paneSession.reorderQueuedMessages}
@@ -507,7 +628,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 onResumeQueue={paneSession.resumeQueuedMessages}
                 onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                 onClearQueue={paneSession.clearQueuedMessages}
-                onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                onSendQueuedAsGuidance={
+                  currentRuntimeUsesCodex ? paneSession.sendQueuedAsGuidance : undefined
+                }
+                onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
                 onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                 onClearCodeComments={paneSession.clearCodeComments}
@@ -561,7 +685,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         runtimeWork={state.runtimeWork}
         currentProject={activeConversationProject}
         devices={state.devices}
-        requiresStop={paneIsResponseStreaming}
+        requiresStop={paneIsBusy}
         onOpenChange={setForkDialogOpen}
         onStopCurrentResponse={() => paneSession.pauseCurrentResponse()}
         onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}

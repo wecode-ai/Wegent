@@ -11,7 +11,7 @@ interface UseStreamingJoinWarningOptions {
   phase?: string
   runtime?: TaskRuntimeState | null
   translate: (key: string) => string
-  notify: (title: string) => void
+  notify: (title: string) => { dismiss: () => void }
 }
 
 export function useStreamingJoinWarning({
@@ -22,9 +22,12 @@ export function useStreamingJoinWarning({
   notify,
 }: UseStreamingJoinWarningOptions) {
   const lastWarningRef = useRef<string | null>(null)
+  const dismissWarningRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!runtime?.activeStreamSubtaskId || phase !== 'streaming') {
+      dismissWarningRef.current?.()
+      dismissWarningRef.current = null
       lastWarningRef.current = null
       return
     }
@@ -33,13 +36,19 @@ export function useStreamingJoinWarning({
       started_at: runtime.activeStreamStartedAt,
       last_activity_at: runtime.activeStreamLastActivityAt,
     })
-    if (!warningKey) return
+    if (!warningKey) {
+      dismissWarningRef.current?.()
+      dismissWarningRef.current = null
+      lastWarningRef.current = null
+      return
+    }
 
     const dedupeKey = `${taskId || 0}:${warningKey}`
     if (lastWarningRef.current === dedupeKey) return
 
+    dismissWarningRef.current?.()
     lastWarningRef.current = dedupeKey
-    notify(translate(warningKey))
+    dismissWarningRef.current = notify(translate(warningKey)).dismiss
   }, [
     notify,
     phase,
@@ -49,4 +58,11 @@ export function useStreamingJoinWarning({
     taskId,
     translate,
   ])
+
+  useEffect(
+    () => () => {
+      dismissWarningRef.current?.()
+    },
+    []
+  )
 }

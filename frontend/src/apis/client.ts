@@ -13,17 +13,20 @@ import { getToken, removeToken } from './user'
 export class ApiError extends Error {
   status: number
   errorCode?: string | number
+  detail?: unknown
 
-  constructor(message: string, status: number, errorCode?: string | number) {
+  constructor(message: string, status: number, errorCode?: string | number, detail?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.errorCode = errorCode
+    this.detail = detail
   }
 }
 
 interface RequestOptions {
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 // HTTP Client with interceptors
@@ -63,15 +66,15 @@ class APIClient {
   private createApiError(errorText: string, status: number): ApiError {
     let errorMsg = errorText
     let errorCode: string | number | undefined
+    let detail: unknown
     try {
       // Try to parse as JSON and extract detail field
       const json = JSON.parse(errorText)
       if (json && typeof json.detail === 'string') {
         errorMsg = json.detail
       } else if (json && typeof json.detail === 'object' && json.detail !== null) {
-        // StructuredValidationException: detail is an object with error_code and extra fields.
-        // Use error_code as message fallback - callers should prefer errorCode for i18n lookup.
-        errorMsg = json.detail.error_code || JSON.stringify(json.detail)
+        detail = json.detail
+        errorMsg = json.detail.message || json.detail.error_code || JSON.stringify(json.detail)
       }
       if (json && (typeof json.error_code === 'string' || typeof json.error_code === 'number')) {
         errorCode = json.error_code
@@ -80,11 +83,16 @@ class APIClient {
         (typeof json.detail.error_code === 'string' || typeof json.detail.error_code === 'number')
       ) {
         errorCode = json.detail.error_code
+      } else if (
+        json?.detail &&
+        (typeof json.detail.code === 'string' || typeof json.detail.code === 'number')
+      ) {
+        errorCode = json.detail.code
       }
     } catch {
       // Not JSON, use original text directly
     }
-    return new ApiError(errorMsg, status, errorCode)
+    return new ApiError(errorMsg, status, errorCode, detail)
   }
 
   private async request<T>(
@@ -94,11 +102,13 @@ class APIClient {
   ): Promise<T> {
     const url = `${this.getBaseURL()}${endpoint}`
     const token = getToken()
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
 
     const config: RequestInit = {
       ...options,
+      signal: requestOptions.signal,
       headers: {
-        'Content-Type': 'application/json',
+        ...(!isFormData && { 'Content-Type': 'application/json' }),
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
       },
@@ -161,6 +171,13 @@ class APIClient {
     })
   }
 
+  async postForm<T>(endpoint: string, data: FormData): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'POST',
+      body: data,
+    })
+  }
+
   async put<T>(endpoint: string, data?: unknown): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'PUT',
@@ -175,8 +192,11 @@ class APIClient {
     })
   }
 
-  async delete<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint, { method: 'DELETE' })
+  async delete<T>(endpoint: string, data?: unknown): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'DELETE',
+      body: data ? JSON.stringify(data) : undefined,
+    })
   }
 }
 

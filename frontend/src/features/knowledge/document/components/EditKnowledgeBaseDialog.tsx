@@ -4,23 +4,29 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { BookOpen, Database } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { BookOpen, Code2, Database } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
+import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
+import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import type {
+  DirectAccessRequirement,
   KnowledgeBase,
   KnowledgeBaseUpdate,
   RetrievalConfigDraft,
@@ -55,9 +61,24 @@ export function EditKnowledgeBaseDialog({
   const { t } = useTranslation()
   const { t: tKnowledge } = useTranslation('knowledge')
   const [name, setName] = useState('')
+  const [showGenerationTask, setShowGenerationTask] = useState(false)
+  const isCodeWiki = (knowledgeBase?.kb_type || 'notebook') === 'code_wiki'
   const [description, setDescription] = useState('')
+  const [directAccessRequirement, setDirectAccessRequirement] =
+    useState<DirectAccessRequirement>('read')
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
+  // Editable so a wiki created before the field existed can be given a model. Left
+  // unset it keeps falling back to the team's bot, which is what it runs on today.
+  const [executionModelRef, setExecutionModelRef] = useState<SummaryModelRef | null>(null)
+  // Whether the model in this dialog is a choice or just what the selector filled in.
+  //
+  // The selector preselects, so opening this dialog on a wiki that has no model puts
+  // one in the box without anyone asking. Sending that on submit would pin a model
+  // nobody chose -- and replace the team fallback the wiki runs on -- as a side
+  // effect of saving some unrelated setting. So the field is only sent once it has
+  // been touched, or when the wiki already had one to update.
+  const [executionModelTouched, setExecutionModelTouched] = useState(false)
   const [summaryModelError, setSummaryModelError] = useState('')
   const {
     multimodalAnalysisEnabled,
@@ -89,32 +110,60 @@ export function EditKnowledgeBaseDialog({
 
   // Full knowledge base data (fetched from API)
   const [fullKnowledgeBase, setFullKnowledgeBase] = useState<KnowledgeBase | null>(null)
+  const [isLoadingFullKnowledgeBase, setIsLoadingFullKnowledgeBase] = useState(false)
+  const [fullKnowledgeBaseLoadFailed, setFullKnowledgeBaseLoadFailed] = useState(false)
+  const fullKnowledgeBaseRequestId = useRef(0)
+
+  const loadFullKnowledgeBase = useCallback(async (knowledgeBaseId: number) => {
+    const requestId = ++fullKnowledgeBaseRequestId.current
+    setFullKnowledgeBase(null)
+    setIsLoadingFullKnowledgeBase(true)
+    setFullKnowledgeBaseLoadFailed(false)
+
+    try {
+      const fullKb = await getKnowledgeBase(knowledgeBaseId)
+      if (fullKnowledgeBaseRequestId.current === requestId) {
+        setFullKnowledgeBase(fullKb)
+      }
+    } catch (err) {
+      console.error('Failed to fetch full knowledge base data:', err)
+      if (fullKnowledgeBaseRequestId.current === requestId) {
+        setFullKnowledgeBaseLoadFailed(true)
+      }
+    } finally {
+      if (fullKnowledgeBaseRequestId.current === requestId) {
+        setIsLoadingFullKnowledgeBase(false)
+      }
+    }
+  }, [])
 
   // Fetch full knowledge base data when dialog opens
   useEffect(() => {
     if (open && knowledgeBase?.id) {
-      getKnowledgeBase(knowledgeBase.id)
-        .then(fullKb => {
-          setFullKnowledgeBase(fullKb)
-        })
-        .catch(err => {
-          console.error('Failed to fetch full knowledge base data:', err)
-          // Fallback to the partial data
-          setFullKnowledgeBase(knowledgeBase)
-        })
-    } else if (!open) {
+      void loadFullKnowledgeBase(knowledgeBase.id)
+    } else {
+      fullKnowledgeBaseRequestId.current += 1
       setFullKnowledgeBase(null)
+      setIsLoadingFullKnowledgeBase(false)
+      setFullKnowledgeBaseLoadFailed(false)
     }
-  }, [open, knowledgeBase?.id])
+
+    return () => {
+      fullKnowledgeBaseRequestId.current += 1
+    }
+  }, [open, knowledgeBase?.id, loadFullKnowledgeBase])
 
   // Initialize form fields when full data is loaded
   useEffect(() => {
-    const kb = fullKnowledgeBase || knowledgeBase
-    if (kb) {
+    if (fullKnowledgeBase) {
+      const kb = fullKnowledgeBase
       setName(kb.name)
       setDescription(kb.description || '')
+      setDirectAccessRequirement(kb.direct_access_requirement ?? 'read')
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
+      setExecutionModelRef(kb.execution_model_ref || null)
+      setExecutionModelTouched(false)
       setSummaryModelError('')
       loadMultimodalFromKB({
         multimodalAnalysisEnabled: kb.multimodal_analysis_enabled || false,
@@ -123,6 +172,7 @@ export function EditKnowledgeBaseDialog({
         multimodalVideoPrompt: kb.multimodal_analysis_video_prompt ?? null,
         multimodalImagePrompt: kb.multimodal_analysis_image_prompt ?? null,
       })
+      setShowGenerationTask(kb.show_generation_task ?? false)
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (kb.retrieval_config) {
@@ -134,7 +184,7 @@ export function EditKnowledgeBaseDialog({
       // Initialize guided questions from knowledge base
       setGuidedQuestions(kb.guided_questions || [])
     }
-  }, [fullKnowledgeBase, knowledgeBase])
+  }, [fullKnowledgeBase])
 
   const handleRetrievalConfigChange = useCallback((config: RetrievalConfigDraft) => {
     setRetrievalConfig(config)
@@ -144,6 +194,10 @@ export function EditKnowledgeBaseDialog({
     setError('')
     setSummaryModelError('')
     clearMultimodalError()
+
+    if (!fullKnowledgeBase) {
+      return
+    }
 
     if (!name.trim()) {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
@@ -176,11 +230,11 @@ export function EditKnowledgeBaseDialog({
       // Build update data
       // Filter out empty guided questions
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
-      // Use fullKnowledgeBase for accurate data, fallback to initial prop
-      const kb = fullKnowledgeBase || knowledgeBase
+      const kb = fullKnowledgeBase
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
+        direct_access_requirement: directAccessRequirement,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         ...buildMultimodalSubmitFields(),
@@ -195,6 +249,13 @@ export function EditKnowledgeBaseDialog({
         guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
+        ...(isCodeWiki ? { show_generation_task: showGenerationTask } : {}),
+        // Applies to the next run. One already going keeps the model it was started
+        // with, which is the model its pages were written by. Omitted entirely when
+        // untouched on a wiki that had none, so "unset" survives an unrelated save.
+        ...(isCodeWiki && (executionModelTouched || kb?.execution_model_ref)
+          ? { execution_model_ref: executionModelRef }
+          : {}),
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -237,7 +298,7 @@ export function EditKnowledgeBaseDialog({
   }
 
   // Knowledge base type info - use fullKnowledgeBase for accurate data
-  const kb = fullKnowledgeBase || knowledgeBase
+  const kb = fullKnowledgeBase
   const kbType = kb?.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
 
@@ -254,75 +315,161 @@ export function EditKnowledgeBaseDialog({
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
+            <DialogDescription>
+              {t('knowledge:document.knowledgeBase.editDialogDescription')}
+            </DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto space-y-4 py-4">
-            <KnowledgeBaseForm
-              name={name}
-              description={description}
-              onNameChange={value => setName(value)}
-              onDescriptionChange={value => setDescription(value)}
-              summaryEnabled={summaryEnabled}
-              onSummaryEnabledChange={checked => {
-                setSummaryEnabled(checked)
-                if (!checked) {
-                  setSummaryModelRef(null)
-                  setSummaryModelError('')
-                }
-              }}
-              summaryModelRef={summaryModelRef}
-              summaryModelError={summaryModelError}
-              onSummaryModelChange={value => {
-                setSummaryModelRef(value)
-                setSummaryModelError('')
-              }}
-              {...multimodalFormProps}
-              knowledgeDefaultTeamId={!kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined}
-              bindModel={bindModel}
-              callLimits={{ maxCalls, exemptCalls }}
-              onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
-                setMaxCalls(nextMax)
-                setExemptCalls(nextExempt)
-              }}
-              advancedOpen={showAdvanced}
-              onAdvancedOpenChange={setShowAdvanced}
-              showRetrievalSection={!!kb?.retrieval_config}
-              retrievalConfig={retrievalConfig}
-              onRetrievalConfigChange={handleRetrievalConfigChange}
-              retrievalReadOnly={false}
-              retrievalPartialReadOnly={true}
-              showGuidedQuestions={true}
-              guidedQuestions={guidedQuestions}
-              onGuidedQuestionsChange={setGuidedQuestions}
-            />
-
-            {/* Default opening view section */}
-            <div className="border-t border-border pt-4 mt-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {isNotebook ? (
-                    <BookOpen className="w-4 h-4 text-primary" />
-                  ) : (
-                    <Database className="w-4 h-4 text-text-secondary" />
-                  )}
-                  <span className="text-sm font-medium">
-                    {tKnowledge('document.knowledgeBase.currentDefaultView')}:{' '}
-                    {isNotebook
-                      ? tKnowledge('document.knowledgeBase.typeNotebook')
-                      : tKnowledge('document.knowledgeBase.typeClassic')}
-                  </span>
-                </div>
+            {isLoadingFullKnowledgeBase ? (
+              <Spinner
+                center
+                text={tKnowledge('document.knowledgeBase.loadingDetails')}
+                data-testid="edit-knowledge-base-loading"
+              />
+            ) : fullKnowledgeBaseLoadFailed ? (
+              <div
+                className="flex min-h-[200px] flex-col items-center justify-center gap-4 text-center"
+                data-testid="edit-knowledge-base-load-error"
+              >
+                <p className="text-sm text-error">
+                  {tKnowledge('document.knowledgeBase.loadDetailsFailed')}
+                </p>
                 <Button
                   variant="outline"
-                  size="sm"
-                  onClick={() => setShowConvertDialog(true)}
-                  className="flex items-center gap-1.5"
+                  onClick={() => knowledgeBase?.id && loadFullKnowledgeBase(knowledgeBase.id)}
+                  data-testid="edit-knowledge-base-retry"
                 >
-                  {tKnowledge('document.knowledgeBase.changeDefaultView')}
+                  {tKnowledge('document.knowledgeBase.retryLoadDetails')}
                 </Button>
               </div>
-            </div>
+            ) : fullKnowledgeBase ? (
+              <>
+                {/* First, because it is what this knowledge base is rather than a
+                    setting on it. Stated, not editable: the binding is fixed at
+                    creation, and its version history hangs off it. */}
+                {isCodeWiki && kb?.source?.sourceUrl && (
+                  <div className="mb-4 flex items-center gap-2 rounded-md bg-muted px-3 py-2">
+                    <Code2 className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="truncate text-sm" title={kb.source.sourceUrl}>
+                      {tKnowledge('codeWiki.create.repository')}:{' '}
+                      {kb.source.projectName || kb.source.sourceUrl}
+                    </span>
+                  </div>
+                )}
 
-            {error && <p className="text-sm text-error">{error}</p>}
+                {isCodeWiki && (
+                  <div className="mb-4">
+                    <SimpleConfigRow
+                      label={tKnowledge('codeWiki.create.modelLabel')}
+                      description={tKnowledge('codeWiki.create.modelDescription')}
+                      align="start"
+                    >
+                      <ModelRefSelector
+                        value={executionModelRef}
+                        onChange={value => {
+                          setExecutionModelRef(value)
+                          setExecutionModelTouched(true)
+                        }}
+                        placeholder={tKnowledge('codeWiki.create.modelPlaceholder')}
+                        // Passed unconditionally: with autoSelect off it no longer
+                        // risks the cache overriding what the wiki already has, and
+                        // it is what lets a pick made here be remembered.
+                        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+                        preferenceScope="wiki"
+                        // Nothing is filled in for a wiki that has no model: an empty
+                        // box is the truth there, and only a real pick may change it.
+                        autoSelect={false}
+                        dataTestId="code-wiki-execution-model-select"
+                      />
+                    </SimpleConfigRow>
+                  </div>
+                )}
+
+                <KnowledgeBaseForm
+                  advancedExtras={
+                    isCodeWiki ? (
+                      <GenerationTaskRow
+                        checked={showGenerationTask}
+                        onChange={setShowGenerationTask}
+                      />
+                    ) : undefined
+                  }
+                  name={name}
+                  description={description}
+                  onNameChange={value => setName(value)}
+                  onDescriptionChange={value => setDescription(value)}
+                  directAccessRequirement={directAccessRequirement}
+                  onDirectAccessRequirementChange={setDirectAccessRequirement}
+                  summaryEnabled={summaryEnabled}
+                  onSummaryEnabledChange={checked => {
+                    setSummaryEnabled(checked)
+                    if (!checked) {
+                      setSummaryModelRef(null)
+                      setSummaryModelError('')
+                    }
+                  }}
+                  summaryModelRef={summaryModelRef}
+                  summaryModelError={summaryModelError}
+                  onSummaryModelChange={value => {
+                    setSummaryModelRef(value)
+                    setSummaryModelError('')
+                  }}
+                  {...multimodalFormProps}
+                  knowledgeDefaultTeamId={
+                    !kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined
+                  }
+                  bindModel={bindModel}
+                  callLimits={{ maxCalls, exemptCalls }}
+                  onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+                    setMaxCalls(nextMax)
+                    setExemptCalls(nextExempt)
+                  }}
+                  advancedOpen={showAdvanced}
+                  onAdvancedOpenChange={setShowAdvanced}
+                  showRetrievalSection={!!kb?.retrieval_config}
+                  retrievalConfig={retrievalConfig}
+                  onRetrievalConfigChange={handleRetrievalConfigChange}
+                  retrievalReadOnly={false}
+                  retrievalPartialReadOnly={true}
+                  showGuidedQuestions={true}
+                  guidedQuestions={guidedQuestions}
+                  onGuidedQuestionsChange={setGuidedQuestions}
+                />
+
+                {/* Default opening view section. A code wiki has neither view — it
+                    is read in its own reader — so offering to switch between them
+                    would show it as "classic" and let it be converted into one. */}
+                {!isCodeWiki && (
+                  <div className="border-t border-border pt-4 mt-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {isNotebook ? (
+                          <BookOpen className="w-4 h-4 text-primary" />
+                        ) : (
+                          <Database className="w-4 h-4 text-text-secondary" />
+                        )}
+                        <span className="text-sm font-medium">
+                          {tKnowledge('document.knowledgeBase.currentDefaultView')}:{' '}
+                          {isNotebook
+                            ? tKnowledge('document.knowledgeBase.typeNotebook')
+                            : tKnowledge('document.knowledgeBase.typeClassic')}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowConvertDialog(true)}
+                        className="flex items-center gap-1.5"
+                      >
+                        {tKnowledge('document.knowledgeBase.changeDefaultView')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {error && <p className="text-sm text-error">{error}</p>}
+              </>
+            ) : null}
           </div>
           <DialogFooter>
             <Button
@@ -336,7 +483,7 @@ export function EditKnowledgeBaseDialog({
             <Button
               onClick={handleSubmit}
               variant="primary"
-              disabled={loading}
+              disabled={loading || isLoadingFullKnowledgeBase || !fullKnowledgeBase}
               className="h-11 min-w-[44px]"
             >
               {loading ? t('common:actions.saving') : t('common:actions.save')}
@@ -349,7 +496,7 @@ export function EditKnowledgeBaseDialog({
       <ConvertKnowledgeBaseTypeDialog
         open={showConvertDialog}
         onOpenChange={setShowConvertDialog}
-        knowledgeBase={fullKnowledgeBase || knowledgeBase}
+        knowledgeBase={fullKnowledgeBase}
         onSuccess={handleTypeConverted}
       />
     </>

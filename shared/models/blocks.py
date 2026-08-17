@@ -29,13 +29,16 @@ class BlockType(str, Enum):
 
     TOOL = "tool"
     TEXT = "text"
+    SUBAGENT = "subagent"
     GUIDANCE = "guidance"
 
 
 class BlockStatus(str, Enum):
     """Block status enumeration."""
 
+    QUEUED = "queued"  # Subagent is waiting to start
     PENDING = "pending"  # Tool is executing
+    INVOKING = "invoking"  # Subagent is being started
     STREAMING = "streaming"  # Text is being streamed
     DONE = "done"  # Block is complete
     ERROR = "error"  # Tool execution failed
@@ -71,6 +74,7 @@ class ToolBlock:
     display_name: Optional[str] = None
     tool_output: Optional[str] = None
     render_payload: Optional[Dict[str, Any]] = None
+    parent_tool_use_id: Optional[str] = None
     type: Literal["tool"] = "tool"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -94,6 +98,8 @@ class ToolBlock:
             result["tool_output"] = self.tool_output
         if self.render_payload:
             result["render_payload"] = self.render_payload
+        if self.parent_tool_use_id:
+            result["parent_tool_use_id"] = self.parent_tool_use_id
         return result
 
     @classmethod
@@ -111,6 +117,73 @@ class ToolBlock:
             display_name=data.get("display_name"),
             tool_output=data.get("tool_output"),
             render_payload=data.get("render_payload"),
+            parent_tool_use_id=data.get("parent_tool_use_id"),
+        )
+
+
+@dataclass
+class SubagentBlock:
+    """Subagent invocation and its nested Claude SDK message blocks."""
+
+    id: str
+    tool_use_id: str
+    tool_name: str = "Agent"
+    tool_input: Dict[str, Any] = field(default_factory=dict)
+    status: str = BlockStatus.QUEUED.value
+    timestamp: int = 0
+    display_name: Optional[str] = None
+    agent_type: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    output: Optional[str] = None
+    summary: Optional[str] = None
+    children: List[Dict[str, Any]] = field(default_factory=list)
+    parent_tool_use_id: Optional[str] = None
+    type: Literal["subagent"] = "subagent"
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "id": self.id,
+            "type": self.type,
+            "tool_use_id": self.tool_use_id,
+            "tool_name": self.tool_name,
+            "tool_input": self.tool_input,
+            "status": self.status,
+            "timestamp": self.timestamp,
+            "children": self.children,
+        }
+        for key in (
+            "display_name",
+            "agent_type",
+            "title",
+            "description",
+            "output",
+            "summary",
+        ):
+            value = getattr(self, key)
+            if value is not None:
+                result[key] = value
+        if self.parent_tool_use_id:
+            result["parent_tool_use_id"] = self.parent_tool_use_id
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SubagentBlock":
+        return cls(
+            id=data.get("id", ""),
+            tool_use_id=data.get("tool_use_id", data.get("id", "")),
+            tool_name=data.get("tool_name", "Agent"),
+            tool_input=data.get("tool_input", {}),
+            status=data.get("status", BlockStatus.QUEUED.value),
+            timestamp=data.get("timestamp", 0),
+            display_name=data.get("display_name"),
+            agent_type=data.get("agent_type"),
+            title=data.get("title"),
+            description=data.get("description"),
+            output=data.get("output"),
+            summary=data.get("summary"),
+            children=data.get("children", []),
+            parent_tool_use_id=data.get("parent_tool_use_id"),
         )
 
 
@@ -130,17 +203,21 @@ class TextBlock:
     content: str = ""
     status: str = BlockStatus.STREAMING.value
     timestamp: int = 0
+    parent_tool_use_id: Optional[str] = None
     type: Literal["text"] = "text"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "id": self.id,
             "type": self.type,
             "content": self.content,
             "status": self.status,
             "timestamp": self.timestamp,
         }
+        if self.parent_tool_use_id:
+            result["parent_tool_use_id"] = self.parent_tool_use_id
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TextBlock":
@@ -150,6 +227,7 @@ class TextBlock:
             content=data.get("content", ""),
             status=data.get("status", BlockStatus.STREAMING.value),
             timestamp=data.get("timestamp", 0),
+            parent_tool_use_id=data.get("parent_tool_use_id"),
         )
 
 
@@ -197,7 +275,7 @@ class GuidanceBlock:
 
 
 # Type alias for any block type
-MessageBlock = Union[ToolBlock, TextBlock, GuidanceBlock]
+MessageBlock = Union[ToolBlock, TextBlock, SubagentBlock, GuidanceBlock]
 
 
 def block_from_dict(data: Dict[str, Any]) -> MessageBlock:
@@ -214,6 +292,8 @@ def block_from_dict(data: Dict[str, Any]) -> MessageBlock:
         return ToolBlock.from_dict(data)
     elif block_type == BlockType.TEXT.value:
         return TextBlock.from_dict(data)
+    elif block_type == BlockType.SUBAGENT.value:
+        return SubagentBlock.from_dict(data)
     elif block_type == BlockType.GUIDANCE.value:
         return GuidanceBlock.from_dict(data)
     else:

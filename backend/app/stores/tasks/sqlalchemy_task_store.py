@@ -9,12 +9,13 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, Callable, Literal, Optional, Sequence
 
-from sqlalchemy import exists, func, text, tuple_
+from sqlalchemy import and_, exists, func, or_, text, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.stores.tasks.interfaces import WorkspaceRefLookup
 
@@ -781,6 +782,54 @@ class SqlAlchemyTaskStore:
             .all()
         )
 
+    def list_recent_owner_only_used_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+    ) -> list[TaskResource]:
+        """Return owner-only Tasks ordered by their latest submitted user message."""
+        approved_member_exists = exists().where(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == TaskResource.id,
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        activity_rows = (
+            db.query(
+                Subtask.task_id, func.max(Subtask.created_at).label("last_used_at")
+            )
+            .join(TaskResource, TaskResource.id == Subtask.task_id)
+            .filter(
+                TaskResource.kind == "Task",
+                TaskResource.user_id == user_id,
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.is_group_chat.is_(False),
+                ~approved_member_exists,
+                Subtask.user_id == user_id,
+                Subtask.role == SubtaskRole.USER,
+                Subtask.status != SubtaskStatus.DELETE,
+            )
+            .group_by(Subtask.task_id)
+            .order_by(func.max(Subtask.created_at).desc(), Subtask.task_id.desc())
+            .limit(limit)
+            .all()
+        )
+        task_ids = [int(row.task_id) for row in activity_rows]
+        if not task_ids:
+            return []
+        tasks_by_id = {
+            int(task.id): task
+            for task in db.query(TaskResource)
+            .filter(TaskResource.id.in_(task_ids))
+            .all()
+        }
+        return [
+            tasks_by_id[int(row.task_id)]
+            for row in activity_rows
+            if int(row.task_id) in tasks_by_id
+        ]
+
     def list_owned_tasks_by_states(
         self,
         db: Session,
@@ -1069,27 +1118,6 @@ class SqlAlchemyTaskStore:
             .all()
         )
 
-    def list_accessible_active_tasks_for_user(
-        self, db: Session, *, user_id: int
-    ) -> list[TaskResource]:
-        return (
-            db.query(TaskResource)
-            .outerjoin(
-                ResourceMember,
-                (ResourceMember.resource_id == TaskResource.id)
-                & (ResourceMember.resource_type == ResourceType.TASK)
-                & (ResourceMember.entity_type == "user")
-                & (ResourceMember.entity_id == str(user_id))
-                & (ResourceMember.status == MemberStatus.APPROVED),
-            )
-            .filter(
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                (TaskResource.user_id == user_id) | (ResourceMember.id.isnot(None)),
-            )
-            .all()
-        )
-
     def count_non_deleted_by_ids(
         self,
         db: Session,
@@ -1197,6 +1225,8 @@ class SqlAlchemyTaskStore:
         scope: Literal["all", "standalone", "project", "project_id"],
         project_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        exclude_group_chats: bool = False,
+        limit: Optional[int] = None,
     ) -> list[TaskResource]:
         query = db.query(TaskResource).filter(
             TaskResource.user_id == user_id,
@@ -1210,8 +1240,27 @@ class SqlAlchemyTaskStore:
             query = query.filter(TaskResource.project_id > 0)
         elif scope == "project_id":
             query = query.filter(TaskResource.project_id == project_id)
+        if exclude_group_chats:
+            legacy_group_chat_flag = TaskResource.json[
+                ("spec", "is_group_chat")
+            ].as_boolean()
+            query = query.filter(
+                and_(
+                    or_(
+                        TaskResource.is_group_chat.is_(False),
+                        TaskResource.is_group_chat.is_(None),
+                    ),
+                    or_(
+                        legacy_group_chat_flag.is_(False),
+                        legacy_group_chat_flag.is_(None),
+                    ),
+                )
+            )
         if client_origin:
             query = query.filter(TaskResource.client_origin == client_origin)
+        query = query.order_by(TaskResource.created_at.desc())
+        if limit is not None:
+            query = query.limit(limit)
         return query.all()
 
     def list_archived_task_ids(

@@ -25,6 +25,7 @@ import {
   type ListDocumentsParams,
 } from '@/apis/knowledge'
 import type {
+  KnowledgeContentOrigin,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
   KnowledgeDocumentUpdate,
@@ -48,6 +49,7 @@ interface DocumentQuery {
   keyword?: string
   sortBy: ListDocumentsParams['sort_by']
   sortOrder: ListDocumentsParams['sort_order']
+  origin?: KnowledgeContentOrigin
 }
 
 function getDocumentSortValue(
@@ -111,6 +113,8 @@ function applyLocalQuery(
         return false
       }
 
+      if (query.origin && document.origin !== query.origin) return false
+
       return true
     })
     .sort((left, right) => compareDocuments(left, right, query.sortBy, query.sortOrder))
@@ -121,6 +125,12 @@ interface UseDocumentsOptions {
   autoLoad?: boolean
   /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
+  /** Skip the local metadata snapshot and request only the current server page. */
+  serverPaginationOnly?: boolean
+  /** Initial page size used by paginated views. */
+  initialPageSize?: number
+  /** When true, load all documents from the local snapshot without page slicing */
+  loadAll?: boolean
   folderId?: number
   includeSubfolders?: boolean
   /** Folder ids in the active folder subtree for local metadata pagination */
@@ -128,6 +138,7 @@ interface UseDocumentsOptions {
   keyword?: string
   sortBy?: ListDocumentsParams['sort_by']
   sortOrder?: ListDocumentsParams['sort_order']
+  origin?: KnowledgeContentOrigin
 }
 
 export function useDocuments(options: UseDocumentsOptions) {
@@ -135,12 +146,16 @@ export function useDocuments(options: UseDocumentsOptions) {
     knowledgeBaseId,
     autoLoad = true,
     paginationEnabled = true,
+    serverPaginationOnly = false,
+    initialPageSize = DEFAULT_PAGE_SIZE,
+    loadAll = false,
     folderId,
     includeSubfolders = false,
     folderScopeIds,
     keyword,
     sortBy = 'createdAt',
     sortOrder = 'desc',
+    origin,
   } = options
   const { t } = useTranslation('knowledge')
 
@@ -151,7 +166,7 @@ export function useDocuments(options: UseDocumentsOptions) {
 
   // Pagination state (only meaningful when paginationEnabled=true)
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [pageSize, setPageSize] = useState(initialPageSize)
   const [totalCount, setTotalCount] = useState(0)
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
@@ -161,10 +176,13 @@ export function useDocuments(options: UseDocumentsOptions) {
   const pageRef = useRef(page)
   const pageSizeRef = useRef(pageSize)
   const paginationEnabledRef = useRef(paginationEnabled)
+  const serverPaginationOnlyRef = useRef(serverPaginationOnly)
+  const loadAllRef = useRef(loadAll)
   const knowledgeBaseIdRef = useRef(knowledgeBaseId)
   const requestSeqRef = useRef(0)
   const localSnapshotRef = useRef<KnowledgeDocument[]>([])
   const localSnapshotKbIdRef = useRef<number | null>(null)
+  const localSnapshotOriginRef = useRef<KnowledgeContentOrigin | undefined>(undefined)
   const localSnapshotModeRef = useRef<LocalSnapshotMode>('unknown')
   const queryRef = useRef<DocumentQuery>({
     folderId,
@@ -173,6 +191,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     keyword: debouncedKeyword,
     sortBy,
     sortOrder,
+    origin,
   })
 
   // Keep refs in sync with state
@@ -186,6 +205,12 @@ export function useDocuments(options: UseDocumentsOptions) {
     paginationEnabledRef.current = paginationEnabled
   }, [paginationEnabled])
   useEffect(() => {
+    serverPaginationOnlyRef.current = serverPaginationOnly
+  }, [serverPaginationOnly])
+  useEffect(() => {
+    loadAllRef.current = loadAll
+  }, [loadAll])
+  useEffect(() => {
     knowledgeBaseIdRef.current = knowledgeBaseId
   }, [knowledgeBaseId])
   useEffect(() => {
@@ -196,8 +221,9 @@ export function useDocuments(options: UseDocumentsOptions) {
       keyword: debouncedKeyword,
       sortBy,
       sortOrder,
+      origin,
     }
-  }, [folderId, includeSubfolders, folderScopeIds, debouncedKeyword, sortBy, sortOrder])
+  }, [folderId, includeSubfolders, folderScopeIds, debouncedKeyword, sortBy, sortOrder, origin])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -210,46 +236,54 @@ export function useDocuments(options: UseDocumentsOptions) {
   const resetLocalSnapshot = useCallback(() => {
     localSnapshotRef.current = []
     localSnapshotKbIdRef.current = null
+    localSnapshotOriginRef.current = undefined
     localSnapshotModeRef.current = 'unknown'
   }, [])
 
-  const loadLocalSnapshot = useCallback(async (knowledgeBaseId: number, requestSeq: number) => {
-    const items: KnowledgeDocument[] = []
-    let offset = 0
+  const loadLocalSnapshot = useCallback(
+    async (knowledgeBaseId: number, requestSeq: number, origin?: KnowledgeContentOrigin) => {
+      const items: KnowledgeDocument[] = []
+      let offset = 0
 
-    while (offset < LOCAL_METADATA_LIMIT) {
-      const response = await listDocuments(knowledgeBaseId, {
-        limit: SERVER_REQUEST_LIMIT,
-        offset,
-      })
+      while (offset < LOCAL_METADATA_LIMIT) {
+        const response = await listDocuments(knowledgeBaseId, {
+          limit: SERVER_REQUEST_LIMIT,
+          offset,
+          origin,
+        })
 
-      if (requestSeq !== requestSeqRef.current) {
-        return null
+        if (requestSeq !== requestSeqRef.current) {
+          return null
+        }
+
+        if (response.total > LOCAL_METADATA_LIMIT) {
+          localSnapshotRef.current = []
+          localSnapshotKbIdRef.current = knowledgeBaseId
+          localSnapshotOriginRef.current = origin
+          localSnapshotModeRef.current = 'server'
+          return null
+        }
+
+        items.push(...response.items)
+        if (!response.has_more || response.items.length === 0 || items.length >= response.total) {
+          localSnapshotRef.current = items
+          localSnapshotKbIdRef.current = knowledgeBaseId
+          localSnapshotOriginRef.current = origin
+          localSnapshotModeRef.current = 'local'
+          return items
+        }
+
+        offset += response.items.length
       }
 
-      if (response.total > LOCAL_METADATA_LIMIT) {
-        localSnapshotRef.current = []
-        localSnapshotKbIdRef.current = knowledgeBaseId
-        localSnapshotModeRef.current = 'server'
-        return null
-      }
-
-      items.push(...response.items)
-      if (!response.has_more || response.items.length === 0 || items.length >= response.total) {
-        localSnapshotRef.current = items
-        localSnapshotKbIdRef.current = knowledgeBaseId
-        localSnapshotModeRef.current = 'local'
-        return items
-      }
-
-      offset += response.items.length
-    }
-
-    localSnapshotRef.current = []
-    localSnapshotKbIdRef.current = knowledgeBaseId
-    localSnapshotModeRef.current = 'server'
-    return null
-  }, [])
+      localSnapshotRef.current = []
+      localSnapshotKbIdRef.current = knowledgeBaseId
+      localSnapshotOriginRef.current = origin
+      localSnapshotModeRef.current = 'server'
+      return null
+    },
+    []
+  )
 
   const fetchServerPage = useCallback(
     async (
@@ -265,6 +299,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         keyword: trimmedKeyword || undefined,
         sort_by: query.sortBy,
         sort_order: query.sortOrder,
+        origin: query.origin,
       }
       const response = await listDocuments(knowledgeBaseId, {
         ...params,
@@ -302,28 +337,9 @@ export function useDocuments(options: UseDocumentsOptions) {
         let nextDocuments: KnowledgeDocument[]
         let nextTotalCount: number
 
-        if (paginationEnabledRef.current) {
-          if (localSnapshotKbIdRef.current !== currentKbId) {
-            localSnapshotModeRef.current = 'unknown'
-          }
-
-          let snapshot = localSnapshotRef.current
-          if (localSnapshotModeRef.current === 'unknown') {
-            snapshot = (await loadLocalSnapshot(currentKbId, requestSeq)) ?? []
-          }
-
-          if (requestSeq !== requestSeqRef.current) {
-            return
-          }
-
-          if (localSnapshotModeRef.current === 'local') {
-            const filteredDocuments = applyLocalQuery(snapshot, query)
-            nextTotalCount = filteredDocuments.length
-            nextDocuments = filteredDocuments.slice(
-              (effectivePage - 1) * effectivePageSize,
-              effectivePage * effectivePageSize
-            )
-          } else {
+        if (paginationEnabledRef.current || loadAllRef.current) {
+          // Server-only pagination takes precedence; loadAll is ignored in this mode.
+          if (serverPaginationOnlyRef.current) {
             const response = await fetchServerPage(
               currentKbId,
               query,
@@ -332,6 +348,45 @@ export function useDocuments(options: UseDocumentsOptions) {
             )
             nextDocuments = response.items
             nextTotalCount = response.total
+          } else {
+            if (
+              localSnapshotKbIdRef.current !== currentKbId ||
+              localSnapshotOriginRef.current !== query.origin
+            ) {
+              localSnapshotModeRef.current = 'unknown'
+            }
+
+            let snapshot = localSnapshotRef.current
+            if (localSnapshotModeRef.current === 'unknown') {
+              snapshot = (await loadLocalSnapshot(currentKbId, requestSeq, query.origin)) ?? []
+            }
+
+            if (requestSeq !== requestSeqRef.current) {
+              return
+            }
+
+            if (localSnapshotModeRef.current === 'local') {
+              const filteredDocuments = applyLocalQuery(snapshot, query)
+              nextTotalCount = filteredDocuments.length
+              if (loadAllRef.current) {
+                // Expand-all mode: return all filtered documents without slicing
+                nextDocuments = filteredDocuments
+              } else {
+                nextDocuments = filteredDocuments.slice(
+                  (effectivePage - 1) * effectivePageSize,
+                  effectivePage * effectivePageSize
+                )
+              }
+            } else {
+              const response = await fetchServerPage(
+                currentKbId,
+                query,
+                effectivePage,
+                effectivePageSize
+              )
+              nextDocuments = response.items
+              nextTotalCount = response.total
+            }
           }
         } else {
           // Compatibility mode: load documents without explicit pagination
@@ -341,6 +396,7 @@ export function useDocuments(options: UseDocumentsOptions) {
             keyword: query.keyword?.trim() || undefined,
             sort_by: query.sortBy,
             sort_order: query.sortOrder,
+            origin: query.origin,
           })
           nextDocuments = response.items
           nextTotalCount = response.total
@@ -577,6 +633,8 @@ export function useDocuments(options: UseDocumentsOptions) {
     debouncedKeyword,
     sortBy,
     sortOrder,
+    origin,
+    loadAll,
     fetchDocuments,
   ])
 

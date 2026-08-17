@@ -14,7 +14,8 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
-        skill_download::skill_download_concurrency, task_identity::task_identity_env,
+        runtime_capabilities::resolve_skill, skill_download::skill_download_concurrency,
+        task_identity::task_identity_env,
     },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
@@ -30,13 +31,17 @@ use crate::{
     logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
-    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions},
+    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions, SkillRef},
 };
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
-const DEFAULT_HAIKU_MODEL_ENV: &str = "ANTHROPIC_DEFAULT_HAIKU_MODEL";
+const DEFAULT_CLAUDE_MODEL_ENV: &[&str] = &[
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+];
 const DEFAULT_CLAUDE_SETTINGS_ENV: &[&str] = &[
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
@@ -310,7 +315,7 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
         .arg("stream-json")
         .arg("--verbose")
         .arg("--permission-mode")
-        .arg("bypassPermissions");
+        .arg(claude_permission_mode(request));
 
     if let Some(system_prompt) = execution_system_prompt(request) {
         spec = spec.arg("--append-system-prompt").arg(system_prompt);
@@ -336,6 +341,17 @@ pub fn build_claude_command(request: &ExecutionRequest, binary: &str) -> Command
     }
 
     spec
+}
+
+fn claude_permission_mode(request: &ExecutionRequest) -> &str {
+    match request
+        .extra
+        .get("claude_permission_mode")
+        .and_then(Value::as_str)
+    {
+        Some(mode @ ("acceptEdits" | "plan" | "auto" | "bypassPermissions")) => mode,
+        Some("default") | Some(_) | None => "bypassPermissions",
+    }
 }
 
 pub(crate) fn prompt_text(prompt: &Value) -> String {
@@ -386,6 +402,12 @@ fn claude_prompt_value(request: &ExecutionRequest) -> Value {
             )
         })
         .unwrap_or_else(|| request.prompt.clone());
+    if let Some(selected_knowledge_prompt) = selected_knowledge_prompt(request) {
+        prompt = crate::prompt_enrichment::inject_selected_knowledge_prompt(
+            &prompt,
+            selected_knowledge_prompt,
+        );
+    }
     let emphasis = crate::services::skill_deployer::build_skill_emphasis_prompt(
         &user_selected_skills(request),
     );
@@ -393,6 +415,16 @@ fn claude_prompt_value(request: &ExecutionRequest) -> Value {
         prompt = append_text_to_vision_prompt(&prompt, &emphasis, true);
     }
     prompt
+}
+
+fn selected_knowledge_prompt(request: &ExecutionRequest) -> Option<&str> {
+    request
+        .extra
+        .get("selected_knowledge_prompt")
+        .or_else(|| request.extra.get("selectedKnowledgePrompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn interactive_form_answer_query(request: &ExecutionRequest) -> Option<String> {
@@ -459,32 +491,34 @@ fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) ->
         }
     }
 
-    spec = apply_default_haiku_model_environment(spec, request);
+    spec = apply_default_model_environment(spec, request);
 
     spec
 }
 
-fn apply_default_haiku_model_environment(
+fn apply_default_model_environment(
     mut spec: CommandSpec,
     request: &ExecutionRequest,
 ) -> CommandSpec {
-    if spec.envs().contains_key(DEFAULT_HAIKU_MODEL_ENV) {
-        return spec;
-    }
+    for key in DEFAULT_CLAUDE_MODEL_ENV {
+        if spec.envs().contains_key(*key) {
+            continue;
+        }
 
-    let value = model_string(request, DEFAULT_HAIKU_MODEL_ENV)
-        .or_else(process_default_haiku_model)
-        .or_else(|| model_id(request));
+        let value = model_string(request, key)
+            .or_else(|| process_model_environment(key))
+            .or_else(|| model_id(request));
 
-    if let Some(value) = value {
-        spec = spec.env(DEFAULT_HAIKU_MODEL_ENV, value);
+        if let Some(value) = value {
+            spec = spec.env(*key, value);
+        }
     }
 
     spec
 }
 
-fn process_default_haiku_model() -> Option<String> {
-    env::var(DEFAULT_HAIKU_MODEL_ENV)
+fn process_model_environment(key: &str) -> Option<String> {
+    env::var(key)
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
@@ -532,16 +566,15 @@ fn apply_claude_header_environment(
         runtime_custom_headers.as_str(),
     ]);
 
-    let mut default_headers = extract_default_headers(request);
+    let mut default_headers = merge_missing_header_map(
+        extract_default_headers(request),
+        vec![
+            ("wecode-action".to_owned(), "wegent".to_owned()),
+            ("wecode-source".to_owned(), "wegent-local".to_owned()),
+            ("wecode-executor".to_owned(), "claudecode".to_owned()),
+        ],
+    );
     if let Some(project_id) = project_id(request) {
-        default_headers = merge_missing_header_map(
-            default_headers,
-            vec![
-                ("wecode-action".to_owned(), "wegent".to_owned()),
-                ("wecode-source".to_owned(), "wegent-local".to_owned()),
-                ("wecode-executor".to_owned(), "claudecode".to_owned()),
-            ],
-        );
         default_headers = merge_header_map(
             default_headers,
             vec![("wecode-project".to_owned(), project_id)],
@@ -641,7 +674,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     let Some(bot_config) = primary_bot(request) else {
         return;
     };
-    let Some(plan) = build_skill_deployment_plan(
+    let Some(mut plan) = build_skill_deployment_plan(
         bot_config,
         request,
         SkillDeploymentOptions {
@@ -655,6 +688,37 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     let Some(backend_url) = task_backend_url(request) else {
         return;
     };
+
+    let resolver_client = reqwest::Client::new();
+    for skill_name in plan.skills.clone() {
+        if plan.resolved_skill_map.contains_key(&skill_name) {
+            continue;
+        }
+        match resolve_skill(&resolver_client, &plan, &skill_name, None, &backend_url).await {
+            Ok(Some((skill_id, namespace))) => {
+                plan.resolved_skill_map.insert(
+                    skill_name.clone(),
+                    SkillRef {
+                        skill_id,
+                        namespace,
+                        is_public: false,
+                        content_hash: None,
+                    },
+                );
+            }
+            Ok(None) => {
+                log_executor_event(
+                    "claude task skill not found",
+                    &[("skill", skill_name.clone())],
+                );
+            }
+            Err(error) => {
+                let mut fields = vec![("skill", skill_name.clone())];
+                push_error_fields(&mut fields, error);
+                log_executor_event("claude task skill resolution failed", &fields);
+            }
+        }
+    }
 
     let provider = HttpPackageProvider::new(backend_url, plan.auth_token.clone());
     stream::iter(plan.skills.iter().cloned())
@@ -1152,6 +1216,69 @@ mod tests {
             task_backend_url(&request),
             Some("http://env-backend.local:8000".to_owned())
         );
+    }
+
+    #[test]
+    fn claude_command_uses_configured_desktop_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("plan".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "plan");
+    }
+
+    #[test]
+    fn claude_command_uses_non_interactive_default_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("default".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
+    }
+
+    #[test]
+    fn claude_command_rejects_unknown_permission_mode() {
+        let mut request = ExecutionRequest {
+            prompt: Value::String("inspect the project".to_owned()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "claude_permission_mode".to_owned(),
+            Value::String("unsafe-custom-mode".to_owned()),
+        );
+
+        let command = build_claude_command(&request, "claude");
+        let permission_index = command
+            .args()
+            .iter()
+            .position(|argument| argument == "--permission-mode")
+            .expect("permission mode flag");
+
+        assert_eq!(command.args()[permission_index + 1], "bypassPermissions");
     }
 
     #[test]

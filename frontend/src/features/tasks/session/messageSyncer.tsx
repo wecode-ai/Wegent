@@ -28,6 +28,7 @@ import {
   SkillResponsePayload,
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
+import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { generateMessageId, TaskStateMachine } from '@wegent/chat-core'
 import type { TaskStateMachineDeps, UnifiedMessage } from '@wegent/chat-core'
@@ -79,6 +80,8 @@ export interface ChatMessageRequest {
   task_type?: TaskType
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  /** Interactive Artifact node that initiated this message */
+  artifact_context?: ArtifactNodeContext
   // Local device ID for task execution (optional, when undefined use cloud executor)
   device_id?: string
   // Project ID to associate this task with
@@ -107,6 +110,10 @@ export interface ChatMessageRequest {
     duration?: number
     /** Model name for video/image generation */
     model?: string
+    /** Model-declared video generation mode */
+    generation_mode_id?: string
+    /** Image dimensions selected at generation time */
+    size?: string
   }
   /** Structured answer for a deferred interactive form tool call */
   interactive_form_answer?: InteractiveFormAnswerPayload
@@ -431,8 +438,12 @@ export function useMessageSyncer({
         content,
         tool_output,
         tool_input,
+        parent_tool_use_id,
         render_payload,
         argument_status,
+        output,
+        summary,
+        children,
         status,
       } = data
 
@@ -451,8 +462,12 @@ export function useMessageSyncer({
         ...(content !== undefined && { content }),
         ...(tool_output !== undefined && { tool_output }),
         ...(tool_input !== undefined && { tool_input }),
+        ...(parent_tool_use_id !== undefined && { parent_tool_use_id }),
         ...(render_payload !== undefined && { render_payload }),
         ...(argument_status !== undefined && { argument_status }),
+        ...(output !== undefined && { output }),
+        ...(summary !== undefined && { summary }),
+        ...(children !== undefined && { children }),
         ...(mappedStatus !== undefined && { status: mappedStatus }),
       }
 
@@ -674,15 +689,17 @@ export function useMessageSyncer({
       })
 
       // Create user message
-      // Include video_config in result if generate_params is provided (for video generation tasks)
-      const videoConfig = request.generate_params
-        ? {
-            model: request.generate_params.model,
-            resolution: request.generate_params.resolution,
-            ratio: request.generate_params.ratio,
-            duration: request.generate_params.duration,
-          }
-        : undefined
+      // Persist the optimistic config badge only for video generation.
+      const videoConfig =
+        request.task_type === 'video' && request.generate_params
+          ? {
+              model: request.generate_params.model,
+              resolution: request.generate_params.resolution,
+              ratio: request.generate_params.ratio,
+              duration: request.generate_params.duration,
+              generation_mode_id: request.generate_params.generation_mode_id,
+            }
+          : undefined
 
       const userMessage: UnifiedMessage = {
         id: userMessageId,
@@ -696,7 +713,7 @@ export function useMessageSyncer({
         senderUserName: options?.currentUserName,
         senderUserId: options?.currentUserId,
         shouldShowSender: request.is_group_chat,
-        // Add video_config to result for video generation tasks
+        // Add video_config to result for video generation tasks.
         result: videoConfig ? { video_config: videoConfig } : undefined,
       }
 
@@ -727,6 +744,7 @@ export function useMessageSyncer({
         branch_name: request.branch_name,
         task_type: request.task_type,
         knowledge_base_id: request.knowledge_base_id,
+        artifact_context: request.artifact_context,
         device_id: request.device_id,
         project_id: request.project_id,
         additional_skills: request.additional_skills,

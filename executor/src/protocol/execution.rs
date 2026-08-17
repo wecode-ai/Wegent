@@ -49,6 +49,16 @@ pub struct ExecutionRequest {
     pub task_type: Option<String>,
     pub workspace_source: Option<String>,
     pub project_workspace_path: Option<String>,
+    #[serde(
+        default,
+        alias = "runtimeWorkspaceRoots",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub runtime_workspace_roots: Vec<String>,
+    #[serde(alias = "runtimeProjectKey")]
+    pub runtime_project_key: Option<String>,
+    #[serde(alias = "runtimeProjectName")]
+    pub runtime_project_name: Option<String>,
     pub device_id: Option<String>,
     pub message_id: Option<i64>,
     pub executor_name: Option<String>,
@@ -57,6 +67,7 @@ pub struct ExecutionRequest {
     pub validation_params: Value,
     pub user_name: Option<String>,
     pub auth_token: Option<String>,
+    pub runtime_auth_token: Option<String>,
     pub skill_identity_token: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -98,6 +109,9 @@ impl Default for ExecutionRequest {
             task_type: None,
             workspace_source: None,
             project_workspace_path: None,
+            runtime_workspace_roots: Vec::new(),
+            runtime_project_key: None,
+            runtime_project_name: None,
             device_id: None,
             message_id: None,
             executor_name: None,
@@ -106,6 +120,7 @@ impl Default for ExecutionRequest {
             validation_params: Value::Object(Default::default()),
             user_name: None,
             auth_token: None,
+            runtime_auth_token: None,
             skill_identity_token: None,
             extra: Map::new(),
         }

@@ -36,11 +36,13 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseType,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
     ResourceScope,
 )
+from app.services.knowledge.code_wiki.source import SourceRepository
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
@@ -732,6 +734,7 @@ class KnowledgeOrchestrator:
         keyword: str | None = None,
         sort_by: str = "createdAt",
         sort_order: str = "desc",
+        content_origin: str | None = None,
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -776,6 +779,7 @@ class KnowledgeOrchestrator:
             keyword=keyword,
             sort_by=sort_by,
             sort_order=sort_order,
+            content_origin=content_origin,
         )
 
         # Batch query user names for created_by field
@@ -801,6 +805,19 @@ class KnowledgeOrchestrator:
             has_more=offset + len(items) < total,
             items=items,
         )
+
+    def get_document(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+    ) -> KnowledgeDocumentResponse:
+        """Return one accessible document with its current processing state."""
+        document = self._get_document_with_access_or_raise(db, user, document_id)
+        response = KnowledgeDocumentResponse.model_validate(document)
+        creator = db.query(User.user_name).filter(User.id == document.user_id).first()
+        response.created_by = creator[0] if creator else None
+        return response
 
     def _get_document_with_access_or_raise(
         self,
@@ -983,6 +1000,7 @@ class KnowledgeOrchestrator:
         knowledge_base_id: int,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        direct_access_requirement: Optional[Literal["read", "edit"]] = None,
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
@@ -1025,6 +1043,8 @@ class KnowledgeOrchestrator:
             update_fields["name"] = name
         if description is not None:
             update_fields["description"] = description
+        if direct_access_requirement is not None:
+            update_fields["direct_access_requirement"] = direct_access_requirement
         if retrieval_config is not None:
             update_fields["retrieval_config"] = retrieval_config
         if summary_enabled is not None:
@@ -1055,14 +1075,19 @@ class KnowledgeOrchestrator:
             knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
         )
 
-    def create_knowledge_base(
+    # Parameters every knowledge base has, forwarded by both public methods below.
+    # Long because the API is long; the two wrappers stay thin by passing them
+    # straight through rather than each growing their own resolution logic.
+    def _create(
         self,
         db: Session,
         user: User,
+        *,
         name: str,
+        kb_type: str,
         description: Optional[str] = None,
         namespace: str = "default",
-        kb_type: str = "notebook",
+        direct_access_requirement: Literal["read", "edit"] = "read",
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
@@ -1073,6 +1098,7 @@ class KnowledgeOrchestrator:
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
+        execution_model_ref: Optional[Dict[str, str]] = None,
         # MCP context: for getting task's model as summary model
         task_id: Optional[int] = None,
         # Multimodal analysis config (KB create). Defaults: enabled=False when
@@ -1081,43 +1107,20 @@ class KnowledgeOrchestrator:
         multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
         multimodal_analysis_video_prompt: Optional[str] = None,
         multimodal_analysis_image_prompt: Optional[str] = None,
-    ) -> KnowledgeBaseResponse:
-        """
-        Create a knowledge base with auto-configuration support.
+        # Code wiki only. Private, so being able to express both shapes here is not a
+        # hazard -- no caller outside this class can reach it, and the two public
+        # methods each fix these. That is the whole point of the split: one
+        # implementation underneath, and a public surface that cannot say "code wiki"
+        # unless you called the method that also registers the repository.
+        source: Optional[SourceRepository] = None,
+        show_generation_task: bool = False,
+        language: str = "",
+    ) -> int:
+        """Resolve defaults, persist a knowledge base, and return its id.
 
-        Supports two RAG modes:
-        1. auto: Use a complete provided config or auto-select missing defaults.
-        2. disabled: Create a knowledge base without RAG retrieval config.
-
-        Auto-selection logic:
-        1. retriever: If not specified, auto-select using get_default_retriever()
-        2. embedding: If not specified, auto-select using get_default_embedding_model()
-        3. summary_model: If not specified and summary_enabled=True:
-           - If task_id provided, use get_task_model_as_summary_model()
-           - Otherwise use first available LLM model
-
-        Args:
-            db: Database session
-            user: Current user
-            name: Knowledge base name
-            description: Optional description
-            namespace: Namespace (default for personal, group name for group)
-            kb_type: Type (notebook or classic)
-            summary_enabled: Enable summary generation
-            rag_config_mode: RAG configuration mode
-            retrieval_config: Complete retrieval config dict (REST API mode)
-            retriever_name: Optional retriever name (MCP mode)
-            retriever_namespace: Optional retriever namespace (MCP mode)
-            embedding_model_name: Optional embedding model name (MCP mode)
-            embedding_model_namespace: Optional embedding model namespace (MCP mode)
-            summary_model_ref: Optional summary model reference
-            task_id: Optional task ID for resolving summary model
-
-        Returns:
-            KnowledgeBaseResponse
-
-        Raises:
-            ValueError: If validation fails
+        **Does not commit.** The caller owns the transaction, because a code wiki is
+        not complete until its repository is registered and the two have to land
+        together.
         """
         logger.info(
             f"[Orchestrator] create_knowledge_base called: name={name}, namespace={namespace}, "
@@ -1181,15 +1184,19 @@ class KnowledgeOrchestrator:
             )
             summary_enabled = False
 
-        # Create knowledge base
         data = KnowledgeBaseCreate(
             name=name,
             description=description,
             namespace=namespace,
-            kb_type=kb_type,
+            direct_access_requirement=direct_access_requirement,
+            kb_type=KnowledgeBaseType(kb_type),
+            source=source.to_spec() if source else None,
+            language=language or None,
+            show_generation_task=show_generation_task,
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
+            execution_model_ref=execution_model_ref,
             multimodal_analysis_enabled=(
                 multimodal_analysis_enabled
                 if multimodal_analysis_enabled is not None
@@ -1200,14 +1207,14 @@ class KnowledgeOrchestrator:
             multimodal_analysis_image_prompt=multimodal_analysis_image_prompt,
         )
 
-        kb_id = KnowledgeService.create_knowledge_base(
+        return KnowledgeService.create_knowledge_base(
             db=db,
             user_id=user.id,
             data=data,
         )
-        db.commit()
 
-        # Fetch and return created knowledge base
+    def _created(self, db: Session, user: User, kb_id: int) -> KnowledgeBaseResponse:
+        """Read back what was just written, in the shape the API returns."""
         knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=kb_id,
@@ -1221,6 +1228,173 @@ class KnowledgeOrchestrator:
         return KnowledgeBaseResponse.from_kind(
             knowledge_base, KnowledgeService.get_document_count(db, knowledge_base.id)
         )
+
+    def create_knowledge_base(
+        self,
+        db: Session,
+        user: User,
+        name: str,
+        description: Optional[str] = None,
+        namespace: str = "default",
+        direct_access_requirement: Literal["read", "edit"] = "read",
+        kb_type: str = KnowledgeBaseType.NOTEBOOK.value,
+        summary_enabled: bool = False,
+        rag_config_mode: Literal["auto", "disabled"] = "auto",
+        retrieval_config: Optional[Dict[str, Any]] = None,
+        retriever_name: Optional[str] = None,
+        retriever_namespace: Optional[str] = None,
+        embedding_model_name: Optional[str] = None,
+        embedding_model_namespace: Optional[str] = None,
+        summary_model_ref: Optional[Dict[str, str]] = None,
+        task_id: Optional[int] = None,
+        multimodal_analysis_enabled: Optional[bool] = None,
+        multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
+        multimodal_analysis_video_prompt: Optional[str] = None,
+        multimodal_analysis_image_prompt: Optional[str] = None,
+    ) -> KnowledgeBaseResponse:
+        """
+        Create a knowledge base with auto-configuration support.
+
+        Supports two RAG modes:
+        1. auto: Use a complete provided config or auto-select missing defaults.
+        2. disabled: Create a knowledge base without RAG retrieval config.
+
+        Auto-selection logic:
+        1. retriever: If not specified, auto-select using get_default_retriever()
+        2. embedding: If not specified, auto-select using get_default_embedding_model()
+        3. summary_model: If not specified and summary_enabled=True:
+           - If task_id provided, use get_task_model_as_summary_model()
+           - Otherwise use first available LLM model
+
+        Args:
+            db: Database session
+            user: Current user
+            name: Knowledge base name
+            description: Optional description
+            namespace: Namespace (default for personal, group name for group)
+            kb_type: Type (notebook or classic)
+            summary_enabled: Enable summary generation
+            rag_config_mode: RAG configuration mode
+            retrieval_config: Complete retrieval config dict (REST API mode)
+            retriever_name: Optional retriever name (MCP mode)
+            retriever_namespace: Optional retriever namespace (MCP mode)
+            embedding_model_name: Optional embedding model name (MCP mode)
+            embedding_model_namespace: Optional embedding model namespace (MCP mode)
+            summary_model_ref: Optional summary model reference
+            task_id: Optional task ID for resolving summary model
+
+        Returns:
+            KnowledgeBaseResponse
+
+        Raises:
+            ValueError: If validation fails, or if a code wiki is asked for.
+        """
+        # A code wiki cannot be made here, and refusing rather than ignoring the type
+        # is what makes this a gate. It is bound to a repository the caller must be
+        # able to read, and it is not complete until that repository is registered --
+        # neither of which this method knows how to do. Checked once, here, rather
+        # than in each caller: MCP was missing the check the REST endpoint had, and a
+        # rollout flag that only some entrances honour is not a flag.
+        if kb_type not in (
+            KnowledgeBaseType.NOTEBOOK.value,
+            KnowledgeBaseType.CLASSIC.value,
+        ):
+            raise ValueError(
+                f"'{kb_type}' knowledge bases cannot be created here; use the "
+                "dedicated code wiki endpoint"
+            )
+
+        kb_id = self._create(
+            db,
+            user,
+            name=name,
+            kb_type=kb_type,
+            description=description,
+            namespace=namespace,
+            direct_access_requirement=direct_access_requirement,
+            summary_enabled=summary_enabled,
+            rag_config_mode=rag_config_mode,
+            retrieval_config=retrieval_config,
+            retriever_name=retriever_name,
+            retriever_namespace=retriever_namespace,
+            embedding_model_name=embedding_model_name,
+            embedding_model_namespace=embedding_model_namespace,
+            summary_model_ref=summary_model_ref,
+            task_id=task_id,
+            multimodal_analysis_enabled=multimodal_analysis_enabled,
+            multimodal_analysis_model_ref=multimodal_analysis_model_ref,
+            multimodal_analysis_video_prompt=multimodal_analysis_video_prompt,
+            multimodal_analysis_image_prompt=multimodal_analysis_image_prompt,
+        )
+        db.commit()
+        return self._created(db, user, kb_id)
+
+    def create_code_wiki(
+        self,
+        db: Session,
+        user: User,
+        name: str,
+        *,
+        source: SourceRepository,
+        description: Optional[str] = None,
+        namespace: str = "default",
+        direct_access_requirement: Literal["read", "edit"] = "read",
+        # Empty is not "English", it is "fall back to the deployment default", which
+        # is also what a wiki created before this field existed does.
+        language: str = "",
+        # Whether this wiki's generation runs are listed as conversations.
+        show_generation_task: bool = False,
+        summary_enabled: bool = False,
+        rag_config_mode: Literal["auto", "disabled"] = "auto",
+        retrieval_config: Optional[Dict[str, Any]] = None,
+        summary_model_ref: Optional[Dict[str, str]] = None,
+        execution_model_ref: Optional[Dict[str, str]] = None,
+        multimodal_analysis_enabled: Optional[bool] = None,
+        multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
+        multimodal_analysis_video_prompt: Optional[str] = None,
+        multimodal_analysis_image_prompt: Optional[str] = None,
+    ) -> KnowledgeBaseResponse:
+        """Create a knowledge base bound to a source repository.
+
+        ``source`` is required rather than optional, which is what stops a code wiki
+        with no repository from being expressible at all -- the shape that used to be
+        reachable through any generic caller, and that regenerating can only answer
+        with "this code wiki has no source repository recorded".
+
+        The registration in ``wiki_projects`` happens in the same transaction as the
+        knowledge base. It used to follow a commit, so a failure between the two left
+        a committed code wiki that no run could ever start and no list would show.
+
+        Whether code wikis may be created at all, and whether this caller may read
+        the repository, are decided by the endpoint: they are about who is asking,
+        not about what a code wiki is.
+        """
+        from app.services.knowledge.code_wiki.registry import claim_repository
+
+        kb_id = self._create(
+            db,
+            user,
+            name=name,
+            kb_type=KnowledgeBaseType.CODE_WIKI.value,
+            description=description,
+            namespace=namespace,
+            direct_access_requirement=direct_access_requirement,
+            summary_enabled=summary_enabled,
+            rag_config_mode=rag_config_mode,
+            retrieval_config=retrieval_config,
+            summary_model_ref=summary_model_ref,
+            execution_model_ref=execution_model_ref,
+            multimodal_analysis_enabled=multimodal_analysis_enabled,
+            multimodal_analysis_model_ref=multimodal_analysis_model_ref,
+            multimodal_analysis_video_prompt=multimodal_analysis_video_prompt,
+            multimodal_analysis_image_prompt=multimodal_analysis_image_prompt,
+            source=source,
+            show_generation_task=show_generation_task,
+            language=language,
+        )
+        claim_repository(db, source, kb_id)
+        db.commit()
+        return self._created(db, user, kb_id)
 
     def create_document_with_content(
         self,
@@ -1278,6 +1452,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user.id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Validate input based on source_type
         normalized_ext: str = DEFAULT_TEXT_FILE_EXTENSION
@@ -1451,6 +1631,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user.id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Get splitter config from data if provided
         splitter_config_dict = None
@@ -1986,10 +2172,25 @@ class KnowledgeOrchestrator:
                     trigger_summary=trigger_summary,
                 )
         except Exception as exc:
+            from app.schemas.knowledge import DocumentProcessingStage
+            from app.services.knowledge.processing_errors import (
+                build_processing_error,
+            )
+
             mark_document_index_enqueue_failed(
                 db=db,
                 document_id=document.id,
                 generation=generation,
+                error=build_processing_error(
+                    stage=DocumentProcessingStage.DISPATCH,
+                    code="index_dispatch_failed",
+                    message=(
+                        "The indexing task could not be submitted. "
+                        "Please retry later."
+                    ),
+                    retryable=True,
+                    generation=generation,
+                ),
             )
             logger.error(
                 f"[Orchestrator] Failed to enqueue RAG indexing task for document {document.id}: {exc}",
@@ -2060,12 +2261,6 @@ class KnowledgeOrchestrator:
         if not document:
             raise ValueError("Document not found")
 
-        skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension, document.file_size
-        )
-        if skip_reason:
-            raise ValueError(skip_reason)
-
         # Check access permission via knowledge base
         knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -2083,6 +2278,16 @@ class KnowledgeOrchestrator:
             raise ValueError(
                 "You do not have permission to manage this document in this knowledge base"
             )
+
+        from app.services.knowledge.content_scope import assert_user_content_is_mutable
+
+        assert_user_content_is_mutable(getattr(document, "origin", "user"))
+
+        skip_reason = get_rag_indexing_skip_reason(
+            document.source_type, document.file_extension, document.file_size
+        )
+        if skip_reason:
+            raise ValueError(skip_reason)
 
         # Apply an optional multimodal prompt override AFTER the access check so
         # an unauthorized caller cannot poison the stored prompt. Powers the
@@ -2212,6 +2417,12 @@ class KnowledgeOrchestrator:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user.id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
 
         # Scrape the web page (async)
         service = get_web_scraper_service()
@@ -2364,6 +2575,10 @@ class KnowledgeOrchestrator:
                 "error_message": "Document not found or access denied",
             }
 
+        from app.services.knowledge.content_scope import assert_user_content_is_mutable
+
+        assert_user_content_is_mutable(getattr(document, "origin", "user"))
+
         # Verify manage permission before mutating content
         from app.models.kind import Kind
 
@@ -2466,12 +2681,17 @@ class KnowledgeOrchestrator:
 
         # Update document metadata
         document.file_size = content_size
-        document.source_config = {
-            "url": result.url,
-            "scraped_at": result.scraped_at.isoformat(),
-            "title": result.title,
-            "description": result.description,
-        }
+        source_config = dict(document.source_config or {})
+        source_config.update(
+            {
+                "url": result.url,
+                "scraped_at": result.scraped_at.isoformat(),
+                "title": result.title,
+                "description": result.description,
+            }
+        )
+        document.source_config = source_config
+        document.clear_processing_error_payload()
         # Reset is_active to False, will be set to True after re-indexing
         document.is_active = False
 

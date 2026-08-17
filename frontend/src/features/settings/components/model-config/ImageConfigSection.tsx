@@ -15,15 +15,21 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ImageGenerationConfig } from '@/apis/models'
+import type { ImageCapabilities, ImageGenerationConfig } from '@/apis/models'
 
 export interface ImageConfigState {
   imageSize: string
   imageResponseFormat: 'url' | 'b64_json'
-  imageOutputFormat: 'jpeg' | 'png'
+  imageOutputFormat: 'jpeg' | 'png' | 'webp'
+  imageOutputCompression: number | undefined
+  imageQuality: 'low' | 'medium' | 'high' | 'auto'
+  imageBackground: 'opaque' | 'transparent' | 'auto'
+  imageModeration: 'auto' | 'low'
   imageWatermark: boolean
   imageMaxImages: number | undefined
   imageMaxReferenceImages: number | undefined
+  imageReferenceFormats: string
+  imageCapabilities: ImageCapabilities | undefined
 }
 
 export interface ImageConfigSectionProps {
@@ -85,6 +91,21 @@ export const ImageConfigSection: React.FC<ImageConfigSectionProps> = ({ config, 
             {t('common:models.image_max_images_hint', '单次请求最多生成的图片数量')}
           </p>
         </div>
+        <div className="space-y-2">
+          <Label htmlFor="image_reference_formats" className="text-sm font-medium">
+            {t('common:models.image_reference_formats')}
+          </Label>
+          <Input
+            id="image_reference_formats"
+            value={config.imageReferenceFormats}
+            onChange={e => onChange({ imageReferenceFormats: e.target.value })}
+            placeholder="jpeg, jpg, png, webp"
+            className="bg-base"
+          />
+          <p className="text-xs text-text-muted">
+            {t('common:models.image_reference_formats_hint')}
+          </p>
+        </div>
       </div>
 
       {/* Reference image settings */}
@@ -96,11 +117,14 @@ export const ImageConfigSection: React.FC<ImageConfigSectionProps> = ({ config, 
           <Input
             id="image_max_reference_images"
             type="number"
-            min={1}
-            max={10}
+            min={0}
+            max={20}
             value={config.imageMaxReferenceImages ?? 1}
-            onChange={e => onChange({ imageMaxReferenceImages: parseInt(e.target.value) || 1 })}
-            placeholder="1-10"
+            onChange={e => {
+              const value = Number.parseInt(e.target.value, 10)
+              onChange({ imageMaxReferenceImages: Number.isNaN(value) ? 1 : value })
+            }}
+            placeholder="0-20"
             className="bg-base"
           />
           <p className="text-xs text-text-muted">
@@ -138,7 +162,7 @@ export const ImageConfigSection: React.FC<ImageConfigSectionProps> = ({ config, 
           </Label>
           <Select
             value={config.imageOutputFormat}
-            onValueChange={(v: 'jpeg' | 'png') => onChange({ imageOutputFormat: v })}
+            onValueChange={(v: 'jpeg' | 'png' | 'webp') => onChange({ imageOutputFormat: v })}
           >
             <SelectTrigger className="bg-base">
               <SelectValue />
@@ -146,8 +170,95 @@ export const ImageConfigSection: React.FC<ImageConfigSectionProps> = ({ config, 
             <SelectContent>
               <SelectItem value="png">PNG</SelectItem>
               <SelectItem value="jpeg">JPEG</SelectItem>
+              <SelectItem value="webp">WebP</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="image_quality" className="text-sm font-medium">
+            {t('common:models.image_quality')}
+          </Label>
+          <Select
+            value={config.imageQuality}
+            onValueChange={(value: ImageConfigState['imageQuality']) =>
+              onChange({ imageQuality: value })
+            }
+          >
+            <SelectTrigger className="bg-base" data-testid="image-quality-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="image_background" className="text-sm font-medium">
+            {t('common:models.image_background')}
+          </Label>
+          <Select
+            value={config.imageBackground}
+            onValueChange={(value: ImageConfigState['imageBackground']) =>
+              onChange({ imageBackground: value })
+            }
+          >
+            <SelectTrigger className="bg-base" data-testid="image-background-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="opaque">Opaque</SelectItem>
+              <SelectItem value="transparent">Transparent</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="image_moderation" className="text-sm font-medium">
+            {t('common:models.image_moderation')}
+          </Label>
+          <Select
+            value={config.imageModeration}
+            onValueChange={(value: ImageConfigState['imageModeration']) =>
+              onChange({ imageModeration: value })
+            }
+          >
+            <SelectTrigger className="bg-base" data-testid="image-moderation-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="image_output_compression" className="text-sm font-medium">
+            {t('common:models.image_output_compression')}
+          </Label>
+          <Input
+            id="image_output_compression"
+            data-testid="image-output-compression-input"
+            type="number"
+            min={0}
+            max={100}
+            value={config.imageOutputCompression ?? ''}
+            onChange={event =>
+              onChange({
+                imageOutputCompression:
+                  event.target.value === '' ? undefined : Number(event.target.value),
+              })
+            }
+            className="bg-base"
+          />
         </div>
       </div>
 
@@ -186,9 +297,15 @@ export function getDefaultImageConfig(): ImageConfigState {
     imageSize: '1024x1024',
     imageResponseFormat: 'url',
     imageOutputFormat: 'png',
+    imageOutputCompression: undefined,
+    imageQuality: 'auto',
+    imageBackground: 'auto',
+    imageModeration: 'auto',
     imageWatermark: false,
     imageMaxImages: undefined,
     imageMaxReferenceImages: 1,
+    imageReferenceFormats: '',
+    imageCapabilities: undefined,
   }
 }
 
@@ -196,13 +313,27 @@ export function getDefaultImageConfig(): ImageConfigState {
  * Convert ImageConfigState to ImageGenerationConfig for API
  */
 export function toImageGenerationConfig(state: ImageConfigState): ImageGenerationConfig {
+  const imageFormats = state.imageReferenceFormats
+    .split(',')
+    .map(value => value.trim().toLowerCase().replace(/^\./, ''))
+    .filter(Boolean)
+
   return {
     size: state.imageSize,
     response_format: state.imageResponseFormat,
     output_format: state.imageOutputFormat,
+    output_compression: state.imageOutputCompression,
+    quality: state.imageQuality,
+    background: state.imageBackground,
+    moderation: state.imageModeration,
     watermark: state.imageWatermark,
     max_images: state.imageMaxImages,
     max_reference_images: state.imageMaxReferenceImages,
+    capabilities: {
+      ...state.imageCapabilities,
+      max_reference_images: state.imageMaxReferenceImages,
+      image_formats: imageFormats.length ? imageFormats : undefined,
+    },
   }
 }
 
@@ -214,9 +345,16 @@ export function fromImageGenerationConfig(config: ImageGenerationConfig): ImageC
     imageSize: config.size || '1024x1024',
     imageResponseFormat: config.response_format || 'url',
     imageOutputFormat: config.output_format || 'png',
+    imageOutputCompression: config.output_compression,
+    imageQuality: config.quality || 'auto',
+    imageBackground: config.background || 'auto',
+    imageModeration: config.moderation || 'auto',
     imageWatermark: config.watermark ?? false,
     imageMaxImages: config.max_images,
-    imageMaxReferenceImages: config.max_reference_images ?? 1,
+    imageMaxReferenceImages:
+      config.capabilities?.max_reference_images ?? config.max_reference_images ?? 1,
+    imageReferenceFormats: (config.capabilities?.image_formats ?? []).join(', '),
+    imageCapabilities: config.capabilities,
   }
 }
 

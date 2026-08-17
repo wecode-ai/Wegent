@@ -31,7 +31,7 @@ export interface CodexOfficialModelList {
   models: CodexOfficialModel[]
 }
 
-export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
+export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.6-sol'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
 
 const CODEX_PICKER_MODELS = [
@@ -43,6 +43,10 @@ const CODEX_PICKER_MODELS = [
   { modelId: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
   { modelId: 'gpt-5.3-codex-spark', label: 'GPT 5.3 Codex Spark' },
 ] as const
+
+const CODEX_PICKER_MODEL_IDS: ReadonlySet<string> = new Set(
+  CODEX_PICKER_MODELS.map(model => model.modelId)
+)
 
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -146,6 +150,14 @@ function normalizeOfficialModel(
   }
 }
 
+function isVisibleCodexPickerModel(model: CodexOfficialModel | null): model is CodexOfficialModel {
+  return (
+    model !== null &&
+    (model.providerType === 'provider' ||
+      CODEX_PICKER_MODEL_IDS.has(normalizedModelId(model.modelId)))
+  )
+}
+
 function sortModels(models: CodexOfficialModel[]): CodexOfficialModel[] {
   return [...models].sort(
     (left, right) =>
@@ -171,7 +183,7 @@ function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
   const normalizedModels = sortModels(
     arrayValue(record.data)
       .map(model => normalizeOfficialModel(model, provider))
-      .filter((model): model is CodexOfficialModel => model !== null)
+      .filter(isVisibleCodexPickerModel)
   )
   return { ...provider, models: normalizedModels }
 }
@@ -198,7 +210,7 @@ export function normalizeCodexOfficialModelList(value: unknown): CodexOfficialMo
   const fallbackModels = sortModels(
     arrayValue(record.data)
       .map(model => normalizeOfficialModel(model, fallbackProvider))
-      .filter((model): model is CodexOfficialModel => model !== null)
+      .filter(isVisibleCodexPickerModel)
   )
   return {
     providers: fallbackModels.length > 0 ? [{ ...fallbackProvider, models: fallbackModels }] : [],

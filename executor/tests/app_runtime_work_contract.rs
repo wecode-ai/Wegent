@@ -14,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, Mutex, MutexGuard};
+use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{
     local::app_ipc::{AppIpcServer, RuntimeWorkHandler},
     runtime_work::RuntimeWorkRpcHandler,
@@ -107,48 +107,6 @@ async fn app_runtime_lists_codex_threads_through_app_server() {
 
     let calls = read_json_lines(&log_path);
     assert!(calls.iter().any(|call| call["method"] == "thread/list"));
-}
-
-#[tokio::test]
-async fn app_runtime_caches_consecutive_codex_thread_lists() {
-    let _lock = env_lock().await;
-    let _home = EnvGuard::set(
-        "WEGENT_EXECUTOR_HOME",
-        &temp_path("wegent-app-runtime-list-cache-home", "dir")
-            .display()
-            .to_string(),
-    );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-list-cache-codex-home");
-    let log_path = temp_path("wegent-app-runtime-list-cache-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
-
-    for _ in 0..2 {
-        let listed = handler
-            .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.list",
-                "payload": {}
-            }))
-            .await
-            .expect("runtime task list should succeed");
-        assert_eq!(listed["success"], true);
-    }
-
-    let calls = read_json_lines(&log_path);
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|call| call["method"] == "initialize")
-            .count(),
-        1
-    );
-    assert_eq!(
-        calls
-            .iter()
-            .filter(|call| call["method"] == "thread/list")
-            .count(),
-        1
-    );
 }
 
 #[tokio::test]
@@ -252,7 +210,91 @@ async fn app_runtime_reads_codex_thread_transcript_through_app_server() {
 }
 
 #[tokio::test]
-async fn app_runtime_pages_codex_thread_transcript_from_cache() {
+async fn app_runtime_restores_filtered_legacy_initial_user_message() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-legacy-preview-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-legacy-preview-codex-home");
+    let fake_codex = write_fake_legacy_codex(
+        &temp_path("wegent-app-runtime-legacy-preview-log", "jsonl"),
+        false,
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-legacy",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-legacy"},
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("legacy runtime transcript should succeed");
+
+    assert_eq!(response["success"], true);
+    assert_eq!(response["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(response["messages"][0]["role"], "user");
+    assert_eq!(
+        response["messages"][0]["content"],
+        "Legacy initial task request"
+    );
+    assert_eq!(response["messages"][1]["role"], "assistant");
+    assert_eq!(response["messages"][1]["content"], "Legacy answer");
+}
+
+#[tokio::test]
+async fn app_runtime_does_not_duplicate_legacy_multimodal_user_message() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-legacy-user-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-legacy-user-codex-home");
+    let fake_codex = write_fake_legacy_codex(
+        &temp_path("wegent-app-runtime-legacy-user-log", "jsonl"),
+        true,
+    );
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-legacy",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-legacy"},
+                "limit": 50
+            }
+        }))
+        .await
+        .expect("legacy multimodal runtime transcript should succeed");
+
+    let messages = response["messages"].as_array().unwrap();
+    let user_messages = messages
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .collect::<Vec<_>>();
+    assert_eq!(user_messages.len(), 1);
+    assert_eq!(user_messages[0]["content"], "Legacy initial task request");
+    assert_eq!(
+        user_messages[0]["attachments"][0]["local_preview_url"],
+        "/tmp/legacy-image.png"
+    );
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[1]["content"], "Legacy answer");
+}
+
+#[tokio::test]
+async fn app_runtime_pages_codex_thread_transcript_from_provider() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -262,7 +304,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
     );
     let _codex_home = set_temp_codex_home("wegent-app-runtime-transcript-page-codex-home");
     let log_path = temp_path("wegent-app-runtime-transcript-page-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_paginated_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let latest = handler
@@ -272,7 +314,7 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
                 "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
-                "limit": 1
+                "limit": 1000
             }
         }))
         .await
@@ -285,178 +327,130 @@ async fn app_runtime_pages_codex_thread_transcript_from_cache() {
                 "workspacePath": "/tmp/project",
                 "runtimeHandle": {"threadId": "thread-1"},
                 "limit": 1,
-                "beforeCursor": "offset:1"
+                "beforeCursor": "older-turns"
             }
         }))
         .await
         .expect("older transcript page should succeed");
+    let newer = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1,
+                "afterCursor": "newer-from-old"
+            }
+        }))
+        .await
+        .expect("newer transcript page should succeed");
 
-    assert_eq!(latest["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(latest["messages"][0]["role"], "assistant");
+    assert_eq!(latest["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(latest["messages"][0]["content"], "new prompt");
     assert_eq!(latest["hasMoreBefore"], true);
-    assert_eq!(latest["beforeCursor"], "offset:1");
-    assert_eq!(older["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(older["messages"][0]["role"], "user");
+    assert_eq!(latest["beforeCursor"], "older-turns");
+    assert_eq!(latest["hasMoreAfter"], false);
+    assert_eq!(latest["afterCursor"], Value::Null);
+    assert_eq!(latest["rangeStart"], Value::Null);
+    assert_eq!(latest["rangeEnd"], Value::Null);
+    assert_eq!(latest["turnNavigation"], json!([]));
+    assert_eq!(older["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(older["messages"][0]["content"], "old prompt");
     assert_eq!(older["hasMoreBefore"], false);
     assert_eq!(older["beforeCursor"], Value::Null);
+    assert_eq!(older["hasMoreAfter"], true);
+    assert_eq!(older["afterCursor"], "newer-from-old");
+    assert_eq!(newer["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(newer["messages"][0]["content"], "new prompt");
 
-    let read_count = read_json_lines(&log_path)
-        .into_iter()
+    let calls = read_json_lines(&log_path);
+    let read_count = calls
+        .iter()
         .filter(|line| line["method"] == "thread/read")
         .count();
-    assert_eq!(read_count, 1);
+    let turns_list_count = calls
+        .iter()
+        .filter(|line| line["method"] == "thread/turns/list")
+        .count();
+    let items_list_count = calls
+        .iter()
+        .filter(|line| line["method"] == "thread/items/list")
+        .count();
+    assert_eq!(read_count, 3);
+    assert_eq!(turns_list_count, 3);
+    assert_eq!(items_list_count, 3);
+    assert!(calls.iter().all(|call| {
+        call["method"] != "thread/turns/list" || call["params"]["itemsView"] == "notLoaded"
+    }));
+    assert!(calls.iter().any(|call| {
+        call["method"] == "thread/turns/list"
+            && call["params"]["cursor"] == "newer-from-old"
+            && call["params"]["sortDirection"] == "asc"
+    }));
+    assert!(calls.iter().any(|call| {
+        call["method"] == "thread/turns/list"
+            && call["params"]["cursor"].is_null()
+            && call["params"]["limit"] == 40
+            && call["params"]["sortDirection"] == "desc"
+    }));
 }
 
 #[tokio::test]
-async fn app_runtime_reads_transcript_from_cached_thread_list_rollout_path() {
+async fn app_runtime_loads_full_codex_transcript_across_opaque_pages() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
-        &temp_path("wegent-app-runtime-list-transcript-home", "dir")
+        &temp_path("wegent-app-runtime-full-transcript-home", "dir")
             .display()
             .to_string(),
     );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-list-transcript-codex-home");
-    let log_path = temp_path("wegent-app-runtime-list-transcript-log", "jsonl");
-    let rollout_path = temp_path("wegent-app-runtime-list-transcript-rollout", "jsonl");
-    write_rollout_messages(&rollout_path, &["from cached list"]);
-    let fake_codex = write_fake_codex_list_with_rollout_path(&log_path, &rollout_path);
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-full-transcript-codex-home");
+    let log_path = temp_path("wegent-app-runtime-full-transcript-log", "jsonl");
+    let fake_codex = write_fake_paginated_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
-    handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.list",
-            "payload": {}
-        }))
-        .await
-        .expect("list should succeed");
     let transcript = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.transcript",
             "payload": {
-                "taskId": "thread-fast",
+                "taskId": "thread-1",
                 "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-fast"},
-                "limit": 50
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 1,
+                "includeFullContent": true
             }
         }))
         .await
-        .expect("transcript should use cached list path");
+        .expect("full transcript should succeed");
 
-    assert_eq!(transcript["messages"][0]["content"], "from cached list");
-    assert_eq!(count_thread_reads(&log_path), 0);
-}
+    let messages = transcript["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[0]["content"], "old prompt");
+    assert_eq!(messages[1]["content"], "old answer");
+    assert_eq!(messages[2]["content"], "new prompt");
+    assert_eq!(messages[3]["content"], "new answer");
+    assert_eq!(transcript["fullContent"], true);
+    assert_eq!(transcript["hasMoreBefore"], false);
+    assert_eq!(transcript["beforeCursor"], Value::Null);
+    assert_eq!(transcript["hasMoreAfter"], false);
+    assert_eq!(transcript["afterCursor"], Value::Null);
 
-#[tokio::test]
-async fn app_runtime_refresh_uses_rollout_signature_before_reloading_transcript() {
-    let _lock = env_lock().await;
-    let _home = EnvGuard::set(
-        "WEGENT_EXECUTOR_HOME",
-        &temp_path("wegent-app-runtime-transcript-signature-home", "dir")
-            .display()
-            .to_string(),
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/turns/list")
+            .count(),
+        2
     );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-transcript-signature-codex-home");
-    let log_path = temp_path("wegent-app-runtime-transcript-signature-log", "jsonl");
-    let rollout_path = temp_path("wegent-app-runtime-transcript-signature-rollout", "jsonl");
-    write_rollout_messages(&rollout_path, &["first message"]);
-    let fake_codex = write_fake_codex_thread_with_rollout_path(&log_path, &rollout_path);
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
-
-    let first = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-signature",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-signature"},
-                "limit": 50,
-                "refresh": true
-            }
-        }))
-        .await
-        .expect("first transcript should succeed");
-    let cached = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-signature",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-signature"},
-                "limit": 50,
-                "refresh": true
-            }
-        }))
-        .await
-        .expect("cached transcript should succeed");
-
-    assert_eq!(first["messages"][0]["content"], "first message");
-    assert_eq!(cached["messages"][0]["content"], "first message");
-    assert_eq!(count_thread_reads(&log_path), 1);
-
-    write_rollout_messages(&rollout_path, &["first message", "second message"]);
-    let refreshed = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-signature",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-signature"},
-                "limit": 50,
-                "refresh": true
-            }
-        }))
-        .await
-        .expect("refreshed transcript should succeed");
-
-    assert_eq!(refreshed["messages"][2]["content"], "second message");
-    assert_eq!(count_thread_reads(&log_path), 2);
-}
-
-#[tokio::test]
-async fn app_runtime_rebuilds_transcript_from_rollout_when_thread_read_has_no_turns() {
-    let _lock = env_lock().await;
-    let _home = EnvGuard::set(
-        "WEGENT_EXECUTOR_HOME",
-        &temp_path("wegent-app-runtime-rollout-transcript-home", "dir")
-            .display()
-            .to_string(),
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/items/list")
+            .count(),
+        2
     );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-rollout-transcript-codex-home");
-    let fake_codex = write_fake_codex_empty_thread_with_rollout(&temp_path(
-        "wegent-app-runtime-rollout-transcript-log",
-        "jsonl",
-    ));
-    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
-
-    let response = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "thread-rollout",
-                "workspacePath": "/tmp/project",
-                "runtimeHandle": {"threadId": "thread-rollout"},
-                "limit": 50
-            }
-        }))
-        .await
-        .expect("runtime transcript should succeed");
-
-    let blocks = response["messages"][1]["blocks"]
-        .as_array()
-        .expect("assistant blocks should exist");
-
-    assert_eq!(response["success"], true);
-    assert_eq!(response["messages"][0]["role"], "user");
-    assert_eq!(response["messages"][0]["content"], "inspect files");
-    assert_eq!(response["messages"][1]["role"], "assistant");
-    assert_eq!(response["messages"][1]["content"], "done");
-    assert_eq!(blocks[0]["type"], "thinking");
-    assert_eq!(blocks[0]["content"], "inspect context");
-    assert_eq!(blocks[1]["type"], "tool");
-    assert_eq!(blocks[1]["tool_name"], "exec_command");
-    assert_eq!(blocks[1]["tool_input"]["cmd"], "sed -n '1,20p' src/main.rs");
-    assert_eq!(blocks[1]["tool_output"], "line 1\n");
 }
 
 #[tokio::test]
@@ -513,6 +507,8 @@ async fn app_runtime_persists_local_task_thread_mapping() {
 
     assert_eq!(created["accepted"], true);
     assert_eq!(created["taskId"], "local-task-1");
+
+    wait_for_persisted_mapping(&handler).await;
 
     let restored_handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
     let restored = wait_for_persisted_mapping(&restored_handler).await;
@@ -584,97 +580,6 @@ async fn app_runtime_create_standalone_chat_generates_default_workspace() {
 }
 
 #[tokio::test]
-async fn app_runtime_transcript_includes_running_tool_blocks_before_thread_mapping() {
-    let _lock = env_lock().await;
-    let _home = EnvGuard::set(
-        "WEGENT_EXECUTOR_HOME",
-        &temp_path("wegent-app-runtime-running-tool-home", "dir")
-            .display()
-            .to_string(),
-    );
-    let _codex_home = set_temp_codex_home("wegent-app-runtime-running-tool-codex-home");
-    let fake_codex =
-        write_fake_codex_running_tool(&temp_path("wegent-app-runtime-running-tool-log", "jsonl"));
-    let (event_tx, mut event_rx) = broadcast::channel(16);
-    let handler = RuntimeWorkRpcHandler::with_event_sender(
-        "device-1",
-        fake_codex.display().to_string(),
-        event_tx,
-    );
-
-    let created = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.create",
-            "payload": {
-                "taskId": "running-tool-task",
-                "workspacePath": "/tmp/project",
-                "title": "Running tool task",
-                "executionRequest": {
-                    "task_id": 91,
-                    "subtask_id": 92,
-                    "prompt": "run tests",
-                    "bot": [{"shell_type": "ClaudeCode"}],
-                    "model_config": {
-                        "model": "openai",
-                        "model_id": "gpt-5",
-                        "api_format": "responses",
-                        "protocol": "openai-responses"
-                    },
-                    "project_workspace_path": "/tmp/project"
-                }
-            }
-        }))
-        .await
-        .expect("create should be accepted");
-
-    assert_eq!(created["accepted"], true);
-
-    wait_for_running_tool_transcript_events(&mut event_rx).await;
-
-    let transcript = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "taskId": "running-tool-task",
-                "workspacePath": "/tmp/project",
-                "limit": 50
-            }
-        }))
-        .await
-        .expect("runtime transcript should succeed");
-    let messages = transcript["messages"]
-        .as_array()
-        .expect("transcript messages should exist");
-    let assistant = messages
-        .iter()
-        .find(|message| message["role"] == "assistant" && message["subtaskId"] == "92")
-        .expect("assistant message should exist");
-    let blocks = assistant["blocks"]
-        .as_array()
-        .expect("assistant blocks should exist");
-    let tool_block = blocks
-        .iter()
-        .find(|block| block["status"] == "done" && block["tool_output"] == "ok\n")
-        .expect("running task transcript should include cached tool block");
-
-    assert_eq!(assistant["role"], "assistant");
-    assert_eq!(assistant["subtaskId"], "92");
-    assert_eq!(assistant["status"], "streaming");
-    assert_eq!(assistant["content"], "done");
-    assert!(assistant.get("completedAt").is_none());
-    assert!(assistant.get("fileChanges").is_none());
-    assert_eq!(blocks[0]["type"], "thinking");
-    assert_eq!(blocks[0]["content"], "checking context");
-    assert_eq!(blocks[0]["status"], "done");
-    assert_eq!(blocks[1]["type"], "text");
-    assert_eq!(blocks[1]["content"], "running tests");
-    assert_eq!(blocks[1]["status"], "done");
-    assert_eq!(tool_block["type"], "tool");
-    assert_eq!(tool_block["tool_name"], "bash");
-    assert_eq!(tool_block["tool_input"]["command"], "cargo test");
-}
-
-#[tokio::test]
 async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -737,6 +642,9 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
 
     let calls = read_json_lines(&log_path);
     assert!(calls.iter().any(|call| call["method"] == "thread/archive"));
+    assert!(calls
+        .iter()
+        .any(|call| call["method"] == "thread/unsubscribe"));
     assert!(calls
         .iter()
         .any(|call| call["method"] == "thread/unarchive"));
@@ -1028,7 +936,13 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}},{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}},{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-1","createdAt":1780000000,"itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-1","item":{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"please fix ci"}},{{"type":"localImage","path":"/tmp/codex-clipboard/screenshot.png"}}]}}}},{{"turnId":"turn-1","item":{{"id":"reason-1","type":"reasoning","summary":["inspect failure"]}}}},{{"turnId":"turn-1","item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"test result: ok\n","exitCode":0}}}},{{"turnId":"turn-1","item":{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -1039,8 +953,14 @@ while IFS= read -r line; do
     *'"method":"thread/archive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"success":true}}}}'
+      ;;
     *'"method":"thread/unarchive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"thread/delete"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -1052,6 +972,138 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_legacy_codex(log_path: &Path, include_user_message: bool) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-legacy", "sh");
+    let _ = fs::remove_file(log_path);
+    let mut items = Vec::new();
+    if include_user_message {
+        items.push(json!({
+            "id": "user-legacy",
+            "type": "userMessage",
+            "content": [
+                {"type": "text", "text": "Legacy initial task request"},
+                {"type": "localImage", "path": "/tmp/legacy-image.png"}
+            ]
+        }));
+    }
+    items.push(json!({
+        "id": "agent-legacy",
+        "type": "agentMessage",
+        "text": "Legacy answer",
+        "phase": "final_answer"
+    }));
+    let read_response = json!({
+        "id": "__REQUEST_ID__",
+        "result": {
+            "thread": {
+                "id": "thread-legacy",
+                "cwd": "/tmp/project",
+                "name": "Legacy task",
+                "preview": "Legacy initial task request",
+                "path": "/tmp/codex/thread-legacy.jsonl",
+                "historyMode": "legacy",
+                "createdAt": 1780000000_i64,
+                "updatedAt": 1780000060_i64,
+                "status": "idle",
+                "turns": []
+            }
+        }
+    });
+    let turns_response = json!({
+        "id": "__REQUEST_ID__",
+        "result": {
+            "data": [{
+                "id": "turn-legacy",
+                "startedAt": 1780000000_i64,
+                "completedAt": 1780000060_i64,
+                "status": "completed",
+                "itemsView": "full",
+                "items": items
+            }],
+            "nextCursor": null,
+            "backwardsCursor": null
+        }
+    });
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' {} | sed 's/"__REQUEST_ID__"/'"$request_id"'/'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        shell_single_quote(&read_response.to_string()),
+        shell_single_quote(&turns_response.to_string()),
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_paginated_codex(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-pagination", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","path":"/tmp/codex/thread-1.jsonl","historyMode":"paginated","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*'"cursor":"older-turns"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-old","startedAt":1780000000,"completedAt":1780000001,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":null,"backwardsCursor":"newer-from-old"}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"turn-new","startedAt":1780000100,"completedAt":1780000101,"status":"completed","itemsView":"notLoaded","items":[]}}],"nextCursor":"older-turns","backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*'"turnId":"turn-old"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-old","item":{{"id":"user-old","type":"userMessage","content":[{{"type":"text","text":"old prompt"}}]}}}},{{"turnId":"turn-old","item":{{"id":"agent-old","type":"agentMessage","text":"old answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"old-items-head"}}}}'
+      ;;
+    *'"method":"thread/items/list"'*'"turnId":"turn-new"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"turnId":"turn-new","item":{{"id":"user-new","type":"userMessage","content":[{{"type":"text","text":"new prompt"}}]}}}},{{"turnId":"turn-new","item":{{"id":"agent-new","type":"agentMessage","text":"new answer","phase":"final_answer"}}}}],"nextCursor":null,"backwardsCursor":"new-items-head"}}}}'
       ;;
   esac
 done
@@ -1140,199 +1192,6 @@ done
     path
 }
 
-fn write_fake_codex_empty_thread_with_rollout(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-app-runtime-rollout-transcript", "sh");
-    let rollout_path = temp_path("fake-codex-app-runtime-rollout", "jsonl");
-    let _ = fs::remove_file(log_path);
-    fs::write(
-        &rollout_path,
-        [
-            json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
-            json!({"type":"response_item","payload":{"id":"user-1","type":"message","role":"user","content":[{"type":"input_text","text":"inspect files"}]}}).to_string(),
-            json!({"type":"event_msg","payload":{"type":"user_message","message":"inspect files"}}).to_string(),
-            json!({"type":"response_item","payload":{"id":"reason-1","type":"reasoning","summary":["inspect context"]}}).to_string(),
-            json!({"type":"response_item","payload":{"id":"call-1","type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"sed -n '1,20p' src/main.rs\",\"workdir\":\"/tmp/project\"}"}}).to_string(),
-            json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"call-1","output":"line 1\n"}}).to_string(),
-            json!({"type":"event_msg","payload":{"type":"agent_message","phase":"final_answer","message":"done"}}).to_string(),
-            json!({"type":"response_item","payload":{"id":"assistant-1","type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"done"}]}}).to_string(),
-            json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
-        ]
-        .join("\n"),
-    )
-    .unwrap();
-    let content = format!(
-        r#"#!/bin/sh
-LOG_PATH='{}'
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$LOG_PATH"
-  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
-      ;;
-    *'"method":"initialized"'*)
-      ;;
-    *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-rollout","cwd":"/tmp/project","name":"Rollout transcript","preview":"rollout","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
-      ;;
-  esac
-done
-"#,
-        log_path.display(),
-        rollout_path.display()
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
-}
-
-fn write_fake_codex_list_with_rollout_path(log_path: &Path, rollout_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-app-runtime-list-rollout", "sh");
-    let _ = fs::remove_file(log_path);
-    let content = format!(
-        r#"#!/bin/sh
-LOG_PATH='{}'
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$LOG_PATH"
-  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
-      ;;
-    *'"method":"initialized"'*)
-      ;;
-    *'"method":"thread/list"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-fast","cwd":"/tmp/project","name":"Fast transcript","preview":"fast","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
-      ;;
-    *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32000,"message":"thread/read should not be called"}}}}'
-      ;;
-  esac
-done
-"#,
-        log_path.display(),
-        rollout_path.display()
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
-}
-
-fn write_fake_codex_thread_with_rollout_path(log_path: &Path, rollout_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-app-runtime-signature-rollout", "sh");
-    let _ = fs::remove_file(log_path);
-    let content = format!(
-        r#"#!/bin/sh
-LOG_PATH='{}'
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$LOG_PATH"
-  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
-      ;;
-    *'"method":"initialized"'*)
-      ;;
-    *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-signature","cwd":"/tmp/project","name":"Signature transcript","preview":"signature","path":"{}","createdAt":1780000000,"updatedAt":1780000060,"status":{{"type":"notLoaded"}},"turns":[]}}}}}}'
-      ;;
-  esac
-done
-"#,
-        log_path.display(),
-        rollout_path.display()
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
-}
-
-fn write_rollout_messages(path: &Path, messages: &[&str]) {
-    let mut lines = Vec::new();
-    for (index, message) in messages.iter().enumerate() {
-        lines.push(json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string());
-        lines.push(
-            json!({"type":"response_item","payload":{"id":format!("user-{index}"),"type":"message","role":"user","content":[{"type":"input_text","text":message}]}})
-                .to_string(),
-        );
-        lines.push(
-            json!({"type":"response_item","payload":{"id":format!("assistant-{index}"),"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":format!("ack {message}")}]}})
-                .to_string(),
-        );
-        lines.push(json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string());
-    }
-    fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
-}
-
-fn count_thread_reads(log_path: &Path) -> usize {
-    read_json_lines(log_path)
-        .into_iter()
-        .filter(|line| line["method"] == "thread/read")
-        .count()
-}
-
-fn write_fake_codex_running_tool(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-app-runtime-running-tool", "sh");
-    let _ = fs::remove_file(log_path);
-    let content = format!(
-        r#"#!/bin/sh
-LOG_PATH='{}'
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$LOG_PATH"
-  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  case "$line" in
-    *'"method":"initialize"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
-      ;;
-    *'"method":"initialized"'*)
-      ;;
-    *'"method":"thread/start"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool"}}}}}}'
-      ;;
-    *'"method":"thread/name/set"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      ;;
-    *'"method":"thread/read"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-running-tool","cwd":"/tmp/project","name":"Running tool task","preview":"run tests","path":"/tmp/codex/thread-running-tool.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}}}}}'
-      ;;
-    *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-running-tool","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"item/reasoning/delta","params":{{"delta":"checking context"}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"running tests","phase":"commentary"}}}}'
-      printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"cmd-1","type":"commandExecution","command":"cargo test","cwd":"/tmp/project","status":"completed","aggregatedOutput":"ok\n","exitCode":0}}}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
-      ;;
-  esac
-done
-"#,
-        log_path.display()
-    );
-    fs::write(&path, content).unwrap();
-    #[cfg(unix)]
-    {
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).unwrap();
-    }
-    path
-}
-
 fn temp_path(prefix: &str, extension: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1342,6 +1201,10 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 struct CodexStateDbThread<'a> {
@@ -1472,32 +1335,4 @@ async fn wait_for_persisted_mapping(handler: &RuntimeWorkRpcHandler) -> Value {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("persisted local task mapping was not restored");
-}
-
-async fn wait_for_running_tool_transcript_events(receiver: &mut broadcast::Receiver<Value>) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let mut saw_tool_update = false;
-        let mut saw_final_delta = false;
-        loop {
-            let event = receiver
-                .recv()
-                .await
-                .expect("runtime event channel should stay open");
-            if event["event"] == "response.block.updated"
-                && event["payload"]["data"]["updates"]["tool_output"] == "ok\n"
-            {
-                saw_tool_update = true;
-            }
-            if event["event"] == "response.output_text.delta"
-                && event["payload"]["data"]["delta"] == "done"
-            {
-                saw_final_delta = true;
-            }
-            if saw_tool_update && saw_final_delta {
-                return;
-            }
-        }
-    })
-    .await
-    .expect("timed out waiting for running transcript events");
 }

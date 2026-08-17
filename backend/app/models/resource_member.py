@@ -43,6 +43,16 @@ class MemberStatus(str, PyEnum):
     REJECTED = "rejected"  # Access denied
 
 
+KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES = (
+    ResourceType.KNOWLEDGE_BASE.value,
+    ResourceType.KNOWLEDGE_BASE.name,
+)
+APPROVED_MEMBER_STATUS_VALUES = (
+    MemberStatus.APPROVED.value,
+    MemberStatus.APPROVED.name,
+)
+
+
 # ResourceRole is an alias to BaseRole for backward compatibility
 # All role-related code should use BaseRole as the single source of truth
 ResourceRole = BaseRole

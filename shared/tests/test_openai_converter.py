@@ -69,6 +69,32 @@ def test_round_trip_preserves_skill_reference_metadata():
     assert converted.preload_skill_refs == request.preload_skill_refs
 
 
+def test_round_trip_preserves_selected_knowledge_context():
+    request = ExecutionRequest(
+        selected_knowledge_prompt="<selected_knowledge_sources />",
+        provider_native_knowledge=True,
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert "selected_knowledge_refs" not in openai_request["metadata"]
+    assert converted.selected_knowledge_prompt == request.selected_knowledge_prompt
+    assert converted.provider_native_knowledge is True
+
+
+def test_string_false_does_not_enable_provider_native_knowledge() -> None:
+    converted = OpenAIRequestConverter.to_execution_request(
+        {
+            "model": "test-model",
+            "input": "hello",
+            "metadata": {"provider_native_knowledge": "false"},
+        }
+    )
+
+    assert converted.provider_native_knowledge is False
+
+
 def test_round_trip_preserves_interactive_form_answer():
     request = ExecutionRequest(
         interactive_form_answer={

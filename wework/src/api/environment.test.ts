@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   buildPullRequestUrl,
   checkoutProjectBranch,
@@ -14,11 +14,65 @@ import {
   workspaceHasUncommittedChanges,
 } from './environment'
 
+const changeRequestStatusPreference = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/tauri/appPreferences', () => ({
+  getAppPreferences: vi.fn(async () => ({
+    changeRequestStatusEnabled: changeRequestStatusPreference.enabled,
+  })),
+}))
+
+beforeEach(() => {
+  changeRequestStatusPreference.enabled = true
+})
+
 describe('parseGitShortStat', () => {
   test('extracts additions and deletions from git shortstat output', () => {
     expect(parseGitShortStat(' 10 files changed, 173 insertions(+), 13366 deletions(-)')).toEqual({
       additions: '+173',
       deletions: '-13366',
+    })
+  })
+
+  test('detects a non-git workspace without depending on localized stderr', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      error: 'Command failed',
+      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 4,
+        name: 'plain-cloud-workspace',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'cloud',
+            deviceId: 'device-456',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/plain-cloud-workspace',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      isGitRepository: false,
+      deviceId: 'device-456',
+      workspacePath: '/workspace/plain-cloud-workspace',
+    })
+    expect(info.error).toBeUndefined()
+    expect(executeCommand).toHaveBeenCalledWith('device-456', {
+      command_key: 'git_is_worktree',
+      path: '/workspace/plain-cloud-workspace',
+      args: ['/workspace/plain-cloud-workspace'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
     })
   })
 
@@ -91,6 +145,422 @@ describe('workspaceHasUncommittedChanges', () => {
 })
 
 describe('loadProjectEnvironment', () => {
+  test('does not call gh or glab when PR/MR status is disabled', async () => {
+    changeRequestStatusPreference.enabled = false
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest).toBeUndefined()
+    expect(info.createPullRequestUrl).toContain('/compare/feature%2Fchange-request-status')
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      'local-device',
+      expect.objectContaining({
+        command_key: expect.stringMatching(/^git_(github_pull_requests|gitlab_merge_requests)$/),
+      })
+    )
+  })
+
+  test('loads the current GitHub pull request and check status from the local device', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            number: 2631,
+            url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+            title: 'feat(wework): show pull request status',
+            state: 'OPEN',
+            isDraft: false,
+            mergeable: 'CONFLICTING',
+            mergeStateStatus: 'DIRTY',
+            statusCheckRollup: [
+              { status: 'COMPLETED', conclusion: 'SUCCESS' },
+              { status: 'IN_PROGRESS', conclusion: '' },
+            ],
+          },
+        ],
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest).toEqual({
+      provider: 'github',
+      state: 'found',
+      changeRequest: {
+        provider: 'github',
+        number: 2631,
+        url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+        title: 'feat(wework): show pull request status',
+        state: 'open',
+        draft: false,
+        checks: 'pending',
+        mergeability: 'conflicting',
+      },
+    })
+    expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
+      command_key: 'git_github_pull_requests',
+      path: '/workspace/Wegent',
+      args: ['feature/change-request-status'],
+      timeout_seconds: 20,
+      max_output_bytes: 256 * 1024,
+    })
+  })
+
+  test.each([
+    ['STARTUP_FAILURE', 'failure'],
+    ['STALE', 'failure'],
+    ['WAITING', 'pending'],
+  ] as const)('maps GitHub check status %s to %s', async (status, expected) => {
+    const check =
+      status === 'WAITING'
+        ? { status, conclusion: '' }
+        : { status: 'COMPLETED', conclusion: status }
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            number: 2631,
+            url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+            title: 'feat(wework): show pull request status',
+            state: 'OPEN',
+            isDraft: false,
+            statusCheckRollup: [check],
+          },
+        ],
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest?.changeRequest?.checks).toBe(expected)
+  })
+
+  test('uses the latest GitHub run when an earlier run was cancelled', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            number: 2631,
+            url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+            title: 'feat(wework): show pull request status',
+            state: 'MERGED',
+            isDraft: false,
+            statusCheckRollup: [
+              {
+                name: 'Test Wework',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:19:55Z',
+                status: 'COMPLETED',
+                conclusion: 'CANCELLED',
+              },
+              {
+                name: 'Test Summary',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:20:54Z',
+                status: 'COMPLETED',
+                conclusion: 'FAILURE',
+              },
+              {
+                name: 'Test Wework',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:21:16Z',
+                status: 'COMPLETED',
+                conclusion: 'SUCCESS',
+              },
+              {
+                name: 'Test Summary',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:25:46Z',
+                status: 'COMPLETED',
+                conclusion: 'SUCCESS',
+              },
+            ],
+          },
+        ],
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest?.changeRequest).toMatchObject({
+      state: 'merged',
+      checks: 'success',
+      mergeability: 'unknown',
+    })
+  })
+
+  test('keeps create request available when the provider CLI is unavailable', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'git@gitlab.com:wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        stdout: '',
+        stderr: 'glab: command not found',
+        error: 'Command failed',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest).toEqual({
+      provider: 'gitlab',
+      state: 'unavailable',
+    })
+    expect(info.createPullRequestUrl).toContain('/-/merge_requests/new?')
+  })
+
+  test('preserves the provider when the change request command rejects', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockRejectedValueOnce(new Error('Device command transport unavailable'))
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest).toEqual({
+      provider: 'github',
+      state: 'error',
+    })
+  })
+
+  test('loads the current GitLab merge request and pipeline status', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'git@gitlab.com:wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            iid: 42,
+            web_url: 'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/42',
+            title: 'feat(wework): show merge request status',
+            state: 'opened',
+            draft: true,
+            head_pipeline: { status: 'success' },
+          },
+        ],
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest).toEqual({
+      provider: 'gitlab',
+      state: 'found',
+      changeRequest: {
+        provider: 'gitlab',
+        number: 42,
+        url: 'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/42',
+        title: 'feat(wework): show merge request status',
+        state: 'open',
+        draft: true,
+        checks: 'success',
+        mergeability: 'unknown',
+      },
+    })
+  })
+
   test('resolves git checkout path to an absolute device workspace path', async () => {
     const executeCommand = vi
       .fn()
@@ -117,6 +587,11 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [],
         stderr: '',
       })
 
@@ -178,6 +653,11 @@ describe('loadProjectEnvironment', () => {
         stdout: 'https://github.com/wecode-ai/Wegent.git\n',
         stderr: '',
       })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [],
+        stderr: '',
+      })
 
     const info = await loadProjectEnvironment(
       { executeCommand },
@@ -202,11 +682,16 @@ describe('loadProjectEnvironment', () => {
       executionTarget: 'cloud',
       deviceId: 'device-123',
       workspacePath: '/workspace/Wegent',
+      isGitRepository: true,
       branchName: 'human/narwhal-20260528-073440',
       additions: '+8',
       deletions: '-3',
       createPullRequestUrl:
         'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
+      changeRequest: {
+        provider: 'github',
+        state: 'not_found',
+      },
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch',
@@ -243,6 +728,11 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [],
         stderr: '',
       })
 
@@ -371,9 +861,60 @@ describe('loadProjectEnvironment', () => {
       additions: '+0',
       deletions: '-0',
       executionTarget: 'local',
+      isGitRepository: false,
       deviceId: 'device-123',
       workspacePath: '/workspace/plain-workspace',
     })
+  })
+
+  test('preserves git command errors when the workspace is a repository', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'fatal: failed to read git metadata',
+        })
+      }
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'true\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 5,
+        name: 'broken-repository',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/broken-repository',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      deviceId: 'device-123',
+      workspacePath: '/workspace/broken-repository',
+      error: 'fatal: failed to read git metadata',
+    })
+    expect(info.isGitRepository).toBeUndefined()
   })
 
   test('deduplicates repeated environment loads for the same project briefly', async () => {
@@ -401,6 +942,11 @@ describe('loadProjectEnvironment', () => {
       })
       .mockResolvedValueOnce({
         success: true,
+        stdout: [],
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
         stdout: 'human/narwhal-20260528-073440\n',
         stderr: '',
       })
@@ -417,6 +963,11 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [],
         stderr: '',
       })
 
@@ -449,8 +1000,8 @@ describe('loadProjectEnvironment', () => {
     const cachedInfo = await loadProjectEnvironment(api, project)
 
     expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
-    // 4 calls: git_branch, git_branch_diff_shortstat, git_status_porcelain, git_remote_url
-    expect(executeCommand).toHaveBeenCalledTimes(4)
+    // 5 calls: branch, diff, status, remote, and the branch's pull request lookup.
+    expect(executeCommand).toHaveBeenCalledTimes(5)
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch',
       path: '/workspace/Wegent',
@@ -479,7 +1030,7 @@ describe('loadProjectEnvironment', () => {
     const refreshedInfo = await loadProjectEnvironment(api, project, undefined, { force: true })
 
     expect(refreshedInfo).toMatchObject({ additions: '+13', deletions: '-5' })
-    expect(executeCommand).toHaveBeenCalledTimes(8)
+    expect(executeCommand).toHaveBeenCalledTimes(10)
   })
 
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {

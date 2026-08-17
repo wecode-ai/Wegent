@@ -170,7 +170,7 @@ export function formatCodexUsageDisplay(
     fiveHour,
     sevenDay,
     trayTitle,
-    tooltip: `${formatTooltipLine(fiveHour)}\n${formatTooltipLine(sevenDay)}`,
+    tooltip: `${isEnglishLocale() ? 'Codex quota' : 'Codex 额度'}\n${formatTooltipLine(fiveHour)}\n${formatTooltipLine(sevenDay)}`,
   }
 }
 

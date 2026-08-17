@@ -5,6 +5,22 @@ import { describe, expect, test } from 'vitest'
 const sourceRoot = resolve(process.cwd(), 'src')
 
 const guardedFiles = [
+  'components/chat/AssistantMarkdown.tsx',
+  'components/chat/CodexTurnArtifacts.tsx',
+  'components/chat/composer/CompactChatComposer.tsx',
+  'components/chat/composer/ComposerToolbar.tsx',
+  'components/chat/composer/ContextUsageIndicator.tsx',
+  'components/chat/composer/ModelAutomaticReasoningOption.tsx',
+  'components/chat/composer/ModelSelector.tsx',
+  'components/common/ActionMenu.tsx',
+  'components/layout/DesktopAppSwitcher.tsx',
+  'components/layout/workspace-panels/FileWorkspacePanel.tsx',
+  'components/plugins/PluginCatalogSections.tsx',
+  'components/projects/DeviceFolderPicker.tsx',
+  'components/projects/ProjectCreateDialog.tsx',
+  'features/todo/TodoCreateDialog.tsx',
+  'features/todo/TodoDetailPanel.tsx',
+  'features/todo/TodoWorkItems.tsx',
   'components/layout/DesktopSidebar.tsx',
   'components/layout/DesktopSettingsMenu.tsx',
   'components/layout/EnvironmentInfoPopover.tsx',
@@ -46,9 +62,13 @@ const forbiddenGlobalZIndexClasses = [
 describe('theme token guard', () => {
   test('tailwind exposes semantic surface colors', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
-    const source = readFileSync(tailwindConfigPath, 'utf8')
+    const source = readFileSync(tailwindConfigPath, 'utf8').replace(/\r\n/g, '\n')
+    const colorsBlock = source.slice(source.indexOf('colors: {'), source.indexOf('borderRadius:'))
 
-    expect(source).toContain("base: 'rgb(var(--color-bg-base) / <alpha-value>)'")
+    expect(source).toContain(
+      "backgroundColor: {\n        base: 'rgb(var(--color-bg-base) / <alpha-value>)'"
+    )
+    expect(colorsBlock).not.toContain("base: 'rgb(var(--color-bg-base) / <alpha-value>)'")
     expect(source).toContain("background: 'rgb(var(--color-bg-base) / <alpha-value>)'")
     expect(source).toContain("surface: 'rgb(var(--color-bg-surface) / <alpha-value>)'")
     expect(source).toContain("popover: 'rgb(var(--color-popover) / <alpha-value>)'")
@@ -59,6 +79,16 @@ describe('theme token guard', () => {
     const source = readFileSync(tailwindConfigPath, 'utf8')
 
     expect(source).toContain("darkMode: 'class'")
+  })
+
+  test('titlebar and window frame use the same opaque surface colors', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const source = readFileSync(globalsPath, 'utf8')
+
+    expect(source.match(/--color-bg-surface: 247 247 248;/g)).toHaveLength(1)
+    expect(source.match(/--color-titlebar: 247 247 248;/g)).toHaveLength(1)
+    expect(source.match(/--color-bg-surface: 28 31 36;/g)).toHaveLength(1)
+    expect(source.match(/--color-titlebar: 28 31 36;/g)).toHaveLength(1)
   })
 
   test('tailwind exposes semantic z-index layers', () => {
@@ -76,16 +106,34 @@ describe('theme token guard', () => {
     const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
     const source = readFileSync(globalsPath, 'utf8')
 
-    expect(source).toContain('scrollbar-color: rgb(210 210 210 / 0.8) rgb(210 210 210 / 0.8);')
+    expect(source).toContain('scrollbar-color: rgb(170 170 170 / 0.85) transparent;')
     expect(source).toContain('width: 7px;')
     expect(source).toContain('height: 7px;')
-    expect(source).toContain('background-color: rgb(210 210 210 / 0.8);')
+    expect(source).toContain('background-color: rgb(170 170 170 / 0.85);')
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track {')
-    expect(source).toContain('background: rgb(210 210 210 / 0.8);')
+    expect(source).toContain('background: transparent;')
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track-piece {')
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-corner {')
-    expect(source).toContain('border: 0;')
-    expect(source).toContain('border-radius: 0;')
+    expect(source).toContain('border: 1px solid transparent;')
+    expect(source).toContain('border-radius: 999px;')
+  })
+
+  test('browser annotation toolbar surface derives from theme tokens for dark mode', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const globalsSource = readFileSync(globalsPath, 'utf8')
+    const panelPath = resolve(
+      sourceRoot,
+      'components/layout/workspace-panels/WorkspaceBrowserPanel.tsx'
+    )
+    const panelSource = readFileSync(panelPath, 'utf8')
+
+    expect(globalsSource).toContain('--color-browser-annotation-surface: color-mix(')
+    expect(globalsSource).toContain('rgb(var(--color-bg-surface)) 82%')
+    expect(globalsSource).toContain('rgb(var(--color-focus)) 18%')
+    expect(panelSource).not.toMatch(/\b(?:bg|border|text)-blue-(?:50|100|200|700)\b/)
+    expect(panelSource).toContain('bg-[var(--color-browser-annotation-surface)]')
+    expect(panelSource).toContain('border-[var(--color-browser-annotation-border)]')
+    expect(panelSource).toContain('bg-[var(--color-browser-annotation-chip)]')
   })
 
   test.each(guardedFiles)(

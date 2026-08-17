@@ -181,10 +181,10 @@ When pushing code, pre-commit automatically runs quality checks:
 - Documentation update reminders
 
 ```bash
-# Push to remote (triggers quality checks)
+# First push: inspect documentation reminders without running quality checks
 git push origin feature/your-feature-name
 
-# If documentation reminders shown, verify and push
+# Ask the AI to complete documentation, then run quality checks and push
 AI_VERIFIED=1 git push origin feature/your-feature-name
 
 # Skip checks if needed (not recommended)

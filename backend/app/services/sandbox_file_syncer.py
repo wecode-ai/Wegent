@@ -12,12 +12,16 @@ The sync is performed in the background and failures are logged but do not
 block the attachment upload flow.
 """
 
-import asyncio
 import logging
 import os
 from typing import Optional
 
 import httpx
+
+from shared.utils.attachment_block import (
+    build_sandbox_path,
+    sanitize_attachment_filename,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,28 +43,7 @@ def _sanitize_filename(filename: str) -> str:
     Returns:
         Sanitized filename safe for use in file paths
     """
-    # Get basename to remove any directory components
-    safe_name = os.path.basename(filename or "attachment")
-    # Replace path separators that might have been encoded
-    safe_name = safe_name.replace("/", "_").replace("\\", "_")
-    # Remove control characters
-    safe_name = safe_name.replace("\n", "").replace("\r", "")
-    return safe_name if safe_name else "attachment"
-
-
-def build_sandbox_attachment_path(task_id: int, subtask_id: int, filename: str) -> str:
-    """Build the sandbox path for an attachment.
-
-    Args:
-        task_id: Task ID
-        subtask_id: Subtask ID
-        filename: Original filename
-
-    Returns:
-        Path where the attachment should be stored in sandbox
-    """
-    safe_filename = _sanitize_filename(filename)
-    return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+    return sanitize_attachment_filename(filename, fallback="attachment")
 
 
 class SandboxFileSyncer:
@@ -234,7 +217,16 @@ class SandboxFileSyncer:
             return False
 
         # Build target path
-        remote_path = build_sandbox_attachment_path(task_id, subtask_id, filename)
+        remote_path = build_sandbox_path(task_id, subtask_id, filename)
+        if not remote_path:
+            logger.warning(
+                "[SandboxFileSyncer] Cannot build attachment path: "
+                "task_id=%s, subtask_id=%s, filename=%s",
+                task_id,
+                subtask_id,
+                filename,
+            )
+            return False
 
         # Upload file
         success = await self.upload_file_to_sandbox(
@@ -282,7 +274,7 @@ async def sync_attachment_to_sandbox_background(
 ) -> None:
     """Sync attachment to sandbox in background.
 
-    This function is designed to be called from asyncio.create_task()
+    This function is designed to be scheduled as an asynchronous task.
     and handles all exceptions internally.
 
     Args:

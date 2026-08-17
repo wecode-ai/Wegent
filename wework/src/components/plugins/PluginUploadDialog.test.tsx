@@ -7,14 +7,9 @@ import { PluginUploadDialog } from './PluginUploadDialog'
 describe('PluginUploadDialog', () => {
   test('rejects plugin packages larger than 50MB before upload', async () => {
     const onUpload = vi.fn()
-    render(
-      <PluginUploadDialog
-        isUploading={false}
-        onCancel={vi.fn()}
-        onUpload={onUpload}
-      />,
-    )
+    render(<PluginUploadDialog isUploading={false} onCancel={vi.fn()} onUpload={onUpload} />)
 
+    expect(screen.getByTestId('plugin-upload-dialog')).toHaveClass('plugin-dialog-surface')
     const file = new File(['x'], 'large-plugin.zip', { type: 'application/zip' })
     Object.defineProperty(file, 'size', { value: 50 * 1024 * 1024 + 1 })
     await userEvent.upload(screen.getByTestId('plugin-upload-file-input'), file)
@@ -26,13 +21,7 @@ describe('PluginUploadDialog', () => {
 
   test('accepts uppercase zip filenames and surfaces upload failures', async () => {
     const onUpload = vi.fn().mockRejectedValue(new Error('Backend rejected package'))
-    render(
-      <PluginUploadDialog
-        isUploading={false}
-        onCancel={vi.fn()}
-        onUpload={onUpload}
-      />,
-    )
+    render(<PluginUploadDialog isUploading={false} onCancel={vi.fn()} onUpload={onUpload} />)
 
     const file = new File(['zip'], 'plugin.ZIP', { type: 'application/zip' })
     await userEvent.upload(screen.getByTestId('plugin-upload-file-input'), file)

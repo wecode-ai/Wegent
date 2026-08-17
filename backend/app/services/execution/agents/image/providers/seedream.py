@@ -111,8 +111,29 @@ class SeedreamProvider(ImageProvider):
         if optimize_mode:
             extra_body["optimize_prompt_options"] = {"mode": optimize_mode}
 
+        request_log_params = {
+            "model": self.model,
+            "size": size,
+            "response_format": response_format,
+            "watermark": extra_body["watermark"],
+            "reference_image_count": (
+                len(reference_images)
+                if reference_images and model_supports_reference_image
+                else 0
+            ),
+            "sequential_image_generation": seq_mode,
+        }
+        if "sequential_image_generation_options" in extra_body:
+            request_log_params["sequential_image_generation_options"] = extra_body[
+                "sequential_image_generation_options"
+            ]
+        if output_format:
+            request_log_params["output_format"] = output_format
+        if optimize_mode:
+            request_log_params["optimize_prompt_mode"] = optimize_mode
         logger.info(
-            f"[SeedreamProvider] Generating image: model={self.model}, size={size}"
+            "[SeedreamProvider] Sending request: params=%s",
+            request_log_params,
         )
 
         response = await self.client.images.generate(

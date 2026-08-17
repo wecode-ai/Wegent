@@ -5,8 +5,9 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useDevices } from '@/contexts/DeviceContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 
 /**
  * Sync the deviceId URL parameter to DeviceContext.
@@ -17,7 +18,10 @@ import { useDevices } from '@/contexts/DeviceContext'
  */
 export default function DeviceParamSync() {
   const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const router = useRouter()
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
+  const { selectedTaskDetail } = useTaskSession()
 
   // Use ref to avoid re-running effect when selectedDeviceId changes
   const selectedDeviceIdRef = useRef(selectedDeviceId)
@@ -30,6 +34,20 @@ export default function DeviceParamSync() {
     const deviceId = searchParams.get('deviceId') || searchParams.get('device_id')
 
     if (!deviceId) return
+
+    const taskId =
+      searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+    const isLoadedTask = !!taskId && String(selectedTaskDetail?.id) === taskId
+
+    if (isLoadedTask) {
+      const nextParams = new URLSearchParams(searchParams.toString())
+      nextParams.delete('deviceId')
+      nextParams.delete('device_id')
+      const query = nextParams.toString()
+      router.replace(query ? `${pathname}?${query}` : pathname)
+      syncedParamRef.current = null
+      return
+    }
 
     // Skip if we already synced this param value
     if (syncedParamRef.current === deviceId) return
@@ -47,8 +65,16 @@ export default function DeviceParamSync() {
     if (deviceExists) {
       setSelectedDeviceId(deviceId)
       syncedParamRef.current = deviceId
+      return
     }
-  }, [searchParams, devices, setSelectedDeviceId])
+
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.delete('deviceId')
+    nextParams.delete('device_id')
+    const query = nextParams.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname)
+    syncedParamRef.current = null
+  }, [searchParams, pathname, router, devices, selectedTaskDetail, setSelectedDeviceId])
 
   return null
 }

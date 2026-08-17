@@ -13,6 +13,7 @@
 export type ClaudeCodeMcpType = 'sse' | 'http' | 'stdio'
 export type AgnoMcpType = 'sse' | 'streamable-http' | 'stdio'
 export type AgentType = 'ClaudeCode' | 'Agno'
+export type McpCapableShellType = AgentType | 'Chat' | 'Codex' | 'CodeX'
 
 /**
  * Validate if a string is a valid AgentType
@@ -22,6 +23,10 @@ export type AgentType = 'ClaudeCode' | 'Agno'
  */
 export function isValidAgentType(value: string): value is AgentType {
   return value === 'ClaudeCode' || value === 'Agno'
+}
+
+export function isMcpCapableShellType(value: string): value is McpCapableShellType {
+  return isValidAgentType(value) || value === 'Chat' || value === 'Codex' || value === 'CodeX'
 }
 
 /**
@@ -130,6 +135,17 @@ export function adaptMcpConfigForAgent(
   }
 
   return adaptedConfig
+}
+
+export function adaptMcpConfigForShell(
+  mcpConfig: Record<string, unknown>,
+  shellType: McpCapableShellType
+): Record<string, unknown> {
+  if (shellType === 'ClaudeCode' || shellType === 'Agno') {
+    return adaptMcpConfigForAgent(mcpConfig, shellType)
+  }
+
+  return adaptMcpConfigForAgent(mcpConfig, 'Agno')
 }
 
 /**

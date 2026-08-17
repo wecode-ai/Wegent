@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.kind import KnowledgeBaseDefaultRef, SkillRefMeta
 from app.schemas.user import UserInDB
@@ -24,6 +24,7 @@ class BotCreate(BaseModel):
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
     preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
+    target_group_names: List[str] = Field(default_factory=list, max_length=100)
     namespace: Optional[str] = (
         "default"  # Namespace for the bot (group name or 'default')
     )
@@ -45,6 +46,7 @@ class BotUpdate(BaseModel):
     skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     preload_skills: Optional[List[str]] = None  # Skills to preload into system prompt
     preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
+    target_group_names: Optional[List[str]] = Field(default=None, max_length=100)
     namespace: Optional[str] = None  # Namespace for the bot (group name or 'default')
     is_active: Optional[bool] = None
 

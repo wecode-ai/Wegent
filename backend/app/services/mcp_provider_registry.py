@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Registry for user-scoped MCP provider integrations."""
+"""Registry for user- and system-managed provider MCP integrations."""
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 
 class MCPProviderServiceDefinition(TypedDict):
@@ -24,6 +24,8 @@ class MCPProviderDefinition(TypedDict):
     """Static definition for a provider and its supported MCP services."""
 
     provider_id: str
+    display_name: str
+    configuration_mode: Literal["user", "system"]
     message_keywords: tuple[str, ...]
     services: dict[str, MCPProviderServiceDefinition]
 
@@ -31,6 +33,8 @@ class MCPProviderDefinition(TypedDict):
 MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
     "dingtalk": {
         "provider_id": "dingtalk",
+        "display_name": "钉钉",
+        "configuration_mode": "user",
         "message_keywords": ("钉钉", "dingtalk"),
         "services": {
             "docs": {
@@ -90,6 +94,11 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
         },
     }
 }
+
+
+def register_mcp_provider(provider: MCPProviderDefinition) -> None:
+    """Register or replace a deployment-specific MCP provider."""
+    MCP_PROVIDER_REGISTRY[provider["provider_id"]] = provider
 
 
 def list_mcp_providers() -> list[MCPProviderDefinition]:

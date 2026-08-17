@@ -20,7 +20,7 @@ import {
   EyeIcon,
   Cog6ToothIcon,
 } from '@heroicons/react/24/outline'
-import { Loader2, UploadIcon, FileIcon, AlertCircle } from 'lucide-react'
+import { Loader2, UploadIcon, FileIcon, AlertCircle, TagsIcon } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -53,12 +53,22 @@ import {
 } from '@/apis/skills'
 import { Switch } from '@/components/ui/switch'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { MarketplaceTagsDialog } from '@/features/resource-library/components/MarketplaceTagsDialog'
+import { MarketplaceTagSelector } from '@/features/resource-library/components/MarketplaceTagSelector'
+import {
+  getMarketplaceTagLabel,
+  useMarketplaceTags,
+} from '@/features/resource-library/useMarketplaceTags'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
 const PublicSkillList: React.FC = () => {
-  const { t } = useTranslation('admin')
+  const { t, i18n } = useTranslation('admin')
   const { toast } = useToast()
+  const { items: marketplaceTagCatalog } = useMarketplaceTags()
+  const marketplaceTagLabels = new Map(
+    marketplaceTagCatalog.map(tag => [tag.id, getMarketplaceTagLabel(tag, i18n.language)])
+  )
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -70,6 +80,7 @@ const PublicSkillList: React.FC = () => {
   const [selectedSkill, setSelectedSkill] = useState<UnifiedSkill | null>(null)
   const [skillContent, setSkillContent] = useState<string>('')
   const [loadingContent, setLoadingContent] = useState(false)
+  const [tagEditingSkillId, setTagEditingSkillId] = useState<number | null>(null)
 
   // Upload form states
   const [skillName, setSkillName] = useState('')
@@ -79,6 +90,7 @@ const PublicSkillList: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
+  const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
 
   // Metadata edit form states
   const [metadataForm, setMetadataForm] = useState({
@@ -181,6 +193,10 @@ const PublicSkillList: React.FC = () => {
       setError('Please enter a skill name')
       return
     }
+    if (!isEditMode && marketplaceTags.length === 0) {
+      setError(t('resource-library:marketplace_tags.required'))
+      return
+    }
 
     setUploading(true)
     setError(null)
@@ -191,7 +207,7 @@ const PublicSkillList: React.FC = () => {
         await updatePublicSkillWithUpload(selectedSkill.id, selectedFile, setUploadProgress)
         toast({ title: t('admin:public_skills.success.updated') })
       } else {
-        await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+        await uploadPublicSkill(selectedFile, skillName.trim(), marketplaceTags, setUploadProgress)
         toast({ title: t('admin:public_skills.success.uploaded') })
       }
       setIsUploadDialogOpen(false)
@@ -270,6 +286,7 @@ const PublicSkillList: React.FC = () => {
     setError(null)
     setSelectedSkill(null)
     setIsEditMode(false)
+    setMarketplaceTags([])
   }
 
   const openUploadDialog = (skill?: UnifiedSkill) => {
@@ -366,104 +383,132 @@ const PublicSkillList: React.FC = () => {
         {/* Skill List */}
         {!loading && skills.length > 0 && (
           <div className="flex-1 overflow-y-auto space-y-3 p-1">
-            {skills.map(skill => (
-              <Card
-                key={skill.id}
-                className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-              >
-                <div className="flex items-center justify-between min-w-0">
-                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <SparklesIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                    <div className="flex flex-col justify-center min-w-0 flex-1">
-                      <div className="flex items-center space-x-2 min-w-0 flex-wrap gap-1">
-                        <h3 className="text-base font-medium text-text-primary truncate">
-                          {skill.displayName || skill.name}
-                        </h3>
-                        {skill.version && <Tag variant="info">v{skill.version}</Tag>}
-                        {skill.visible === false && (
-                          <Tag variant="warning">{t('admin:public_skills.hidden')}</Tag>
-                        )}
-                        {skill.tags?.map(tag => (
-                          <Tag key={tag} variant="default">
-                            {tag}
-                          </Tag>
-                        ))}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-text-muted flex-wrap">
-                        {skill.description && (
-                          <>
-                            <span className="truncate max-w-[300px]">{skill.description}</span>
-                            <span>•</span>
-                          </>
-                        )}
-                        {skill.author && (
-                          <>
-                            <span>
-                              {t('admin:public_skills.columns.author')}: {skill.author}
-                            </span>
-                            <span>•</span>
-                          </>
-                        )}
-                        <span>
-                          {t('admin:public_skills.columns.created_at')}:{' '}
-                          {formatDate(skill.created_at)}
-                        </span>
+            {skills.map(skill => {
+              const hasMarketplaceTags = Boolean(skill.marketplaceTags?.length)
+              const displayedTags = hasMarketplaceTags
+                ? skill.marketplaceTags!.map(tag => marketplaceTagLabels.get(tag) || tag)
+                : skill.tags || []
+
+              return (
+                <Card
+                  key={skill.id}
+                  className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
+                >
+                  <div className="flex items-center justify-between min-w-0">
+                    <div className="flex items-center space-x-3 min-w-0 flex-1">
+                      <SparklesIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                      <div className="flex flex-col justify-center min-w-0 flex-1">
+                        <div className="flex items-center space-x-2 min-w-0 flex-wrap gap-1">
+                          <h3 className="text-base font-medium text-text-primary truncate">
+                            {skill.displayName || skill.name}
+                          </h3>
+                          {skill.version && <Tag variant="info">v{skill.version}</Tag>}
+                          {skill.visible === false && (
+                            <Tag variant="warning">{t('admin:public_skills.hidden')}</Tag>
+                          )}
+                          {displayedTags.map(tag => (
+                            <Tag
+                              key={tag}
+                              variant={hasMarketplaceTags ? 'info' : 'default'}
+                              title={
+                                hasMarketplaceTags
+                                  ? t('resource-library:marketplace_tags.field_label')
+                                  : t('admin:public_skills.fields.tags')
+                              }
+                              data-testid={`public-skill-${skill.id}-${
+                                hasMarketplaceTags ? 'marketplace-tag' : 'skill-keyword'
+                              }`}
+                            >
+                              {tag}
+                            </Tag>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-text-muted flex-wrap">
+                          {skill.description && (
+                            <>
+                              <span className="truncate max-w-[300px]">{skill.description}</span>
+                              <span>•</span>
+                            </>
+                          )}
+                          {skill.author && (
+                            <>
+                              <span>
+                                {t('admin:public_skills.columns.author')}: {skill.author}
+                              </span>
+                              <span>•</span>
+                            </>
+                          )}
+                          <span>
+                            {t('admin:public_skills.columns.created_at')}:{' '}
+                            {formatDate(skill.created_at)}
+                          </span>
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setTagEditingSkillId(skill.id)}
+                        title={t('resource-library:marketplace_tags.edit_title')}
+                        data-testid={`edit-skill-marketplace-tags-button-${skill.id}`}
+                      >
+                        <TagsIcon className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleViewContent(skill)}
+                        title={t('admin:public_skills.view_content')}
+                      >
+                        <EyeIcon className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => openMetadataDialog(skill)}
+                        title={t('admin:public_skills.edit_metadata')}
+                      >
+                        <Cog6ToothIcon className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => openUploadDialog(skill)}
+                        title={t('admin:public_skills.update_skill')}
+                      >
+                        <PencilIcon className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleDownloadSkill(skill)}
+                        title={t('admin:public_skills.download_skill')}
+                      >
+                        <ArrowDownTrayIcon className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:text-error"
+                        onClick={() => {
+                          setSelectedSkill(skill)
+                          setIsDeleteDialogOpen(true)
+                        }}
+                        title={t('admin:public_skills.delete_skill')}
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => handleViewContent(skill)}
-                      title={t('admin:public_skills.view_content')}
-                    >
-                      <EyeIcon className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => openMetadataDialog(skill)}
-                      title={t('admin:public_skills.edit_metadata')}
-                    >
-                      <Cog6ToothIcon className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => openUploadDialog(skill)}
-                      title={t('admin:public_skills.update_skill')}
-                    >
-                      <PencilIcon className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => handleDownloadSkill(skill)}
-                      title={t('admin:public_skills.download_skill')}
-                    >
-                      <ArrowDownTrayIcon className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 hover:text-error"
-                      onClick={() => {
-                        setSelectedSkill(skill)
-                        setIsDeleteDialogOpen(true)
-                      }}
-                      title={t('admin:public_skills.delete_skill')}
-                    >
-                      <TrashIcon className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            ))}
+                </Card>
+              )
+            })}
           </div>
         )}
 
@@ -478,6 +523,15 @@ const PublicSkillList: React.FC = () => {
           </div>
         )}
       </div>
+
+      <MarketplaceTagsDialog
+        resourceId={tagEditingSkillId}
+        open={tagEditingSkillId !== null}
+        onSaved={fetchSkills}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setTagEditingSkillId(null)
+        }}
+      />
 
       {/* Upload/Update Skill Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={open => !open && handleCloseUploadDialog()}>
@@ -567,6 +621,17 @@ const PublicSkillList: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {!isEditMode && (
+              <div className="space-y-2">
+                <Label>{t('resource-library:marketplace_tags.field_label')}</Label>
+                <MarketplaceTagSelector
+                  value={marketplaceTags}
+                  onChange={setMarketplaceTags}
+                  disabled={uploading}
+                />
+              </div>
+            )}
 
             {/* Upload Progress */}
             {uploading && (

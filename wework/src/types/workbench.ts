@@ -3,8 +3,12 @@ import type {
   CodexMemoryCitation,
   CodexReference,
   DeviceInfo,
+  ModelOptions,
   ProjectWithTasks,
+  RuntimeAdditionalContext,
   RuntimeContextUsage,
+  RuntimeGoalCreateInput,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
@@ -67,7 +71,9 @@ export type WorkbenchMessage = Omit<
   'blocks'
 > & {
   blocks?: ProcessingBlock[]
+  runtimeDisplayItems?: RuntimeAssistantDisplayItem[]
   runtimeMessageIndex?: number | null
+  turnId?: string | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
@@ -80,6 +86,17 @@ export type WorkbenchMessage = Omit<
   memoryCitations?: CodexMemoryCitation[] | null
 }
 
+export type RuntimeAssistantDisplayItem =
+  | {
+      id: string
+      type: 'assistant_text'
+      content: string
+    }
+  | {
+      id: string
+      type: 'block'
+    }
+
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
 export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'
 
@@ -87,9 +104,22 @@ export interface QueuedWorkbenchMessage {
   id: string
   content: string
   status: QueuedMessageStatus
+  deliveryMode?: 'message' | 'guidance'
   createdAt: string
   error?: string
   notice?: string
+}
+
+export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
+  attachments?: Attachment[]
+  displayContent?: string
+  codeComments?: CodeCommentContext[]
+  modelId?: string
+  modelType?: RuntimeSendRequest['modelType']
+  modelOptions?: ModelOptions
+  runtimeGoalRequest?: boolean
+  initialGoal?: RuntimeGoalCreateInput
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface GuidanceWorkbenchMessage {
@@ -102,6 +132,7 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  turns: RuntimeConversationTurn[]
   running?: boolean
   contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
@@ -113,6 +144,41 @@ export interface RuntimePaneTranscript {
   hasMoreAfter?: boolean
   afterCursor?: string | null
 }
+
+export interface RuntimeConversationTurn {
+  id: string | null
+  clientUserMessageId?: string
+  runtimeMessageIndex?: number
+  items: RuntimeConversationItem[]
+  status: RuntimeWorkbenchMessageStatus
+  completedAt?: string | number | null
+  error?: string
+  errorType?: string
+  stoppedNotice?: boolean | null
+  streamingThinkingContent?: string
+  fileChanges?: TurnFileChangesSummary
+  references?: CodexReference[]
+  memoryCitations?: CodexMemoryCitation[]
+}
+
+export type RuntimeConversationItem =
+  | {
+      id: string
+      type: 'user_message'
+      message: WorkbenchMessage & { role: 'user' }
+    }
+  | {
+      id: string
+      type: 'assistant_text'
+      content: string
+      streamTextOffset?: number
+      createdAt: string
+    }
+  | {
+      id: string
+      type: 'block'
+      block: ProcessingBlock
+    }
 
 export interface RuntimePaneTranscriptLoadOptions {
   limit?: number

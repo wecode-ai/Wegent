@@ -18,6 +18,13 @@ use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
 const STATE_VERSION: u64 = 1;
 const DEFAULT_KEEP_COUNT: usize = 15;
+const AUTO_PRUNE_BATCH_SIZE: usize = 1;
+
+#[derive(Default)]
+pub(crate) struct WorktreePruneBatch {
+    pub removed: Vec<ManagedWorktree>,
+    pub errors: Vec<String>,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -54,6 +61,7 @@ pub(crate) struct ManagedWorktree {
     pub path: String,
     pub repository_name: String,
     pub source_path: Option<String>,
+    pub permanent: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub snapshot_ref: Option<String>,
@@ -72,6 +80,7 @@ impl Default for ManagedWorktree {
             path: String::new(),
             repository_name: String::new(),
             source_path: None,
+            permanent: false,
             created_at: now,
             updated_at: now,
             snapshot_ref: None,
@@ -100,11 +109,34 @@ pub(crate) struct WorktreeManager {
 }
 
 impl WorktreeManager {
+    pub fn source_path_for(&self, workspace_path: &str) -> Option<String> {
+        let normalized_path = normalized_path_key(Path::new(workspace_path));
+        self.load()
+            .records
+            .get(&normalized_path)
+            .and_then(|record| record.source_path.clone())
+    }
+
+    fn busy_task_repositories(&self, tasks: &[RuntimeTaskLink]) -> HashSet<String> {
+        tasks
+            .iter()
+            .filter(|task| task.running)
+            .flat_map(|task| {
+                [
+                    Some(normalized_path_key(Path::new(&task.workspace_path))),
+                    self.source_path_for(&task.workspace_path)
+                        .map(|path| normalized_path_key(Path::new(&path))),
+                ]
+            })
+            .flatten()
+            .collect()
+    }
+
     pub fn from_env() -> Self {
         Self::new(runtime_work_dir().join("worktrees.json"))
     }
 
-    fn new(state_path: PathBuf) -> Self {
+    pub(crate) fn new(state_path: PathBuf) -> Self {
         Self {
             state_path,
             mutation_lock: Arc::new(Mutex::new(())),
@@ -113,6 +145,26 @@ impl WorktreeManager {
 
     pub fn settings(&self) -> WorktreeSettings {
         self.load().settings
+    }
+
+    pub fn planned_path(&self, source_path: &Path, worktree_id: &str) -> Result<PathBuf, String> {
+        validate_worktree_id(worktree_id)?;
+        let source_path = canonical_existing_dir(source_path)?;
+        let repository_name = source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("repository");
+        let state = self.load();
+        let root = PathBuf::from(&state.settings.resolved_worktree_root);
+        ensure_safe_root(&root)?;
+        let path = root.join(worktree_id).join(repository_name);
+        ensure_managed_path(&path, &state.known_roots)?;
+        Ok(path)
+    }
+
+    pub fn is_managed_path(&self, path: &Path) -> bool {
+        ensure_managed_path(path, &self.load().known_roots).is_ok()
     }
 
     pub fn update_settings(
@@ -154,6 +206,35 @@ impl WorktreeManager {
         source_path: &Path,
         worktree_id: &str,
         git_ref: Option<&str>,
+        permanent: bool,
+    ) -> Result<ManagedWorktree, String> {
+        self.prepare_with_path(source_path, worktree_id, git_ref, permanent, None)
+    }
+
+    pub fn prepare_at(
+        &self,
+        source_path: &Path,
+        worktree_id: &str,
+        git_ref: Option<&str>,
+        permanent: bool,
+        planned_path: &Path,
+    ) -> Result<ManagedWorktree, String> {
+        self.prepare_with_path(
+            source_path,
+            worktree_id,
+            git_ref,
+            permanent,
+            Some(planned_path),
+        )
+    }
+
+    fn prepare_with_path(
+        &self,
+        source_path: &Path,
+        worktree_id: &str,
+        git_ref: Option<&str>,
+        permanent: bool,
+        planned_path: Option<&Path>,
     ) -> Result<ManagedWorktree, String> {
         let _guard = self
             .mutation_lock
@@ -168,26 +249,41 @@ impl WorktreeManager {
             .unwrap_or("repository")
             .to_owned();
         let mut state = self.load();
-        let root = PathBuf::from(&state.settings.resolved_worktree_root);
+        let root = match planned_path {
+            Some(path) => path
+                .parent()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .ok_or_else(|| format!("Invalid planned worktree path {}", path.display()))?,
+            None => PathBuf::from(&state.settings.resolved_worktree_root),
+        };
         ensure_safe_root(&root)?;
         fs::create_dir_all(&root)
             .map_err(|error| format!("Failed to create {}: {error}", root.display()))?;
-        let path = root.join(worktree_id).join(&repository_name);
-        ensure_managed_path(&path, &state.known_roots)?;
+        let expected_path = root.join(worktree_id).join(&repository_name);
+        let path = planned_path.unwrap_or(&expected_path);
+        if path != expected_path {
+            return Err(format!(
+                "Planned worktree path {} does not match task {worktree_id}",
+                path.display()
+            ));
+        }
+        ensure_managed_path(path, &state.known_roots)?;
         if !path.exists() {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
             }
-            add_git_worktree(&source_path, &path, git_ref)?;
+            add_git_worktree(&source_path, path, git_ref)?;
         }
-        let key = normalized_path_key(&path);
+        let key = normalized_path_key(path);
         let now = now_ms();
         let mut record = state.records.remove(&key).unwrap_or_default();
         record.worktree_id = worktree_id.to_owned();
         record.path = path.display().to_string();
         record.repository_name = repository_name;
         record.source_path = Some(source_path.display().to_string());
+        record.permanent = permanent;
         record.updated_at = now;
         record.state = "active".to_owned();
         record.last_error = None;
@@ -261,6 +357,7 @@ impl WorktreeManager {
         record.last_error = None;
         state.records.insert(key, record.clone());
         self.save(&state)?;
+        remove_empty_worktree_container(path)?;
         Ok(record)
     }
 
@@ -328,29 +425,52 @@ impl WorktreeManager {
     }
 
     pub fn prune(&self, tasks: &[RuntimeTaskLink]) -> Result<Vec<ManagedWorktree>, String> {
+        self.prune_up_to(tasks, usize::MAX)
+    }
+
+    pub fn prune_auto_batch(
+        &self,
+        tasks: &[RuntimeTaskLink],
+    ) -> Result<WorktreePruneBatch, String> {
+        let state = self.load();
+        if !state.settings.auto_cleanup_enabled {
+            return Ok(WorktreePruneBatch::default());
+        }
+        let listed = self.list(tasks)?;
+        let busy_task_repositories = self.busy_task_repositories(tasks);
+        let candidates = select_auto_prune_candidates(
+            listed,
+            tasks,
+            &busy_task_repositories,
+            state.settings.keep_count,
+            usize::MAX,
+        );
+        Ok(remove_auto_prune_candidates(
+            candidates,
+            AUTO_PRUNE_BATCH_SIZE,
+            |record| self.delete(Path::new(&record.path), true),
+        ))
+    }
+
+    fn prune_up_to(
+        &self,
+        tasks: &[RuntimeTaskLink],
+        max_removals: usize,
+    ) -> Result<Vec<ManagedWorktree>, String> {
         let state = self.load();
         if !state.settings.auto_cleanup_enabled {
             return Ok(Vec::new());
         }
-        let protected = tasks
-            .iter()
-            .filter(|task| {
-                task.running || now_ms().saturating_sub(task.updated_at) < 5 * 60 * 1_000
-            })
-            .map(|task| normalized_path_key(Path::new(&task.workspace_path)))
-            .collect::<HashSet<_>>();
-        let mut active = self
-            .list(tasks)?
-            .into_iter()
-            .filter(|(record, linked_tasks)| is_auto_prune_candidate(record, linked_tasks))
-            .map(|(record, _)| record)
-            .collect::<Vec<_>>();
-        active.sort_by_key(|record| std::cmp::Reverse(record.updated_at));
+        let listed = self.list(tasks)?;
+        let busy_task_repositories = self.busy_task_repositories(tasks);
         let mut removed = Vec::new();
-        for record in active.into_iter().skip(state.settings.keep_count) {
-            if protected.contains(&normalized_path_key(Path::new(&record.path))) {
-                continue;
-            }
+        for record in select_auto_prune_candidates(
+            listed,
+            tasks,
+            &busy_task_repositories,
+            state.settings.keep_count,
+            max_removals,
+        ) {
             removed.push(self.delete(Path::new(&record.path), true)?);
         }
         Ok(removed)
@@ -394,11 +514,7 @@ struct Snapshot {
 fn snapshot_worktree(path: &Path, snapshot_dir: &Path) -> Result<Snapshot, String> {
     fs::create_dir_all(snapshot_dir).map_err(|error| error.to_string())?;
     let head = git_output(path, &["rev-parse", "HEAD"], None)?;
-    let common_dir = git_output(
-        path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        None,
-    )?;
+    let common_dir = git_common_dir(path)?;
     let index = snapshot_dir.join(format!(
         "snapshot-index-{}-{}",
         std::process::id(),
@@ -438,7 +554,7 @@ fn snapshot_worktree(path: &Path, snapshot_dir: &Path) -> Result<Snapshot, Strin
     Ok(Snapshot {
         reference,
         commit,
-        git_common_dir: common_dir,
+        git_common_dir: common_dir.display().to_string(),
     })
 }
 
@@ -460,33 +576,61 @@ fn remove_git_worktree(path: &Path) -> Result<(), String> {
     git_output(path, &["worktree", "remove", "--force", value], None).map(|_| ())
 }
 
+fn remove_empty_worktree_container(path: &Path) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    remove_empty_directory(parent)
+}
+
+fn remove_empty_directory(path: &Path) -> Result<(), String> {
+    match fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "Failed to remove empty worktree directory {}: {error}",
+            path.display()
+        )),
+    }
+}
+
 fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("--git-dir")
         .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
-        .arg(reference)
-        .output()
-        .map_err(|error| error.to_string())?;
+        .arg(reference);
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("--git-dir")
         .arg(git_common_dir)
-        .args(["update-ref", "-d", reference])
-        .output()
-        .map_err(|error| error.to_string())?;
+        .args(["update-ref", "-d", reference]);
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
     let mut command = Command::new("git");
+    crate::process::hide_windows_console(&mut command);
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -516,7 +660,8 @@ fn discover_worktrees(state: &mut WorktreeState) {
             continue;
         };
         for id in ids.flatten().filter(|entry| entry.path().is_dir()) {
-            let Ok(repositories) = fs::read_dir(id.path()) else {
+            let id_path = id.path();
+            let Ok(repositories) = fs::read_dir(&id_path) else {
                 continue;
             };
             for repository in repositories.flatten().filter(|entry| entry.path().is_dir()) {
@@ -532,6 +677,7 @@ fn discover_worktrees(state: &mut WorktreeState) {
                     ..ManagedWorktree::default()
                 });
             }
+            let _ = remove_empty_directory(&id_path);
         }
     }
     for record in state.records.values_mut() {
@@ -543,13 +689,7 @@ fn discover_worktrees(state: &mut WorktreeState) {
 }
 
 fn source_repository_path(worktree_path: &Path) -> Option<String> {
-    let common_dir = git_output(
-        worktree_path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        None,
-    )
-    .ok()?;
-    let common_dir = PathBuf::from(common_dir);
+    let common_dir = git_common_dir(worktree_path).ok()?;
     if common_dir.file_name()?.to_str()? != ".git" {
         return None;
     }
@@ -560,6 +700,20 @@ fn source_repository_path(worktree_path: &Path) -> Option<String> {
             .display()
             .to_string(),
     )
+}
+
+fn git_common_dir(worktree_path: &Path) -> Result<PathBuf, String> {
+    let common_dir = PathBuf::from(git_output(
+        worktree_path,
+        &["rev-parse", "--git-common-dir"],
+        None,
+    )?);
+    let absolute = if common_dir.is_absolute() {
+        common_dir
+    } else {
+        worktree_path.join(common_dir)
+    };
+    Ok(fs::canonicalize(&absolute).unwrap_or(absolute))
 }
 
 fn normalize_configured_root(value: &str) -> Result<String, String> {
@@ -576,42 +730,72 @@ fn normalize_configured_root(value: &str) -> Result<String, String> {
 }
 
 fn ensure_safe_root(root: &Path) -> Result<(), String> {
-    if !root.is_absolute() || root.parent().is_none() {
+    ensure_concrete_absolute_path(root, "Worktree root")?;
+    if root.parent().is_none() {
         return Err("Worktree root must be an absolute non-root directory".to_owned());
     }
     Ok(())
 }
 
 fn ensure_managed_path(path: &Path, roots: &[String]) -> Result<(), String> {
+    ensure_concrete_absolute_path(path, "Worktree path")?;
     let normalized = normalized_path_key(path);
-    let safe = roots.iter().any(|root| {
-        let root = normalized_path_key(Path::new(root));
-        normalized.starts_with(&format!("{root}/"))
-            && normalized[root.len() + 1..].split('/').count() == 2
+    let matching_root = roots.iter().find_map(|root| {
+        let root = Path::new(root);
+        if ensure_safe_root(root).is_err() {
+            return None;
+        }
+        let normalized_root = normalized_path_key(root);
+        (normalized.starts_with(&format!("{normalized_root}/"))
+            && normalized[normalized_root.len() + 1..].split('/').count() == 2)
+            .then_some(root)
     });
-    if !safe {
+    let Some(matching_root) = matching_root else {
         return Err("Worktree path is outside managed roots".to_owned());
-    }
+    };
     if path.exists() {
         let canonical = fs::canonicalize(path).map_err(|error| error.to_string())?;
-        let within_root = roots.iter().any(|root| {
-            fs::canonicalize(root)
-                .ok()
-                .is_some_and(|root| canonical.starts_with(root))
-        });
-        let contains_symlink = path
-            .parent()
-            .and_then(|parent| parent.symlink_metadata().ok())
-            .is_some_and(|metadata| metadata.file_type().is_symlink())
-            || path
-                .symlink_metadata()
-                .ok()
-                .is_some_and(|metadata| metadata.file_type().is_symlink());
-        if !within_root || contains_symlink {
+        let canonical_root = fs::canonicalize(matching_root).map_err(|error| error.to_string())?;
+        if !canonical.starts_with(&canonical_root)
+            || contains_symlink_below_root(matching_root, path)?
+        {
             return Err("Worktree path resolves outside managed roots".to_owned());
         }
     }
     Ok(())
+}
+
+fn ensure_concrete_absolute_path(path: &Path, label: &str) -> Result<(), String> {
+    let has_placeholder = path.components().any(|component| {
+        let value = component.as_os_str().to_string_lossy();
+        value.starts_with('~')
+            || value.starts_with('$')
+            || (value.len() > 2 && value.starts_with('%') && value.ends_with('%'))
+    });
+    let has_parent_component = path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir));
+    if !path.is_absolute() || has_placeholder || has_parent_component {
+        return Err(format!(
+            "{label} must be an expanded absolute path without placeholders"
+        ));
+    }
+    Ok(())
+}
+
+fn contains_symlink_below_root(root: &Path, path: &Path) -> Result<bool, String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| "Worktree path is outside managed roots".to_owned())?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&current).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn canonical_existing_dir(path: &Path) -> Result<PathBuf, String> {
@@ -704,8 +888,79 @@ fn same_path(left: &str, right: &str) -> bool {
 
 fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTaskLink]) -> bool {
     record.state == "active"
+        && !record.permanent
         && !linked_tasks.is_empty()
         && linked_tasks.iter().all(|task| task.status == "archived")
+}
+
+fn select_auto_prune_candidates(
+    listed: Vec<(ManagedWorktree, Vec<RuntimeTaskLink>)>,
+    tasks: &[RuntimeTaskLink],
+    busy_task_repositories: &HashSet<String>,
+    keep_count: usize,
+    max_removals: usize,
+) -> Vec<ManagedWorktree> {
+    let protected = tasks
+        .iter()
+        .filter(|task| task.running || now_ms().saturating_sub(task.updated_at) < 5 * 60 * 1_000)
+        .map(|task| normalized_path_key(Path::new(&task.workspace_path)))
+        .collect::<HashSet<_>>();
+    let mut busy_repositories = listed
+        .iter()
+        .filter(|(_, linked_tasks)| linked_tasks.iter().any(|task| task.running))
+        .filter_map(|(record, _)| repository_identity(record))
+        .collect::<HashSet<_>>();
+    busy_repositories.extend(busy_task_repositories.iter().cloned());
+    let mut active = listed
+        .into_iter()
+        .filter(|(record, linked_tasks)| is_auto_prune_candidate(record, linked_tasks))
+        .map(|(record, _)| record)
+        .collect::<Vec<_>>();
+    active.sort_by_key(|record| std::cmp::Reverse(record.updated_at));
+    active
+        .into_iter()
+        .skip(keep_count)
+        .filter(|record| !protected.contains(&normalized_path_key(Path::new(&record.path))))
+        .filter(|record| {
+            !repository_identity(record)
+                .is_some_and(|repository| busy_repositories.contains(&repository))
+        })
+        .take(max_removals)
+        .collect()
+}
+
+fn remove_auto_prune_candidates<F>(
+    candidates: Vec<ManagedWorktree>,
+    max_removals: usize,
+    mut remove: F,
+) -> WorktreePruneBatch
+where
+    F: FnMut(&ManagedWorktree) -> Result<ManagedWorktree, String>,
+{
+    let mut batch = WorktreePruneBatch::default();
+    if max_removals == 0 {
+        return batch;
+    }
+    for record in candidates {
+        match remove(&record) {
+            Ok(removed) => {
+                batch.removed.push(removed);
+                if batch.removed.len() >= max_removals {
+                    break;
+                }
+            }
+            Err(error) => batch.errors.push(format!("{}: {error}", record.path)),
+        }
+    }
+    batch
+}
+
+fn repository_identity(record: &ManagedWorktree) -> Option<String> {
+    record
+        .source_path
+        .as_deref()
+        .or(record.git_common_dir.as_deref())
+        .map(|path| normalized_path_key(Path::new(path)))
 }
 
 fn now_ms() -> i64 {
@@ -775,6 +1030,115 @@ mod tests {
     }
 
     #[test]
+    fn managed_path_rejects_unexpanded_or_ambiguous_paths() {
+        let roots = vec!["/tmp/wegent-worktrees".to_owned()];
+
+        for path in [
+            "/tmp/wegent-worktrees/$TASK/repo",
+            "/tmp/wegent-worktrees/${TASK}/repo",
+            "/tmp/wegent-worktrees/%TASK%/repo",
+            "/tmp/wegent-worktrees/../outside/repo",
+            "relative/worktrees/task/repo",
+        ] {
+            assert!(
+                ensure_managed_path(Path::new(path), &roots).is_err(),
+                "{path} must not be accepted as a deletion target"
+            );
+        }
+        for path in [
+            "/tmp/wegent-worktrees/cost$analysis/repo",
+            "/tmp/wegent-worktrees/100%done/repo",
+        ] {
+            assert!(
+                ensure_managed_path(Path::new(path), &roots).is_ok(),
+                "{path} is a concrete deletion target"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_path_does_not_create_the_worktree() {
+        let root = test_directory("wegent-worktree-planned-path-test");
+        let source = root.join("source");
+        let managed_root = root.join("managed");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&managed_root).unwrap();
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        manager
+            .save(&WorktreeState {
+                version: STATE_VERSION,
+                settings: WorktreeSettings {
+                    worktree_root: managed_root.display().to_string(),
+                    resolved_worktree_root: managed_root.display().to_string(),
+                    ..WorktreeSettings::default()
+                },
+                known_roots: vec![managed_root.display().to_string()],
+                records: HashMap::new(),
+            })
+            .unwrap();
+
+        let planned = manager.planned_path(&source, "task-1").unwrap();
+
+        assert_eq!(planned, managed_root.join("task-1/source"));
+        assert!(!planned.exists());
+        assert!(manager.list(&[]).unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepare_at_keeps_the_path_planned_before_settings_change() {
+        let root = test_directory("wegent-worktree-stable-planned-path-test");
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        run_git(&source, &["init"]);
+        run_git(&source, &["config", "user.name", "Wegent Test"]);
+        run_git(&source, &["config", "user.email", "test@wegent.local"]);
+        fs::write(source.join("tracked.txt"), "base\n").unwrap();
+        run_git(&source, &["add", "."]);
+        run_git(&source, &["commit", "-m", "base"]);
+
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        let original_root = root.join("original");
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(original_root.display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+        let planned = manager.planned_path(&source, "task-1").unwrap();
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(root.join("updated").display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+
+        let record = manager
+            .prepare_at(&source, "task-1", None, false, &planned)
+            .unwrap();
+
+        assert_eq!(PathBuf::from(record.path), planned);
+        assert!(planned.exists());
+        let _ = manager.delete(&planned, false);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_path_rejects_symlinks_below_the_managed_root() {
+        let root = test_directory("wegent-worktree-symlink-test");
+        let managed_root = root.join("managed");
+        let target = managed_root.join("target/repo");
+        fs::create_dir_all(&managed_root).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        std::os::unix::fs::symlink(managed_root.join("target"), managed_root.join("task")).unwrap();
+        let roots = vec![managed_root.display().to_string()];
+
+        assert!(ensure_managed_path(&managed_root.join("task/repo"), &roots).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn snapshot_delete_and_restore_preserve_uncommitted_files() {
         let root = test_directory("wegent-worktree-test");
         let source = root.join("source");
@@ -793,7 +1157,7 @@ mod tests {
                 ..WorktreeSettingsPatch::default()
             })
             .unwrap();
-        let record = manager.prepare(&source, "task-1", None).unwrap();
+        let record = manager.prepare(&source, "task-1", None, false).unwrap();
         let path = PathBuf::from(&record.path);
         fs::write(path.join("tracked.txt"), "changed\n").unwrap();
         fs::write(path.join("untracked.txt"), "new\n").unwrap();
@@ -801,6 +1165,10 @@ mod tests {
         let deleted = manager.delete(&path, true).unwrap();
         assert_eq!(deleted.state, "restorable");
         assert!(!path.exists());
+        assert!(
+            !path.parent().unwrap().exists(),
+            "deleting a worktree must remove its empty runtime container"
+        );
 
         manager.restore(&path).unwrap();
         assert_eq!(
@@ -815,6 +1183,29 @@ mod tests {
     }
 
     #[test]
+    fn discovery_removes_legacy_empty_worktree_containers() {
+        let root = test_directory("wegent-empty-worktree-container-test");
+        let managed_root = root.join("managed");
+        let empty_container = managed_root.join("stale-task");
+        fs::create_dir_all(&empty_container).unwrap();
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(managed_root.display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+
+        manager.list(&[]).unwrap();
+
+        assert!(
+            !empty_container.exists(),
+            "discovering worktrees must remove legacy empty runtime containers"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn auto_prune_only_selects_worktrees_linked_exclusively_to_archived_tasks() {
         let record = ManagedWorktree::default();
         let mut active_task = task_link("active");
@@ -823,8 +1214,107 @@ mod tests {
         archived_task.status = "archived".to_owned();
 
         assert!(!is_auto_prune_candidate(&record, &[active_task]));
-        assert!(is_auto_prune_candidate(&record, &[archived_task]));
+        assert!(is_auto_prune_candidate(&record, &[archived_task.clone()]));
         assert!(!is_auto_prune_candidate(&record, &[]));
+        assert!(!is_auto_prune_candidate(
+            &ManagedWorktree {
+                permanent: true,
+                ..record
+            },
+            &[archived_task]
+        ));
+    }
+
+    #[test]
+    fn auto_prune_runs_with_active_tasks_and_avoids_their_repository() {
+        let source_a = "/tmp/source-a";
+        let source_b = "/tmp/source-b";
+        let newest_a = worktree_record("newest-a", source_a, 30);
+        let old_a = worktree_record("old-a", source_a, 20);
+        let old_b = worktree_record("old-b", source_b, 10);
+        let running_b = worktree_record("running-b", source_b, 40);
+        let archived = |id: &str, path: &str| {
+            let mut task = task_link(id);
+            task.status = "archived".to_owned();
+            task.workspace_path = path.to_owned();
+            task
+        };
+        let mut running_task = task_link("running");
+        running_task.running = true;
+        running_task.workspace_path = running_b.path.clone();
+        let listed = vec![
+            (
+                newest_a.clone(),
+                vec![archived("archived-newest-a", &newest_a.path)],
+            ),
+            (old_a.clone(), vec![archived("archived-old-a", &old_a.path)]),
+            (old_b.clone(), vec![archived("archived-old-b", &old_b.path)]),
+            (running_b, vec![running_task.clone()]),
+        ];
+
+        let selected = select_auto_prune_candidates(listed, &[running_task], &HashSet::new(), 1, 1);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|record| record.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![old_a.path.as_str()]
+        );
+    }
+
+    #[test]
+    fn auto_prune_avoids_source_repository_used_by_a_running_task() {
+        let source_a = "/tmp/source-a";
+        let source_b = "/tmp/source-b";
+        let newest_a = worktree_record("newest-a", source_a, 30);
+        let old_a = worktree_record("old-a", source_a, 20);
+        let old_b = worktree_record("old-b", source_b, 10);
+        let archived = |id: &str, path: &str| {
+            let mut task = task_link(id);
+            task.status = "archived".to_owned();
+            task.workspace_path = path.to_owned();
+            task
+        };
+        let listed = vec![
+            (
+                newest_a.clone(),
+                vec![archived("archived-newest-a", &newest_a.path)],
+            ),
+            (old_a.clone(), vec![archived("archived-old-a", &old_a.path)]),
+            (old_b.clone(), vec![archived("archived-old-b", &old_b.path)]),
+        ];
+        let busy_task_repositories = HashSet::from([source_a.to_owned()]);
+
+        let selected = select_auto_prune_candidates(listed, &[], &busy_task_repositories, 1, 1);
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|record| record.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![old_b.path.as_str()]
+        );
+    }
+
+    #[test]
+    fn auto_prune_skips_failed_candidate_and_removes_the_next_one() {
+        let failed = worktree_record("failed", "/tmp/source-a", 20);
+        let removable = worktree_record("removable", "/tmp/source-b", 10);
+
+        let batch =
+            remove_auto_prune_candidates(vec![failed.clone(), removable.clone()], 1, |record| {
+                if record.path == failed.path {
+                    Err("simulated delete failure".to_owned())
+                } else {
+                    Ok(record.clone())
+                }
+            });
+
+        assert_eq!(batch.removed.len(), 1);
+        assert_eq!(batch.removed[0].path, removable.path);
+        assert_eq!(batch.errors.len(), 1);
+        assert!(batch.errors[0].contains(&failed.path));
     }
 
     #[test]
@@ -875,6 +1365,36 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn source_path_lookup_survives_missing_worktree_git_metadata() {
+        let root = test_directory("wegent-worktree-source-lookup-test");
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        let worktree_path = root.join("managed/task-1/project");
+        let source_path = root.join("source/project");
+        let mut records = HashMap::new();
+        records.insert(
+            normalized_path_key(&worktree_path),
+            ManagedWorktree {
+                path: worktree_path.display().to_string(),
+                source_path: Some(source_path.display().to_string()),
+                ..ManagedWorktree::default()
+            },
+        );
+        manager
+            .save(&WorktreeState {
+                version: STATE_VERSION,
+                records,
+                ..WorktreeState::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            manager.source_path_for(&worktree_path.display().to_string()),
+            Some(source_path.display().to_string())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn test_directory(prefix: &str) -> PathBuf {
         env::temp_dir().join(format!(
             "{prefix}-{}-{}",
@@ -885,6 +1405,7 @@ mod tests {
 
     fn run_git(path: &Path, args: &[&str]) {
         let mut command = Command::new("git");
+        crate::process::hide_windows_console(&mut command);
         command
             .arg("-c")
             .arg("core.bare=false")
@@ -912,18 +1433,38 @@ mod tests {
             runtime: "codex".to_owned(),
             status: "active".to_owned(),
             running: false,
+            continuable: true,
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: 0,
             updated_at: 0,
+            completed_at: None,
             runtime_handle: Value::Null,
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
             pinned_order: None,
+        }
+    }
+
+    fn worktree_record(id: &str, source_path: &str, updated_at: i64) -> ManagedWorktree {
+        ManagedWorktree {
+            worktree_id: id.to_owned(),
+            path: format!("/tmp/worktrees/{id}/repository"),
+            repository_name: "repository".to_owned(),
+            source_path: Some(source_path.to_owned()),
+            updated_at,
+            state: "active".to_owned(),
+            ..ManagedWorktree::default()
         }
     }
 }

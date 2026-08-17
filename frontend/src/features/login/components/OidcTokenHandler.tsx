@@ -6,6 +6,7 @@
 
 import { useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { setToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 
@@ -45,7 +46,7 @@ export default function OidcTokenHandler() {
     }
 
     if (loginSuccess === 'true' && accessToken) {
-      localStorage.setItem('auth_token', accessToken)
+      setToken(accessToken)
       localStorage.setItem('token_type', tokenType || 'bearer')
 
       toast({

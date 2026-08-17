@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.capability_reference_service import get_referenced_capability
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
@@ -682,7 +683,7 @@ class RagRuntimeResolver:
         model_namespace: str,
     ):
         if model_namespace == "default":
-            return (
+            model = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "Model",
@@ -694,7 +695,14 @@ class RagRuntimeResolver:
                 .order_by(Kind.user_id.desc())
                 .first()
             )
-        return (
+            return model or get_referenced_capability(
+                db,
+                kind="Model",
+                name=model_name,
+                user_id=user_id,
+                namespace=model_namespace,
+            )
+        model = (
             db.query(Kind)
             .filter(
                 Kind.kind == "Model",
@@ -703,6 +711,13 @@ class RagRuntimeResolver:
                 Kind.is_active.is_(True),
             )
             .first()
+        )
+        return model or get_referenced_capability(
+            db,
+            kind="Model",
+            name=model_name,
+            user_id=user_id,
+            namespace=model_namespace,
         )
 
     def _decrypt_optional_secret(self, value: Any) -> Any:

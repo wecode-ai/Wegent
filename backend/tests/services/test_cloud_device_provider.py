@@ -10,7 +10,11 @@ from app.models.kind import Kind
 from app.services.device.cloud_provider import CloudDeviceProvider
 
 
-def _cloud_device(device_id: str, bind_shell: str) -> Kind:
+def _cloud_device(
+    device_id: str,
+    bind_shell: str,
+    app_device_id: str | None = None,
+) -> Kind:
     return Kind(
         user_id=7,
         kind="Device",
@@ -29,6 +33,7 @@ def _cloud_device(device_id: str, bind_shell: str) -> Kind:
                 "deviceType": "cloud",
                 "connectionMode": "websocket",
                 "bindShell": bind_shell,
+                "appDeviceId": app_device_id,
                 "displayName": device_id,
                 "isDefault": False,
                 "cloudConfig": {
@@ -66,3 +71,26 @@ async def test_list_devices_preserves_cloud_device_bind_shell(test_db, monkeypat
         "cloud-claude": "claudecode",
         "cloud-openclaw": "openclaw",
     }
+
+
+@pytest.mark.asyncio
+async def test_list_devices_preserves_app_device_id(test_db, monkeypatch):
+    """Cloud routes must expose the desktop app identity they belong to."""
+    test_db.add(_cloud_device("cloud-device", "claudecode", "local-device"))
+    test_db.commit()
+
+    async def fake_mget(keys):
+        return {}
+
+    async def fake_latest_version():
+        return "1.0.0"
+
+    monkeypatch.setattr("app.core.cache.cache_manager.mget", fake_mget)
+    monkeypatch.setattr(
+        "app.services.device.cloud_provider.executor_version_service.get_latest_version",
+        fake_latest_version,
+    )
+
+    devices = await CloudDeviceProvider().list_devices(test_db, user_id=7)
+
+    assert devices[0]["app_device_id"] == "local-device"

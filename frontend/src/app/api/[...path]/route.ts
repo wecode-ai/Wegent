@@ -31,6 +31,7 @@ const ALLOWED_EXTERNAL_PATHS = [
   '/api/auth/oidc/cli-callback', // CLI OIDC callback
   '/api/auth/oauth/callback', // OAuth callback
   '/api/flows/webhook/', // Flow webhook triggers from external systems
+  '/api/attachments/download/shared', // Signed attachment downloads for model providers
 ]
 
 /**

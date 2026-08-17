@@ -310,6 +310,17 @@ version: "1.0.0"
         )
 
         skill_id = int(created_skill.metadata.labels["id"])
+        skill_kind = test_db.get(Kind, skill_id)
+        skill_json = dict(skill_kind.json)
+        skill_json["spec"] = {
+            **skill_json["spec"],
+            "capability": {
+                "publishStatus": "published",
+                "tags": ["technical_development"],
+            },
+        }
+        skill_kind.json = skill_json
+        test_db.commit()
 
         # Update with new ZIP
         updated_md = """---
@@ -334,6 +345,10 @@ author: "New Author"
         assert updated_skill.spec.version == "2.0.0"
         assert updated_skill.spec.author == "New Author"
         assert updated_skill.status.fileSize == len(updated_zip)
+        updated_kind = test_db.get(Kind, skill_id)
+        assert updated_kind.json["spec"]["capability"]["tags"] == [
+            "technical_development"
+        ]
 
     def test_update_skill_not_found(self, test_db: Session, test_user: User):
         """Test updating non-existent skill fails"""

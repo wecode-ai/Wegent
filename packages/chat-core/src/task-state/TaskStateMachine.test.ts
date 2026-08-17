@@ -88,6 +88,137 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().messages.get('ai-42')?.botName).toBe('Planner Bot')
   })
 
+  it('nests child agent blocks under their parent subagent block', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'ClaudeCode', 7)
+    machine.handleChatChunk(42, '', {
+      blocks: [
+        {
+          id: 'task-1',
+          type: 'subagent',
+          tool_use_id: 'task-1',
+          tool_name: 'Task',
+          title: 'Query monitor for 10006 errors',
+          status: 'streaming',
+        },
+      ],
+    })
+    machine.handleChatChunk(42, '', {
+      blocks: [
+        {
+          id: 'tool-1',
+          type: 'tool',
+          tool_use_id: 'tool-1',
+          parent_tool_use_id: 'task-1',
+          tool_name: 'Bash',
+          tool_input: { command: 'ks logs' },
+          status: 'pending',
+        },
+      ],
+    })
+    machine.handleChatChunk(42, '', {
+      blocks: [
+        {
+          id: 'tool-1',
+          type: 'tool',
+          tool_use_id: 'tool-1',
+          parent_tool_use_id: 'task-1',
+          tool_name: 'Bash',
+          tool_output: 'ok',
+          status: 'done',
+        },
+      ],
+    })
+
+    const blocks = machine.getState().messages.get('ai-42')?.result?.blocks ?? []
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({
+      id: 'task-1',
+      type: 'subagent',
+      children: [
+        {
+          id: 'tool-1',
+          type: 'tool',
+          tool_name: 'Bash',
+          tool_input: { command: 'ks logs' },
+          tool_output: 'ok',
+          status: 'done',
+        },
+      ],
+    })
+  })
+
+  it('nests subagent blocks recursively by parent tool use id', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+    machine.handleChatStart(42, 'ClaudeCode', 7)
+
+    machine.handleChatChunk(
+      42,
+      '',
+      {
+        blocks: [
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            status: 'pending',
+          },
+        ],
+      }
+    )
+    machine.handleChatChunk(
+      42,
+      '',
+      {
+        blocks: [
+          {
+            id: 'Agent_1',
+            type: 'subagent',
+            tool_use_id: 'Agent_1',
+            parent_tool_use_id: 'Agent_0',
+            status: 'pending',
+          },
+        ],
+      }
+    )
+    machine.handleChatChunk(
+      42,
+      '',
+      {
+        blocks: [
+          {
+            id: 'child-tool',
+            type: 'tool',
+            tool_use_id: 'child-tool',
+            tool_name: 'Read',
+            parent_tool_use_id: 'Agent_1',
+            status: 'done',
+          },
+        ],
+      }
+    )
+
+    const blocks = machine.getState().messages.get('ai-42')?.result?.blocks || []
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({
+      id: 'Agent_0',
+      children: [
+        {
+          id: 'Agent_1',
+          children: [{ id: 'child-tool', parent_tool_use_id: 'Agent_1' }],
+        },
+      ],
+    })
+  })
+
   it('preserves new done text blocks when inline thinking blocks exist', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),
@@ -529,11 +660,12 @@ describe('TaskStateMachine', () => {
     }) => void = () => {}
     const joinTask = vi.fn(
       () =>
-        new Promise<{ subtasks: Array<Record<string, unknown>>; streaming?: undefined }>(
-          resolve => {
-            resolveJoin = resolve
-          }
-        )
+        new Promise<{
+          subtasks: Array<Record<string, unknown>>
+          streaming?: undefined
+        }>(resolve => {
+          resolveJoin = resolve
+        })
     )
 
     const machine = new TaskStateMachine(100, {
@@ -541,7 +673,10 @@ describe('TaskStateMachine', () => {
       isConnected: () => true,
     })
 
-    const recoverPromise = machine.recover({ force: true, reason: 'task-selected' })
+    const recoverPromise = machine.recover({
+      force: true,
+      reason: 'task-selected',
+    })
 
     machine.syncTaskDetail({
       id: 100,
@@ -1201,7 +1336,11 @@ describe('TaskStateMachine', () => {
         },
       }),
       joinTask: vi.fn().mockResolvedValue({
-        streaming: { subtask_id: 77, offset: 12, cached_content: 'hello world!' },
+        streaming: {
+          subtask_id: 77,
+          offset: 12,
+          cached_content: 'hello world!',
+        },
         subtasks: [],
       }),
     })
@@ -1616,6 +1755,69 @@ describe('TaskStateMachine', () => {
     expect(message?.status).toBe('completed')
     expect(message?.content).toBe('partial final answer')
     expect(machine.getState().runtime.phase).toBe('terminal')
+
+    consoleInfoSpy.mockRestore()
+  })
+
+  it('restores a running image generation placeholder from persisted image config', async () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const actions = createRuntimeActions({
+      joinTask: vi.fn().mockResolvedValue({
+        streaming: {
+          subtask_id: 77,
+          offset: 0,
+          cached_content: '',
+        },
+        subtasks: [
+          {
+            id: 76,
+            role: 'USER',
+            message_id: 1,
+            prompt: 'make an image',
+            status: 'COMPLETED',
+            result: {
+              image_config: {
+                model: 'gpt-image',
+                size: '1512x648',
+              },
+            },
+            created_at: '2026-08-11T12:00:00.000Z',
+          },
+          {
+            id: 77,
+            role: 'TEAM',
+            message_id: 2,
+            prompt: '',
+            status: 'RUNNING',
+            result: { value: '' },
+            created_at: '2026-08-11T12:00:01.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'RUNNING',
+      updated_at: '2026-08-11T12:00:01.000Z',
+    })
+    await machine.recover({ force: true })
+
+    const message = machine.getState().messages.get('ai-77')
+    expect(message?.status).toBe('streaming')
+    expect(message?.result?.blocks).toEqual([
+      expect.objectContaining({
+        id: 'image-placeholder-77',
+        type: 'image',
+        status: 'streaming',
+        is_placeholder: true,
+        image_urls: [],
+        image_count: 0,
+        image_size: '1512x648',
+      }),
+    ])
 
     consoleInfoSpy.mockRestore()
   })

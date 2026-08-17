@@ -21,10 +21,17 @@ export function isCloudDevice(device: SelectableDevice): boolean {
   return device.device_type === 'cloud'
 }
 
+export function isLocalStandaloneDevice(device: Pick<SelectableDevice, 'device_type'>): boolean {
+  return device.device_type !== 'cloud' && device.device_type !== 'remote'
+}
+
 export function isWeWorkSelectableStandaloneDevice(device: SelectableDevice): boolean {
-  return isClaudeCodeDevice(device) &&
+  return (
+    isLocalStandaloneDevice(device) &&
+    isClaudeCodeDevice(device) &&
     isOnlineDevice(device) &&
     isWeWorkExecutorVersionCompatible(device.executor_version)
+  )
 }
 
 export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]): T[] {
@@ -37,9 +44,9 @@ export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]):
     const rightCompatible = isWeWorkExecutorVersionCompatible(right.executor_version) ? 0 : 1
     if (leftCompatible !== rightCompatible) return leftCompatible - rightCompatible
 
-    const leftCloud = isOnlineDevice(left) && isCloudDevice(left) ? 0 : 1
-    const rightCloud = isOnlineDevice(right) && isCloudDevice(right) ? 0 : 1
-    if (leftCloud !== rightCloud) return leftCloud - rightCloud
+    const leftLocal = isLocalStandaloneDevice(left) ? 0 : 1
+    const rightLocal = isLocalStandaloneDevice(right) ? 0 : 1
+    if (leftLocal !== rightLocal) return leftLocal - rightLocal
 
     return (left.name || left.device_id).localeCompare(right.name || right.device_id)
   })
@@ -47,7 +54,7 @@ export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]):
 
 export function getPreferredStandaloneDeviceId(
   devices: SelectableDevice[],
-  currentDeviceId?: string | null,
+  currentDeviceId?: string | null
 ): string | null {
   const currentDevice = currentDeviceId
     ? devices.find(device => device.device_id === currentDeviceId)

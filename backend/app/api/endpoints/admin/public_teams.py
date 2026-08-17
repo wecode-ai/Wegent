@@ -4,24 +4,161 @@
 
 """Admin public team management endpoints."""
 
+import io
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Path,
+    Query,
+    UploadFile,
+    status,
+)
+from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_admin_user
 from app.models.kind import Kind
+from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 from app.schemas.admin import (
     PublicTeamCreate,
+    PublicTeamIconUploadResponse,
     PublicTeamListResponse,
     PublicTeamResponse,
     PublicTeamUpdate,
 )
+from app.services.context import context_service
 from shared.telemetry.decorators import trace_async
 
 router = APIRouter()
+
+MAX_TEAM_ICON_BYTES = 2 * 1024 * 1024
+MAX_TEAM_ICON_PIXELS = 16_777_216
+TEAM_ICON_SIZE = 512
+TEAM_ICON_ASSET_TYPE = "public_team_icon"
+SUPPORTED_TEAM_ICON_FORMATS = {"JPEG", "PNG", "WEBP"}
+
+
+def _normalize_team_icon(content: bytes) -> bytes:
+    """Validate and normalize an uploaded team icon to a square WebP image."""
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            if image.format not in SUPPORTED_TEAM_ICON_FORMATS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Only PNG, JPEG, and WebP images are supported",
+                )
+            if image.width * image.height > MAX_TEAM_ICON_PIXELS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Team icon dimensions are too large",
+                )
+            normalized = ImageOps.fit(
+                image.convert("RGBA"),
+                (TEAM_ICON_SIZE, TEAM_ICON_SIZE),
+                method=Image.Resampling.LANCZOS,
+            )
+            output = io.BytesIO()
+            normalized.save(output, format="WEBP", quality=88, method=6)
+            return output.getvalue()
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image file",
+        ) from exc
+
+
+def _get_public_team_icon_asset(
+    db: Session,
+    *,
+    asset_id: int,
+    user_id: int | None = None,
+) -> SubtaskContext | None:
+    query = db.query(SubtaskContext).filter(SubtaskContext.id == asset_id)
+    if user_id is not None:
+        query = query.filter(SubtaskContext.user_id == user_id)
+    asset = query.first()
+    if (
+        asset is None
+        or (asset.type_data or {}).get("public_asset_type") != TEAM_ICON_ASSET_TYPE
+    ):
+        return None
+    return asset
+
+
+@router.post(
+    "/public-teams/icon-assets",
+    response_model=PublicTeamIconUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_public_team_icon(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> PublicTeamIconUploadResponse:
+    """Upload an image used as a public team's canonical icon."""
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Filename is required",
+        )
+    content = await file.read(MAX_TEAM_ICON_BYTES + 1)
+    if len(content) > MAX_TEAM_ICON_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Team icon must not exceed 2 MB",
+        )
+
+    normalized = _normalize_team_icon(content)
+    asset, _ = context_service.upload_attachment(
+        db=db,
+        user_id=current_user.id,
+        filename=f"{uuid.uuid4().hex}.webp",
+        binary_data=normalized,
+    )
+    asset.type_data = {
+        **(asset.type_data or {}),
+        "public_asset_type": TEAM_ICON_ASSET_TYPE,
+    }
+    db.commit()
+    db.refresh(asset)
+    return PublicTeamIconUploadResponse(
+        asset_id=asset.id,
+        url=f"/api/resource-library/assets/team-icons/{asset.id}",
+    )
+
+
+@router.delete(
+    "/public-teams/icon-assets/{asset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_public_team_icon(
+    asset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> None:
+    """Delete an uploaded public team icon owned by the current administrator."""
+    asset = _get_public_team_icon_asset(
+        db,
+        asset_id=asset_id,
+        user_id=current_user.id,
+    )
+    if asset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Team icon asset not found",
+        )
+    if not context_service.delete_context(db, asset.id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Team icon asset could not be deleted",
+        )
 
 
 def _get_team_description(team: Kind) -> Optional[str]:

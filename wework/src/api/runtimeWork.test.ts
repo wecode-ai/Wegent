@@ -177,6 +177,31 @@ describe('createRuntimeWorkApi', () => {
     })
   })
 
+  test('starts a supervisor review immediately', async () => {
+    const response = {
+      accepted: true,
+      taskId: 'codex-1',
+      supervisor: {
+        mode: 'auto' as const,
+        status: 'active' as const,
+        instructions: '',
+        suggestions: [],
+      },
+    }
+    const post = vi.fn().mockResolvedValue(response)
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      address: {
+        deviceId: 'device-1',
+        taskId: 'codex-1',
+      },
+    }
+
+    await expect(api.runRuntimeSupervisorNow(request)).resolves.toEqual(response)
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/supervisor/run-now', request)
+  })
+
   test('opens a runtime workspace without creating a task', async () => {
     const post = vi.fn().mockResolvedValue({
       accepted: true,
@@ -288,6 +313,11 @@ describe('createRuntimeWorkApi', () => {
           taskId: 'runtime-1',
         },
         sessionKeys: ['session-a', 'session-b'],
+        modelSelection: {
+          modelName: 'gpt-5.6-luna',
+          modelType: 'public',
+          options: { reasoningEffort: 'low' },
+        },
       })
     ).resolves.toEqual({
       address: {
@@ -306,6 +336,11 @@ describe('createRuntimeWorkApi', () => {
         taskId: 'runtime-1',
       },
       sessionKeys: ['session-a', 'session-b'],
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: { reasoningEffort: 'low' },
+      },
     })
   })
 
@@ -345,6 +380,7 @@ describe('createRuntimeWorkApi', () => {
       runtimeTaskSubscriptions: [],
     })
     await api.updateGlobalImNotification({ enabled: true, sessionKey: 'session-a' })
+    await api.updateImNotificationPresence({ clientId: 'desktop-client-1', away: false })
     await api.subscribeRuntimeTaskNotifications({
       address: {
         deviceId: 'device-1',
@@ -362,7 +398,11 @@ describe('createRuntimeWorkApi', () => {
       enabled: true,
       sessionKey: 'session-a',
     })
-    expect(put).toHaveBeenNthCalledWith(2, '/runtime-work/im-notifications/runtime-task', {
+    expect(put).toHaveBeenNthCalledWith(2, '/runtime-work/im-notifications/presence', {
+      clientId: 'desktop-client-1',
+      away: false,
+    })
+    expect(put).toHaveBeenNthCalledWith(3, '/runtime-work/im-notifications/runtime-task', {
       address: {
         deviceId: 'device-1',
         taskId: 'codex-1',

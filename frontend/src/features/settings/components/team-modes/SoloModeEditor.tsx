@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dropdown'
 import { RiRobot2Line, RiMagicLine } from 'react-icons/ri'
 import { Plus, ChevronDown, Check } from 'lucide-react'
+import type { ModelCategoryType } from '@/apis/models'
 import { Bot, Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
@@ -44,6 +45,7 @@ export interface SoloModeEditorProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  modelCategoryType?: ModelCategoryType
 }
 
 export default function SoloModeEditor({
@@ -60,6 +62,7 @@ export default function SoloModeEditor({
   botEditRef,
   scope,
   groupName,
+  modelCategoryType,
 }: SoloModeEditorProps) {
   const { t } = useTranslation()
 
@@ -310,6 +313,7 @@ export default function SoloModeEditor({
               allowedAgents={allowedAgents}
               scope={scope}
               groupName={groupName}
+              modelCategoryType={modelCategoryType}
             />
           </div>
         ) : selectedBotId !== null ? (
@@ -330,6 +334,7 @@ export default function SoloModeEditor({
               allowedAgents={allowedAgents}
               scope={scope}
               groupName={groupName}
+              modelCategoryType={modelCategoryType}
             />
           </div>
         ) : (

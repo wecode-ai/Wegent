@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createDeliveryApi } from './deliveries'
+import { createDeviceApi } from './devices'
 import { ApiError, createHttpClient } from './http'
 
 describe('createHttpClient', () => {
@@ -32,6 +34,69 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer token-1',
+      },
+    })
+  })
+
+  test('sends patch requests through the configured authenticated backend', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ version: 2 }),
+    })
+
+    const client = createHttpClient({
+      baseUrl: 'https://cloud.example.com/api',
+      getToken: () => 'cloud-token',
+    })
+    const result = await client.patch<{ version: number }>('/v1/loop-items/WEG-1', {
+      version: 1,
+      status: 'in_progress',
+    })
+
+    expect(result).toEqual({ version: 2 })
+    expect(fetchMock).toHaveBeenCalledWith('https://cloud.example.com/api/v1/loop-items/WEG-1', {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
+      },
+      body: JSON.stringify({ version: 1, status: 'in_progress' }),
+    })
+  })
+
+  test('uses one cloud connection for devices and cloud projects', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [], total: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [] }),
+      })
+    const client = createHttpClient({
+      baseUrl: 'http://localhost:8000/api',
+      getToken: () => 'cloud-token',
+    })
+
+    await createDeviceApi(client).listDevices()
+    await createDeliveryApi(client).listCloudProjects()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://localhost:8000/api/devices', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
+      },
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/api/v1/cloud-projects', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer cloud-token',
       },
     })
   })
@@ -83,6 +148,107 @@ describe('createHttpClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  test('logs a correlated diagnostic when a request remains pending', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    let resolveResponse: ((response: Response) => void) | undefined
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>(resolve => {
+        resolveResponse = resolve
+      })
+    )
+
+    try {
+      const client = createHttpClient({ baseUrl: 'https://cloud.example.com/api' })
+      const request = client.get('/devices')
+
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(warn).toHaveBeenCalledWith(
+        '[Wework] HTTP GET /devices is still pending after 5000ms.',
+        expect.objectContaining({
+          requestId: expect.stringMatching(/^wework-/),
+          phase: 'waiting_for_response',
+          endpoint: '/devices',
+          transport: 'fetch',
+        })
+      )
+
+      resolveResponse?.({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'X-Request-ID': 'backend-request-1' }),
+        json: async () => ({ items: [] }),
+      } as Response)
+      await request
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('completed slowly'),
+        expect.objectContaining({
+          backendRequestId: 'backend-request-1',
+          phase: 'response_received',
+          status: 200,
+        })
+      )
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  test('logs transport error details without logging the authorization token', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      fetchMock.mockRejectedValueOnce(new TypeError('Load failed'))
+      const client = createHttpClient({
+        baseUrl: 'https://cloud.example.com/api',
+        getToken: () => 'secret-cloud-token',
+      })
+
+      await expect(client.get('/devices')).rejects.toThrow('Load failed')
+
+      const serializedCalls = JSON.stringify(warn.mock.calls)
+      expect(serializedCalls).toContain('Load failed')
+      expect(serializedCalls).toContain('"phase":"transport"')
+      expect(serializedCalls).not.toContain('secret-cloud-token')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('uses the diagnostic lifecycle for blob requests', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      headers: new Headers({ 'X-Request-ID': 'backend-blob-request' }),
+      text: async () => 'blob service unavailable',
+    })
+
+    try {
+      const client = createHttpClient({
+        baseUrl: 'https://cloud.example.com/api',
+        getToken: () => 'secret-cloud-token',
+      })
+
+      await expect(client.getBlob('/attachments/1')).rejects.toMatchObject({
+        status: 502,
+        message: 'blob service unavailable',
+      })
+
+      expect(warn).toHaveBeenCalledWith(
+        '[Wework] HTTP GET /attachments/1 returned 502.',
+        expect.objectContaining({
+          phase: 'http_error',
+          backendRequestId: 'backend-blob-request',
+        })
+      )
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-cloud-token')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   test('throws ApiError with parsed detail message', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
@@ -120,6 +286,32 @@ describe('createHttpClient', () => {
       errorCode: 'TURN_FILE_CHANGES_CONFLICT',
       detail: {
         file_changes: { status: 'conflicted' },
+      },
+    })
+  })
+
+  test('parses nested external service errors', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      text: async () =>
+        JSON.stringify({
+          error: {
+            code: 'site_publish_failed',
+            message: 'CDN failed',
+          },
+        }),
+    })
+
+    const client = createHttpClient({ baseUrl: 'https://sites.example.com' })
+
+    await expect(client.post('/api/sites/site-1/publish')).rejects.toMatchObject<ApiError>({
+      message: 'CDN failed',
+      status: 502,
+      errorCode: 'site_publish_failed',
+      detail: {
+        code: 'site_publish_failed',
+        message: 'CDN failed',
       },
     })
   })

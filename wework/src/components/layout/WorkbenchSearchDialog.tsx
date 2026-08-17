@@ -3,6 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
+import {
+  WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT,
+  type WorkbenchCloudSearchResultsDetail,
+} from '@/features/workbench/workbenchCloudDataEvents'
 import type {
   RuntimeTaskAddress,
   RuntimeWorkSearchRequest,
@@ -46,6 +50,7 @@ function WorkbenchSearchDialogPanel({
   const { t } = useTranslation('common')
   const inputRef = useRef<HTMLInputElement>(null)
   const searchCacheRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
+  const cloudResultsRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
   const [query, setQuery] = useState('')
   const [items, setItems] = useState<RuntimeWorkSearchItem[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -57,6 +62,25 @@ function WorkbenchSearchDialogPanel({
   useEffect(() => {
     window.setTimeout(() => inputRef.current?.focus(), 0)
   }, [])
+
+  useEffect(() => {
+    const handleCloudResults = (event: Event) => {
+      const detail = (event as CustomEvent<WorkbenchCloudSearchResultsDetail>).detail
+      const resultQuery = detail?.request.query.trim()
+      if (!resultQuery) return
+      cloudResultsRef.current.set(resultQuery, detail.response.items)
+      if (resultQuery !== trimmedQuery) return
+      setItems(current => {
+        const merged = mergeSearchItems(current, detail.response.items, SEARCH_LIMIT)
+        rememberSearchResults(searchCacheRef.current, resultQuery, merged)
+        return merged
+      })
+    }
+
+    window.addEventListener(WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT, handleCloudResults)
+    return () =>
+      window.removeEventListener(WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT, handleCloudResults)
+  }, [trimmedQuery])
 
   useEffect(() => {
     if (!trimmedQuery) return
@@ -77,8 +101,13 @@ function WorkbenchSearchDialogPanel({
       onSearchRuntimeWork({ query: trimmedQuery, limit: SEARCH_LIMIT })
         .then(response => {
           if (cancelled) return
-          rememberSearchResults(searchCacheRef.current, trimmedQuery, response.items)
-          setItems(response.items)
+          const merged = mergeSearchItems(
+            response.items,
+            cloudResultsRef.current.get(trimmedQuery) ?? [],
+            SEARCH_LIMIT
+          )
+          rememberSearchResults(searchCacheRef.current, trimmedQuery, merged)
+          setItems(merged)
           setSelectedIndex(0)
           setError(null)
           setSearchedQuery(trimmedQuery)
@@ -124,7 +153,10 @@ function WorkbenchSearchDialogPanel({
         if (event.target === event.currentTarget) onClose()
       }}
     >
-      <div className="w-full max-w-[520px] overflow-hidden rounded-[18px] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.20)] ring-1 ring-black/5">
+      <div
+        data-testid="workbench-search-dialog"
+        className="w-full max-w-[520px] overflow-hidden rounded-[18px] bg-popover text-text-primary shadow-[0_24px_70px_rgba(15,23,42,0.20)] ring-[0.5px] ring-border"
+      >
         <div className="flex h-14 items-center gap-3 border-b border-border/70 px-4">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <input
@@ -236,6 +268,33 @@ function rememberSearchResults(
   if (oldestKey) {
     cache.delete(oldestKey)
   }
+}
+
+function mergeSearchItems(
+  primary: RuntimeWorkSearchItem[],
+  secondary: RuntimeWorkSearchItem[],
+  limit: number
+): RuntimeWorkSearchItem[] {
+  const merged = new Map<string, RuntimeWorkSearchItem>()
+  const candidates = [...primary, ...secondary]
+  candidates.forEach(item => {
+    const key = [
+      item.address.deviceId,
+      item.address.taskId,
+      item.address.workspacePath ?? '',
+      item.messageId ?? '',
+    ].join('\0')
+    merged.set(key, item)
+  })
+  return [...merged.values()]
+    .sort((left, right) => searchUpdatedAt(right) - searchUpdatedAt(left))
+    .slice(0, limit)
+}
+
+function searchUpdatedAt(item: RuntimeWorkSearchItem): number {
+  if (!item.updatedAt) return 0
+  const timestamp = new Date(item.updatedAt).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
 }
 
 function renderHighlightedSnippet(snippet: string, query: string) {

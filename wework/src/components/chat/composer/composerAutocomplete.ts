@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import type { LocalDeviceApp, LocalDeviceSkill } from '@/types/api'
+import { compareComposerPluginsByUsage, readRecentPluginAppIds } from './composerPluginSort'
 
 export type ComposerTriggerKind = 'mention' | 'skill' | 'slash'
 
@@ -18,6 +19,9 @@ export interface SlashCommand {
   searchAliases?: string[]
   requiresEmptyComposer?: boolean
   Icon: ComponentType<{ className?: string }>
+  iconUrl?: string | null
+  iconContrastPad?: boolean
+  trailingIcon?: ComponentType<{ className?: string }>
   enabled?: boolean
   testId: string
   skill?: LocalDeviceSkill
@@ -31,7 +35,8 @@ export function findStandaloneTrigger(
   value: string,
   cursor: number,
   trigger: '@' | '$' | '/',
-  kind: ComposerTriggerKind
+  kind: ComposerTriggerKind,
+  allowWhitespaceInQuery?: (query: string) => boolean
 ): ComposerTextTrigger | null {
   const beforeCursor = value.slice(0, cursor)
   const triggerIndex = beforeCursor.lastIndexOf(trigger)
@@ -41,7 +46,7 @@ export function findStandaloneTrigger(
   if (triggerIndex > 0 && !/\s/.test(previousChar)) return null
 
   const query = value.slice(triggerIndex + 1, cursor)
-  if (/\s/.test(query)) return null
+  if (/\s/.test(query) && !allowWhitespaceInQuery?.(query)) return null
   if (trigger === '/' && query.includes('/')) return null
 
   return { kind, start: triggerIndex, query }
@@ -55,6 +60,29 @@ export function chooseNearestTrigger(
       .filter((trigger): trigger is ComposerTextTrigger => trigger !== null)
       .sort((left, right) => right.start - left.start)[0] ?? null
   )
+}
+
+/**
+ * Parses the `@项目空间:keyword` / `@项目空间 keyword` scope syntax. Returns
+ * the keyword after the separator when the query starts with one of the given
+ * scope labels followed by a half-width/full-width colon or whitespace,
+ * otherwise null. Labels are matched longest-first so labels containing
+ * spaces (e.g. "project space") win over shorter prefixes.
+ */
+export function parseCloudProjectScopeQuery(query: string, scopeLabels: string[]): string | null {
+  const labels = scopeLabels
+    .map(label => label.trim().toLowerCase())
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+  const normalizedQuery = query.toLowerCase()
+  for (const label of labels) {
+    if (!normalizedQuery.startsWith(label)) continue
+    const rest = query.slice(label.length)
+    const separatorMatch = rest.match(/^[:：]|\s+/)
+    if (!separatorMatch) return null
+    return rest.slice(separatorMatch[0].length)
+  }
+  return null
 }
 
 export function hasDraftTextForSlashCommands(value: string): boolean {
@@ -79,6 +107,7 @@ export function filterSlashCommands(
     if (!groupOrder.has(group)) groupOrder.set(group, groupOrder.size)
   })
 
+  const recentIds = readRecentPluginAppIds()
   return draftCompatibleCommands
     .map(command => ({ command, score: scoreSlashCommand(command, normalizedQuery) }))
     .filter(item => item.score > 0)
@@ -87,6 +116,9 @@ export function filterSlashCommands(
       const rightGroupOrder = groupOrder.get(right.command.group ?? null) ?? Number.MAX_SAFE_INTEGER
       if (leftGroupOrder !== rightGroupOrder) return leftGroupOrder - rightGroupOrder
       if (left.score !== right.score) return right.score - left.score
+      if (left.command.app && right.command.app) {
+        return compareComposerPluginsByUsage(left.command.app, right.command.app, recentIds)
+      }
       return left.command.title.localeCompare(right.command.title)
     })
     .map(item => item.command)

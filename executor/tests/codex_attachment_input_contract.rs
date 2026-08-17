@@ -23,6 +23,54 @@ use wegent_executor::{
 };
 
 #[tokio::test]
+async fn codex_app_server_includes_pasted_zip_in_model_input() {
+    let _lock = env_lock().await;
+    let workspace = unique_dir("codex-zip-attachment");
+    let archive = workspace.join("feedback.zip");
+    fs::write(&archive, b"PK\x03\x04test").unwrap();
+    let log_path = workspace.join("codex-rpc.jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let mut request = ExecutionRequest {
+        task_id: "29".to_owned(),
+        subtask_id: "44".to_owned(),
+        prompt: Value::String(String::new()),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "attachments".to_owned(),
+        json!([{
+            "id": 15,
+            "original_filename": "feedback.zip",
+            "mime_type": "application/zip",
+            "file_size": 8,
+            "subtask_id": 43,
+            "local_path": archive
+        }]),
+    );
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    let input_text = messages[3]["params"]["input"][0]["text"].as_str().unwrap();
+    assert!(input_text.contains("feedback.zip"));
+    assert!(input_text.contains("application/zip"));
+    assert!(input_text.contains(&archive.display().to_string()));
+}
+
+#[tokio::test]
 async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
     let _lock = env_lock().await;
     let workspace = unique_dir("codex-attachment-local");
@@ -51,6 +99,7 @@ async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
         model_config: json!({
             "model": "openai",
             "model_id": "gpt-5",
+            "wework_model_kind": "codex-official",
             "protocol": "openai-responses"
         }),
         ..ExecutionRequest::default()
@@ -118,6 +167,7 @@ async fn codex_app_server_keeps_failed_download_placeholder_order() {
         model_config: json!({
             "model": "openai",
             "model_id": "gpt-5",
+            "wework_model_kind": "codex-official",
             "protocol": "openai-responses"
         }),
         ..ExecutionRequest::default()
@@ -192,6 +242,7 @@ async fn codex_app_server_cleans_generated_model_input_images() {
         model_config: json!({
             "model": "openai",
             "model_id": "gpt-5",
+            "wework_model_kind": "codex-provider",
             "protocol": "openai-responses"
         }),
         ..ExecutionRequest::default()
@@ -222,6 +273,14 @@ async fn codex_app_server_cleans_generated_model_input_images() {
         .as_str()
         .unwrap()
         .to_owned();
+    assert!(messages[3]["params"]["input"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(&large_image.display().to_string()));
+    assert!(!messages[3]["params"]["input"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(".model-input.png"));
     assert_ne!(generated_path, large_image.display().to_string());
     assert!(generated_path.ends_with(".model-input.png"));
     assert_eq!(
@@ -230,6 +289,63 @@ async fn codex_app_server_cleans_generated_model_input_images() {
     );
     assert!(large_image.exists());
     assert!(!Path::new(&generated_path).exists());
+}
+
+#[tokio::test]
+async fn codex_app_server_keeps_official_model_images_at_original_size() {
+    let _lock = env_lock().await;
+    let workspace = unique_dir("codex-official-image");
+    let large_image = workspace.join("large.png");
+    fs::write(&large_image, png_bytes(3000, 1500)).unwrap();
+    let log_path = workspace.join("codex-rpc.jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let mut request = ExecutionRequest {
+        task_id: "29".to_owned(),
+        subtask_id: "44".to_owned(),
+        auth_token: Some("token".to_owned()),
+        prompt: json!([
+            {"type": "input_text", "text": "Analyze this image"},
+            {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+        ]),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "wework_model_kind": "codex-official",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "attachments".to_owned(),
+        json!([{
+            "id": 15,
+            "original_filename": "large.png",
+            "mime_type": "image/png",
+            "file_size": fs::metadata(&large_image).unwrap().len(),
+            "subtask_id": 43,
+            "local_path": large_image
+        }]),
+    );
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+    let messages = read_json_lines(&log_path);
+    assert_eq!(
+        messages[3]["params"]["input"][1]["path"],
+        large_image.display().to_string()
+    );
+    assert_eq!(
+        png_dimensions(&fs::read(&large_image).unwrap()),
+        Some((3000, 1500))
+    );
 }
 
 fn png_bytes(width: u32, height: u32) -> Vec<u8> {

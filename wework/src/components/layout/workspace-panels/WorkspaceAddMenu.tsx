@@ -9,11 +9,26 @@ import {
   type MouseEvent,
 } from 'react'
 import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
+import { track } from '@/telemetry/client'
 
 const MENU_GAP = 8
 const VIEWPORT_PADDING = 8
 const MENU_WIDTH = 240
 const EMBEDDED_BROWSER_OCCLUSION_ID = 'workspace-add-menu'
+const WORKSPACE_PANEL_TYPES = new Set([
+  'review',
+  'terminal',
+  'browser',
+  'chat',
+  'files',
+  'desktop',
+] as const)
+
+function workspacePanelType(id: string) {
+  return WORKSPACE_PANEL_TYPES.has(id as never)
+    ? (id as 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop')
+    : 'other'
+}
 
 export interface WorkspaceAddMenuItem {
   id: string
@@ -138,6 +153,7 @@ export function WorkspaceAddMenu({
     setOpen(false)
     setPosition(null)
     await item.onSelect()
+    track('workspace_panel_added', { panel: workspacePanelType(item.id) })
   }
 
   return (
@@ -175,7 +191,7 @@ export function WorkspaceAddMenu({
                 data-testid={item.testId}
                 disabled={item.disabled}
                 onClick={() => void selectItem(item)}
-                className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm font-medium leading-5 text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+                className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm font-normal leading-5 text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
               >
                 <item.icon className="h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>

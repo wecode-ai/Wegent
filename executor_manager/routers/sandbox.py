@@ -66,6 +66,7 @@ class CleanupSandboxByTaskRequest(BaseModel):
     task_id: int = Field(ge=1)
     dry_run: bool = False
     archive_before_delete: bool = True
+    delete_on_archive_failure: bool = False
 
 
 @router.post("", response_model=CreateSandboxResponse)
@@ -165,10 +166,11 @@ async def cleanup_sandbox_by_task_id(
     client_ip = http_request.client.host if http_request.client else "unknown"
     logger.info(
         "[SandboxAPI] Cleanup sandbox by task: task_id=%s dry_run=%s "
-        "archive_before_delete=%s from %s",
+        "archive_before_delete=%s delete_on_archive_failure=%s from %s",
         request.task_id,
         request.dry_run,
         request.archive_before_delete,
+        request.delete_on_archive_failure,
         client_ip,
     )
 
@@ -177,6 +179,7 @@ async def cleanup_sandbox_by_task_id(
         task_id=request.task_id,
         dry_run=request.dry_run,
         archive_before_delete=request.archive_before_delete,
+        delete_on_archive_failure=request.delete_on_archive_failure,
     )
 
 

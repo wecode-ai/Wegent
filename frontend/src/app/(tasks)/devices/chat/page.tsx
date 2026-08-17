@@ -25,10 +25,11 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { Monitor, WifiOff } from 'lucide-react'
-import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
+import { TaskParamSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
-import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
+import { getAccountDefaultDeviceId } from '@/features/devices/utils/execution-target'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { useUser } from '@/features/common/UserContext'
 
 const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
   ssr: false,
@@ -46,10 +47,15 @@ export default function DeviceChatPage() {
 
   // Device state
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
+  const { user } = useUser()
 
   // Check if deviceId is specified in URL
   const searchParams = useSearchParams()
   const hasDeviceIdParam = !!(searchParams.get('deviceId') || searchParams.get('device_id'))
+  const routeTaskId =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  const isExistingTask = Boolean(routeTaskId)
+  const selectedTaskMatchesRoute = isExistingTask && String(selectedTaskDetail?.id) === routeTaskId
 
   // Project context — when projectId is in URL, device is locked to project config
   const projectIdParam = searchParams.get('projectId')
@@ -79,16 +85,13 @@ export default function DeviceChatPage() {
     saveLastTab('devices')
   }, [])
 
-  // Auto-select preferred device if none selected and no URL param
+  // Initialize a new task from the account default without substituting a
+  // different available device. Existing tasks use their persisted target.
   useEffect(() => {
-    if (hasDeviceIdParam) return
-    if (!selectedDeviceId && devices.length > 0) {
-      const preferredDevice = getPreferredExecutionDevice(devices)
-      if (preferredDevice) {
-        setSelectedDeviceId(preferredDevice.device_id)
-      }
-    }
-  }, [devices, selectedDeviceId, setSelectedDeviceId, hasDeviceIdParam])
+    if (hasDeviceIdParam || isExistingTask || selectedDeviceId) return
+    const defaultDeviceId = getAccountDefaultDeviceId(user?.preferences?.default_execution_target)
+    if (defaultDeviceId) setSelectedDeviceId(defaultDeviceId)
+  }, [hasDeviceIdParam, isExistingTask, selectedDeviceId, setSelectedDeviceId, user])
 
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
@@ -123,16 +126,21 @@ export default function DeviceChatPage() {
 
   // Handle device selection
   const handleDeviceSelect = (deviceId: string) => {
+    if (isExistingTask) return
     setSelectedDeviceId(deviceId)
     // Clear any existing task when selecting a new device
     selectTask(null)
   }
 
   // Get current task title for top navigation
-  const currentTaskTitle = selectedTaskDetail?.title
+  const currentTaskTitle = selectedTaskMatchesRoute ? selectedTaskDetail?.title : undefined
 
-  // Get selected device info
-  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+  const persistedTaskDeviceId =
+    selectedTaskMatchesRoute && selectedTaskDetail?.task_type === 'task'
+      ? selectedTaskDetail.device_id || null
+      : null
+  const activeDeviceId = isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
 
   // Check if selected device is OpenClaw type
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
@@ -141,7 +149,6 @@ export default function DeviceChatPage() {
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* URL parameter sync */}
       <TaskParamSync />
-      <DeviceTaskSync />
       <DeviceParamSync />
 
       {/* Collapsed sidebar floating buttons */}
@@ -177,9 +184,9 @@ export default function DeviceChatPage() {
           <div className="flex items-center gap-2 mr-2">
             <Monitor className="w-4 h-4 text-text-muted" />
             <select
-              value={selectedDeviceId || ''}
+              value={activeDeviceId || ''}
               onChange={e => handleDeviceSelect(e.target.value)}
-              disabled={isProjectContext}
+              disabled={isProjectContext || isExistingTask}
               className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="" disabled>
@@ -203,7 +210,7 @@ export default function DeviceChatPage() {
 
         {/* Chat area or placeholder */}
         {/* Show ChatArea when device is selected OR when viewing an existing task */}
-        {selectedDeviceId || selectedTaskDetail ? (
+        {activeDeviceId || isExistingTask ? (
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}

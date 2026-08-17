@@ -34,6 +34,9 @@ def verify_jwt_token(token: str) -> Optional[User]:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
+        if payload.get("scope"):
+            logger.debug("Scoped JWT is not a chat session token")
+            return None
         user_name = payload.get("sub")
         if not user_name:
             return None

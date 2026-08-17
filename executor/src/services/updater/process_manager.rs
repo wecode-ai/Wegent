@@ -153,6 +153,7 @@ impl ProcessManager {
             return false;
         };
         let mut command = Command::new(program);
+        crate::process::hide_windows_console(&mut command);
         command.args(plan.command.iter().skip(1));
         command.stdin(Stdio::null());
 
@@ -244,8 +245,10 @@ impl ProcessOperations for DefaultProcessOperations {
     }
 
     #[cfg(not(unix))]
-    fn terminate_gracefully(&self, _pid: u32) -> bool {
-        false
+    fn terminate_gracefully(&self, pid: u32) -> bool {
+        // Windows has no POSIX-style graceful termination; treat it the same as
+        // forceful termination for the updater's purposes.
+        send_signal(pid, libc::SIGTERM)
     }
 
     #[cfg(unix)]
@@ -254,8 +257,10 @@ impl ProcessOperations for DefaultProcessOperations {
     }
 
     #[cfg(not(unix))]
-    fn terminate_forcefully(&self, _pid: u32) -> bool {
-        false
+    fn terminate_forcefully(&self, pid: u32) -> bool {
+        // Windows has no SIGKILL; the signal value is ignored by the Windows
+        // implementation of send_signal, which always calls TerminateProcess.
+        send_signal(pid, libc::SIGTERM)
     }
 }
 
@@ -265,7 +270,31 @@ fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn is_process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    const STILL_ACTIVE: u32 = 259;
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut exit_code);
+        CloseHandle(handle);
+        if ok == 0 {
+            return false;
+        }
+        exit_code == STILL_ACTIVE
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn is_process_alive(_pid: u32) -> bool {
     false
 }
@@ -273,6 +302,27 @@ fn is_process_alive(_pid: u32) -> bool {
 #[cfg(unix)]
 fn send_signal(pid: u32, signal: libc::c_int) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, signal) == 0 }
+}
+
+#[cfg(windows)]
+fn send_signal(pid: u32, _signal: libc::c_int) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let ok = TerminateProcess(handle, 1);
+        CloseHandle(handle);
+        ok != 0
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn send_signal(_pid: u32, _signal: libc::c_int) -> bool {
+    false
 }
 
 #[cfg(unix)]

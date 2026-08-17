@@ -1,7 +1,7 @@
 ---
 description: "Provides read_file/write_file/exec/list_files/read_file/write_file for running process and managing filesystems in the sandbox. Ideal for code testing, file management, and command execution. The sub_claude_agent tool is available for advanced use cases. You MUST load this skill BEFORE use sandbox tools."
 displayName: "沙箱环境"
-version: "2.1.0"
+version: "2.1.2"
 author: "Wegent Team"
 tags: ["sandbox", "code-execution", "filesystem", "automation"]
 bindShells: ["Chat"]
@@ -280,8 +280,11 @@ Download a file from Wegent attachment URL to sandbox for processing.
 
 **Parameters:**
 - `attachment_url` (required): Wegent attachment URL (e.g., `/api/attachments/123/download`)
-- `save_path` (required): Path to save the file in sandbox
 - `timeout_seconds` (optional): Download timeout in seconds (default: 300)
+
+The tool resolves the attachment filename and owning subtask from Wegent, then
+saves it to the canonical task attachment directory:
+`/home/user/{task_id}:executor:attachments/{subtask_id}/{filename}`.
 
 **Returns:**
 - `success`: Whether the download succeeded
@@ -293,8 +296,7 @@ Download a file from Wegent attachment URL to sandbox for processing.
 {
   "name": "download_attachment",
   "arguments": {
-    "attachment_url": "/api/attachments/123/download",
-    "save_path": "/home/user/downloads/document.pdf"
+    "attachment_url": "/api/attachments/123/download"
   }
 }
 ```
@@ -382,7 +384,42 @@ Download a file from Wegent attachment URL to sandbox for processing.
 }
 ```
 
-### Scenario 5: Using Claude (Only When Explicitly Requested)
+### Scenario 5: Creating ZIP Files
+
+⚠️ **`zip` is not pre-installed.** Always run `dnf install -y zip` before using it.
+
+⚠️ **Always use English or pinyin folder names as the ZIP root directory.** The `zip` command does not set the ZIP UTF-8 flag, so Windows decodes Chinese names using CP437, resulting in garbled folders that appear empty.
+
+```json
+// Step 1: Install zip
+{
+  "name": "exec",
+  "arguments": {
+    "command": "dnf install -y zip"
+  }
+}
+
+// Step 2: Create ZIP with English folder name (recommended)
+{
+  "name": "exec",
+  "arguments": {
+    "command": "zip -r 'my-skill.zip' 'my-skill/'"
+  }
+}
+```
+
+**If the user explicitly requires a Chinese folder name**, use Python's `zipfile` module instead — it automatically sets the UTF-8 flag so Windows can decode Chinese names correctly:
+
+```json
+{
+  "name": "exec",
+  "arguments": {
+    "command": "python3 -c \"\nimport zipfile, os\nfolder = '中文名称'\nwith zipfile.ZipFile(folder + '.zip', 'w', zipfile.ZIP_DEFLATED) as zf:\n    for root, dirs, files in os.walk(folder):\n        for f in files:\n            zf.write(os.path.join(root, f))\n\""
+  }
+}
+```
+
+### Scenario 6: Using Claude (Only When Explicitly Requested)
 
 **Example user request**: "Please use Claude to generate a presentation about AI"
 
@@ -460,6 +497,7 @@ Control Claude's available tools via the `allowed_tools` parameter:
 4. **Check Return Results** - Verify the `success` field
 5. **Mind Size Limits** - File read/write operations have size constraints
 6. **Prefer exec** - Use for most tasks; only use `sub_claude_agent` when user explicitly requests Claude assistance
+7. **ZIP Encoding** - Install `zip` first with `dnf install -y zip`; always use English/pinyin folder names for cross-platform compatibility; if Chinese names are required, use Python's `zipfile` module (it sets the UTF-8 flag correctly, preventing garbled names on Windows)
 
 ---
 
@@ -484,3 +522,16 @@ Control Claude's available tools via the `allowed_tools` parameter:
 ### Permission Denied
 **Cause**: Insufficient file permissions
 **Solution**: Check file paths and permission settings
+
+### ZIP Folder Appears Empty or Garbled on Windows
+**Cause**: The `zip` command stores filenames as raw bytes without setting the ZIP UTF-8 flag (bit 11). Windows decodes them using CP437, turning Chinese folder names into garbled text, making contents inaccessible.
+**Solution**: Use English/pinyin folder names with the `zip` command. If Chinese names are required, use Python's `zipfile` module — it sets the UTF-8 flag automatically:
+```bash
+python3 -c "
+import zipfile, os
+folder = '中文名称'
+with zipfile.ZipFile(folder + '.zip', 'w', zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk(folder):
+        for f in files:
+            zf.write(os.path.join(root, f))
+"

@@ -1,0 +1,596 @@
+import { describe, expect, test, vi } from 'vitest'
+import {
+  createExternalIssueApi,
+  createLocalDeliveryApi,
+  createLocalProjectChatAgentApi,
+} from './localDelivery'
+
+const projectRecord = {
+  id: 'project-1',
+  resource_type: 'project',
+  cloud_project_id: null,
+  parent_id: null,
+  public_id: 'public-1',
+  project_key: 'LOCAL',
+  name: 'Local board',
+  title: null,
+  description: '',
+  sequence_number: null,
+  status: 'active',
+  priority: null,
+  sort_order: 0,
+  current_delivery_id: null,
+  metadata: { task_provider: 'local', tags: [] },
+  version: 1,
+  created_at: '2026-07-27T00:00:00Z',
+  updated_at: '2026-07-27T00:00:00Z',
+  completed_at: null,
+}
+
+const taskRecord = {
+  ...projectRecord,
+  id: 'LOCAL-1',
+  resource_type: 'task',
+  cloud_project_id: projectRecord.id,
+  public_id: null,
+  project_key: null,
+  name: null,
+  title: 'First task',
+  sequence_number: 1,
+  status: 'inbox',
+  priority: 'none',
+  metadata: { tags: ['local'] },
+}
+
+describe('local delivery API', () => {
+  test('maps execution state from local task records', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') {
+        return [
+          {
+            ...taskRecord,
+            assignee_agent_id: 'LA-1',
+            execution_id: 5,
+            execution_state: 'pending_approval',
+          },
+        ]
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const { items } = await api.listLoopItems('project-1')
+    expect(items[0].execution_id).toBe(5)
+    expect(items[0].execution_state).toBe('pending_approval')
+    expect(items[0].assignee_agent_id).toBe('LA-1')
+  })
+
+  test('local robot create sends the creator id', async () => {
+    const request = vi.fn(async () => ({ id: 'LA-1', created_by_user_id: 7 }))
+    const api = createLocalProjectChatAgentApi(request, 7)
+    await api.create('project-1', {
+      name: 'Local Bot',
+      runtime: 'codex',
+      executionDeviceId: 'local-device',
+    })
+    expect(request).toHaveBeenCalledWith('chat_agents.create', {
+      project_id: 'project-1',
+      agent: expect.objectContaining({ created_by_user_id: 7 }),
+    })
+  })
+
+  test('queries a backend project provider without creating a local project', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'external_projects.configure') return projectRecord
+      if (method === 'external_todos.list') return [taskRecord]
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createExternalIssueApi(request)
+    const cloudProject = {
+      id: 'cloud-1',
+      public_id: 'cloud-public-1',
+      project_key: 'CLOUD',
+      name: 'Cloud GitHub board',
+      description: '',
+      project_store: 'backend' as const,
+      task_provider: 'github' as const,
+      provider_config: { repository: 'acme/repo' },
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-07-27T00:00:00Z',
+      updated_at: '2026-07-27T00:00:00Z',
+    }
+
+    await api.configureProject(cloudProject, 'local-secret')
+    await api.listLoopItems(cloudProject)
+
+    expect(request).toHaveBeenCalledWith('external_projects.configure', {
+      project: expect.objectContaining({
+        id: 'cloud-1',
+        project_store: 'backend',
+        task_provider: 'github',
+        provider_config: {
+          repository: 'acme/repo',
+          token: 'local-secret',
+        },
+      }),
+    })
+    expect(request).toHaveBeenCalledWith('external_todos.list', {
+      project: expect.objectContaining({
+        id: 'cloud-1',
+        project_store: 'backend',
+        task_provider: 'github',
+      }),
+    })
+    expect(request).not.toHaveBeenCalledWith('projects.create', expect.anything())
+  })
+
+  test('reports the current user as the creator of GitHub and GitLab tasks', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'external_todos.create') {
+        return { ...taskRecord, created_by_user_id: 7 }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createExternalIssueApi(request)
+    const cloudProject = {
+      id: 'cloud-1',
+      public_id: 'cloud-public-1',
+      project_key: 'CLOUD',
+      name: 'Public GitHub board',
+      description: '',
+      project_store: 'backend' as const,
+      task_provider: 'github' as const,
+      provider_config: { repository: 'acme/repo' },
+      created_by_user_id: 1,
+      current_user_id: 7,
+      access_role: 'RestrictedAnalyst' as const,
+      visibility: 'public' as const,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-07-27T00:00:00Z',
+      updated_at: '2026-07-27T00:00:00Z',
+    }
+
+    await api.createLoopItem(cloudProject, {
+      title: 'Created by visitor',
+      tags: ['customer'],
+      creator_name: 'Micro66',
+    })
+
+    expect(request).toHaveBeenCalledWith('external_todos.create', {
+      project: expect.objectContaining({
+        id: 'cloud-1',
+        task_provider: 'github',
+      }),
+      todo: {
+        title: 'Created by visitor',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: ['customer', 'wegent:creator:7:Micro66'],
+      },
+    })
+  })
+
+  test('passes external provider credentials only through executor IPC', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'projects.create') {
+        return {
+          ...projectRecord,
+          metadata: {
+            task_provider: 'github',
+            provider_config: {
+              repository: 'acme/repo',
+              credential_configured: true,
+            },
+          },
+        }
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await api.createCloudProject({
+      name: 'GitHub board',
+      task_provider: 'github',
+      provider_config: {
+        repository: 'acme/repo',
+        token: 'github-secret',
+      },
+    })
+
+    expect(request).toHaveBeenCalledWith('projects.create', {
+      name: 'GitHub board',
+      task_provider: 'github',
+      provider_config: {
+        repository: 'acme/repo',
+        token: 'github-secret',
+      },
+    })
+  })
+
+  test('routes project and task operations through executor IPC', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'projects.update') {
+        return { ...projectRecord, name: 'Renamed board', version: 2 }
+      }
+      if (method === 'projects.archive') return {}
+      if (method === 'todos.list') return [taskRecord]
+      if (method === 'todos.create') return taskRecord
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listCloudProjects()).resolves.toMatchObject({
+      items: [{ id: 'project-1', name: 'Local board' }],
+    })
+    await expect(api.listLoopItems('project-1')).resolves.toMatchObject({
+      items: [{ id: 'LOCAL-1', title: 'First task', tags: ['local'] }],
+    })
+    await expect(
+      api.updateCloudProject('project-1', { name: 'Renamed board', version: 1 })
+    ).resolves.toMatchObject({ name: 'Renamed board', version: 2 })
+    await api.createLoopItem('project-1', { title: 'First task' })
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'First task',
+        description: '',
+        status: 'inbox',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('projects.update', {
+      project_id: 'project-1',
+      project: { name: 'Renamed board', version: 1 },
+    })
+
+    await api.archiveCloudProject('project-1', 2)
+    expect(request).toHaveBeenCalledWith('projects.archive', {
+      project_id: 'project-1',
+      version: 2,
+    })
+  })
+
+  test('does not expose cached backend projects as local project spaces', async () => {
+    const backendProjectRecord = {
+      ...projectRecord,
+      id: 'cloud-1',
+      name: 'Cloud GitLab board',
+      metadata: {
+        project_store: 'backend',
+        task_provider: 'gitlab',
+        provider_config: { repository: 'group/project' },
+      },
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'projects.list') return [projectRecord, backendProjectRecord]
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(api.listCloudProjects()).resolves.toMatchObject({
+      items: [{ id: 'project-1', name: 'Local board' }],
+    })
+  })
+
+  test('remembers task ownership for updates and persists board order', async () => {
+    const updatedRecord = { ...taskRecord, title: 'Updated', version: 2 }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [taskRecord]
+      if (method === 'todos.update') return updatedRecord
+      if (method === 'todos.reorder') return [updatedRecord]
+      if (method === 'todos.archive') return {}
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await api.listLoopItems('project-1')
+    await expect(
+      api.updateLoopItem('LOCAL-1', { version: 1, title: 'Updated' })
+    ).resolves.toMatchObject({ title: 'Updated', version: 2 })
+    await expect(
+      api.reorderLoopItems('project-1', {
+        parent_id: null,
+        status: 'inbox',
+        item_ids: ['LOCAL-1'],
+      })
+    ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
+    await api.archiveLoopItem('LOCAL-1')
+
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: { version: 1, title: 'Updated' },
+    })
+    expect(request).toHaveBeenCalledWith('todos.reorder', {
+      project_id: 'project-1',
+      reorder: {
+        parent_id: null,
+        status: 'inbox',
+        item_ids: ['LOCAL-1'],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('todos.archive', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+    })
+  })
+
+  test('binds a runtime task through executor storage', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [taskRecord]
+      if (method === 'todos.bind') return { id: '1' }
+      if (method === 'runtime_tasks.context') {
+        return {
+          id: '1',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return taskRecord
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const runtimeTask = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    await api.listLoopItems('project-1')
+    await api.bindTask('LOCAL-1', runtimeTask, 'Runtime')
+    await expect(api.findLoopItemForTask(runtimeTask)).resolves.toMatchObject({ id: 'LOCAL-1' })
+
+    expect(request).toHaveBeenCalledWith('todos.bind', {
+      project_id: 'project-1',
+      item_id: 'LOCAL-1',
+      task: {
+        deviceId: 'local-device',
+        taskId: 'runtime-1',
+        taskTitle: 'Runtime',
+      },
+    })
+  })
+
+  test('tracks concurrent calls for the same runtime task only once', async () => {
+    const trackedTask = { ...taskRecord, status: 'in_progress' }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'todos.create') return trackedTask
+      if (method === 'todos.bind') return { id: 'binding-1' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const trackProjectTask = api.trackProjectTask
+
+    const first = trackProjectTask(
+      'project-1',
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task',
+      'Track only this explicitly selected task'
+    )
+    const second = trackProjectTask(
+      'project-1',
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task changed during rendering',
+      'Updated description'
+    )
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({ id: 'LOCAL-1', status: 'in_progress' }),
+      }),
+      expect.objectContaining({
+        item: expect.objectContaining({ id: 'LOCAL-1', status: 'in_progress' }),
+      }),
+    ])
+
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(request).toHaveBeenCalledWith('runtime_tasks.context', {
+      device_id: 'local-device',
+      task_id: 'runtime-1',
+    })
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'Runtime task',
+        description: 'Track only this explicitly selected task',
+        status: 'in_progress',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('todos.bind', {
+      project_id: 'project-1',
+      item_id: 'LOCAL-1',
+      task: {
+        deviceId: 'local-device',
+        taskId: 'runtime-1',
+        taskTitle: 'Runtime task',
+      },
+    })
+  })
+
+  test('allows retrying project tracking after a failed request', async () => {
+    const trackedTask = { ...taskRecord, status: 'in_progress' }
+    let createAttempts = 0
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'todos.create') {
+        createAttempts += 1
+        if (createAttempts === 1) throw new Error('Temporary create failure')
+        return trackedTask
+      }
+      if (method === 'todos.bind') return { id: 'binding-1' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.trackProjectTask(
+        'project-1',
+        { deviceId: 'local-device', taskId: 'runtime-1' },
+        'Runtime task',
+        'Retry tracking'
+      )
+    ).rejects.toThrow('Temporary create failure')
+
+    await expect(
+      api.trackProjectTask(
+        'project-1',
+        { deviceId: 'local-device', taskId: 'runtime-1' },
+        'Runtime task',
+        'Retry tracking'
+      )
+    ).resolves.toMatchObject({ item: { id: 'LOCAL-1' } })
+  })
+
+  test('updates tracking status when the API method is called without object context', async () => {
+    const trackedTask = { ...taskRecord, status: 'in_progress' }
+    const reviewedTask = { ...trackedTask, status: 'in_review', version: 2 }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') {
+        return {
+          id: 'binding-1',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime task',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return trackedTask
+      if (method === 'todos.update') return reviewedTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const updateTaskTrackingStatus = api.updateTaskTrackingStatus
+
+    await expect(
+      updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
+    ).resolves.toMatchObject({ id: 'LOCAL-1', status: 'in_review' })
+
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: { version: 1, status: 'in_review' },
+    })
+  })
+
+  test('synchronizes a friendly runtime title through executor IPC', async () => {
+    const renamedTask = { ...taskRecord, title: '修复登录回调', version: 2 }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') {
+        return {
+          id: 'binding-1',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime task',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return taskRecord
+      if (method === 'todos.update') return renamedTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.updateTaskTrackingTitle({ deviceId: 'local-device', taskId: 'runtime-1' }, '修复登录回调')
+    ).resolves.toMatchObject({ id: 'LOCAL-1', title: '修复登录回调' })
+
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: { version: 1, title: '修复登录回调' },
+    })
+  })
+
+  test('routes local files, attachments, and deliveries through executor IPC', async () => {
+    const delivery = {
+      id: 'delivery-1',
+      loop_item_id: 'LOCAL-1',
+      created_by_user_id: 0,
+      source_task_binding_id: null,
+      source_task_snapshot: null,
+      status: 'draft',
+      created_at: '2026-07-27T00:00:00Z',
+      delivered_at: null,
+      assets: [],
+    }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.list') return [taskRecord]
+      if (method === 'files.create_folder') {
+        return {
+          id: 'folder-1',
+          cloud_project_id: 'project-1',
+          path: 'docs',
+          name: 'docs',
+          kind: 'folder',
+          content_type: null,
+          size_bytes: 0,
+          sha256: null,
+          description: '',
+          created_by_user_id: 0,
+          updated_by_user_id: 0,
+          version: 1,
+          created_at: '2026-07-27T00:00:00Z',
+          updated_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'deliveries.create') return delivery
+      if (method === 'deliveries.get') return { ...delivery, markdown: '# Done', chat: null }
+      if (method === 'deliveries.finalize') return { ...delivery, status: 'delivered' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await api.listLoopItems('project-1')
+    await expect(api.createCloudFolder('project-1', 'docs')).resolves.toMatchObject({
+      id: 'folder-1',
+      kind: 'folder',
+    })
+    await expect(api.createDelivery('LOCAL-1', { markdown: '# Done' })).resolves.toMatchObject({
+      id: 'delivery-1',
+    })
+    await expect(api.finalizeDelivery('delivery-1')).resolves.toMatchObject({
+      status: 'delivered',
+    })
+
+    expect(request).toHaveBeenCalledWith('files.create_folder', {
+      project_id: 'project-1',
+      path: 'docs',
+    })
+    expect(request).toHaveBeenCalledWith('deliveries.create', {
+      project_id: 'project-1',
+      item_id: 'LOCAL-1',
+      delivery: { markdown: '# Done' },
+    })
+    expect(request).toHaveBeenCalledWith('deliveries.finalize', {
+      item_id: 'LOCAL-1',
+      delivery_id: 'delivery-1',
+    })
+  })
+})

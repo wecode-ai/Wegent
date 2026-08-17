@@ -12,10 +12,45 @@
     "public_shells": "Public Shells",
     "templates": "Templates",
     "api_keys": "API Keys",
+    "marketplace": "Marketplace",
     "system_config": "System Config",
     "im_channels": "IM Channels",
+    "connector_apps": "Apps",
+    "task_runs": "Task Run Monitor",
     "monitor": "Subscription Monitor",
     "device_monitor": "Device Monitor"
+  },
+  "marketplace_management": {
+    "title": "Marketplace Management",
+    "description": "Manage Featured recommendations in the Agent and Skill marketplaces",
+    "agent_tab": "Agent Marketplace",
+    "skill_tab": "Skill Marketplace",
+    "system_source": "System",
+    "user_source": "User Published",
+    "publisher": "Publisher: {{name}}",
+    "recommendation_score_value": "Score {{score}}",
+    "edit_recommendation_score": "Set recommendation score",
+    "recommendation_score": "Recommendation score",
+    "recommendation_score_description": "Higher scores rank earlier in the marketplace.",
+    "recommendation_score_hint": "0 is not recommended, 80–89 is Featured, and 90–100 is Premium.",
+    "score_none": "None 0",
+    "score_featured": "Featured 80",
+    "score_premium": "Premium 90",
+    "recommendation_score_saved": "Recommendation score saved",
+    "recommendation_score_save_failed": "Failed to save recommendation score",
+    "resource_count": "{{count}} resources",
+    "configure_example_conversations": "Configure examples",
+    "example_conversations_configured": "{{count}} examples configured",
+    "edit_example_conversations": "Manage example conversations",
+    "example_conversation_description": "Administrators maintain examples for system Agents; publishers maintain their own Agent examples.",
+    "save_example_conversation": "Save URL",
+    "example_conversation_saved": "Example conversation URL saved",
+    "example_conversation_save_failed": "Failed to save example conversation URL",
+    "load_failed": "Failed to load marketplace resources",
+    "empty": "No marketplace resources",
+    "previous": "Previous",
+    "next": "Next",
+    "pagination": "Page {{page}} of {{totalPages}}"
   },
   "stats": {
     "total_users": "Total Users",
@@ -133,7 +168,9 @@
       "active": "Active",
       "inactive": "Inactive",
       "advanced": "Advanced",
-      "standard": "Standard"
+      "standard": "Standard",
+      "wework_available": "wework available",
+      "wework_unavailable": "wework unavailable"
     },
     "columns": {
       "id": "ID",
@@ -154,7 +191,8 @@
       "model_sub_group_placeholder": "Enter secondary group",
       "config": "Model Configuration",
       "config_placeholder": "Enter model configuration as JSON",
-      "is_advanced": "Advanced Model"
+      "is_advanced": "Advanced Model",
+      "is_wework_available": "Available in wework"
     },
     "confirm": {
       "delete_title": "Delete Model",
@@ -193,7 +231,7 @@
       "description": "Description",
       "version": "Version",
       "author": "Author",
-      "tags": "Tags",
+      "tags": "Skill Keywords",
       "created_at": "Created At",
       "actions": "Actions"
     },
@@ -234,7 +272,7 @@
       "tags": "tag1, tag2, tag3"
     },
     "hints": {
-      "tags": "Separate multiple tags with commas",
+      "tags": "Feature keywords from the skill package; they are not used for marketplace category filters. Separate multiple keywords with commas.",
       "visible": "When disabled, this skill will not appear in user skill lists, but agents already bound to it can still use it"
     }
   },
@@ -335,6 +373,8 @@
     "quick_launch_function_team_placeholder": "Select agent",
     "quick_launch_function_order": "Order",
     "quick_launch_function_icon": "Icon",
+    "quick_launch_function_cover": "Scenario cover",
+    "quick_launch_function_cover_placeholder": "Enter an image URL, for example /marketplace-covers/development.webp",
     "quick_launch_function_enabled": "Enabled",
     "quick_launch_function_disabled": "Disabled",
     "quick_launch_function_phrases": "Quick Phrases",
@@ -354,6 +394,19 @@
     "quick_launch_function_preset_attachments": "Attachments",
     "quick_launch_function_preset_upload_attachment": "Upload Attachment",
     "quick_launch_function_preset_no_attachments": "No preset attachments",
+    "marketplace_tags_title": "Marketplace Tags",
+    "marketplace_tags_description": "Manage marketplace filters. Saved IDs cannot be renamed or deleted, only disabled. Lower sort values appear first.",
+    "marketplace_tags_add": "Add Tag",
+    "marketplace_tags_load_failed": "Failed to load marketplace tag configuration",
+    "marketplace_tags_save_failed": "Failed to save marketplace tag configuration",
+    "marketplace_tags_saved": "Marketplace tag configuration saved",
+    "marketplace_tags_required": "Tag ID and both localized names are required",
+    "marketplace_tag_id": "Tag ID",
+    "marketplace_tag_name_zh": "Chinese Name",
+    "marketplace_tag_name_en": "English Name",
+    "marketplace_tag_sort": "Sort Value",
+    "marketplace_tag_enabled": "Enabled",
+    "marketplace_tag_disabled": "Disabled",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
@@ -530,6 +583,41 @@
       "signing_key_name_required": "SigningKey name is required",
       "audience_required": "Audience is required",
       "invalid_ttl": "TTL configuration is invalid"
+    }
+  },
+  "task_run_monitor": {
+    "title": "Task Run Monitor",
+    "description": "Track total assistant runs and current failure details across all users",
+    "refresh": "Refresh task run statistics",
+    "time_range": {
+      "1": "Last hour",
+      "6": "Last 6 hours",
+      "24": "Last 24 hours",
+      "72": "Last 3 days",
+      "168": "Last 7 days",
+      "720": "Last 30 days"
+    },
+    "stats": {
+      "total": "Total runs",
+      "failed": "Failed",
+      "approximate": "Approximate distinct count"
+    },
+    "failure_reasons": {
+      "title": "Top failure reasons",
+      "description": "Identical error messages are grouped; percentages use all failed runs",
+      "empty": "No failed runs in this time range",
+      "unknown": "No failure reason recorded"
+    },
+    "recent_failures": {
+      "title": "Recent failures",
+      "description": "Task, user, source, and original error details for investigation",
+      "empty": "No recent failures",
+      "user": "User",
+      "subtask": "Run"
+    },
+    "rate_note": "Total runs use Redis HyperLogLog and are approximate. Failed runs are the current failed state among runs created in the selected time range.",
+    "errors": {
+      "load_failed": "Failed to load task run statistics"
     }
   },
   "monitor": {
@@ -1055,6 +1143,77 @@
       "restart_all_cloud_title": "Confirm Restart All Cloud Devices",
       "restart_all_cloud_message": "This will send restart commands to all cloud devices and may interrupt running tasks. Confirm before continuing.",
       "restart_all_cloud_confirm": "Confirm Restart"
+    }
+  },
+  "connector_apps": {
+    "title": "App Connections",
+    "description": "Publish MCP or HTTP apps and control their authentication, visibility, and tool access.",
+    "create": "Add App",
+    "edit": "Edit app",
+    "disable": "Disable app",
+    "discover_tools": "Discover tools",
+    "test_tool": "Test tool",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "empty": "No apps have been configured.",
+    "connections": "{{count}} user connections",
+    "confirm_disable": "Disable “{{name}}”? Existing connections will be deleted and users must authorize again after re-enabling.",
+    "auth": {
+      "none": "No user auth",
+      "oauth2": "OAuth 2.0 user authorization",
+      "bearer": "User bearer token"
+    },
+    "visibility": {
+      "all": "All users",
+      "roles": "Selected roles"
+    },
+    "dialog": {
+      "create_title": "Add app",
+      "edit_title": "Edit app",
+      "description": "Connect a Streamable HTTP/SSE MCP server or adapt an ordinary HTTP API into tools. Secrets are encrypted and never returned by the API."
+    },
+    "fields": {
+      "name": "Display name",
+      "slug": "Unique slug",
+      "description": "Description",
+      "mcp_url": "MCP endpoint URL",
+      "http_base_url": "HTTP API base URL",
+      "transport": "Connection protocol",
+      "http_tools": "HTTP tool definitions",
+      "icon_url": "Icon URL",
+      "auth_type": "User authentication",
+      "visibility": "Visibility",
+      "allowed_roles": "Allowed roles",
+      "provider_headers": "Provider headers",
+      "clear_provider_headers": "Clear saved provider headers",
+      "tool_allowlist": "Tool allowlist",
+      "enabled": "Make this app available to users"
+    },
+    "hints": {
+      "lines": "Enter one value per line.",
+      "allowlist": "One upstream tool name per line. Leave empty to expose all tools.",
+      "http_tools": "JSON array of tools. Each tool defines name, description, method, relative path, input_schema, optional argument_locations, and timeout_seconds.",
+      "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"Get a ticket\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
+      "headers_json": "Optional JSON object. Values are stored encrypted.",
+      "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them."
+    },
+    "success": {
+      "saved": "App saved",
+      "disabled": "App disabled",
+      "discovered": "Discovered {{count}} tools",
+      "tested": "Tool test completed"
+    },
+    "errors": {
+      "load_failed": "Failed to load apps",
+      "save_failed": "Failed to save app",
+      "disable_failed": "Failed to disable app",
+      "discover_failed": "Failed to discover tools",
+      "test_failed": "Failed to test tool",
+      "test_returned_error": "Tool test returned an error",
+      "no_test_tool": "Configure or allow at least one tool before testing",
+      "required": "Name, slug, endpoint URL, and required transport configuration are required",
+      "provider_headers_invalid": "Provider headers must be a JSON object with string values",
+      "http_tools_invalid": "HTTP tool definitions must be a JSON array"
     }
   },
   "templates": {

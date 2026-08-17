@@ -22,6 +22,8 @@ export interface BaseWorkbenchProcessingBlock {
   subtaskId: string
   status: WorkbenchToolBlockStatus
   createdAt: number
+  completedAt?: number
+  durationMs?: number
   contentTruncated?: boolean
   contentOriginalChars?: number
   contentLoadRef?: WorkbenchContentLoadRef
@@ -75,6 +77,7 @@ export interface WorkbenchMessage<
   id: string
   taskId?: string
   subtaskId?: string
+  turnId?: string
   shellType?: string
   role: WorkbenchMessageRole
   content: string
@@ -89,6 +92,7 @@ export interface WorkbenchMessage<
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
   streamTextOffset?: number
+  streamingThinkingContent?: string
   contentTruncated?: boolean
   contentOriginalChars?: number
   contentLoadRef?: WorkbenchContentLoadRef
@@ -113,6 +117,8 @@ type ProcessingBlockUpdate = {
   renderPayload?: unknown
   fileChanges?: unknown
   status?: WorkbenchToolBlockStatus
+  completedAt?: number
+  durationMs?: number
 }
 
 const MAX_LIVE_MESSAGE_CONTENT_CHARS = 200_000
@@ -130,6 +136,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       taskId?: string
       subtaskId?: string
+      clientUserMessageId?: string
       shellType?: string
     }
   | {
@@ -144,7 +151,9 @@ export type WorkbenchMessageAction<
       type: 'assistant_chunk'
       messageId?: string
       subtaskId?: string
+      itemId?: string
       content: string
+      contentMode?: 'delta' | 'snapshot'
       offset?: number
       reasoningChunk?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
@@ -153,6 +162,8 @@ export type WorkbenchMessageAction<
       type: 'assistant_done'
       messageId?: string
       subtaskId?: string
+      turnId?: string
+      itemId?: string
       content?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
       fileChanges?: TFileChanges
@@ -171,6 +182,7 @@ export type WorkbenchMessageAction<
   | {
       type: 'assistant_error'
       messageId?: string
+      itemId?: string
       subtaskId?: string
       error: string
       errorType?: string
@@ -180,6 +192,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       subtaskId?: string
       block: WorkbenchProcessingBlock<TFileChanges>
+      replaceAssistantTextItemId?: string
     }
   | {
       type: 'block_updated'
@@ -206,7 +219,9 @@ export function reduceWorkbenchMessages<
         limitWorkbenchMessage
       )
     case 'user_added':
-      return [...state, action.message]
+      return normalizeUniqueWorkbenchMessages([...state, action.message]).map(
+        limitWorkbenchMessage
+      )
     case 'assistant_started':
       if (
         state.some((message) => isAssistantMessageForAction(message, action))
@@ -243,6 +258,7 @@ export function reduceWorkbenchMessages<
                 ...clearMessageError(message),
                 taskId: action.taskId ?? message.taskId,
                 content: action.content,
+                streamingThinkingContent: undefined,
                 status: 'streaming' as const,
                 blocks: action.blocks ?? message.blocks
               })
@@ -282,7 +298,14 @@ export function reduceWorkbenchMessages<
           limitWorkbenchMessage({
             ...message,
             streamTextOffset: contentMerge.streamTextOffset,
-            blocks: getChunkBlocks(message, action)
+            blocks: getChunkBlocks(message, action),
+            streamingThinkingContent: resolveStreamingThinkingContent({
+              previousContent: message.streamingThinkingContent,
+              reasoningChunk: action.reasoningChunk,
+              content: action.content,
+              incomingBlocks: action.blocks,
+              blocks: getChunkBlocks(message, action)
+            })
           })
         ]
       }
@@ -290,30 +313,41 @@ export function reduceWorkbenchMessages<
         isAssistantMessageForAction(message, action)
           ? message.status === 'done'
             ? message
-            : limitWorkbenchMessage({
-                ...clearMessageError(message),
-                ...mergeWorkbenchChunkContent(
-                  message.content,
-                  message.streamTextOffset,
-                  message.contentOriginalChars,
-                  action.content,
-                  action.offset
-                ),
-                status: 'streaming' as const,
-                blocks: getChunkBlocks(message, action)
-              })
+            : (() => {
+                const blocks = getChunkBlocks(message, action)
+                return limitWorkbenchMessage({
+                  ...clearMessageError(message),
+                  ...mergeWorkbenchChunkContent(
+                    message.content,
+                    message.streamTextOffset,
+                    message.contentOriginalChars,
+                    action.content,
+                    action.offset
+                  ),
+                  status: 'streaming' as const,
+                  blocks,
+                  streamingThinkingContent: resolveStreamingThinkingContent({
+                    previousContent: message.streamingThinkingContent,
+                    reasoningChunk: action.reasoningChunk,
+                    content: action.content,
+                    incomingBlocks: action.blocks,
+                    blocks
+                  })
+                })
+              })()
           : message
       )
-    case 'assistant_done':
-      if (
-        !state.some((message) => isAssistantMessageForAction(message, action))
-      ) {
+    case 'assistant_done': {
+      const messageIndex = findAssistantMessageIndexForDoneAction(state, action)
+      if (messageIndex === null) return state
+      if (messageIndex === -1) {
         return [
           ...state,
           limitWorkbenchMessage(
             createAssistantMessage<TAttachment, TFileChanges>({
               messageId: action.messageId,
-              subtaskId: action.subtaskId,
+              subtaskId: action.turnId ?? action.subtaskId,
+              turnId: action.turnId,
               content: action.content ?? '',
               status: 'done',
               blocks: finalizeProcessingBlocks(action.blocks, 'done'),
@@ -322,10 +356,12 @@ export function reduceWorkbenchMessages<
           )
         ]
       }
-      return state.map((message) =>
-        isAssistantMessageForAction(message, action)
+      return state.map((message, index) =>
+        index === messageIndex
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
+              subtaskId: action.turnId ?? message.subtaskId,
+              turnId: action.turnId ?? message.turnId,
               content: action.content ?? message.content,
               streamTextOffset: undefined,
               // A completed response is authoritative. Do not retain a stream
@@ -336,6 +372,7 @@ export function reduceWorkbenchMessages<
                 contentLoadRef: undefined
               }),
               status: 'done' as const,
+              streamingThinkingContent: undefined,
               blocks: finalizeProcessingBlocks(
                 action.blocks ?? message.blocks,
                 'done'
@@ -344,6 +381,7 @@ export function reduceWorkbenchMessages<
             })
           : message
       )
+    }
     case 'assistant_cancelled': {
       const completedAt = new Date().toISOString()
       const matches = state.some((message) =>
@@ -381,6 +419,7 @@ export function reduceWorkbenchMessages<
               }),
               status: 'done' as const,
               runtimeStatus: 'cancelled' as const,
+              streamingThinkingContent: undefined,
               completedAt,
               stoppedNotice: true,
               blocks: finalizeProcessingBlocks(message.blocks, 'done')
@@ -417,6 +456,7 @@ export function reduceWorkbenchMessages<
           ? limitWorkbenchMessage({
               ...message,
               status: 'failed' as const,
+              streamingThinkingContent: undefined,
               error:
                 message.error && isGenericTaskStatusError(action.error)
                   ? message.error
@@ -448,21 +488,31 @@ export function reduceWorkbenchMessages<
           : message
       )
     case 'block_updated':
-      return state.map((message) =>
-        isAssistantMessageForAction(message, action)
-          ? limitWorkbenchMessage({
-              ...withActiveStreamState(
-                message,
-                isActiveBlockStatus(action.updates.status)
-              ),
-              blocks: (message.blocks ?? []).map((block) =>
-                block.id === action.blockId
-                  ? mergeProcessingBlockUpdate(block, action.updates)
-                  : block
-              )
-            })
-          : message
-      )
+      return state.map((message) => {
+        if (!isAssistantMessageForAction(message, action)) return message
+
+        const previousBlock = message.blocks?.find(
+          (block) => block.id === action.blockId
+        )
+        const blocks = (message.blocks ?? []).map((block) =>
+          block.id === action.blockId
+            ? mergeProcessingBlockUpdate(block, action.updates)
+            : block
+        )
+        return limitWorkbenchMessage({
+          ...withActiveStreamState(
+            message,
+            isActiveBlockStatus(action.updates.status)
+          ),
+          blocks,
+          streamingThinkingContent:
+            previousBlock?.type === 'thinking'
+              ? getLatestThinkingContent(blocks)
+              : previousBlock?.type === 'text' || previousBlock?.type === 'plan'
+                ? undefined
+                : message.streamingThinkingContent
+        })
+      })
     default:
       return state
   }
@@ -472,11 +522,15 @@ function mergeProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
-  const { toolOutputDelta, ...directUpdates } = updates
-  const nextBlock = {
+  const { toolOutputDelta, durationMs, ...directUpdates } = updates
+  const nextBlock = withBlockCompletionTime(block, {
     ...block,
-    ...directUpdates
-  } as WorkbenchProcessingBlock<TFileChanges>
+    ...directUpdates,
+    ...(durationMs !== undefined && {
+      durationMs: Math.max(0, durationMs),
+      completedAt: block.createdAt + Math.max(0, durationMs)
+    })
+  } as WorkbenchProcessingBlock<TFileChanges>)
 
   if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {
     return nextBlock
@@ -518,7 +572,9 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
     MAX_LIVE_MESSAGE_CONTENT_CHARS,
     message.contentOriginalChars
   )
-  const blocks = message.blocks?.map(limitProcessingBlock)
+  const blocks = sortProcessingBlocksByCreatedAt(
+    message.blocks?.map(limitProcessingBlock)
+  )
   return {
     ...message,
     content: content.text,
@@ -560,6 +616,28 @@ function limitProcessingBlock<TFileChanges>(
   return block
 }
 
+function sortProcessingBlocksByCreatedAt<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+): WorkbenchProcessingBlock<TFileChanges>[] | undefined {
+  if (!blocks) return undefined
+
+  return blocks
+    .map((block, index) => ({ block, index }))
+    .sort((left, right) => {
+      const leftCreatedAt = Number.isFinite(left.block.createdAt)
+        ? left.block.createdAt
+        : Number.POSITIVE_INFINITY
+      const rightCreatedAt = Number.isFinite(right.block.createdAt)
+        ? right.block.createdAt
+        : Number.POSITIVE_INFINITY
+      if (leftCreatedAt === rightCreatedAt) {
+        return left.index - right.index
+      }
+      return leftCreatedAt - rightCreatedAt
+    })
+    .map(({ block }) => block)
+}
+
 function limitToolBlock(block: WorkbenchToolBlock): WorkbenchToolBlock {
   if (typeof block.toolOutput !== 'string') return block
 
@@ -598,7 +676,7 @@ function limitTextContent(
   if (currentChars <= maxChars) {
     return {
       text: value,
-      truncated: originalChars > currentChars,
+      truncated: originalChars > maxChars && originalChars > currentChars,
       originalChars
     }
   }
@@ -732,6 +810,34 @@ function isAssistantMessageForAction<TAttachment, TFileChanges>(
   )
 }
 
+function findAssistantMessageIndexForDoneAction<TAttachment, TFileChanges>(
+  messages: WorkbenchMessage<TAttachment, TFileChanges>[],
+  action: { messageId?: string; subtaskId?: string; turnId?: string }
+): number | null {
+  if (action.messageId) {
+    return messages.findIndex(
+      message =>
+        message.role === 'assistant' && message.id === action.messageId
+    )
+  }
+  for (const identity of [action.subtaskId, action.turnId]) {
+    if (typeof identity !== 'string') continue
+    const candidates = messages.flatMap((message, index) =>
+      message.role === 'assistant' && message.subtaskId === identity
+        ? [{ index, message }]
+        : []
+    )
+    if (candidates.length === 1) return candidates[0].index
+    if (candidates.length > 1) {
+      const unsettled = candidates.filter(
+        candidate => candidate.message.status !== 'done'
+      )
+      return unsettled.length === 1 ? unsettled[0].index : null
+    }
+  }
+  return -1
+}
+
 function isAssistantMessageForCancellationAction<TAttachment, TFileChanges>(
   message: WorkbenchMessage<TAttachment, TFileChanges>,
   action: { messageId?: string; subtaskId?: string }
@@ -756,6 +862,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   messageId,
   taskId,
   subtaskId,
+  turnId,
   shellType,
   content = '',
   status = 'streaming',
@@ -770,6 +877,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
   messageId?: string
   taskId?: string
   subtaskId?: string
+  turnId?: string
   shellType?: string
   content?: string
   status?: WorkbenchMessageStatus
@@ -785,6 +893,7 @@ function createAssistantMessage<TAttachment, TFileChanges>({
     id: messageId ?? `assistant-${subtaskId ?? Date.now()}`,
     taskId,
     subtaskId,
+    turnId,
     shellType,
     role: 'assistant',
     content,
@@ -841,21 +950,36 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
   >
 ): WorkbenchMessage<TAttachment, TFileChanges> {
   const subtaskId = action.subtaskId ?? message.subtaskId
+  const movesPendingContent = shouldMovePendingContentBeforeBlock(
+    message,
+    action.block
+  )
   const activeMessage = withActiveStreamState(
     message,
     isActiveBlockStatus(action.block.status)
   )
+  const blocks = mergeProcessingBlock(
+    subtaskId
+      ? getBlocksBeforeIncomingBlock(message, subtaskId, action.block)
+      : (message.blocks ?? []),
+    action.block
+  )
   return {
     ...activeMessage,
-    content: shouldMovePendingContentBeforeBlock(message, action.block)
-      ? ''
-      : message.content,
-    blocks: mergeProcessingBlock(
-      subtaskId
-        ? getBlocksBeforeIncomingBlock(message, subtaskId, action.block)
-        : (message.blocks ?? []),
-      action.block
-    )
+    content: movesPendingContent ? '' : message.content,
+    ...(movesPendingContent && {
+      streamTextOffset: undefined,
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    }),
+    blocks,
+    streamingThinkingContent:
+      action.block.type === 'thinking' || action.block.type === 'tool'
+        ? getLatestThinkingContent(blocks)
+        : action.block.type === 'text' || action.block.type === 'plan'
+          ? undefined
+          : message.streamingThinkingContent
   }
 }
 
@@ -905,6 +1029,40 @@ function getChunkBlocks<TAttachment, TFileChanges>(
 
   if (!action.blocks) return withReasoning
   return action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
+}
+
+export function resolveStreamingThinkingContent<TFileChanges>({
+  previousContent,
+  reasoningChunk,
+  content,
+  incomingBlocks,
+  blocks
+}: {
+  previousContent?: string
+  reasoningChunk?: string
+  content?: string
+  incomingBlocks?: WorkbenchProcessingBlock<TFileChanges>[]
+  blocks?: WorkbenchProcessingBlock<TFileChanges>[]
+}): string | undefined {
+  if (reasoningChunk) return getLatestThinkingContent(blocks)
+  if (content) return undefined
+  if (incomingBlocks?.some(block => block.type === 'tool')) {
+    return getLatestThinkingContent(blocks)
+  }
+  return previousContent
+}
+
+export function getLatestThinkingContent<TFileChanges>(
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+): string | undefined {
+  if (!blocks?.length) return undefined
+
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]
+    if (block?.type === 'thinking' && block.content.trim()) return block.content
+  }
+
+  return undefined
 }
 
 function mergeWorkbenchChunkContent(
@@ -1066,7 +1224,10 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
   subtaskId: string,
   incomingBlock: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges>[] {
-  const finalizedBlocks = finalizeOpenNarrativeBlocks(message.blocks)
+  const finalizedBlocks = finalizeOpenNarrativeBlocks(
+    message.blocks,
+    incomingBlock.createdAt
+  )
   if (!shouldMovePendingContentBeforeBlock(message, incomingBlock))
     return finalizedBlocks
 
@@ -1078,7 +1239,7 @@ function getBlocksBeforeIncomingBlock<TAttachment, TFileChanges>(
       type: 'text',
       content: message.content,
       status: 'done',
-      createdAt: Date.now()
+      createdAt: incomingBlock.createdAt
     }
   ]
 }
@@ -1095,7 +1256,8 @@ function getTextBlockCount(blocks: WorkbenchProcessingBlock[]): number {
 }
 
 function finalizeOpenNarrativeBlocks<TFileChanges>(
-  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
+  blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined,
+  nextBlockCreatedAt: number
 ): WorkbenchProcessingBlock<TFileChanges>[] {
   return (blocks ?? []).map((block) => {
     if (
@@ -1104,7 +1266,12 @@ function finalizeOpenNarrativeBlocks<TFileChanges>(
         block.type === 'plan') &&
       block.status === 'streaming'
     ) {
-      return { ...block, status: 'done' as const }
+      return {
+        ...block,
+        status: 'done' as const,
+        createdAt: Math.min(block.createdAt, nextBlockCreatedAt),
+        completedAt: block.completedAt ?? Date.now()
+      }
     }
 
     return block
@@ -1124,10 +1291,10 @@ function finalizeBlocks<TFileChanges>(
       return block
     }
 
-    return {
+    return withBlockCompletionTime(block, {
       ...block,
       status: finalStatus
-    } as WorkbenchProcessingBlock<TFileChanges>
+    } as WorkbenchProcessingBlock<TFileChanges>)
   })
 }
 
@@ -1147,9 +1314,19 @@ function mergeProcessingBlock<TFileChanges>(
   if (index === -1) return [...blocks, incomingBlock]
 
   const nextBlocks = [...blocks]
-  nextBlocks[index] = {
+  nextBlocks[index] = withBlockCompletionTime(nextBlocks[index], {
     ...nextBlocks[index],
     ...incomingBlock
-  } as WorkbenchProcessingBlock<TFileChanges>
+  } as WorkbenchProcessingBlock<TFileChanges>)
   return nextBlocks
+}
+
+function withBlockCompletionTime<TFileChanges>(
+  previous: WorkbenchProcessingBlock<TFileChanges>,
+  next: WorkbenchProcessingBlock<TFileChanges>
+): WorkbenchProcessingBlock<TFileChanges> {
+  const wasActive = previous.status !== 'done' && previous.status !== 'error'
+  const isComplete = next.status === 'done' || next.status === 'error'
+  if (!wasActive || !isComplete || next.completedAt !== undefined) return next
+  return { ...next, completedAt: Date.now() }
 }

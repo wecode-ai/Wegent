@@ -117,7 +117,7 @@ async def test_runtime_rpc_service_decodes_compressed_ack(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_runtime_rpc_service_rejects_stale_socket_without_waiting(monkeypatch):
+async def test_runtime_rpc_service_routes_to_socket_on_another_worker(monkeypatch):
     from app.services.device import runtime_rpc_service as module
 
     monkeypatch.setattr(
@@ -127,18 +127,18 @@ async def test_runtime_rpc_service_rejects_stale_socket_without_waiting(monkeypa
     )
     set_offline = AsyncMock()
     monkeypatch.setattr(module.device_service, "set_device_offline", set_offline)
-    sio_call = AsyncMock()
+    sio_call = AsyncMock(return_value={"success": True, "workspaces": []})
     sio = _socketio_with_call(sio_call, connected=False)
     monkeypatch.setattr(module, "get_sio", lambda: sio)
 
-    with pytest.raises(module.RuntimeRpcError, match="disconnected"):
-        await module.RuntimeRpcService().call(
-            user_id=7,
-            device_id="device-1",
-            method="runtime.tasks.list",
-            payload={},
-            timeout_seconds=30,
-        )
+    result = await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.list",
+        payload={},
+        timeout_seconds=30,
+    )
 
-    sio_call.assert_not_awaited()
-    set_offline.assert_awaited_once_with(7, "device-1")
+    assert result == {"success": True, "workspaces": []}
+    sio_call.assert_awaited_once()
+    set_offline.assert_not_awaited()

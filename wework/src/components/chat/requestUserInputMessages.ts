@@ -1,5 +1,5 @@
 import type { RequestUserInputResponse } from '@/types/api'
-import type { ProcessingBlock, ToolBlock, WorkbenchMessage } from '@/types/workbench'
+import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
@@ -104,49 +104,20 @@ export function isHiddenRequestUserInputBlock(
   return Boolean(key && hiddenRequestUserInputIds.has(key))
 }
 
-export function insertUserMessageBeforeRequestUserInput(
-  messages: WorkbenchMessage[],
-  userMessage: WorkbenchMessage,
+export function applyRequestUserInputResponseToBlock(
+  block: ProcessingBlock,
   response: RequestUserInputResponse
-): WorkbenchMessage[] {
+): ProcessingBlock {
   const responseKey = requestUserInputResponseKey(response)
-  const targetIndex = findRequestUserInputMessageIndex(messages, responseKey)
-  if (targetIndex < 0) {
-    return [...messages, userMessage]
+  if (!isMatchingRequestUserInputBlock(block, responseKey)) return block
+  return {
+    ...block,
+    status: 'done',
+    renderPayload: {
+      ...block.renderPayload,
+      response,
+    },
   }
-
-  return [...messages.slice(0, targetIndex), userMessage, ...messages.slice(targetIndex)]
-}
-
-export function applyRequestUserInputResponseToMessages(
-  messages: WorkbenchMessage[],
-  response: RequestUserInputResponse
-): WorkbenchMessage[] {
-  const responseKey = requestUserInputResponseKey(response)
-  let didUpdate = false
-
-  const nextMessages = messages.map(message => {
-    if (message.role !== 'assistant' || !message.blocks?.length) return message
-
-    let messageUpdated = false
-    const nextBlocks = message.blocks.map(block => {
-      if (!isMatchingRequestUserInputBlock(block, responseKey)) return block
-      didUpdate = true
-      messageUpdated = true
-      return {
-        ...block,
-        status: 'done' as const,
-        renderPayload: {
-          ...block.renderPayload,
-          response,
-        },
-      }
-    })
-
-    return messageUpdated ? { ...message, blocks: nextBlocks } : message
-  })
-
-  return didUpdate ? nextMessages : messages
 }
 
 function isRequestUserInputPayload(value: unknown): value is RequestUserInputPayload {
@@ -162,21 +133,6 @@ export function hasRequestUserInputResponse(payload: RequestUserInputPayload): b
   return Boolean(
     payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
   )
-}
-
-function findRequestUserInputMessageIndex(
-  messages: WorkbenchMessage[],
-  responseKey: string | null
-): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message.role !== 'assistant') continue
-    if (!message.blocks?.some(block => isMatchingRequestUserInputBlock(block, responseKey))) {
-      continue
-    }
-    return index
-  }
-  return -1
 }
 
 function isMatchingRequestUserInputBlock(

@@ -254,6 +254,23 @@ class TestSkillDownloadWithApiKey:
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
 
+    def test_download_system_skill_with_jwt_rejected(
+        self,
+        test_client: TestClient,
+        test_token: str,
+        test_public_skill_setup,
+    ):
+        """A regular browser JWT cannot use the generic system Skill fallback."""
+        response = test_client.get(
+            f"/api/v1/kinds/skills/{test_public_skill_setup.id}/download",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == (
+            "System skills cannot be downloaded by individual users"
+        )
+
 
 @pytest.mark.integration
 class TestSkillDownloadWithServiceKey:

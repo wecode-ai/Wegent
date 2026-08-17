@@ -34,4 +34,16 @@ describe('ProjectFolderIcon', () => {
 
     expect(screen.getByTestId('project-remote-folder-icon-8')).toBeInTheDocument()
   })
+
+  test('uses an open folder icon for expanded projects', () => {
+    const project: ProjectWithTasks = {
+      id: 9,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    render(<ProjectFolderIcon project={project} className="h-4 w-4" open />)
+
+    expect(screen.getByTestId('project-folder-icon-9')).toHaveAttribute('data-state', 'open')
+  })
 })

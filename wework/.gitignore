@@ -38,3 +38,6 @@ scripts/ios-env/local.env
 *.njsproj
 *.sln
 *.sw?
+
+# Generated temporary Tauri dev config used by dev:windows
+src-tauri/tauri.dev.windows.*.json

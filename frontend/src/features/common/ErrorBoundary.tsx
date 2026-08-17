@@ -17,6 +17,19 @@ interface State {
   error?: Error
 }
 
+const ASSET_RELOAD_KEY = 'wegent_asset_reload_at'
+const ASSET_RELOAD_COOLDOWN_MS = 10_000
+
+export function isAssetVersionError(error: Error): boolean {
+  const details = `${error.name} ${error.message} ${error.stack || ''}`
+  return (
+    details.includes('ChunkLoadError') ||
+    details.includes('Loading chunk') ||
+    (details.includes("reading 'call'") &&
+      (details.includes('options.factory') || details.includes('__webpack_require__')))
+  )
+}
+
 export default class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props)
@@ -30,11 +43,12 @@ export default class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo)
 
-    // Check if it's a chunk loading error
-    if (error.name === 'ChunkLoadError' || error.message.includes('ChunkLoadError')) {
-      console.error(
-        'Chunk loading error detected. This might be due to network issues or deployment problems.'
-      )
+    if (isAssetVersionError(error)) {
+      const lastReloadAt = Number(sessionStorage.getItem(ASSET_RELOAD_KEY) || 0)
+      if (Date.now() - lastReloadAt > ASSET_RELOAD_COOLDOWN_MS) {
+        sessionStorage.setItem(ASSET_RELOAD_KEY, String(Date.now()))
+        window.location.reload()
+      }
     }
   }
 
@@ -45,9 +59,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       // Check if it's specifically a chunk loading error
-      const isChunkError =
-        this.state.error?.name === 'ChunkLoadError' ||
-        this.state.error?.message.includes('ChunkLoadError')
+      const isChunkError = this.state.error ? isAssetVersionError(this.state.error) : false
 
       if (this.props.fallback) {
         return this.props.fallback

@@ -536,7 +536,7 @@ def iter_user_groups_with_roles(
         List of tuples (group_name, role, source_entity_type, source_entity_id)
     """
     from app.schemas.base_role import get_highest_role
-    from app.services.share.external_entity_resolver import (
+    from app.services.external_entity_resolver import (
         get_all_entity_types,
         get_entity_resolver,
     )

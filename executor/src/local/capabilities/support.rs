@@ -16,11 +16,86 @@ use zip::ZipArchive;
 
 use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MANIFEST_VERSION};
 
+const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
+const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
+const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
+const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
+const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
+const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
+const UNIX_MODE_SYMLINK: u32 = 0o120_000;
+const CODEX_MANIFEST_FIELDS: [&str; 11] = [
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "skills",
+    "mcpServers",
+    "connectors",
+];
+// Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
+const CLAUDE_MANIFEST_FIELDS: [&str; 22] = [
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "skills",
+    "mcpServers",
+    "commands",
+    "agents",
+    "hooks",
+    "outputStyles",
+    "lspServers",
+    "experimental",
+    "dependencies",
+    "userConfig",
+    "channels",
+    "themes",
+    "monitors",
+    "connectors",
+];
+
 pub(super) fn extract_plugin_zip(
     package: &[u8],
     install_path: &Path,
 ) -> Result<(), CapabilitySyncError> {
     let mut archive = ZipArchive::new(Cursor::new(package))?;
+    if archive.len() > MAX_PACKAGE_ENTRY_COUNT {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package contains too many files",
+        ));
+    }
+
+    let mut normalized_paths = BTreeMap::<String, ()>::new();
+    let mut expanded_size = 0_u64;
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        validate_plugin_zip_entry(&file)?;
+        if file.is_dir() {
+            continue;
+        }
+        expanded_size = expanded_size.saturating_add(file.size());
+        if expanded_size > MAX_EXPANDED_PACKAGE_SIZE_BYTES {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Expanded plugin package is too large",
+            ));
+        }
+        let normalized = normalize_zip_entry_path(file.name())?;
+        if normalized_paths.insert(normalized, ()).is_some() {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Duplicate path in plugin ZIP: {}",
+                file.name()
+            )));
+        }
+    }
+
     let mut entries = Vec::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
@@ -28,17 +103,23 @@ pub(super) fn extract_plugin_zip(
             continue;
         }
         let Some(path) = file.enclosed_name().map(Path::to_path_buf) else {
-            continue;
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Unsafe path in plugin ZIP: {}",
+                file.name()
+            )));
         };
         if is_macos_metadata_path(&path) {
             continue;
         }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.read_to_end(&mut bytes).map_err(map_zip_read_error)?;
         entries.push((path, bytes));
     }
     let manifest_prefix = plugin_manifest_prefix(&entries).ok_or_else(|| {
-        CapabilitySyncError::invalid_payload("Plugin package is missing .claude-plugin/plugin.json")
+        CapabilitySyncError::invalid_payload(
+            "Plugin package is missing .codex-plugin/plugin.json or \
+             .claude-plugin/plugin.json",
+        )
     })?;
 
     let temp_path = sibling_temp_path(install_path);
@@ -60,12 +141,7 @@ pub(super) fn extract_plugin_zip(
             fs::write(&target, bytes)?;
             ensure_plugin_hook_executable(relative, &target)?;
         }
-        if !temp_path.join(".claude-plugin/plugin.json").is_file() {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Plugin package is missing .claude-plugin/plugin.json",
-            ));
-        }
-        Ok(())
+        ensure_dual_plugin_manifests(&temp_path).map(|_| ())
     })();
     if let Err(error) = extraction_result {
         let _ = remove_existing_path(&temp_path);
@@ -78,6 +154,185 @@ pub(super) fn extract_plugin_zip(
     }
     fs::rename(&temp_path, install_path)?;
     Ok(())
+}
+
+fn validate_plugin_zip_entry(file: &zip::read::ZipFile<'_>) -> Result<(), CapabilitySyncError> {
+    if let Some(mode) = file.unix_mode() {
+        if mode & UNIX_FILE_TYPE_MASK == UNIX_MODE_SYMLINK {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Symbolic links are not allowed: {}",
+                file.name()
+            )));
+        }
+    }
+    normalize_zip_entry_path(file.name())?;
+    Ok(())
+}
+
+fn normalize_zip_entry_path(name: &str) -> Result<String, CapabilitySyncError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package contains an empty path",
+        ));
+    }
+    if trimmed.starts_with('/') || trimmed.contains('\\') {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "Unsafe path in plugin ZIP: {name}"
+        )));
+    }
+    for component in Path::new(trimmed).components() {
+        if matches!(component, Component::ParentDir) {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Unsafe path in plugin ZIP: {name}"
+            )));
+        }
+    }
+    Ok(trimmed.trim_end_matches('/').to_owned())
+}
+
+fn map_zip_read_error(error: io::Error) -> CapabilitySyncError {
+    if error.to_string().to_ascii_lowercase().contains("encrypted") {
+        return CapabilitySyncError::invalid_payload("Encrypted files are not allowed");
+    }
+    CapabilitySyncError::Io(error)
+}
+
+pub(super) fn has_plugin_manifest(plugin_path: &Path) -> bool {
+    PLUGIN_MANIFEST_PATHS
+        .iter()
+        .any(|manifest_path| plugin_path.join(manifest_path).is_file())
+}
+
+pub(super) fn ensure_dual_plugin_manifests(
+    plugin_path: &Path,
+) -> Result<bool, CapabilitySyncError> {
+    let codex_path = plugin_path.join(CODEX_PLUGIN_MANIFEST_PATH);
+    let claude_path = plugin_path.join(CLAUDE_PLUGIN_MANIFEST_PATH);
+    let codex_manifest = read_plugin_manifest(&codex_path)?;
+    let claude_manifest = read_plugin_manifest(&claude_path)?;
+    validate_plugin_manifest_names(codex_manifest.as_ref(), claude_manifest.as_ref())?;
+    if codex_manifest.is_none() && claude_manifest.is_none() {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package is missing .codex-plugin/plugin.json or \
+             .claude-plugin/plugin.json",
+        ));
+    }
+
+    let codex_missing = codex_manifest.is_none();
+    let codex_manifest = codex_manifest.unwrap_or_else(|| {
+        convert_plugin_manifest(
+            claude_manifest
+                .as_ref()
+                .expect("Claude manifest exists when Codex manifest is missing"),
+            false,
+        )
+    });
+    let claude_source = claude_manifest.as_ref().unwrap_or(&codex_manifest);
+    let normalized_claude_manifest = convert_plugin_manifest(claude_source, true);
+    let claude_changed = claude_manifest.as_ref() != Some(&normalized_claude_manifest);
+    if codex_missing {
+        write_json(&codex_path, &codex_manifest)?;
+    }
+    if claude_changed {
+        write_json(&claude_path, &normalized_claude_manifest)?;
+    }
+    Ok(codex_missing || claude_changed)
+}
+
+fn read_plugin_manifest(path: &Path) -> Result<Option<Value>, CapabilitySyncError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let manifest: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+    if !manifest.is_object() {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "{} must contain a JSON object",
+            path.display()
+        )));
+    }
+    Ok(Some(manifest))
+}
+
+fn validate_plugin_manifest_names(
+    codex_manifest: Option<&Value>,
+    claude_manifest: Option<&Value>,
+) -> Result<(), CapabilitySyncError> {
+    let codex_name = plugin_manifest_name(codex_manifest, CODEX_PLUGIN_MANIFEST_PATH)?;
+    let claude_name = plugin_manifest_name(claude_manifest, CLAUDE_PLUGIN_MANIFEST_PATH)?;
+    if codex_name
+        .as_ref()
+        .zip(claude_name.as_ref())
+        .is_some_and(|(codex, claude)| codex != claude)
+    {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Codex and Claude Code plugin manifest names must match",
+        ));
+    }
+    Ok(())
+}
+
+fn plugin_manifest_name(
+    manifest: Option<&Value>,
+    manifest_path: &str,
+) -> Result<Option<String>, CapabilitySyncError> {
+    let Some(manifest) = manifest else {
+        return Ok(None);
+    };
+    let name = value_string(manifest.get("name")).filter(|name| !name.is_empty());
+    name.map(Some).ok_or_else(|| {
+        CapabilitySyncError::invalid_payload(format!(
+            "{manifest_path} must include a non-empty name"
+        ))
+    })
+}
+
+fn convert_plugin_manifest(manifest: &Value, for_claude: bool) -> Value {
+    let fields = if for_claude {
+        CLAUDE_MANIFEST_FIELDS.as_slice()
+    } else {
+        CODEX_MANIFEST_FIELDS.as_slice()
+    };
+    let mut converted = Map::new();
+    let source = manifest.as_object().expect("plugin manifest object");
+    for field in fields {
+        if let Some(value) = source.get(*field) {
+            converted.insert((*field).to_owned(), value.clone());
+        }
+    }
+    if for_claude {
+        copy_codex_interface_metadata(source, &mut converted);
+    } else {
+        copy_claude_interface_metadata(source, &mut converted);
+    }
+    Value::Object(converted)
+}
+
+fn copy_codex_interface_metadata(source: &Map<String, Value>, target: &mut Map<String, Value>) {
+    let Some(interface) = source.get("interface").and_then(Value::as_object) else {
+        return;
+    };
+    if !target.contains_key("description") {
+        if let Some(description) = interface
+            .get("shortDescription")
+            .or_else(|| interface.get("longDescription"))
+        {
+            target.insert("description".to_owned(), description.clone());
+        }
+    }
+}
+
+fn copy_claude_interface_metadata(source: &Map<String, Value>, target: &mut Map<String, Value>) {
+    let mut interface = Map::new();
+    if let Some(display_name) = source.get("displayName") {
+        interface.insert("displayName".to_owned(), display_name.clone());
+    }
+    if let Some(description) = source.get("description") {
+        interface.insert("shortDescription".to_owned(), description.clone());
+    }
+    if !interface.is_empty() {
+        target.insert("interface".to_owned(), Value::Object(interface));
+    }
 }
 
 pub(super) fn ensure_plugin_hook_permissions(
@@ -139,12 +394,16 @@ fn is_plugin_hook_path(path: &Path) -> bool {
 fn plugin_manifest_prefix(entries: &[(PathBuf, Vec<u8>)]) -> Option<PathBuf> {
     entries
         .iter()
-        .filter(|(path, _)| path.ends_with(Path::new(".claude-plugin/plugin.json")))
-        .map(|(path, _)| {
-            path.parent()
-                .and_then(Path::parent)
-                .map(Path::to_path_buf)
-                .unwrap_or_default()
+        .flat_map(|(path, _)| {
+            PLUGIN_MANIFEST_PATHS
+                .iter()
+                .filter(move |manifest_path| path.ends_with(manifest_path))
+                .map(move |_| {
+                    path.parent()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf)
+                        .unwrap_or_default()
+                })
         })
         .min_by_key(|path| path.components().count())
 }
@@ -221,13 +480,17 @@ pub(super) fn upsert_installed_plugin(
     write_json(&path, &installed)
 }
 
-pub(super) fn enable_plugin(plugins_dir: &Path, key: &str) -> Result<(), CapabilitySyncError> {
+pub(super) fn set_plugin_enabled(
+    plugins_dir: &Path,
+    key: &str,
+    enabled: bool,
+) -> Result<(), CapabilitySyncError> {
     let settings_path = plugins_dir
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("settings.json");
     let mut settings = read_json_or_default(&settings_path, || json!({}))?;
-    ensure_object_field(&mut settings, "enabledPlugins").insert(key.to_owned(), json!(true));
+    ensure_object_field(&mut settings, "enabledPlugins").insert(key.to_owned(), json!(enabled));
     write_json(&settings_path, &settings)
 }
 
@@ -245,6 +508,7 @@ pub(super) fn plugin_manifest_entry(
         entry.insert("installed_plugin_id".to_owned(), json!(id));
     }
     entry.insert("marketplace".to_owned(), json!(spec.marketplace));
+    entry.insert("enabled".to_owned(), json!(spec.enabled));
     entry.insert("version".to_owned(), json!(spec.version));
     if let Some(checksum) = &spec.checksum {
         entry.insert("checksum".to_owned(), json!(checksum));
@@ -330,7 +594,18 @@ fn parse_skill_frontmatter(content: &str) -> BTreeMap<String, String> {
 }
 
 pub(super) fn sorted_dir_entries(path: &Path) -> Result<Vec<fs::DirEntry>, CapabilitySyncError> {
-    if !path.is_dir() {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "Refusing to traverse managed directory symlink: {}",
+            path.display()
+        )));
+    }
+    if !metadata.is_dir() {
         return Ok(Vec::new());
     }
     let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
@@ -361,6 +636,22 @@ pub(super) fn ensure_root_object(value: &mut Value) -> &mut Map<String, Value> {
         *value = Value::Object(Map::new());
     }
     value.as_object_mut().expect("manifest object")
+}
+
+pub(super) fn upsert_marketplace_plugin(
+    marketplace: &mut Value,
+    plugin_name: &str,
+    plugin: Value,
+) -> Result<(), CapabilitySyncError> {
+    let plugins = ensure_root_object(marketplace)
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let plugins = plugins.as_array_mut().ok_or_else(|| {
+        CapabilitySyncError::invalid_payload("Marketplace plugins must be an array")
+    })?;
+    plugins.retain(|candidate| candidate.get("name").and_then(Value::as_str) != Some(plugin_name));
+    plugins.push(plugin);
+    Ok(())
 }
 
 pub(super) fn ensure_object_field<'a>(
@@ -488,6 +779,21 @@ pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), Capabil
     }
 }
 
+pub(super) fn copy_dir_atomic(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
+    let temporary = sibling_temp_path(target);
+    remove_existing_path(&temporary)?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Err(error) = copy_dir_recursive(source, &temporary) {
+        let _ = remove_existing_path(&temporary);
+        return Err(error);
+    }
+    remove_existing_path(target)?;
+    fs::rename(&temporary, target)?;
+    Ok(())
+}
+
 #[cfg(unix)]
 fn symlink_dir(target: &Path, link: &Path) -> io::Result<()> {
     std::os::unix::fs::symlink(target, link)
@@ -498,7 +804,7 @@ fn symlink_dir(target: &Path, link: &Path) -> io::Result<()> {
     std::os::windows::fs::symlink_dir(target, link)
 }
 
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
+pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -531,7 +837,7 @@ pub(super) fn remove_existing_path(path: &Path) -> Result<(), CapabilitySyncErro
     }
 }
 
-fn sibling_temp_path(path: &Path) -> PathBuf {
+pub(super) fn sibling_temp_path(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
@@ -564,4 +870,36 @@ pub(super) fn now_rfc3339_like() -> String {
         .unwrap_or_default()
         .as_millis();
     format!("{millis}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dual_manifest_conversion_preserves_connector_auth_contracts() {
+        let connectors = json!([{
+            "slug": "gitlab-intra",
+            "authPolicy": "on_install",
+            "localAuth": {
+                "kind": "browser_oauth",
+                "health": ["scripts/local-auth.sh", "health"],
+                "start": ["scripts/local-auth.sh", "login"]
+            }
+        }]);
+        let manifest = json!({
+            "name": "gitlab-intra",
+            "version": "1.0.0",
+            "connectors": connectors,
+        });
+
+        assert_eq!(
+            convert_plugin_manifest(&manifest, false)["connectors"],
+            manifest["connectors"]
+        );
+        assert_eq!(
+            convert_plugin_manifest(&manifest, true)["connectors"],
+            manifest["connectors"]
+        );
+    }
 }

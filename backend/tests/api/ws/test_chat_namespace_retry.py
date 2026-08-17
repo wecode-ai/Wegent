@@ -24,6 +24,17 @@ from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 
 
+def test_retry_restores_image_generation_size() -> None:
+    user_subtask = SimpleNamespace(
+        result={"image_config": {"model": "gpt-image", "size": "1512x648"}}
+    )
+
+    params = chat_namespace._get_retry_generate_params(user_subtask)
+
+    assert params is not None
+    assert params.size == "1512x648"
+
+
 class _RetryDbMock:
     """Mock DB that records whether the retry session was released."""
 
@@ -31,6 +42,7 @@ class _RetryDbMock:
         self.closed = False
         self.rolled_back = False
         self.commit = Mock()
+        self.refresh = Mock()
         self.query = Mock()
         self.query.return_value.filter.return_value.first.return_value = user
 
@@ -199,6 +211,77 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
 
     assert result == {"success": True}
     mock_trigger.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_restores_persisted_video_generation_params():
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    task = SimpleNamespace(id=100, json={"metadata": {"labels": {}}})
+    failed_ai_subtask = SimpleNamespace(
+        id=42,
+        team_id=10,
+        message_id=7,
+        parent_id=41,
+        status=SimpleNamespace(value="FAILED"),
+    )
+    team = SimpleNamespace(id=10)
+    user_subtask = SimpleNamespace(
+        id=41,
+        prompt="Generate a video",
+        contexts=[],
+        result={
+            "video_config": {
+                "resolution": "1080p",
+                "ratio": "16:9",
+                "duration": 5,
+                "generation_mode_id": "text-to-video",
+            }
+        },
+    )
+    user = SimpleNamespace(id=1)
+    db = _RetryDbMock(user=user)
+
+    with (
+        patch("app.api.ws.chat_namespace.SessionLocal", return_value=db),
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace.fetch_retry_context",
+            return_value=(failed_ai_subtask, task, team, user_subtask),
+        ),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch(
+            "app.api.ws.chat_namespace.extract_display_prompt",
+            return_value="Generate a video",
+        ),
+        patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
+        patch(
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
+            AsyncMock(),
+        ) as mock_trigger,
+        patch("app.stores.tasks.task_store"),
+    ):
+        result = await namespace.on_chat_retry(
+            "sid-123",
+            {
+                "task_id": 100,
+                "subtask_id": 42,
+                "force_override_bot_model": "video-model",
+                "force_override_bot_model_type": "public",
+                "use_model_override": True,
+            },
+        )
+
+    assert result == {"success": True}
+    generate_params = mock_trigger.await_args.kwargs["payload"].generate_params
+    assert generate_params.resolution == "1080p"
+    assert generate_params.ratio == "16:9"
+    assert generate_params.duration == 5
+    assert generate_params.generation_mode_id == "text-to-video"
 
 
 @pytest.mark.asyncio

@@ -21,8 +21,25 @@ import {
   Square,
   CheckSquare,
   Workflow,
+  AlertTriangle,
 } from 'lucide-react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
@@ -68,11 +85,17 @@ const saveFilterTypes = (types: HistoryFilterType[]) => {
 interface HistoryManageDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  initialTaskId?: number | null
 }
 
 const PAGE_SIZE = 20
+const DELETE_BATCH_SIZE = 50
 
-export default function HistoryManageDialog({ open, onOpenChange }: HistoryManageDialogProps) {
+export default function HistoryManageDialog({
+  open,
+  onOpenChange,
+  initialTaskId,
+}: HistoryManageDialogProps) {
   const { t } = useTranslation()
   const router = useRouter()
   const { refreshPersonalTasks } = useTaskSession()
@@ -82,12 +105,19 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
 
   // Selected tasks for batch delete
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set())
+  // Whether user has opted to select ALL tasks (including unloaded pages)
+  const [isSelectingAll, setIsSelectingAll] = useState(false)
 
   // Is deleting
   const [isDeleting, setIsDeleting] = useState(false)
 
+  // Clear all confirmation dialog
+  const [showClearAllConfirm, setShowClearAllConfirm] = useState(false)
+  const [showDeleteSelectedConfirm, setShowDeleteSelectedConfirm] = useState(false)
+
   // Pagination state - load data independently
   const [allTasks, setAllTasks] = useState<Task[]>([])
+  const [total, setTotal] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
@@ -122,6 +152,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
           setAllTasks(prev => [...prev, ...result.items])
         } else {
           setAllTasks(result.items)
+          setTotal(result.total)
         }
         setHasMore(result.items.length === PAGE_SIZE)
         setCurrentPage(page)
@@ -142,9 +173,11 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
       setFilterTypes(savedTypes)
       setCurrentPage(1)
       setAllTasks([])
+      setIsSelectingAll(false)
+      setSelectedTaskIds(initialTaskId ? new Set([initialTaskId]) : new Set())
       loadTasks(1, false, savedTypes)
     }
-  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, initialTaskId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load more handler
   const handleLoadMore = useCallback(() => {
@@ -155,6 +188,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
 
   // Save filter types when changed and reload
   const handleFilterChange = (type: HistoryFilterType) => {
+    setIsSelectingAll(false)
     setFilterTypes(prev => {
       let newTypes: HistoryFilterType[]
       if (prev.includes(type)) {
@@ -168,6 +202,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
       // Reload with new filter
       setCurrentPage(1)
       setAllTasks([])
+      setSelectedTaskIds(new Set())
       loadTasks(1, false, newTypes)
       return newTypes
     })
@@ -176,15 +211,31 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
   // Tasks are already filtered by API, just use them directly
   const filteredTasks = allTasks
 
+  const deleteTaskIdsInBatches = useCallback(async (taskIds: number[]) => {
+    for (let index = 0; index < taskIds.length; index += DELETE_BATCH_SIZE) {
+      await taskApis.bulkDeleteTasks(taskIds.slice(index, index + DELETE_BATCH_SIZE))
+    }
+  }, [])
+
+  const deleteAllPersonalTasksInBatches = useCallback(async () => {
+    let deletedCount: number
+    do {
+      const result = await taskApis.deleteAllPersonalTasks()
+      deletedCount = result.count
+    } while (deletedCount > 0)
+  }, [])
+
   // Clear selection when dialog closes
   useEffect(() => {
     if (!open) {
       setSelectedTaskIds(new Set())
+      setIsSelectingAll(false)
     }
   }, [open])
 
   // Toggle task selection
   const toggleTaskSelection = (taskId: number) => {
+    setIsSelectingAll(false)
     setSelectedTaskIds(prev => {
       const next = new Set(prev)
       if (next.has(taskId)) {
@@ -196,46 +247,92 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
     })
   }
 
-  // Select all
+  // Select all loaded tasks
   const selectAll = () => {
     setSelectedTaskIds(new Set(filteredTasks.map(t => t.id)))
   }
 
   // Deselect all
   const deselectAll = () => {
+    setIsSelectingAll(false)
     setSelectedTaskIds(new Set())
   }
 
-  // Delete selected tasks
+  // Whether all loaded tasks are selected
+  const allLoadedSelected =
+    filteredTasks.length > 0 && filteredTasks.every(task => selectedTaskIds.has(task.id))
+
+  // Handle the select-all / deselect-all toggle
+  const handleSelectAllToggle = () => {
+    if (isSelectingAll || allLoadedSelected) {
+      deselectAll()
+    } else {
+      selectAll()
+    }
+  }
+
+  // Delete selected tasks (or all if isSelectingAll)
   const handleDeleteSelected = useCallback(async () => {
-    if (selectedTaskIds.size === 0) return
+    if (selectedTaskIds.size === 0 && !isSelectingAll) return
 
     setIsDeleting(true)
     try {
-      // Delete tasks one by one
-      for (const taskId of selectedTaskIds) {
-        await taskApis.deleteTask(taskId)
+      if (isSelectingAll) {
+        await deleteAllPersonalTasksInBatches()
+        setIsSelectingAll(false)
+        setSelectedTaskIds(new Set())
+      } else {
+        const ids = Array.from(selectedTaskIds)
+        await deleteTaskIdsInBatches(ids)
+        setSelectedTaskIds(new Set())
       }
-      setSelectedTaskIds(new Set())
-      // Reload the task list
+      setAllTasks([])
       loadTasks(1, false)
-      // Also refresh the sidebar
       refreshPersonalTasks()
     } catch (error) {
       console.error('Failed to delete tasks:', error)
     } finally {
       setIsDeleting(false)
     }
-  }, [selectedTaskIds, loadTasks, refreshPersonalTasks])
+  }, [
+    selectedTaskIds,
+    isSelectingAll,
+    deleteAllPersonalTasksInBatches,
+    deleteTaskIdsInBatches,
+    loadTasks,
+    refreshPersonalTasks,
+  ])
+
+  // Handle clear all button
+  const handleClearAll = useCallback(async () => {
+    setShowClearAllConfirm(false)
+    setIsDeleting(true)
+    try {
+      await deleteAllPersonalTasksInBatches()
+      setSelectedTaskIds(new Set())
+      setIsSelectingAll(false)
+      setAllTasks([])
+      loadTasks(1, false)
+      refreshPersonalTasks()
+    } catch (error) {
+      console.error('Failed to clear all tasks:', error)
+    } finally {
+      setIsDeleting(false)
+    }
+  }, [deleteAllPersonalTasksInBatches, loadTasks, refreshPersonalTasks])
 
   // Delete single task
   const handleDeleteSingleTask = useCallback(
     async (taskId: number) => {
       try {
         await taskApis.deleteTask(taskId)
-        // Remove from local state
         setAllTasks(prev => prev.filter(t => t.id !== taskId))
-        // Also refresh the sidebar
+        setSelectedTaskIds(prev => {
+          const next = new Set(prev)
+          next.delete(taskId)
+          return next
+        })
+        setTotal(prev => Math.max(0, prev - 1))
         refreshPersonalTasks()
       } catch (error) {
         console.error('Failed to delete task:', error)
@@ -325,161 +422,247 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
     )
   }
 
+  const activeCount = isSelectingAll ? total : selectedTaskIds.size
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">{t('history:title')}</DialogTitle>
-        </DialogHeader>
-
-        {/* Filter buttons */}
-        <div className="flex items-center gap-2 flex-wrap py-2 border-b border-border">
-          <span className="text-xs text-text-muted mr-1">{t('history:filters.all')}:</span>
-          <FilterButton
-            type="online"
-            icon={MessageSquare}
-            label={t('history:filters.conversations')}
-            color="bg-green-500/10 text-green-600"
-          />
-          <FilterButton
-            type="offline"
-            icon={Code2}
-            label={t('history:filters.tasks')}
-            color="bg-blue-500/10 text-blue-600"
-          />
-          <FilterButton
-            type="flow"
-            icon={Workflow}
-            label="Flow"
-            color="bg-purple-500/10 text-purple-600"
-          />
-        </div>
-
-        {/* Batch action bar */}
-        <div className="flex items-center justify-between py-2 border-b border-border">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={selectedTaskIds.size === filteredTasks.length ? deselectAll : selectAll}
-              className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
-            >
-              {selectedTaskIds.size === filteredTasks.length && filteredTasks.length > 0 ? (
-                <CheckSquare className="w-4 h-4" />
-              ) : (
-                <Square className="w-4 h-4" />
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center justify-between">
+              <span>{t('history:title')}</span>
+              {filteredTasks.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowClearAllConfirm(true)}
+                  disabled={isDeleting}
+                  className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                  data-testid="history-clear-all-button"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1" />
+                  {t('history:actions.clear_all')}
+                </Button>
               )}
-              <span>
-                {selectedTaskIds.size > 0
-                  ? t('history:confirm.delete_selected', { count: selectedTaskIds.size })
-                  : t('history:actions.view')}
-              </span>
-            </button>
+            </DialogTitle>
+            <DialogDescription className="sr-only">{t('history:description')}</DialogDescription>
+          </DialogHeader>
+
+          {/* Filter buttons */}
+          <div className="flex items-center gap-2 flex-wrap py-2 border-b border-border">
+            <span className="text-xs text-text-muted mr-1">{t('history:filters.all')}:</span>
+            <FilterButton
+              type="online"
+              icon={MessageSquare}
+              label={t('history:filters.conversations')}
+              color="bg-green-500/10 text-green-600"
+            />
+            <FilterButton
+              type="offline"
+              icon={Code2}
+              label={t('history:filters.tasks')}
+              color="bg-blue-500/10 text-blue-600"
+            />
+            <FilterButton
+              type="flow"
+              icon={Workflow}
+              label="Flow"
+              color="bg-purple-500/10 text-purple-600"
+            />
           </div>
 
-          {selectedTaskIds.size > 0 && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleDeleteSelected}
-              disabled={isDeleting}
-              className="h-7 text-xs"
-            >
-              <Trash2 className="w-3.5 h-3.5 mr-1" />
-              {isDeleting ? t('history:status.loading') : t('history:actions.delete')}
-            </Button>
-          )}
-        </div>
+          {/* Batch action bar */}
+          <div className="flex items-center justify-between py-2 border-b border-border">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSelectAllToggle}
+                className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
+                data-testid="history-select-all-toggle"
+              >
+                {isSelectingAll || (allLoadedSelected && filteredTasks.length > 0) ? (
+                  <CheckSquare className="w-4 h-4 text-primary" />
+                ) : (
+                  <Square className="w-4 h-4" />
+                )}
+                <span>
+                  {activeCount > 0
+                    ? t('history:actions.selected_count', { count: activeCount })
+                    : t('history:actions.select_all')}
+                </span>
+              </button>
 
-        {/* Task list */}
-        <div className="flex-1 overflow-y-auto -mx-6 px-6 py-2">
-          {isLoading ? (
-            <div className="text-center py-12">
-              <p className="text-sm text-text-muted">{t('history:status.loading')}</p>
-            </div>
-          ) : filteredTasks.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-sm text-text-muted">{t('history:empty.title')}</p>
-              <p className="text-xs text-text-muted mt-1">{t('history:empty.description')}</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {filteredTasks.map(task => {
-                const isSelected = selectedTaskIds.has(task.id)
-                return (
-                  <div
-                    key={task.id}
-                    className={`group flex items-center gap-3 py-2.5 px-3 rounded-lg transition-colors ${
-                      isSelected ? 'bg-primary/5' : 'hover:bg-hover'
-                    }`}
-                  >
-                    {/* Checkbox */}
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        toggleTaskSelection(task.id)
-                      }}
-                      className="flex-shrink-0 text-text-muted hover:text-text-primary"
-                    >
-                      {isSelected ? (
-                        <CheckSquare className="w-4 h-4 text-primary" />
-                      ) : (
-                        <Square className="w-4 h-4" />
-                      )}
-                    </button>
-
-                    {/* Task content (clickable) */}
-                    <div
-                      className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer"
-                      onClick={() => handleTaskClick(task)}
-                    >
-                      {/* Task type icon */}
-                      <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
-
-                      {/* Task title and time */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-text-primary truncate">{task.title}</p>
-                        <div className="flex items-center gap-2 text-xs text-text-muted">
-                          <span>{formatTimeAgo(task.created_at)}</span>
-                          {getStatusIcon(task.status)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Delete button (individual) */}
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        handleDeleteSingleTask(task.id)
-                      }}
-                      className="flex-shrink-0 p-1 text-text-muted hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                      title={t('history:actions.delete')}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )
-              })}
-
-              {/* Load more button */}
-              {hasMore && (
+              {/* Select all across pages prompt */}
+              {allLoadedSelected && hasMore && !isSelectingAll && (
                 <button
-                  onClick={handleLoadMore}
-                  disabled={isLoadingMore}
-                  className="w-full py-2 text-xs text-text-muted hover:text-text-primary transition-colors"
+                  onClick={() => setIsSelectingAll(true)}
+                  className="text-xs text-primary hover:underline transition-colors"
+                  data-testid="history-select-all-pages-button"
                 >
-                  {isLoadingMore ? t('history:status.loading') : t('common:tasks.load_more')}
+                  {t('history:actions.select_all_count', { count: total })}
                 </button>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Footer info */}
-        <div className="flex-shrink-0 pt-2 border-t border-border">
-          <p className="text-xs text-text-muted text-center">
-            {t('common:tasks.total_count', { count: filteredTasks.length })}
-          </p>
-        </div>
-      </DialogContent>
-    </Dialog>
+            {activeCount > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setShowDeleteSelectedConfirm(true)}
+                disabled={isDeleting}
+                className="h-7 text-xs"
+                data-testid="history-delete-selected-button"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+                {isDeleting ? t('history:status.loading') : t('history:actions.delete')}
+              </Button>
+            )}
+          </div>
+
+          {/* Task list */}
+          <div className="flex-1 overflow-y-auto -mx-6 px-6 py-2">
+            {isLoading ? (
+              <div className="text-center py-12">
+                <p className="text-sm text-text-muted">{t('history:status.loading')}</p>
+              </div>
+            ) : filteredTasks.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-sm text-text-muted">{t('history:empty.title')}</p>
+                <p className="text-xs text-text-muted mt-1">{t('history:empty.description')}</p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {filteredTasks.map(task => {
+                  const isSelected = isSelectingAll || selectedTaskIds.has(task.id)
+                  return (
+                    <div
+                      key={task.id}
+                      className={`group flex items-center gap-3 py-2.5 px-3 rounded-lg transition-colors ${
+                        isSelected ? 'bg-primary/5' : 'hover:bg-hover'
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          toggleTaskSelection(task.id)
+                        }}
+                        className="flex h-11 w-11 min-w-[44px] flex-shrink-0 items-center justify-center text-text-muted hover:text-text-primary lg:h-8 lg:w-8 lg:min-w-8"
+                        aria-label={t('history:actions.select_task', { title: task.title })}
+                        data-testid={`history-task-checkbox-${task.id}`}
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="w-4 h-4 text-primary" />
+                        ) : (
+                          <Square className="w-4 h-4" />
+                        )}
+                      </button>
+
+                      {/* Task content (clickable) */}
+                      <div
+                        className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer"
+                        onClick={() => handleTaskClick(task)}
+                      >
+                        <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
+
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-text-primary truncate">{task.title}</p>
+                          <div className="flex items-center gap-2 text-xs text-text-muted">
+                            <span>{formatTimeAgo(task.created_at)}</span>
+                            {getStatusIcon(task.status)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Delete button (individual) */}
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          handleDeleteSingleTask(task.id)
+                        }}
+                        className="flex h-11 w-11 min-w-[44px] flex-shrink-0 items-center justify-center text-text-muted transition-all hover:text-red-500 lg:h-8 lg:w-8 lg:min-w-8 lg:opacity-0 lg:group-hover:opacity-100"
+                        aria-label={t('common:tasks.delete_task')}
+                        data-testid={`history-task-delete-${task.id}`}
+                        title={t('history:actions.delete')}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+
+                {/* Load more button */}
+                {hasMore && (
+                  <button
+                    onClick={handleLoadMore}
+                    disabled={isLoadingMore}
+                    className="w-full py-2 text-xs text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    {isLoadingMore ? t('history:status.loading') : t('common:tasks.load_more')}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer info */}
+          <div className="flex-shrink-0 pt-2 border-t border-border">
+            <p className="text-xs text-text-muted text-center">
+              {t('common:tasks.total_count', { count: total || filteredTasks.length })}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Selected tasks confirmation dialog */}
+      <AlertDialog open={showDeleteSelectedConfirm} onOpenChange={setShowDeleteSelectedConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              {t('history:actions.bulk_delete')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('history:confirm.delete_selected', { count: activeCount })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setShowDeleteSelectedConfirm(false)
+                void handleDeleteSelected()
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="history-confirm-delete-selected-button"
+            >
+              {t('history:actions.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear all confirmation dialog */}
+      <AlertDialog open={showClearAllConfirm} onOpenChange={setShowClearAllConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              {t('history:actions.clear_all')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t('history:confirm.clear_all')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleClearAll}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="history-confirm-clear-all-button"
+            >
+              {t('history:actions.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

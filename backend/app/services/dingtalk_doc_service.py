@@ -35,6 +35,10 @@ MAX_NODES_PER_SYNC = 5000
 DOCS_SOURCE = DingTalkNodeSource.DOCS
 
 
+class DingTalkMCPToolError(RuntimeError):
+    """Raised when an MCP tool returns a protocol-level error result."""
+
+
 class DingTalkDocService:
     """Service for syncing and querying DingTalk document nodes."""
 
@@ -213,6 +217,27 @@ class DingTalkDocService:
     )
 
     @staticmethod
+    def _normalize_mcp_node(
+        node: dict[str, Any], *, allow_workspace_id: bool = False
+    ) -> dict[str, Any]:
+        """Return an MCP node with its provider identifier normalized to nodeId."""
+        id_keys = (
+            ["workspaceId", "nodeId", "id", "dingtalk_node_id"]
+            if allow_workspace_id
+            else ["nodeId", "id", "dingtalk_node_id"]
+        )
+
+        for key in id_keys:
+            value = node.get(key)
+            if value is None:
+                continue
+            node_id = str(value).strip()
+            if node_id:
+                return {**node, "nodeId": node_id}
+
+        return dict(node)
+
+    @staticmethod
     def _parse_list_nodes_result(
         result: Any,
     ) -> tuple[list[dict[str, Any]], str | None]:
@@ -228,6 +253,9 @@ class DingTalkDocService:
 
         nodes: list[dict[str, Any]] = []
         next_page_token: str | None = None
+
+        if getattr(result, "isError", False) is True:
+            raise DingTalkMCPToolError("DingTalk MCP tool returned an error result")
 
         if not hasattr(result, "content") or not result.content:
             logger.debug("list_nodes result has no content attribute or empty content")
@@ -247,9 +275,18 @@ class DingTalkDocService:
                     )
                     continue
 
+                if isinstance(data, dict) and data.get("success") is False:
+                    raise DingTalkMCPToolError(
+                        "DingTalk MCP tool returned an unsuccessful result"
+                    )
+
                 if isinstance(data, list):
                     # Direct list of node objects
-                    nodes.extend(item for item in data if isinstance(item, dict))
+                    nodes.extend(
+                        DingTalkDocService._normalize_mcp_node(item)
+                        for item in data
+                        if isinstance(item, dict)
+                    )
                 elif isinstance(data, dict):
                     # Wrapped response envelope — try known list keys
                     found_list: list[dict[str, Any]] | None = None
@@ -257,7 +294,9 @@ class DingTalkDocService:
                         candidate = data.get(key)
                         if isinstance(candidate, list):
                             found_list = [
-                                item for item in candidate if isinstance(item, dict)
+                                DingTalkDocService._normalize_mcp_node(item)
+                                for item in candidate
+                                if isinstance(item, dict)
                             ]
                             break
 
@@ -311,6 +350,7 @@ class DingTalkDocService:
 
         Compares with existing records and performs add/update/delete operations.
         Only operates on nodes with the given source value.
+
         """
         source_value = DingTalkDocService._normalize_source(source)
         added = 0

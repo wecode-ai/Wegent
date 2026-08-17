@@ -394,6 +394,75 @@ class TestBuildMcpServers:
         assert servers["native-server"]["timeout"] == 900000
 
 
+def test_wework_space_mcp_uses_existing_chat_and_code_shell_contracts(test_db, mocker):
+    builder = TaskRequestBuilder(test_db)
+    subtask = SimpleNamespace(
+        id=2,
+        message_id=33,
+        executor_name="",
+        executor_namespace="",
+    )
+    task = SimpleNamespace(id=1, json={"spec": {}}, project_id=None)
+    user = SimpleNamespace(id=7, user_name="alice")
+    team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
+    bot = SimpleNamespace(id=9)
+
+    mocker.patch(
+        "app.services.execution.request_builder.Team.model_validate",
+        return_value=SimpleNamespace(spec=SimpleNamespace(collaborationModel="solo")),
+    )
+    mocker.patch.object(builder, "_get_bot_for_subtask", return_value=bot)
+    mocker.patch.object(builder, "_build_workspace", return_value={})
+    mocker.patch.object(builder, "_build_user_info", return_value={"id": 7})
+    mocker.patch.object(builder, "_get_model_config", return_value={})
+    mocker.patch.object(builder, "_get_base_system_prompt", return_value="sys")
+    mocker.patch.object(builder, "_inject_conditional_provider_skills", return_value=[])
+    mocker.patch.object(builder, "_get_bot_skills", return_value=([], [], [], {}))
+    mocker.patch.object(
+        builder,
+        "_build_bot_config",
+        return_value=[{"shell_type": "ClaudeCode", "skills": [], "mcp_servers": []}],
+    )
+    mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
+    mocker.patch.object(builder, "_is_group_chat", return_value=False)
+    mocker.patch.object(builder, "_generate_auth_token", return_value="task-jwt")
+    mocker.patch.object(
+        builder, "_generate_skill_identity_token", return_value="skill-jwt"
+    )
+    mocker.patch(
+        "app.services.execution.request_builder.settings.WEGENT_BACKEND_PUBLIC_URL",
+        "http://localhost:8000",
+    )
+
+    result = builder.build(
+        subtask=subtask,
+        task=task,
+        user=user,
+        team=team,
+        message="hello",
+        include_wework_space_mcp=True,
+    )
+
+    assert result.mcp_servers == [
+        {
+            "name": "wegent-wework-space",
+            "type": "streamable-http",
+            "url": "http://localhost:8000/mcp/wework-space/sse",
+            "timeout": 60,
+            "auth": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+    assert result.bot[0]["mcp_servers"] == [
+        {
+            "name": "wegent-wework-space",
+            "type": "http",
+            "url": "http://localhost:8000/mcp/wework-space/sse",
+            "timeout": 60,
+            "headers": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+
+
 class TestPrepareMcpForClaudeCode:
     """Integration tests for _prepare_mcp_for_claude_code."""
 
@@ -545,13 +614,13 @@ class TestResolveRequestPreloadSkills:
         "_check_mcp_server_reachable",
         return_value=True,
     )
-    def test_selected_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
+    def test_inherited_kb_skill_resolves_into_request_and_claude_mcp(self, mock_check):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         request = ExecutionRequest(
             task_id=1273,
             subtask_id=1709,
             knowledge_base_ids=[1408],
-            is_user_selected_kb=True,
+            is_user_selected_kb=False,
             skill_names=["browser"],
             skill_configs=[{"name": "browser"}],
             preload_skills=["wegent-knowledge"],
@@ -566,30 +635,35 @@ class TestResolveRequestPreloadSkills:
         )
         bot = SimpleNamespace(name="chat-bot")
         team = SimpleNamespace(namespace="default")
+        captured = {}
 
-        builder._get_bot_skills = lambda **kwargs: (
-            [
-                {"name": "browser"},
-                {
-                    "name": "wegent-knowledge",
-                    "mcpServers": {
-                        "wegent-knowledge": {
-                            "type": "streamable-http",
-                            "url": "${{backend_url}}/mcp/knowledge/sse",
-                        }
+        def fake_get_bot_skills(**kwargs):
+            captured.update(kwargs)
+            return (
+                [
+                    {"name": "browser"},
+                    {
+                        "name": "wegent-knowledge",
+                        "mcpServers": {
+                            "wegent-knowledge": {
+                                "type": "streamable-http",
+                                "url": "${{backend_url}}/mcp/knowledge/sse",
+                            }
+                        },
                     },
+                ],
+                ["wegent-knowledge"],
+                ["wegent-knowledge"],
+                {
+                    "wegent-knowledge": {
+                        "skill_id": 99,
+                        "namespace": "default",
+                        "is_public": True,
+                    }
                 },
-            ],
-            ["wegent-knowledge"],
-            ["wegent-knowledge"],
-            {
-                "wegent-knowledge": {
-                    "skill_id": 99,
-                    "namespace": "default",
-                    "is_public": True,
-                }
-            },
-        )
+            )
+
+        builder._get_bot_skills = fake_get_bot_skills
 
         result = builder.resolve_request_preload_skills(
             request=request,
@@ -599,6 +673,13 @@ class TestResolveRequestPreloadSkills:
         )
 
         assert result.skill_names == ["browser", "wegent-knowledge"]
+        assert captured["user_preload_skills"] == [
+            {
+                "name": "wegent-knowledge",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
         assert result.skill_refs["wegent-knowledge"]["is_public"] is True
@@ -610,3 +691,45 @@ class TestResolveRequestPreloadSkills:
                 "url": "${{backend_url}}/mcp/knowledge/sse",
             }
         ]
+
+    def test_provider_runtime_skill_is_resolved_as_public(self):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        request = ExecutionRequest(
+            preload_skills=["dingtalk-docs"],
+            user_selected_skills=["dingtalk-docs"],
+            bot=[{"shell_type": "Chat", "skills": [], "mcp_servers": []}],
+        )
+        captured = {}
+
+        def fake_get_bot_skills(**kwargs):
+            captured.update(kwargs)
+            return (
+                [{"name": "dingtalk-docs"}],
+                ["dingtalk-docs"],
+                ["dingtalk-docs"],
+                {
+                    "dingtalk-docs": {
+                        "skill_id": 101,
+                        "namespace": "default",
+                        "is_public": True,
+                    }
+                },
+            )
+
+        builder._get_bot_skills = fake_get_bot_skills
+
+        result = builder.resolve_request_preload_skills(
+            request=request,
+            bot=SimpleNamespace(name="chat-bot"),
+            team=SimpleNamespace(namespace="default"),
+            user=SimpleNamespace(id=7, preferences="{}"),
+        )
+
+        assert captured["user_preload_skills"] == [
+            {
+                "name": "dingtalk-docs",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+        assert result.skill_names == ["dingtalk-docs"]

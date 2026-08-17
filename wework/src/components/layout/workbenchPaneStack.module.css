@@ -1,0 +1,30 @@
+.paneGroup {
+  container-name: workbench-pane;
+  container-type: size;
+}
+
+@container (max-width: 44rem) {
+  .paneHeaderActions [data-testid='local-workspace-titlebar-control'] {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .paneHeaderActions [data-testid='open-code-server-titlebar-button'] {
+    width: 1.75rem;
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .paneHeaderActions [data-testid='open-workspace-location-label'],
+  .paneHeaderActions [data-testid='open-local-workspace-picker-button'] {
+    display: none;
+  }
+}
+
+@container workbench-pane (max-height: 34rem) {
+  .paneContent :global([data-testid='desktop-chat-scroll-sticky-footer']) {
+    padding-top: 8px;
+    padding-bottom: 4px;
+  }
+}

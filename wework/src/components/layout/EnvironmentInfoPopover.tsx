@@ -1,18 +1,22 @@
 import {
   Check,
   ChevronDown,
+  CircleCheck,
   CircleDot,
+  CircleX,
+  Cloud,
   Copy,
   FolderOpen,
   GitCommit,
   GitBranch,
   GitPullRequest,
   Info,
+  Link2,
   Laptop,
   LoaderCircle,
-  MapPin,
-  Settings,
+  Clock3,
   Square,
+  TriangleAlert,
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
@@ -27,17 +31,26 @@ import {
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
-import type { DeviceInfo } from '@/types/api'
+import { navigateTo } from '@/lib/navigation'
+import {
+  findWorkbenchDevice,
+  getExecutorOfflineDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
+} from '@/lib/workbench-device'
+import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
+import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   popoverContainer: HTMLElement | null
   docked?: boolean
-  defaultOpen?: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
   floatingFooter?: ReactNode
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
@@ -48,6 +61,12 @@ interface EnvironmentInfoPopoverProps {
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
   onOpenChangesReview?: () => void
+  onDeliver?: () => void
+  todoLabel?: string
+  onManageTodo?: () => void
+  supervisor?: RuntimeSupervisorState | null
+  onConfigureSupervisor?: () => void
+  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
 }
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
@@ -56,11 +75,17 @@ const FLOATING_POPOVER_WIDTH = 300
 const FLOATING_POPOVER_GAP = 8
 const FLOATING_POPOVER_MARGIN = 16
 
+function getWorkspacePathDisplayName(path: string): string {
+  const normalizedPath = path.replace(/[\\/]+$/, '')
+  return normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) || path
+}
+
 export function EnvironmentInfoPopover({
   info,
   popoverContainer,
   docked = true,
-  defaultOpen = false,
+  open,
+  onOpenChange,
   floatingFooter,
   devices = [],
   onRefresh,
@@ -71,24 +96,27 @@ export function EnvironmentInfoPopover({
   onCheckoutBranch,
   onCreateBranch,
   onOpenChangesReview,
+  onDeliver,
+  todoLabel,
+  onManageTodo,
+  supervisor,
+  onConfigureSupervisor,
+  onRunSupervisorNow,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(docked && defaultOpen)
-  const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
+  const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
   const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
   const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
-  const userToggledOpenRef = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
-  const device = info.deviceId
-    ? devices.find(deviceInfo => deviceInfo.device_id === info.deviceId)
-    : undefined
+  const device = info.deviceId ? findWorkbenchDevice(devices, info.deviceId) : undefined
   const deviceName = device?.name?.trim() || ''
   const executionLabel =
     info.executionTarget === 'cloud'
@@ -97,12 +125,60 @@ export function EnvironmentInfoPopover({
   const executionTargetLabel = t('workbench.environment_execution_target')
   const deviceLabel = t('workbench.environment_device')
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
+  const executorDisplayName =
+    info.executionTarget === 'cloud'
+      ? getWorkbenchDeviceUnavailableDisplayName(device ?? null) || deviceDisplayName
+      : deviceDisplayName
+  const ExecutorIcon = info.executionTarget === 'cloud' ? Cloud : Laptop
   const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
-  const hasGitInfo = Boolean(info.branchName?.trim())
-  const canShowBranchSelector = Boolean(onListBranches && onCheckoutBranch)
-  const hasDiffStats = Boolean(info.additions || info.deletions)
+  const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
+  const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
+  const displayError = offlineDeviceId
+    ? t('workbench.conversation_device_offline_notice', {
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(offlineDevice) ||
+          t('workbench.current_device', '当前设备'),
+      })
+    : info.error
+  const gitRepositoryAvailable = info.isGitRepository !== false
+  const hasGitInfo = gitRepositoryAvailable && Boolean(info.branchName?.trim())
+  const canShowBranchSelector = Boolean(
+    gitRepositoryAvailable && onListBranches && onCheckoutBranch
+  )
+  const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
-  const environmentInfoLabel = t('workbench.environment_info')
+  const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
+  const workspacePaths =
+    info.workspaceRoots && info.workspaceRoots.length > 0
+      ? info.workspaceRoots
+      : info.workspacePath
+        ? [info.workspacePath]
+        : []
+  const changeRequest = info.changeRequest?.changeRequest
+  const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
+  const changeRequestStateLabel = changeRequest
+    ? changeRequest.draft
+      ? t('workbench.environment_change_request_draft', '草稿')
+      : t(`workbench.environment_change_request_${changeRequest.state}`, changeRequest.state)
+    : ''
+  const changeRequestChecksLabel =
+    changeRequest && changeRequest.checks !== 'unknown'
+      ? t(
+          `workbench.environment_change_request_checks_${changeRequest.checks}`,
+          changeRequest.checks
+        )
+      : ''
+  const changeRequestConflictLabel =
+    changeRequest?.mergeability === 'conflicting'
+      ? t('workbench.environment_change_request_conflicting', '存在冲突')
+      : ''
+  const changeRequestStatusLabel = [
+    changeRequestStateLabel,
+    changeRequestConflictLabel || changeRequestChecksLabel,
+  ]
+    .filter(Boolean)
+    .join('，')
+
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
@@ -110,21 +186,38 @@ export function EnvironmentInfoPopover({
     void openExternalUrl(info.createPullRequestUrl)
   }
 
+  function handleOpenChangeRequest() {
+    if (!changeRequest?.url) return
+    void openExternalUrl(changeRequest.url)
+  }
+
   function handleOpenChangesReview() {
     onOpenChangesReview?.()
-    userToggledOpenRef.current = true
-    setOpen(false)
-  }
-
-  async function handleCopyWorkspacePath() {
-    if (!info.workspacePath) {
-      return
+    if (!docked) {
+      onOpenChange(false)
     }
-
-    await navigator.clipboard?.writeText(info.workspacePath)
-    setWorkspacePathCopied(true)
-    window.setTimeout(() => setWorkspacePathCopied(false), 1200)
   }
+
+  async function handleCopyWorkspacePath(workspacePath: string) {
+    await copyTextToClipboard(workspacePath)
+    if (copiedWorkspacePathTimeoutRef.current !== null) {
+      window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
+    }
+    setCopiedWorkspacePath(workspacePath)
+    copiedWorkspacePathTimeoutRef.current = window.setTimeout(() => {
+      setCopiedWorkspacePath(current => (current === workspacePath ? null : current))
+      copiedWorkspacePathTimeoutRef.current = null
+    }, 2000)
+  }
+
+  useEffect(
+    () => () => {
+      if (copiedWorkspacePathTimeoutRef.current !== null) {
+        window.clearTimeout(copiedWorkspacePathTimeoutRef.current)
+      }
+    },
+    []
+  )
 
   function getCommitErrorMessage(error: unknown) {
     const fallback = t('workbench.environment_commit_failed', '提交失败')
@@ -193,12 +286,11 @@ export function EnvironmentInfoPopover({
   }
 
   function handleToggleOpen() {
-    userToggledOpenRef.current = true
     const nextOpen = !open
     if (nextOpen && !docked) {
       setFloatingPopoverStyle(getFloatingPopoverPosition())
     }
-    setOpen(nextOpen)
+    onOpenChange(nextOpen)
     if (nextOpen) {
       void onRefresh?.()
     }
@@ -210,13 +302,13 @@ export function EnvironmentInfoPopover({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
-        setOpen(false)
+        onOpenChange(false)
       }
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [docked, open])
+  }, [docked, onOpenChange, open])
 
   function getFloatingPopoverPosition(): CSSProperties | undefined {
     const anchor = rootRef.current?.getBoundingClientRect()
@@ -244,8 +336,8 @@ export function EnvironmentInfoPopover({
         onClick={handleToggleOpen}
         className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
         aria-expanded={open}
-        aria-label={environmentInfoLabel}
-        title={environmentInfoLabel}
+        aria-label={taskSummaryToggleLabel}
+        title={taskSummaryToggleLabel}
       >
         <Info />
       </button>
@@ -259,86 +351,94 @@ export function EnvironmentInfoPopover({
             data-testid="environment-info-popover"
             style={docked ? undefined : floatingPopoverStyle}
             className={cn(
-              'w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-md backdrop-blur-3xl backdrop-saturate-150',
+              'pointer-events-auto w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-md backdrop-blur-3xl backdrop-saturate-150',
               docked ? 'ml-2 mt-3' : 'fixed z-system'
             )}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[13px] font-medium text-text-primary">
-                {t('workbench.environment_info', '环境信息')}
-              </h2>
-              <button
-                type="button"
-                data-testid="environment-settings-button"
-                className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary hover:bg-hover hover:text-text-primary"
-                aria-label={t('workbench.environment_settings', '环境设置')}
-              >
-                <Settings className="h-[18px] w-[18px]" />
-              </button>
-            </div>
+            <h2 className="mb-3 text-sm font-medium text-text-primary">
+              {t('workbench.environment_summary_title', '环境')}
+            </h2>
 
             <div className="space-y-3">
-              <section data-testid="environment-device-section" className="space-y-0.5">
+              <section
+                data-testid="environment-device-section"
+                className="flex w-full min-w-0 flex-col gap-1"
+              >
+                {workspacePaths.map((workspacePath, index) => {
+                  const copied = copiedWorkspacePath === workspacePath
+                  return (
+                    <div
+                      key={workspacePath}
+                      className="flex h-11 min-w-0 items-center gap-2 md:h-7"
+                      data-testid={`environment-workspace-root-row-${index}`}
+                    >
+                      <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                      <button
+                        type="button"
+                        data-testid={
+                          index === 0
+                            ? 'environment-workspace-path-button'
+                            : `environment-workspace-root-button-${index}`
+                        }
+                        onClick={() => void handleCopyWorkspacePath(workspacePath)}
+                        title={workspacePath}
+                        aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
+                        className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary md:min-h-0"
+                      >
+                        <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
+                        <span
+                          data-testid={
+                            index === 0
+                              ? 'environment-workspace-path'
+                              : `environment-workspace-root-${index}`
+                          }
+                          className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-text-primary"
+                        >
+                          {getWorkspacePathDisplayName(workspacePath)}
+                        </span>
+                        <span
+                          data-testid={
+                            index === 0
+                              ? 'environment-workspace-path-copy-icon'
+                              : `environment-workspace-root-copy-icon-${index}`
+                          }
+                          className={cn(
+                            'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                            copied ? 'text-green-500' : 'text-text-muted'
+                          )}
+                          aria-hidden="true"
+                        >
+                          {copied ? (
+                            <Check className="h-3.5 w-3.5" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                        {copied && (
+                          <span role="status" className="sr-only">
+                            {t('workbench.environment_copied')}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  )
+                })}
                 <div
                   data-testid="environment-execution-target-row"
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary"
+                  title={`${executionTargetLabel} · ${executionLabel}; ${deviceTitle}`}
+                  className="flex h-7 min-w-0 items-center gap-2 text-xs text-text-secondary"
                 >
-                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                    <MapPin className="h-[18px] w-[18px]" />
+                  <ExecutorIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                  <span className="sr-only">
+                    {executionTargetLabel} · {executionLabel} ·{' '}
                   </span>
-                  <span className="shrink-0">{executionTargetLabel}</span>
-                  <span className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right text-text-secondary">
-                    {executionLabel}
-                  </span>
+                  <div data-testid="environment-device-button" className="min-w-0 truncate">
+                    <span className="sr-only">{deviceLabel}</span>
+                    <span data-testid="environment-device-name" className="whitespace-nowrap">
+                      {executorDisplayName}
+                    </span>
+                  </div>
                 </div>
-                <div
-                  data-testid="environment-device-button"
-                  title={deviceTitle}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary"
-                >
-                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                    <Laptop className="h-[18px] w-[18px]" />
-                  </span>
-                  <span className="shrink-0">{deviceLabel}</span>
-                  <span
-                    data-testid="environment-device-name"
-                    className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right text-text-secondary"
-                  >
-                    {deviceDisplayName}
-                  </span>
-                </div>
-                {info.workspacePath && (
-                  <button
-                    type="button"
-                    data-testid="environment-workspace-path-button"
-                    onClick={handleCopyWorkspacePath}
-                    title={info.workspacePath}
-                    className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover"
-                  >
-                    <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                      <FolderOpen className="h-[18px] w-[18px]" />
-                    </span>
-                    <span className="shrink-0">{t('workbench.environment_workspace_path')}</span>
-                    <span
-                      data-testid="environment-workspace-path"
-                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
-                    >
-                      {info.workspacePath}
-                    </span>
-                    <span
-                      data-testid="environment-workspace-path-copy-icon"
-                      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary"
-                      aria-hidden="true"
-                    >
-                      <Copy className="h-[16px] w-[16px]" />
-                    </span>
-                    {workspacePathCopied && (
-                      <span className="shrink-0 text-xs text-green-500">
-                        {t('workbench.environment_copied')}
-                      </span>
-                    )}
-                  </button>
-                )}
               </section>
 
               {showChangesSection && (
@@ -351,7 +451,7 @@ export function EnvironmentInfoPopover({
                     data-testid="environment-changes-button"
                     disabled={!onOpenChangesReview}
                     onClick={handleOpenChangesReview}
-                    className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
+                    className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
                   >
                     <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                       <CircleDot className="h-[18px] w-[18px]" />
@@ -359,7 +459,7 @@ export function EnvironmentInfoPopover({
                     <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
                       {t('workbench.environment_changes', '变更')}
                     </span>
-                    <span className="flex gap-1.5 text-[13px]">
+                    <span className="flex gap-1.5 text-sm">
                       <span className="text-green-500">{additions}</span>
                       <span className="text-red-500">{deletions}</span>
                     </span>
@@ -380,7 +480,7 @@ export function EnvironmentInfoPopover({
                       {commitStatus === 'committing' ? (
                         <div
                           data-testid="environment-commit-progress-row"
-                          className="flex h-8 w-full items-center gap-3 rounded-md bg-hover px-0 text-left text-[13px] leading-[18px] text-text-secondary"
+                          className="flex h-8 w-full items-center gap-3 rounded-md bg-hover px-0 text-left text-sm leading-[18px] text-text-secondary"
                         >
                           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                             <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -407,7 +507,7 @@ export function EnvironmentInfoPopover({
                             setCommitError(null)
                           }}
                           className={cn(
-                            'flex h-8 w-full items-center gap-3 rounded-md text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted',
+                            'flex h-8 w-full items-center gap-3 rounded-md text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted',
                             commitFormOpen && 'bg-hover'
                           )}
                         >
@@ -424,40 +524,174 @@ export function EnvironmentInfoPopover({
                           )}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        data-testid="create-pull-request-button"
-                        disabled={!info.createPullRequestUrl}
-                        onClick={handleCreatePullRequest}
-                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                      >
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                          <GitPullRequest className="h-[18px] w-[18px]" />
-                        </span>
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                          {t('workbench.environment_create_pr', '创建拉取请求')}
-                        </span>
-                      </button>
-
-                      <div className="my-4 h-px bg-border" />
-
-                      <section>
-                        <h3 className="mb-3 text-[13px] text-text-secondary">
-                          {t('workbench.environment_sources', '来源')}
-                        </h3>
-                        <p className="text-[13px] text-text-muted">
-                          {t('workbench.environment_no_sources', '暂无来源')}
-                        </p>
-                      </section>
+                      {changeRequest ? (
+                        <button
+                          type="button"
+                          data-testid="change-request-button"
+                          onClick={handleOpenChangeRequest}
+                          title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
+                          aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
+                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                        >
+                          <span
+                            className={cn(
+                              'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary',
+                              changeRequest.state === 'open' &&
+                                !changeRequest.draft &&
+                                'text-green-500',
+                              changeRequest.state === 'merged' && 'text-green-500',
+                              changeRequest.state === 'closed' && 'text-red-500',
+                              changeRequest.mergeability === 'conflicting' && 'text-red-500'
+                            )}
+                            aria-hidden="true"
+                          >
+                            <GitPullRequest className="h-[18px] w-[18px]" />
+                            {changeRequest.mergeability === 'conflicting' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
+                                <TriangleAlert className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'success' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-green-500">
+                                <CircleCheck className="h-3.5 w-3.5 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'failure' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
+                                <CircleX className="h-3.5 w-3.5 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'pending' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-text-muted">
+                                <Clock3 className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span
+                              data-testid="change-request-number"
+                              className="shrink-0 font-medium"
+                            >
+                              {changeRequestPrefix}
+                              {changeRequest.number}
+                            </span>
+                            <span
+                              data-testid="change-request-title"
+                              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                            >
+                              {changeRequest.title}
+                            </span>
+                            <span data-testid="change-request-state" className="sr-only">
+                              {changeRequestStateLabel}
+                            </span>
+                            {changeRequest.checks !== 'unknown' && (
+                              <span data-testid="change-request-checks" className="sr-only">
+                                {changeRequestChecksLabel}
+                              </span>
+                            )}
+                            {changeRequest.mergeability === 'conflicting' && (
+                              <span data-testid="change-request-conflict" className="sr-only">
+                                {changeRequestConflictLabel}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid="create-pull-request-button"
+                          disabled={!info.createPullRequestUrl}
+                          onClick={handleCreatePullRequest}
+                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+                        >
+                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                            <GitPullRequest className="h-[18px] w-[18px]" />
+                          </span>
+                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                            {info.changeRequest?.provider === 'gitlab'
+                              ? t('workbench.environment_create_mr', '创建合并请求')
+                              : t('workbench.environment_create_pr', '创建拉取请求')}
+                          </span>
+                        </button>
+                      )}
+                      {info.changeRequest &&
+                        ['unavailable', 'unauthenticated', 'error'].includes(
+                          info.changeRequest.state
+                        ) && (
+                          <div className="px-7 pb-1">
+                            <p
+                              data-testid="change-request-lookup-hint"
+                              className="text-xs leading-4 text-text-muted"
+                            >
+                              {t(
+                                `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
+                                ''
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              data-testid="change-request-open-settings"
+                              onClick={() => {
+                                onOpenChange(false)
+                                navigateTo('/settings/git-hosting')
+                              }}
+                              className="mt-1 text-xs text-blue-500 hover:underline"
+                            >
+                              {t(
+                                'workbench.environment_change_request_configure',
+                                '配置代码托管工具'
+                              )}
+                            </button>
+                          </div>
+                        )}
                     </>
                   )}
                 </section>
               )}
+              {(onManageTodo || onDeliver) && (
+                <section className="border-t border-border pt-3">
+                  {onManageTodo && (
+                    <button
+                      type="button"
+                      data-testid="environment-todo-binding-button"
+                      onClick={onManageTodo}
+                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                        <Link2 className="h-[18px] w-[18px]" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{todoLabel || '关联项目空间'}</span>
+                    </button>
+                  )}
+                  {onDeliver && (
+                    <button
+                      type="button"
+                      data-testid="environment-delivery-button"
+                      onClick={onDeliver}
+                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                        <GitBranch className="h-[18px] w-[18px]" />
+                      </span>
+                      <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
+                    </button>
+                  )}
+                </section>
+              )}
+              {supervisor && onConfigureSupervisor && (
+                <section
+                  data-testid="environment-supervisor-section"
+                  className="border-t border-border pt-3"
+                >
+                  <TaskSupervisorStatusButton
+                    supervisor={supervisor}
+                    onClick={onConfigureSupervisor}
+                    onRunNow={onRunSupervisorNow}
+                  />
+                </section>
+              )}
             </div>
 
-            {info.error && (
+            {displayError && (
               <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-                {info.error}
+                {displayError}
               </p>
             )}
             {commitError && (
@@ -480,7 +714,7 @@ export function EnvironmentInfoPopover({
             className="fixed left-1/2 top-[36vh] z-system-popover w-[430px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-[0_18px_48px_rgba(0,0,0,0.20)]"
             onSubmit={handleSubmitCommit}
           >
-            <div className="flex h-10 items-center gap-2 px-4 text-[13px] leading-[18px] text-text-secondary">
+            <div className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-secondary">
               <GitBranch className="h-4 w-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate font-medium">{branchLabel}</span>
               <ChevronDown className="h-4 w-4 shrink-0" />
@@ -500,14 +734,14 @@ export function EnvironmentInfoPopover({
                   event.currentTarget.form?.requestSubmit()
                 }
               }}
-              className="min-h-[74px] w-full resize-none bg-background px-4 py-2 text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-muted"
+              className="min-h-[74px] w-full resize-none bg-background px-4 py-2 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
               placeholder={t('workbench.environment_commit_message_placeholder')}
               autoFocus
             />
 
             <div
               data-testid="environment-include-unstaged-row"
-              className="flex h-10 items-center gap-2 px-4 text-[13px] leading-[18px] text-text-primary"
+              className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-primary"
             >
               <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border bg-background text-text-primary">
                 <Check className="h-3 w-3" strokeWidth={2.4} />
@@ -522,7 +756,7 @@ export function EnvironmentInfoPopover({
                 type="submit"
                 data-testid="environment-confirm-commit-button"
                 disabled={!onCommitChanges || commitStatus === 'committing'}
-                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <GitCommit className="h-4 w-4 shrink-0 text-text-secondary" />
                 <span className="min-w-0 flex-1 truncate">
@@ -530,7 +764,7 @@ export function EnvironmentInfoPopover({
                     ? t('workbench.environment_committing', '提交中')
                     : t('workbench.environment_commit', '提交')}
                 </span>
-                <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-surface px-1.5 text-[11px] leading-none text-text-muted">
+                <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-surface px-1.5 text-xs leading-none text-text-muted">
                   <span>⌘</span>
                   <CornerDownLeft className="h-3 w-3" aria-hidden="true" />
                 </span>
@@ -540,7 +774,7 @@ export function EnvironmentInfoPopover({
                 data-testid="environment-commit-and-push-button"
                 disabled={!onCommitAndPushChanges || commitStatus === 'committing'}
                 onClick={() => void handleCommitPanelAction('commit-and-push')}
-                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
               >
                 <Upload className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">
@@ -552,7 +786,7 @@ export function EnvironmentInfoPopover({
                 data-testid="environment-push-button"
                 disabled={!onPushChanges || commitStatus === 'committing'}
                 onClick={() => void handleCommitPanelAction('push')}
-                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
               >
                 <Upload className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">

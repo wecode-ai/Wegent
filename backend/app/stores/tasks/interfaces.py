@@ -21,6 +21,15 @@ class WorkspaceRefLookup:
     name: str
 
 
+@dataclass(frozen=True)
+class FailedSubtaskDetail:
+    """Failed subtask with the task and user data needed by monitoring views."""
+
+    subtask: Subtask
+    task: TaskResource
+    user_name: Optional[str]
+
+
 class TaskIdAllocationError(RuntimeError):
     """Raised when a task ID reservation cannot be allocated."""
 
@@ -273,6 +282,14 @@ class TaskStore(Protocol):
         client_origin: Optional[str] = None,
     ) -> list[TaskResource]: ...
 
+    def list_recent_owner_only_used_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+    ) -> list[TaskResource]: ...
+
     def list_owned_tasks_by_states(
         self,
         db: Session,
@@ -371,10 +388,6 @@ class TaskStore(Protocol):
         self, db: Session, *, user_id: int
     ) -> list[TaskResource]: ...
 
-    def list_accessible_active_tasks_for_user(
-        self, db: Session, *, user_id: int
-    ) -> list[TaskResource]: ...
-
     def count_non_deleted_by_ids(
         self,
         db: Session,
@@ -429,6 +442,8 @@ class TaskStore(Protocol):
         scope: Literal["all", "standalone", "project", "project_id"],
         project_id: Optional[int] = None,
         client_origin: Optional[str] = None,
+        exclude_group_chats: bool = False,
+        limit: Optional[int] = None,
     ) -> list[TaskResource]: ...
 
     def list_archived_task_ids(
@@ -566,6 +581,22 @@ class SubtaskStore(Protocol):
         role: SubtaskRole,
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
+
+    def list_by_ids_and_role(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        role: SubtaskRole,
+    ) -> list[Subtask]: ...
+
+    def list_failed_details_by_ids(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        limit: int,
+    ) -> list[FailedSubtaskDetail]: ...
 
     def get_accessible_by_id(
         self,
@@ -835,6 +866,10 @@ class SubtaskStore(Protocol):
 
     def list_running(self, db: Session) -> list[Subtask]: ...
 
+    def list_running_since(
+        self, db: Session, *, created_after: datetime
+    ) -> list[Subtask]: ...
+
     def list_session_task_ids(
         self, db: Session, *, skip: int, limit: int
     ) -> list[int]: ...
@@ -897,6 +932,20 @@ class SubtaskStore(Protocol):
     def update_fields(
         self, db: Session, *, subtask: Subtask, **fields: Any
     ) -> Subtask: ...
+
+    def transition_status(
+        self,
+        db: Session,
+        *,
+        subtask_id: int,
+        task_id: int,
+        owner_user_id: int,
+        role: SubtaskRole,
+        from_status: SubtaskStatus,
+        to_status: SubtaskStatus,
+        progress: Optional[int] = None,
+        completed_at: Optional[datetime] = None,
+    ) -> bool: ...
 
     def has_running_assistant(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None

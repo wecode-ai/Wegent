@@ -9,4 +9,60 @@ describe('browser URL helpers', () => {
     )
     expect(normalizeBrowserUrl('ftp://example.com')).toBeNull()
   })
+
+  test('allows application assets only from the current Tauri origin', () => {
+    expect(
+      normalizeBrowserUrl(
+        'tauri://localhost/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000',
+        'tauri://localhost/'
+      )
+    ).toBe('tauri://localhost/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000')
+    expect(
+      normalizeBrowserUrl('tauri://other-host/extension-page.html', 'tauri://localhost/')
+    ).toBe(null)
+    expect(
+      normalizeBrowserUrl('custom://localhost/extension-page.html', 'tauri://localhost/')
+    ).toBe(null)
+  })
+
+  test('allows local asset protocol URLs for browser previews', () => {
+    expect(normalizeBrowserUrl('asset://localhost/Users/me/workspace/chart.html')).toBe(
+      'asset://localhost/Users/me/workspace/chart.html'
+    )
+    expect(normalizeBrowserUrl('asset://other-host/Users/me/workspace/chart.html')).toBeNull()
+  })
+
+  test('allows local file URLs and returns a valid encoded URL', () => {
+    expect(normalizeBrowserUrl('file:///Users/me/report.html')).toBe('file:///Users/me/report.html')
+    expect(normalizeBrowserUrl('file:///Users/me/test file.html')).toBe(
+      'file:///Users/me/test%20file.html'
+    )
+    expect(normalizeBrowserUrl('file:///Users/me/test%20file.html')).toBe(
+      'file:///Users/me/test%20file.html'
+    )
+    expect(normalizeBrowserUrl('file:///Users/me/测试.html')).toBe(
+      'file:///Users/me/%E6%B5%8B%E8%AF%95.html'
+    )
+    expect(normalizeBrowserUrl('file:///C:/Users/me/report.html')).toBe(
+      'file:///C:/Users/me/report.html'
+    )
+    // A hostname form is still a syntactically valid file URL; pass it through.
+    expect(normalizeBrowserUrl('file://etc/passwd')).toBe('file://etc/passwd')
+  })
+
+  test('normalizes local filesystem paths to file URLs', () => {
+    expect(normalizeBrowserUrl('/Users/me/report.html')).toBe('file:///Users/me/report.html')
+    expect(normalizeBrowserUrl('/Users/me/test file.html')).toBe(
+      'file:///Users/me/test%20file.html'
+    )
+    expect(normalizeBrowserUrl('/Users/me/测试.html')).toBe(
+      'file:///Users/me/%E6%B5%8B%E8%AF%95.html'
+    )
+    expect(normalizeBrowserUrl('C:\\Users\\me\\report.html')).toBe(
+      'file:///C:/Users/me/report.html'
+    )
+    expect(normalizeBrowserUrl('\\\\server\\share\\report.html')).toBe(
+      'file://server/share/report.html'
+    )
+  })
 })

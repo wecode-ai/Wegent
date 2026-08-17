@@ -95,6 +95,38 @@ class _OutputTextBlockSessionManager:
         ]
 
 
+class _McpImageResultSessionManager:
+    async def get_accumulated_content(self, _subtask_id: int) -> str:
+        return "Image generated."
+
+    async def finalize_and_get_blocks(
+        self,
+        _subtask_id: int,
+        *,
+        termination_reason: str | None = None,
+        terminal_status: str | None = None,
+    ) -> list[dict]:
+        return [
+            {
+                "id": "tool-image-1",
+                "type": "tool",
+                "tool_name": "wegent-image_generate_image",
+                "status": "done",
+                "tool_output": [
+                    {
+                        "type": "text",
+                        "text": (
+                            '{"type":"images","result_data":{"blocks":['
+                            '{"id":"image-1","type":"image","status":"done",'
+                            '"image_urls":["/api/attachments/40/download"],'
+                            '"image_attachment_ids":[40],"image_count":1}]}}'
+                        ),
+                    }
+                ],
+            }
+        ]
+
+
 @pytest.mark.asyncio
 async def test_collect_completed_result_merges_duplicate_block_fields(monkeypatch):
     async def _empty_existing_result(_subtask_id: int) -> dict:
@@ -248,3 +280,35 @@ async def test_collect_completed_result_normalizes_empty_value_from_output_text_
 
     assert result is not None
     assert result["value"] == "Visible assistant answer."
+
+
+@pytest.mark.asyncio
+async def test_collect_completed_result_promotes_mcp_result_blocks(
+    monkeypatch,
+) -> None:
+    async def _empty_existing_result(_subtask_id: int) -> dict:
+        return {}
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_get_existing_subtask_result",
+        _empty_existing_result,
+    )
+
+    import app.services.chat.storage as chat_storage
+
+    monkeypatch.setattr(
+        chat_storage,
+        "session_manager",
+        _McpImageResultSessionManager(),
+    )
+
+    result = await lifecycle.collect_completed_result(
+        1234,
+        status="COMPLETED",
+        result={"value": "Image generated."},
+    )
+
+    assert result is not None
+    assert [block["type"] for block in result["blocks"]] == ["tool", "image"]
+    assert result["blocks"][1]["image_attachment_ids"] == [40]

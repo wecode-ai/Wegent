@@ -19,9 +19,43 @@ describe('getRuntimeConfig', () => {
   })
 
   test('reads the default Wegent Backend URL from build-time config', () => {
-    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://cloud.example.com')
+    delete window.__WEWORK_RUNTIME_CONFIG__
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://cloud.example.com/api')
 
     expect(getRuntimeConfig().wegentBackendUrl).toBe('https://cloud.example.com')
+    expect(getRuntimeConfig().apiBaseUrl).toBe('https://cloud.example.com/api')
+    expect(getRuntimeConfig().socketBaseUrl).toBe('https://cloud.example.com')
+  })
+
+  test('leaves the feedback URL empty by default', () => {
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', '')
+    expect(getRuntimeConfig().feedbackUrl).toBe('')
+  })
+
+  test('uses the official PlantUML SVG server by default', () => {
+    expect(getRuntimeConfig().plantumlServerUrl).toBe('https://www.plantuml.com/plantuml/svg')
+  })
+
+  test('prefers and normalizes the runtime PlantUML server URL', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      plantumlServerUrl: 'https://plantuml.example.com/svg/',
+    }
+
+    expect(getRuntimeConfig().plantumlServerUrl).toBe('https://plantuml.example.com/svg')
+  })
+
+  test('reads and normalizes the feedback URL from build-time config', () => {
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports/')
+
+    expect(getRuntimeConfig().feedbackUrl).toBe('https://feedback.example.com/v1/reports')
+  })
+
+  test('uses the optional Wegent Socket URL from build-time config', () => {
+    delete window.__WEWORK_RUNTIME_CONFIG__
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://cloud.example.com/api')
+    vi.stubEnv('VITE_WEGENT_SOCKET_URL', 'wss://wss-cloud.example.com/')
+
+    expect(getRuntimeConfig().socketBaseUrl).toBe('wss://wss-cloud.example.com')
   })
 
   test('prefers the runtime default Wegent Backend URL over build-time config', () => {
@@ -33,9 +67,8 @@ describe('getRuntimeConfig', () => {
     expect(getRuntimeConfig().wegentBackendUrl).toBe('https://runtime.example.com')
   })
 
-  test('prefers runtime config over build-time environment values', () => {
-    vi.stubEnv('VITE_API_BASE_URL', 'http://build.example.com/api')
-    vi.stubEnv('VITE_SOCKET_BASE_URL', 'http://build.example.com')
+  test('prefers runtime config over the configured backend URL', () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'http://build.example.com')
     vi.stubEnv('VITE_LOGIN_MODE', 'password')
     window.__WEWORK_RUNTIME_CONFIG__ = {
       apiBaseUrl: 'http://runtime.example.com/api',

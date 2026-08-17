@@ -77,28 +77,12 @@
     "groupManagerDescription": "Manage groups, members, and permissions."
   },
   "skills": {
-    "search_skills": "Search in Market",
-    "search_skills_title": "Search Skills from Market",
-    "search_skills_description": "Search and install skills from various skill markets",
-    "search_placeholder": "Search by keyword...",
-    "search_hint": "Enter keywords to search for skills",
-    "searching_skills": "Searching...",
-    "no_search_results": "No skills found",
-    "install": "Install",
-    "installing": "Installing...",
-    "downloading": "Downloading...",
-    "installed": "Installed",
-    "retry_install": "Retry",
-    "install_success": "Installation successful",
-    "install_success_message": "Skill '{{skillName}}' installed successfully",
-    "install_failed": "Installation failed",
-    "public_skill": "Public",
-    "private_skill": "Private",
-    "search_failed": "Search failed",
-    "request_permission": "Request Permission",
-    "go_to_market": "Go to Market",
     "libraryTitle": "Skill Library",
     "libraryDescription": "Upload and manage skills. Skills can be auto-enabled for your conversations or bound to agents as built-in capabilities.",
+    "myLibraryTitle": "My Skills",
+    "myLibraryDescription": "Manage skills you created and currently auto-enable.",
+    "groupLibraryTitle": "Group Skills",
+    "groupLibraryDescription": "Manage skills created and maintained by this group. Skills added from the marketplace are shown separately above.",
     "defaultEnabled": {
       "title": "Auto-Enabled Skills",
       "description": "These skills automatically take effect in all your conversations. You can add exceptions for modes or agents.",
@@ -119,6 +103,7 @@
       "removeFromMyDefault": "Stop Auto-Enabling",
       "addSuccess": "Skill will auto-enable",
       "removeSuccess": "Skill will no longer auto-enable",
+      "removeExternalSuccess": "Auto-enable stopped. You can add this skill again from Discover.",
       "updateFailed": "Failed to update auto-enabled skills",
       "groupScopeHint": "Only affects you. Other group members are unchanged."
     },
@@ -193,13 +178,24 @@
   "team": {
     "list": {
       "filterDevice": "Device",
-      "goToDevice": "Go to Device"
+      "runOnDevice": "Run on Device"
     },
     "quick_phrases": {
       "label": "Quick phrases",
       "description": "Shown after a user clicks this QuickCard; selecting a phrase fills the message box.",
       "placeholder": "Example: Help me create a product roadmap PPT",
       "add": "Add phrase"
+    },
+    "input_placeholder": {
+      "label": "Input placeholder",
+      "description": "Uses the current device and language first, then the generic value, and finally the system default.",
+      "generic": "Generic fallback",
+      "desktop": "Desktop",
+      "mobile": "Mobile",
+      "zh": "Chinese",
+      "en": "English",
+      "zh_placeholder": "Chinese placeholder",
+      "en_placeholder": "English placeholder"
     },
     "simple": {
       "advanced_title": "Advanced configuration",
@@ -227,6 +223,8 @@
         "executor_description": "Controls the runtime environment used to handle tasks."
       },
       "bind_mode": {
+        "more_modes": "More modes",
+        "collapse_more_modes": "Collapse more modes",
         "chat": {
           "title": "Chat",
           "description": "Use for Q&A, document discussion, and ongoing conversation."
@@ -238,6 +236,14 @@
         "task": {
           "title": "Device",
           "description": "Use for tasks that need a local device or execution environment."
+        },
+        "video": {
+          "title": "Video",
+          "description": "Use for video generation and video creation tasks."
+        },
+        "image": {
+          "title": "Image",
+          "description": "Use for image generation and image creation tasks."
         }
       },
       "executor": {

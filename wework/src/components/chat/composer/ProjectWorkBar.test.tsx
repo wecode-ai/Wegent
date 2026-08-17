@@ -112,6 +112,59 @@ const runtimeWork: RuntimeWorkListResponse = {
 }
 
 describe('ProjectWorkBar', () => {
+  test('uses consistent regular typography for desktop selector triggers', () => {
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-work-button').parentElement).toHaveClass(
+      'text-sm',
+      'font-normal',
+      'w-full'
+    )
+    expect(screen.getByTestId('project-work-button')).toHaveClass('w-full')
+    expect(screen.getByTestId('project-work-button').parentElement?.parentElement).toHaveClass(
+      'min-w-0',
+      'max-w-[18rem]',
+      'shrink'
+    )
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
+      'w-full',
+      'text-sm',
+      'font-normal'
+    )
+    expect(screen.getByTestId('execution-mode-button').parentElement).toHaveClass(
+      'min-w-0',
+      'max-w-[10rem]',
+      'shrink'
+    )
+    expect(screen.getByTestId('project-branch-button')).toHaveClass(
+      'w-full',
+      'text-sm',
+      'font-normal'
+    )
+    expect(screen.getByTestId('project-branch-button').parentElement).toHaveClass(
+      'min-w-0',
+      'max-w-[18rem]',
+      'shrink'
+    )
+    expect(screen.getByTestId('project-branch-button')).toHaveAttribute('title', 'main')
+  })
+
   test('shows empty project list and grouped project creation actions', async () => {
     const onCreateProjectMode = vi.fn()
 
@@ -144,15 +197,7 @@ describe('ProjectWorkBar', () => {
     expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
     expect(screen.queryByTestId('standalone-device-list')).not.toBeInTheDocument()
 
-    await userEvent.hover(screen.getByTestId('add-local-project-option'))
-
-    expect(screen.getByTestId('add-local-project-submenu')).toBeInTheDocument()
-    expect(screen.getByTestId('add-local-blank-project-option')).toHaveTextContent('新建空白项目')
-    expect(screen.getByTestId('add-local-existing-project-option')).toHaveTextContent(
-      '使用现有文件夹'
-    )
-
-    await userEvent.click(screen.getByTestId('add-local-existing-project-option'))
+    await userEvent.click(screen.getByTestId('add-local-project-option'))
 
     expect(onCreateProjectMode).toHaveBeenCalledWith('existing')
   })
@@ -570,6 +615,63 @@ describe('ProjectWorkBar', () => {
     expect(onSelectProjectWorkspace).toHaveBeenCalledWith(7, 101)
   })
 
+  test('shows one local multi-root project row and selects its current primary folder', async () => {
+    const onSelectProjectWorkspace = vi.fn()
+    const multiRootWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, key: 'multi-root', name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 301,
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/repo/web',
+              tasks: [],
+            },
+            {
+              id: 302,
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/repo/api',
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        runtimeWork={multiRootWork}
+        currentProject={project}
+        currentProjectId={7}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={onSelectProjectWorkspace}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-option-7')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('project-option-7')).toHaveTextContent('web')
+    expect(screen.queryByTestId('project-workspace-option-301')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-workspace-option-302')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-option-7'))
+    expect(onSelectProjectWorkspace).toHaveBeenCalledWith(7, 301)
+  })
+
   test('does not read project rows without runtime workspaces', async () => {
     const onBindProjectWorkspace = vi.fn()
     const emptyProject: ProjectWithTasks = {
@@ -661,6 +763,10 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('新工作树')
+    expect(screen.getByTestId('project-worktree-branch-button')).toHaveClass(
+      'text-sm',
+      'font-normal'
+    )
     expect(screen.getByTestId('project-worktree-branch-button')).toHaveTextContent('选择分支')
     expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
     expect(onExecutionModeChange).not.toHaveBeenCalled()
@@ -717,6 +823,8 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-branch-button'))
 
     const menu = await screen.findByTestId('project-branch-menu')
+    expect(menu).toHaveClass('right-0')
+    expect(menu).not.toHaveClass('left-0')
     await waitFor(() => expect(onListBranches).toHaveBeenCalledTimes(1))
     await userEvent.click(within(menu).getByText('develop'))
 
@@ -841,6 +949,8 @@ describe('ProjectWorkBar', () => {
     await userEvent.click(screen.getByTestId('project-worktree-branch-button'))
 
     const menu = await screen.findByTestId('project-worktree-branch-menu')
+    expect(menu).toHaveClass('right-0')
+    expect(menu).not.toHaveClass('left-0')
     await waitFor(() => expect(onListBranches).toHaveBeenCalledTimes(1))
     expect(within(menu).getByText('develop')).toBeInTheDocument()
 

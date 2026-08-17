@@ -1,42 +1,65 @@
-import { useEffect, useState } from 'react'
-import { Check, Copy, PanelLeft } from 'lucide-react'
+import {
+  Activity,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { Check, Copy, Info, Minimize2 } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import {
+  RuntimeTaskLifecycleStore,
+  RuntimeTaskLifecycleStreamCoordinator,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  createDefaultWorkbenchServices,
+  type WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
+import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
-import { AppsPage } from '@/pages/AppsPage'
+import { SitesPage } from '@/pages/SitesPage'
+import { AutomationsPage } from '@/pages/AutomationsPage'
+import { CloudWorkPage } from '@/pages/CloudWorkPage'
+import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
+import { APP_TABS } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
-import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
-import {
-  requestDesktopSidebarToggle,
-  useDesktopSidebarCollapsed,
-} from '@/components/layout/useDesktopSidebarCollapsed'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
-import { useTranslation } from '@/hooks/useTranslation'
+import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
-import { defaultAppPreferences, getAppPreferences } from '@/tauri/appPreferences'
+import { createHttpClient } from '@/api/http'
+import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { useAwayImNotificationPresence } from '@/features/workbench/awayImNotificationPresence'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
+  INCREASE_FONT_SIZE_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
@@ -49,6 +72,8 @@ import {
   dispatchToggleSidebarShortcut,
   dispatchToggleSidePanelShortcut,
   dispatchToggleModelSelectorShortcut,
+  dispatchStepFontSizeShortcut,
+  dispatchResetFontSizeShortcut,
   isEditableShortcutTarget,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -59,42 +84,306 @@ import {
   getWeworkDevInstanceRows,
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
+import { AppshotBridge } from '@/features/appshots/AppshotBridge'
+import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
+import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useTranslation } from '@/hooks/useTranslation'
+import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import type { User } from '@/types/api'
+import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
+import { track, useTelemetryEnabled } from '@/telemetry/client'
+import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
+import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
+const POPOUT_WINDOW_LABEL = 'popout-window'
+
+function isPopoutWindowRuntime() {
+  if (!isTauriRuntime()) return false
+  try {
+    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  } catch {
+    return false
+  }
+}
+
+function hasTauriIpc() {
+  const internals = (
+    window as typeof window & {
+      __TAURI_INTERNALS__?: { invoke?: unknown; transformCallback?: unknown }
+    }
+  ).__TAURI_INTERNALS__
+  return (
+    typeof internals?.invoke === 'function' && typeof internals.transformCallback === 'function'
+  )
+}
+
+function buildCloudAppUrl(url: string, token: string | null): string {
+  if (!token) return url
+
+  const authenticatedUrl = new URL(url)
+  const basePath = authenticatedUrl.pathname.replace(/\/+$/, '')
+  authenticatedUrl.pathname = `${basePath}/login/oidc`
+  authenticatedUrl.searchParams.set('access_token', token)
+  authenticatedUrl.searchParams.set('token_type', 'bearer')
+  authenticatedUrl.searchParams.set('login_success', 'true')
+  return authenticatedUrl.toString()
+}
 
 function useCurrentPath() {
-  const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
+  return useCurrentLocation().pathname
+}
+
+function useCurrentLocation() {
+  const [location, setLocation] = useState(() => ({
+    pathname: stripAppBasePath(window.location.pathname),
+    search: window.location.search,
+  }))
 
   useEffect(() => {
-    const handlePopState = () => setPath(stripAppBasePath(window.location.pathname))
+    const handlePopState = () =>
+      setLocation({
+        pathname: stripAppBasePath(window.location.pathname),
+        search: window.location.search,
+      })
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  return path
+  return location
+}
+
+function telemetryFeatureForPath(path: string) {
+  if (path === '/login' || path === '/login/oidc') return 'login' as const
+  if (path === '/plugins/manage') return 'plugin_management' as const
+  if (path === '/plugins/create') return 'plugin_create' as const
+  if (path === '/plugins') return 'plugins' as const
+  if (path === '/cloud-work') return 'cloud_work' as const
+  if (path === '/sites') return 'sites' as const
+  if (path === '/automations') return 'automations' as const
+  if (path.startsWith('/app/')) return 'apps' as const
+  if (path.startsWith('/settings')) return 'settings' as const
+  if (path.startsWith('/project-space')) return 'project_space' as const
+  if (path === '/') return 'workbench' as const
+  return 'unknown' as const
 }
 
 interface AppRoutesProps {
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
+  onOpenWeworkForAppshot?: () => void
 }
 
-function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
+function workspaceTabPath(tab: WorkspaceTab): string {
+  return stripAppBasePath(new URL(tab.contentRoute, window.location.origin).pathname)
+}
+
+function workspaceTabIframe(
+  tab: WorkspaceTab,
+  wegentUrl: string | null | undefined
+): { src: string; title: string } | null {
+  const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
+  if (!match) return null
+  const app = APP_TABS.find(candidate => candidate.key === match[1])
+  if (!app || app.mode !== 'iframe') return null
+  const src = app.key === 'wegent' ? wegentUrl : app.url
+  return src ? { src, title: app.label } : null
+}
+
+function workspaceTabAuxiliaryPage(path: string, search: string) {
+  if (path === '/plugins/manage') return <PluginManagementPage />
+  if (path === '/plugins/create') return <PluginCreatePage />
+  if (path === '/plugins') return <PluginsPage routeSearch={search} />
+  if (path === '/cloud-work') return <CloudWorkPage />
+  if (path === '/sites') return <SitesPage />
+  if (path === '/automations') return <AutomationsPage />
+  return null
+}
+
+interface WorkspaceTabSurfaceProps {
+  active: boolean
+  cloudWebUrl: string | null | undefined
+  lifecycleStore: RuntimeTaskLifecycleStore
+  onOpenWeworkForAppshot?: () => void
+  onWorkbenchStartupReadyChange?: (ready: boolean) => void
+  services: WorkbenchServices
+  tab: WorkspaceTab
+  user: User
+}
+
+function WorkspaceTabSurface({
+  active,
+  cloudWebUrl,
+  lifecycleStore,
+  onOpenWeworkForAppshot,
+  onWorkbenchStartupReadyChange,
+  services,
+  tab,
+  user,
+}: WorkspaceTabSurfaceProps) {
+  const tabPath = workspaceTabPath(tab)
+  const tabSearch = new URL(tab.contentRoute, window.location.origin).search
+  const iframe = workspaceTabIframe(tab, cloudWebUrl)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
+  const auxiliaryActive = Boolean(auxiliaryPage)
+  const nativeWorkbenchActive = !iframe && !auxiliaryActive
+  const [surfaceHistory, setSurfaceHistory] = useState(() => ({
+    iframe,
+    hasMountedProvider: !iframe,
+    hasMountedWorkbench: nativeWorkbenchActive,
+  }))
+  const nextIframe =
+    iframe &&
+    surfaceHistory.iframe?.src === iframe.src &&
+    surfaceHistory.iframe.title === iframe.title
+      ? surfaceHistory.iframe
+      : (iframe ?? surfaceHistory.iframe)
+  const nextSurfaceHistory = {
+    iframe: nextIframe,
+    hasMountedProvider: surfaceHistory.hasMountedProvider || !iframe,
+    hasMountedWorkbench: surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive,
+  }
+  if (
+    nextSurfaceHistory.iframe !== surfaceHistory.iframe ||
+    nextSurfaceHistory.hasMountedProvider !== surfaceHistory.hasMountedProvider ||
+    nextSurfaceHistory.hasMountedWorkbench !== surfaceHistory.hasMountedWorkbench
+  ) {
+    setSurfaceHistory(nextSurfaceHistory)
+  }
+
+  const renderedIframe = iframe ?? surfaceHistory.iframe
+  const renderProvider = surfaceHistory.hasMountedProvider || !iframe
+  const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
+  // Task-scoped browser routing is owned by workbench effects and must remain
+  // available while another workspace tab is active.
+  const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  return (
+    <WorkspaceTabPortalOwner ownerId={tab.id}>
+      <Activity mode={active || keepTaskRuntimeActive ? 'visible' : 'hidden'}>
+        <div
+          className={cn(
+            'min-h-0 min-w-0 overflow-hidden',
+            active ? 'relative h-full' : 'absolute inset-0',
+            !active && keepTaskRuntimeActive && 'pointer-events-none invisible'
+          )}
+          data-testid={`workspace-tab-content-${tab.id}`}
+          data-workspace-tab-content={tab.id}
+          aria-hidden={!active}
+        >
+          {renderProvider ? (
+            <WorkbenchProvider
+              lifecycleStore={lifecycleStore}
+              services={services}
+              user={user}
+              onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
+              workspaceTabId={tab.id}
+              syncRemoteProjects={active}
+              syncRuntimeTaskLifecycle={active}
+            >
+              {onOpenWeworkForAppshot && active && !iframe ? (
+                <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
+              ) : null}
+              {renderWorkbench ? (
+                <div
+                  data-testid="desktop-workbench-surface"
+                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+                  aria-hidden={!nativeWorkbenchActive}
+                >
+                  <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
+                </div>
+              ) : null}
+              {auxiliaryPage ? (
+                <div data-testid="desktop-auxiliary-surface" className="h-full">
+                  {auxiliaryPage}
+                </div>
+              ) : null}
+            </WorkbenchProvider>
+          ) : null}
+          {renderedIframe ? (
+            <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
+              <AppIframe
+                active={active && Boolean(iframe)}
+                src={renderedIframe.src}
+                title={renderedIframe.title}
+                workspaceTabId={tab.id}
+              />
+            </div>
+          ) : null}
+        </div>
+      </Activity>
+    </WorkspaceTabPortalOwner>
+  )
+}
+
+function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
+  const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
-  const { activeTab, isNativeApp } = useChromeTabs(path)
-  const isAuxiliaryRoute =
-    (!isNativeApp && activeTab?.mode === 'iframe' && Boolean(activeTab.url)) ||
-    path === '/plugins/manage' ||
-    path === '/plugins/create' ||
-    path === '/plugins' ||
-    path === '/apps'
-  const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
-  if (!isAuxiliaryRoute && !hasMountedWorkbench) setHasMountedWorkbench(true)
+  const cloudConnection = useCloudConnection()
+  const experimentalFeatures = useExperimentalFeaturesState()
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const [mountedTabs, setMountedTabs] = useState(() => ({
+    activeTabId: workspaceTabs?.activeTabId ?? null,
+    ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
+  }))
+  const telemetryEnabled = useTelemetryEnabled()
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
+  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const runtimeServiceUser = useMemo<User | undefined>(
+    () =>
+      workbenchIdentity
+        ? {
+            id: workbenchIdentity.id,
+            user_name: workbenchIdentity.user_name,
+            email: workbenchIdentity.email,
+          }
+        : undefined,
+    [workbenchIdentity]
+  )
+  const services = useMemo(
+    () =>
+      createDefaultWorkbenchServices({
+        isConnected: cloudConnection.isConnected,
+        backendUrl: cloudConnection.backendUrl,
+        apiBaseUrl: cloudConnection.apiBaseUrl,
+        socketBaseUrl: cloudConnection.socketBaseUrl,
+        socketPath: cloudConnection.socketPath,
+        token: cloudConnection.token,
+        user: runtimeServiceUser,
+      }),
+    [
+      cloudConnection.apiBaseUrl,
+      cloudConnection.backendUrl,
+      cloudConnection.isConnected,
+      cloudConnection.socketBaseUrl,
+      cloudConnection.socketPath,
+      cloudConnection.token,
+      runtimeServiceUser,
+    ]
+  )
 
   useEffect(() => {
-    if (isLoading || !user || isNativeApp || !activeTab?.url) return
-    onWorkbenchStartupReadyChange?.(true)
-  }, [activeTab?.url, isLoading, isNativeApp, onWorkbenchStartupReadyChange, user])
+    track('feature_opened', {
+      feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
+    })
+  }, [isPopoutWindow, path, telemetryEnabled])
+  if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
+    setMountedTabs({
+      activeTabId: workspaceTabs.activeTabId,
+      ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
+    })
+  }
+
+  useLayoutEffect(() => {
+    setActiveWorkspaceTabPortalOwner(workspaceTabs?.activeTabId ?? null)
+  }, [workspaceTabs?.activeTabId])
 
   if (path === '/login') {
     return <LoginPage />
@@ -104,93 +393,182 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
     return <OidcCallbackPage />
   }
 
+  if (path === '/auth/wework/authorize') {
+    return <WeworkAuthorizePage />
+  }
+
   if (isLoading || !user) {
     return null
   }
 
-  const auxiliaryPage =
-    !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? (
-      <AppIframe src={activeTab.url} title={activeTab.label} />
-    ) : path === '/plugins/manage' ? (
-      <PluginManagementPage />
-    ) : path === '/plugins/create' ? (
-      <PluginCreatePage />
-    ) : path === '/plugins' ? (
-      <PluginsPage />
-    ) : path === '/apps' ? (
-      <AppsPage />
-    ) : null
-  // Keep the workbench mounted while another top-level surface is visible. The
-  // composer, terminals and in-app browser own live, non-serializable state, so
-  // reconstructing them after every route change is both lossy and expensive.
-  return (
-    <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
-      {(!auxiliaryPage || hasMountedWorkbench) && (
-        <div
-          className={cn('h-full', auxiliaryPage && 'hidden')}
-          aria-hidden={Boolean(auxiliaryPage)}
+  // Route surfaces and their sidebars must read one resolved preference snapshot.
+  // Mounting them before it is available makes experimental navigation items briefly
+  // disappear when a route change creates a new sidebar instance.
+  if (!experimentalFeatures.loaded) {
+    return null
+  }
+
+  if (isPopoutWindow) {
+    return (
+      <>
+        <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+        <WorkbenchProvider
+          lifecycleStore={lifecycleStore}
+          services={services}
+          user={user}
+          onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
-          <WorkbenchPage />
-        </div>
-      )}
-      {auxiliaryPage}
-    </WorkbenchProvider>
+          {hasTauriIpc() && <SystemDragBridge />}
+          <PopoutWorkbenchPage />
+        </WorkbenchProvider>
+      </>
+    )
+  }
+
+  if (!workspaceTabs) return null
+
+  return (
+    <>
+      <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+      {workspaceTabs.tabs.map(tab => {
+        if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
+        return (
+          <WorkspaceTabSurface
+            key={tab.id}
+            active={tab.id === workspaceTabs.activeTabId}
+            lifecycleStore={lifecycleStore}
+            services={services}
+            cloudWebUrl={
+              cloudConnection.webUrl
+                ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
+                : cloudConnection.webUrl
+            }
+            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+            tab={tab}
+            user={user}
+          />
+        )
+      })}
+    </>
   )
 }
 
 export default function App() {
+  const path = useCurrentPath()
+  if (isTauriRuntime() && path === '/system-drag') {
+    return <SystemDragPanel />
+  }
+
+  return <MainApp />
+}
+
+function MainApp() {
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-
-    getAppPreferences()
-      .then(preferences => {
-        if (!cancelled) {
-          return applyLanguagePreference(preferences.language)
-        }
-        return undefined
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to initialize language preference:', error)
-        if (!cancelled) {
-          return applyLanguagePreference(defaultAppPreferences.language)
-        }
-        return undefined
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   return (
     <AppearanceProvider>
-      <AppUpdateProvider>
-        <CloudConnectionProvider>
-          <AuthProvider>
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
+      <AppPreferencesProvider>
+        <LanguagePreferenceInitializer />
+        <AppUpdateProvider>
+          <CloudConnectionProvider>
+            <AuthProvider>
+              <TelemetryBridge />
+              <AppShell />
+            </AuthProvider>
+          </CloudConnectionProvider>
+        </AppUpdateProvider>
+      </AppPreferencesProvider>
     </AppearanceProvider>
   )
 }
 
-function AppShell() {
-  const path = useCurrentPath()
-  const { user, isLoading } = useAuth()
-  const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
-  const isTauri = isTauriRuntime()
-  const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
-  const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
-  const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
-  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+function LanguagePreferenceInitializer() {
+  const appPreferences = useAppPreferencesState()
 
   useEffect(() => {
-    if (!isTauri) return undefined
+    if (!appPreferences?.loaded) return
+    void applyLanguagePreference(appPreferences.preferences.language)
+  }, [appPreferences?.loaded, appPreferences?.preferences.language])
+
+  return null
+}
+
+const BROWSER_WORKSPACE_SCOPE_PREFIX = 'wework-workspace-'
+
+function browserWorkspaceTabStorageScope(): string {
+  if (!window.name.startsWith(BROWSER_WORKSPACE_SCOPE_PREFIX)) {
+    window.name = `${BROWSER_WORKSPACE_SCOPE_PREFIX}${crypto.randomUUID()}`
+  }
+  return `browser:${window.name}`
+}
+
+function AppShell() {
+  const { t } = useTranslation('common')
+  const appPreferences = useAppPreferencesState()
+  const { pathname: path, search } = useCurrentLocation()
+  const { user, isLoading } = useAuth()
+  const cloudConnection = useCloudConnection()
+  const initialCloudConnection = {
+    apiBaseUrl: cloudConnection.apiBaseUrl,
+    backendUrl: cloudConnection.backendUrl,
+    socketBaseUrl: cloudConnection.socketBaseUrl,
+    isConnected: cloudConnection.isConnected,
+    token: cloudConnection.token,
+  }
+  const { activeAppKey, navigateToApp } = useChromeTabs(path)
+  const isTauri = isTauriRuntime()
+  const isPopoutWindow = isPopoutWindowRuntime()
+  const currentWindowLabel = isTauri ? getCurrentWindow().label : null
+  const isMainWindow = currentWindowLabel === 'main'
+  const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
+  const cloudApiBaseUrl = cloudConnection.apiBaseUrl
+  const cloudToken = cloudConnection.token
+  const titlebarOverlaysContent = false
+  const showChromeTitlebar = isTauri && !isPopoutWindow
+  const workspaceTabStorageScope = useMemo(
+    () => (isTauri ? getCurrentWindow().label : browserWorkspaceTabStorageScope()),
+    [isTauri]
+  )
+  const workspaceTabLabels = useMemo(
+    () => ({
+      task: t('workbench.workspace_tab_task', '任务'),
+      board: t('workbench.workspace_tab_board', '项目空间'),
+      agent: t('workbench.workspace_tab_agent', '智能体'),
+      auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
+      auxiliaryRoutes: {
+        plugins: t('workbench.workspace_tab_plugins', '插件'),
+        sites: t('workbench.workspace_tab_sites', '应用'),
+        automations: t('workbench.automation', '已安排'),
+        cloud: t('workbench.workspace_tab_cloud', '云端工作'),
+      },
+    }),
+    [t]
+  )
+  const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
+  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const updateImNotificationPresence = useMemo(() => {
+    if (!cloudApiBaseUrl || !cloudToken) return undefined
+    return createRuntimeWorkApi(
+      createHttpClient({
+        baseUrl: cloudApiBaseUrl,
+        getToken: () => cloudToken,
+        redirectOnUnauthorized: false,
+      })
+    ).updateImNotificationPresence
+  }, [cloudApiBaseUrl, cloudToken])
+  useAwayImNotificationPresence({
+    enabled: isMainWindow && hasTauriIpc() && cloudConnection.isConnected,
+    updatePresence: updateImNotificationPresence,
+  })
+  const openWeworkForAppshot = useCallback(() => {
+    navigateToApp('wework')
+  }, [navigateToApp])
+
+  useEffect(() => {
+    if (!isTauri || isPopoutWindow) return undefined
 
     let activeBindings = mergeKeybindings([])
     let disposed = false
@@ -208,7 +586,6 @@ function AppShell() {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
       const terminalKey = activeBindings[OPEN_TERMINAL_COMMAND]
       const settingsKey = activeBindings[OPEN_SETTINGS_COMMAND]
       const goBackKey = activeBindings[GO_BACK_COMMAND]
@@ -216,7 +593,17 @@ function AppShell() {
       const sidebarKey = activeBindings[TOGGLE_SIDEBAR_COMMAND]
       const sidePanelKey = activeBindings[TOGGLE_SIDE_PANEL_COMMAND]
       const modelSelectorKey = activeBindings[TOGGLE_MODEL_SELECTOR_COMMAND]
+      const increaseFontSizeKey = activeBindings[INCREASE_FONT_SIZE_COMMAND]
+      const decreaseFontSizeKey = activeBindings[DECREASE_FONT_SIZE_COMMAND]
+      const resetFontSizeKey = activeBindings[RESET_FONT_SIZE_COMMAND]
       const eventKey = keybindingFromKeyboardEvent(event)
+      const matchesFontSizeShortcut =
+        eventKey === increaseFontSizeKey ||
+        eventKey === decreaseFontSizeKey ||
+        eventKey === resetFontSizeKey
+      // The page zoom guard prevents WebView zoom before this window-level
+      // handler runs. Keep application font-size shortcuts actionable.
+      if (event.defaultPrevented && !matchesFontSizeShortcut) return
       const matchesRegisteredShortcut = [
         terminalKey,
         settingsKey,
@@ -225,6 +612,9 @@ function AppShell() {
         sidebarKey,
         sidePanelKey,
         modelSelectorKey,
+        increaseFontSizeKey,
+        decreaseFontSizeKey,
+        resetFontSizeKey,
       ].some(key => key && key === eventKey)
       if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
 
@@ -258,6 +648,21 @@ function AppShell() {
         dispatchToggleModelSelectorShortcut()
         return
       }
+      if (increaseFontSizeKey && eventKey === increaseFontSizeKey) {
+        event.preventDefault()
+        dispatchStepFontSizeShortcut(1)
+        return
+      }
+      if (decreaseFontSizeKey && eventKey === decreaseFontSizeKey) {
+        event.preventDefault()
+        dispatchStepFontSizeShortcut(-1)
+        return
+      }
+      if (resetFontSizeKey && eventKey === resetFontSizeKey) {
+        event.preventDefault()
+        dispatchResetFontSizeShortcut()
+        return
+      }
       if (!terminalKey || eventKey !== terminalKey) return
       event.preventDefault()
       dispatchOpenTerminalShortcut()
@@ -287,7 +692,11 @@ function AppShell() {
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     }
-  }, [isTauri])
+  }, [isPopoutWindow, isTauri])
+
+  useEffect(() => {
+    return installMacOSInputArrowKeyGuard()
+  }, [])
 
   useEffect(() => {
     if (
@@ -316,10 +725,18 @@ function AppShell() {
   }
 
   if (isLoading) {
+    if (isPopoutWindow) {
+      return <div className="h-dvh bg-transparent" />
+    }
     return (
-      <LocalRuntimeInitializer startupReady={false}>
-        <div />
-      </LocalRuntimeInitializer>
+      <CodexHomeInitializer>
+        <LocalRuntimeInitializer
+          initialCloudConnection={initialCloudConnection}
+          startupReady={false}
+        >
+          <div />
+        </LocalRuntimeInitializer>
+      </CodexHomeInitializer>
     )
   }
 
@@ -327,46 +744,76 @@ function AppShell() {
     return <AppRoutes />
   }
 
+  const shell = (
+    <WorkspaceTabsProvider
+      pathname={path}
+      search={search}
+      storageScope={workspaceTabStorageScope}
+      labels={workspaceTabLabels}
+      startupTabKind={
+        isMainWindow && appPreferences?.loaded
+          ? appPreferences.preferences.defaultWorkspaceTab
+          : undefined
+      }
+    >
+      <div
+        data-testid="app-shell"
+        className={cn(
+          isTauri ? 'fixed inset-0' : 'h-dvh',
+          isPopoutWindow
+            ? 'overflow-visible bg-transparent'
+            : isWorkspaceWindow
+              ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
+              : 'overflow-hidden bg-surface',
+          titlebarOverlaysContent ? 'relative' : 'flex flex-col'
+        )}
+      >
+        {showChromeTitlebar && (
+          <ChromeTitlebar
+            showWorkspacePortals={activeAppKey !== 'wework'}
+            showFeedback={activeAppKey !== 'wework'}
+          />
+        )}
+        {isTauri && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
+        {!isPopoutWindow && !isWorkspaceWindow ? (
+          <LocalExecutorCloudBridge
+            apiBaseUrl={cloudConnection.apiBaseUrl}
+            backendUrl={cloudConnection.backendUrl}
+            socketBaseUrl={cloudConnection.socketBaseUrl}
+            isConnected={cloudConnection.isConnected}
+            token={cloudConnection.token}
+          />
+        ) : null}
+        <CloudModelCatalogSyncDialogHost />
+        <div
+          data-testid="app-route-host"
+          className={cn(
+            'relative min-h-0',
+            isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+            titlebarOverlaysContent ? 'h-full' : 'flex-1'
+          )}
+        >
+          <AppRoutes
+            onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+            onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+          />
+        </div>
+        {!isPopoutWindow && <WeworkDevInstanceBadge />}
+      </div>
+    </WorkspaceTabsProvider>
+  )
+
+  if (isPopoutWindow) {
+    return shell
+  }
+
   return (
     <CodexHomeInitializer>
       <LocalRuntimeInitializer
+        initialCloudConnection={initialCloudConnection}
         startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
       >
-        <LocalExecutorCloudBridge />
-        <div
-          className={cn(
-            'h-dvh overflow-hidden bg-surface',
-            titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-          )}
-        >
-          {showChromeTitlebar && (
-            <ChromeTitlebar
-              tabs={tabs}
-              activeKey={activeAppKey}
-              onNavigate={navigateToApp}
-              beforeTabs={
-                activeAppKey === 'wework' ? (
-                  <TitlebarSidebarToggle />
-                ) : (
-                  <TitlebarSidebarTogglePlaceholder />
-                )
-              }
-              afterTabs={<AppUpdateTitlebarButton />}
-              iconOnlyTabs={isTauri}
-              className={
-                titlebarOverlaysContent
-                  ? 'absolute inset-x-0 top-0 z-system bg-transparent'
-                  : undefined
-              }
-            />
-          )}
-          <div
-            className={cn('min-h-0 overflow-hidden', titlebarOverlaysContent ? 'h-full' : 'flex-1')}
-          >
-            <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
-          </div>
-          <WeworkDevInstanceBadge />
-        </div>
+        {shell}
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>
   )
@@ -375,25 +822,130 @@ function AppShell() {
 function WeworkDevInstanceBadge() {
   const info = getWeworkDevInstanceInfo()
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState(true)
+  const [position, setPosition] = useState<CSSProperties>()
+  const draggedRef = useRef(false)
+  const copiedResetTimeoutRef = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (copiedResetTimeoutRef.current !== null) {
+        window.clearTimeout(copiedResetTimeoutRef.current)
+      }
+    },
+    []
+  )
   if (!info) return null
 
   const rows = getWeworkDevInstanceRows(info)
+  const popoverAbove = typeof position?.top !== 'number' || position.top > window.innerHeight / 2
+  const popoverAlignRight =
+    typeof position?.left !== 'number' || position.left > window.innerWidth / 2
   const copyValue = async (key: string, value: string) => {
     await navigator.clipboard?.writeText(value)
     setCopiedKey(key)
-    window.setTimeout(() => setCopiedKey(current => (current === key ? null : current)), 1200)
+    if (copiedResetTimeoutRef.current !== null) {
+      window.clearTimeout(copiedResetTimeoutRef.current)
+    }
+    copiedResetTimeoutRef.current = window.setTimeout(() => {
+      copiedResetTimeoutRef.current = null
+      setCopiedKey(current => (current === key ? null : current))
+    }, 1200)
+  }
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return
+    const root = event.currentTarget.parentElement
+    if (!root) return
+    const startX = event.clientX
+    const startY = event.clientY
+    const startRect = root.getBoundingClientRect()
+    draggedRef.current = false
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const deltaY = moveEvent.clientY - startY
+      if (!draggedRef.current && Math.hypot(deltaX, deltaY) < 4) return
+      draggedRef.current = true
+      setPosition({
+        bottom: 'auto',
+        right: 'auto',
+        left: Math.min(
+          Math.max(0, window.innerWidth - startRect.width),
+          Math.max(0, startRect.left + deltaX)
+        ),
+        top: Math.min(
+          Math.max(0, window.innerHeight - startRect.height),
+          Math.max(0, startRect.top + deltaY)
+        ),
+      })
+    }
+    const stopDragging = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopDragging)
+      window.removeEventListener('pointercancel', stopDragging)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopDragging)
+    window.addEventListener('pointercancel', stopDragging)
+  }
+
+  const handleTriggerClick = () => {
+    if (draggedRef.current) {
+      draggedRef.current = false
+      return
+    }
+    if (collapsed) setCollapsed(false)
   }
 
   return (
     <div
       data-testid="wework-dev-instance-badge"
+      style={position}
       className="group pointer-events-auto fixed bottom-3 right-3 z-critical max-w-[min(460px,calc(100vw-1.5rem))]"
     >
-      <div className="ml-auto max-w-[min(240px,calc(100vw-1.5rem))] truncate rounded-md border border-border/80 bg-background/95 px-2.5 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
-        <span className="text-text-primary">{info.title}</span>
-      </div>
-      <div className="pointer-events-none absolute bottom-full right-0 w-[min(460px,calc(100vw-1.5rem))] translate-y-1 pb-2 text-xs opacity-0 transition group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
+      <button
+        type="button"
+        data-testid="wework-dev-instance-trigger"
+        onClick={handleTriggerClick}
+        onPointerDown={handlePointerDown}
+        aria-label={collapsed ? 'Expand development instance info' : 'Development instance info'}
+        className={cn(
+          'ml-auto flex cursor-grab items-center justify-center border border-border/80 bg-background/95 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur active:cursor-grabbing',
+          collapsed
+            ? 'h-8 w-8 rounded-full'
+            : 'max-w-[min(240px,calc(100vw-1.5rem))] rounded-md px-2.5 py-1.5'
+        )}
+      >
+        {collapsed ? (
+          <Info className="h-4 w-4" />
+        ) : (
+          <span className="truncate text-text-primary">{info.title}</span>
+        )}
+      </button>
+      <div
+        className={cn(
+          'pointer-events-none absolute w-[min(460px,calc(100vw-1.5rem))] text-xs opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
+          popoverAbove ? 'bottom-full pb-2' : 'top-full pt-2',
+          popoverAlignRight ? 'right-0' : 'left-0'
+        )}
+      >
         <div className="rounded-lg border border-border/80 bg-background/98 p-2 shadow-[0_18px_48px_rgba(0,0,0,0.18)] backdrop-blur">
+          <div className="mb-1 flex items-center justify-between px-2 py-1">
+            <span className="font-medium text-text-primary">Development instance</span>
+            {!collapsed && (
+              <button
+                type="button"
+                data-testid="collapse-wework-dev-instance-button"
+                className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                title="Collapse to movable icon"
+                aria-label="Collapse development instance info"
+                onClick={() => setCollapsed(true)}
+              >
+                <Minimize2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <div className="space-y-1">
             {rows.map(row => (
               <div
@@ -402,7 +954,7 @@ function WeworkDevInstanceBadge() {
               >
                 <div className="text-text-muted">{row.label}</div>
                 <div
-                  className="min-w-0 truncate font-mono text-[11px] text-text-primary"
+                  className="min-w-0 truncate font-mono text-xs text-text-primary"
                   title={row.value}
                 >
                   {row.value}
@@ -427,46 +979,5 @@ function WeworkDevInstanceBadge() {
         </div>
       </div>
     </div>
-  )
-}
-
-function TitlebarSidebarTogglePlaceholder() {
-  return (
-    <div
-      data-testid="titlebar-sidebar-toggle-placeholder"
-      aria-hidden="true"
-      className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, 'invisible pointer-events-none')}
-    />
-  )
-}
-
-function TitlebarSidebarToggle() {
-  const { t } = useTranslation('common')
-  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const label = sidebarCollapsed
-    ? t('workbench.expand_sidebar', '展开侧边栏')
-    : t('workbench.collapse_sidebar', '收起侧边栏')
-
-  return (
-    <TitlebarTooltip
-      label={t('workbench.toggle_sidebar', '切换边栏')}
-      shortcut="Command+B"
-      align="start"
-    >
-      <button
-        type="button"
-        data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
-        onClick={() => {
-          if (!requestDesktopSidebarToggle()) {
-            setSidebarCollapsed(!sidebarCollapsed)
-          }
-        }}
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={label}
-        aria-pressed={sidebarCollapsed}
-      >
-        <PanelLeft />
-      </button>
-    </TitlebarTooltip>
   )
 }

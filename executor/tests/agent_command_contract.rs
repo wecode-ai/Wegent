@@ -175,15 +175,20 @@ fn claude_command_maps_nested_model_env_to_process_environment() {
 }
 
 #[test]
-fn claude_command_uses_model_config_default_haiku_model_when_set() {
+fn claude_command_uses_explicit_default_models_when_set() {
     let _lock = env_lock();
     let _default_haiku = EnvGuard::set("ANTHROPIC_DEFAULT_HAIKU_MODEL", "process-haiku");
+    let _default_sonnet = EnvGuard::set("ANTHROPIC_DEFAULT_SONNET_MODEL", "process-sonnet");
+    let _default_opus = EnvGuard::set("ANTHROPIC_DEFAULT_OPUS_MODEL", "process-opus");
     let request = ExecutionRequest {
         prompt: json!("run locally"),
         model_config: json!({
             "model": "anthropic",
             "model_id": "claude-sonnet-4",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-custom"
+            "CLAUDE_CODE_SUBAGENT_MODEL": "claude-subagent-custom",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-custom",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-custom",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-custom"
         }),
         ..ExecutionRequest::default()
     };
@@ -191,15 +196,29 @@ fn claude_command_uses_model_config_default_haiku_model_when_set() {
     let spec = build_claude_command(&request, "claude");
 
     assert_eq!(
+        spec.envs().get("CLAUDE_CODE_SUBAGENT_MODEL").unwrap(),
+        "claude-subagent-custom"
+    );
+    assert_eq!(
         spec.envs().get("ANTHROPIC_DEFAULT_HAIKU_MODEL").unwrap(),
         "claude-haiku-custom"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_SONNET_MODEL").unwrap(),
+        "claude-sonnet-custom"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_OPUS_MODEL").unwrap(),
+        "claude-opus-custom"
     );
 }
 
 #[test]
-fn claude_command_defaults_haiku_model_to_model_id() {
+fn claude_command_defaults_all_model_tiers_to_model_id() {
     let _lock = env_lock();
     let _default_haiku = EnvGuard::remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+    let _default_sonnet = EnvGuard::remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+    let _default_opus = EnvGuard::remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
     let request = ExecutionRequest {
         prompt: json!("run locally"),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -208,8 +227,17 @@ fn claude_command_defaults_haiku_model_to_model_id() {
 
     let spec = build_claude_command(&request, "claude");
 
+    assert!(!spec.envs().contains_key("CLAUDE_CODE_SUBAGENT_MODEL"));
     assert_eq!(
         spec.envs().get("ANTHROPIC_DEFAULT_HAIKU_MODEL").unwrap(),
+        "claude-sonnet-4"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_SONNET_MODEL").unwrap(),
+        "claude-sonnet-4"
+    );
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_DEFAULT_OPUS_MODEL").unwrap(),
         "claude-sonnet-4"
     );
 }
@@ -735,6 +763,31 @@ fn claude_project_headers_merge_custom_headers_and_default_headers() {
 }
 
 #[test]
+fn claude_non_project_request_includes_local_tracking_headers() {
+    let _lock = env_lock();
+    let home = unique_dir("claude-non-project-headers-home");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _process_headers = EnvGuard::remove("ANTHROPIC_CUSTOM_HEADERS");
+    let request = ExecutionRequest {
+        prompt: json!("answer without a project"),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+    let default_headers: serde_json::Value =
+        serde_json::from_str(spec.envs().get("DEFAULT_HEADERS").unwrap()).unwrap();
+
+    assert_eq!(
+        spec.envs().get("ANTHROPIC_CUSTOM_HEADERS").unwrap(),
+        "wecode-action: wegent\nwecode-source: wegent-local\nwecode-executor: claudecode"
+    );
+    assert_eq!(default_headers["wecode-action"], "wegent");
+    assert_eq!(default_headers["wecode-source"], "wegent-local");
+    assert_eq!(default_headers["wecode-executor"], "claudecode");
+    assert!(default_headers.get("wecode-project").is_none());
+}
+
+#[test]
 fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header() {
     let _lock = env_lock();
     let home = unique_dir("claude-standalone-zero-home");
@@ -862,6 +915,25 @@ fn claude_command_injects_kb_meta_prompt_for_chat_tasks() {
     assert!(prompt.contains("wegent_kb_list_documents"));
     assert!(prompt.contains("wegent_kb_read_document_content"));
     assert!(prompt.ends_with("Save this file to the selected knowledge base."));
+}
+
+#[test]
+fn claude_command_injects_selected_knowledge_for_code_tasks() {
+    let request = ExecutionRequest {
+        prompt: json!("Implement the requested change."),
+        task_type: Some("code".to_owned()),
+        extra: serde_json::Map::from_iter([(
+            "selected_knowledge_prompt".to_owned(),
+            json!("<selected_knowledge_sources><source provider=\"dingtalk\" /></selected_knowledge_sources>"),
+        )]),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+    let prompt = &spec.args()[1];
+
+    assert!(prompt.starts_with("<selected_knowledge_sources>"));
+    assert!(prompt.ends_with("Implement the requested change."));
 }
 
 #[test]

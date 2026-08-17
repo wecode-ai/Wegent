@@ -35,7 +35,9 @@ describe('formatCodexUsageDisplay', () => {
 
     const display = formatCodexUsageDisplay(response)
 
-    expect(display.tooltip).toBe('5小时额度 87%（11:30 重置）\n7天额度 42%（1月5日 09:15 重置）')
+    expect(display.tooltip).toBe(
+      'Codex 额度\n5小时额度 87%（11:30 重置）\n7天额度 42%（1月5日 09:15 重置）'
+    )
   })
 
   test('formats the real app-server rate limit shape', () => {

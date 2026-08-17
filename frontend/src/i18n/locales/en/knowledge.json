@@ -43,9 +43,12 @@
     "selectKnowledgeBase": "Select a knowledge base to view documents",
     "selectWholeKb": "Select KB",
     "selected": "Selected",
-    "selectedDocuments": "{{count}} documents selected",
-    "selectedFolders": "{{count}} folders selected, including subfolders",
-    "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
+    "scopeAllDocuments": "All · {{count}} docs",
+    "scopeDocumentsCompact_one": "{{count}} doc",
+    "scopeDocumentsCompact_other": "{{count}} docs",
+    "scopeFoldersCompact_one": "{{count}} folder",
+    "scopeFoldersCompact_other": "{{count}} folders",
+    "scopeMixedCompact": "{{folderCount}} folders · {{documentCount}} docs",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"
@@ -103,6 +106,8 @@
       "collapse": "Collapse",
       "collapseTree": "Collapse list",
       "expandTree": "List",
+      "expandAll": "Expand All",
+      "layeredNav": "Layered Navigation",
       "docCount": "{{count}} docs",
       "loadingKbs": "Loading knowledge bases..."
     },
@@ -156,8 +161,8 @@
       "wikispace": "Knowledge Base",
       "wikispaceSyncHint": "Click sync to pull knowledge bases from DingTalk",
       "wikispaceEmpty": "No knowledge base content",
-      "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
-      "wikispaceConfigureHint": "Please go to settings to configure DingTalk Knowledge Base MCP"
+      "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
+      "wikispaceConfigureHint": "Please configure DingTalk Knowledge Base MCP and DingTalk Docs MCP in settings"
     },
     "groupFilter": {
       "all": "All Groups"
@@ -210,13 +215,18 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
+      "createDialogDescription": "Configure the knowledge base name, visibility, and retrieval settings.",
       "createDesc": "Create your first knowledge base",
-      "notebookDesc": "Open Notebook View by default for document selection and chat",
-      "classicDesc": "Open Document View by default for browsing, uploading, and management",
+      "notebookDesc": "Open the Workspace by default to chat and use tools for knowledge and data",
+      "classicDesc": "Open Document Management by default for browsing, uploading, and maintenance",
       "type": "Default Opening View",
-      "typeNotebook": "Notebook View",
-      "typeClassic": "Document View",
+      "typeNotebook": "Workspace",
+      "typeClassic": "Document Management",
       "edit": "Edit Knowledge Base",
+      "editDialogDescription": "Update the knowledge base details, visibility, and retrieval settings.",
+      "loadingDetails": "Loading knowledge base details...",
+      "loadDetailsFailed": "Failed to load the latest knowledge base details. Editing is disabled to protect the current settings.",
+      "retryLoadDetails": "Retry",
       "delete": "Delete Knowledge Base",
       "name": "Name",
       "namePlaceholder": "Enter knowledge base name",
@@ -224,6 +234,12 @@
       "nameTooLong": "Name must be 100 characters or less",
       "description": "Description",
       "descriptionPlaceholder": "Enter description (optional)",
+      "directAccessRange": "Knowledge base visibility",
+      "directAccessRangeDescription": "Controls which members can see and open this knowledge base. This does not affect use through agents.",
+      "directAccessAllMembers": "All members with access",
+      "directAccessAllMembersDescription": "Members with read or edit access can see and open this knowledge base.",
+      "directAccessEditorsOnly": "Editors only",
+      "directAccessEditorsOnlyDescription": "Non-editors cannot see or open this knowledge base, but can still use it through an agent that has it configured.",
       "documentCount": "Documents",
       "empty": "No knowledge bases yet",
       "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",
@@ -231,15 +247,30 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
+      "categoryFilter": {
+        "label": "Knowledge base category",
+        "all": "All",
+        "document": "Document",
+        "code": "Code",
+        "emptyDocument": "No document knowledge bases",
+        "emptyCode": "No code knowledge bases"
+      },
       "currentDefaultView": "Current Default Opening View",
-      "convertToNotebook": "Open Notebook View by Default",
-      "convertToClassic": "Open Document View by Default",
+      "convertToNotebook": "Open Workspace by Default",
+      "convertToClassic": "Open Document Management by Default",
       "changeDefaultView": "Change Default View",
       "changeDefaultViewConfirm": "This only changes the default view used when opening the knowledge base. Existing content and permissions are unchanged.",
       "defaultViewUpdateSuccess": "Default opening view updated",
       "defaultViewUpdateFailed": "Failed to update default opening view",
       "targetGroup": "Target Group",
-      "selectGroup": "Select Group"
+      "selectGroup": "Select Group",
+      "kindDocument": "Documents",
+      "kindDocumentDesc": "Upload and organise material",
+      "kindCode": "Code",
+      "kindCodeDesc": "Generated from a repository"
+    },
+    "breadcrumb": {
+      "root": "All Documents"
     },
     "folder": {
       "folderType": "Folder",
@@ -297,7 +328,35 @@
         "converting": "Converting",
         "convertingHint": "Document is being converted to a searchable format. This may take a few minutes.",
         "pendingConversion": "Pending Conversion",
-        "pendingConversionHint": "Document is waiting to be converted to a searchable format."
+        "pendingConversionHint": "Document is waiting to be converted to a searchable format.",
+        "failed": "Failed",
+        "failedHint": "Document processing failed. Reindex the document, or contact an administrator if the problem continues."
+      },
+      "processingError": {
+        "stage": {
+          "dispatch": "Task submission failed",
+          "conversion": "Document conversion failed",
+          "indexing": "Document indexing failed",
+          "system": "Document processing failed"
+        },
+        "codes": {
+          "modelQuotaExhausted": "The selected model quota has been exhausted. Switch models or contact an administrator.",
+          "modelPermissionDenied": "The selected model is not available to the current account. Check its permissions or select another model.",
+          "conversionTimeout": "Document conversion timed out. Please retry.",
+          "conversionServiceUnavailable": "Could not connect to the MinerU document conversion service. Check the service status or retry later.",
+          "conversionLockTimeout": "The document conversion task waited too long. Reindex the document.",
+          "conversionFailed": "Document conversion failed. Please retry.",
+          "conversionConfigurationError": "The document conversion service is not configured correctly. Contact an administrator.",
+          "multimodalEmptyResponse": "The multimodal model returned no usable content. Check the document or select another model.",
+          "multimodalModelUnavailable": "The multimodal model is not configured or available. Check the knowledge base model settings.",
+          "multimodalFileTooLarge": "The media file is too large for multimodal processing.",
+          "indexingTimeout": "Document indexing timed out. Please retry.",
+          "indexingFailed": "Document indexing failed. Please retry.",
+          "indexLockTimeout": "The document indexing task waited too long. Please retry.",
+          "indexDispatchFailed": "The document indexing task could not be submitted. Please retry later.",
+          "processingFailed": "Document processing failed. Please retry."
+        },
+        "model": "Model"
       },
       "reindex": "Reindex",
       "index": "Start Indexing",
@@ -371,6 +430,7 @@
         "transferSuccessFolders": "Transferred {{folderCount}} folder(s) successfully",
         "transferSuccessMixed": "Transferred {{folderCount}} folder(s) and {{docCount}} document(s) successfully",
         "transferFailed": "Transfer failed",
+        "transferSelectionLimit": "Select at most {{count}} documents and folders per transfer",
         "noOtherKbs": "No target knowledge bases match the transfer rules",
         "errors": {
           "SOURCE_TARGET_SAME": "Source and target knowledge bases must be different",
@@ -379,6 +439,7 @@
           "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
           "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "A transfer can include at most 200 documents and folders",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
@@ -387,6 +448,8 @@
         "title": "Document Detail",
         "backToList": "Back to List",
         "summary": "Document Summary",
+        "derivedSummary": "AI Summary (based on parsed content)",
+        "refreshSummary": "Refresh AI summary",
         "status": "Status",
         "statusValues": {
           "pending": "Pending",
@@ -397,6 +460,8 @@
         "topics": "Topics",
         "metaInfo": "Metadata",
         "content": "Document Content",
+        "parsedContent": "Parsed Content",
+        "sourceFile": "Original File",
         "truncated": "Content Truncated",
         "copy": "Copy",
         "copied": "Copied",
@@ -429,7 +494,18 @@
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype",
         "qaPairsDetected": "{{count}} Q/A pairs detected",
-        "contentUpdatedAt": "Updated"
+        "contentUpdatedAt": "Updated",
+        "sourcePreview": {
+          "loading": "Loading original file...",
+          "download": "Download original",
+          "downloadFailed": "Failed to download the original file",
+          "tooLargeTitle": "File is too large for online preview",
+          "tooLargeDescription": "This file is {{size}}, which exceeds the current {{limit}} preview limit. Download it to continue.",
+          "fetchFailedTitle": "Unable to load the original file",
+          "fetchFailedDescription": "The original file could not be loaded. Check your network connection or access permissions, then retry.",
+          "renderFailedTitle": "Original file preview failed",
+          "renderFailedDescription": "The file may be damaged, encrypted, or use unsupported Office features. Retry the preview or download the original file."
+        }
       },
       "downloadFailed": "Failed to download file",
       "fetchFailed": "Failed to fetch documents",
@@ -444,6 +520,7 @@
       "confirming": "Creating documents...",
       "summary": "Completed: {{success}} succeeded, {{failed}} failed",
       "status": {
+        "createFailed": "Document creation failed",
         "pending": "Pending",
         "uploading": "Uploading",
         "success": "Uploaded",
@@ -596,6 +673,7 @@
     },
     "formSections": {
       "basic": "Basic Settings",
+      "access": "Access and Usage",
       "summary": "Summary Settings",
       "guidedQuestions": "Guided Questions"
     },
@@ -849,6 +927,138 @@
     },
     "analyzing": "Analyzing data table..."
   },
+  "artifact": {
+    "tab": "Tools",
+    "title": "Tools",
+    "subtitle": "Choose a tool to work with your knowledge and data",
+    "tools": "Tools",
+    "showTools": "Show tools panel",
+    "hideTools": "Collapse tools panel",
+    "generation": "Content generation",
+    "showSources": "Show sources",
+    "hideSources": "Collapse sources",
+    "resizeSources": "Resize sources panel",
+    "showGeneration": "Show content generation",
+    "hideGeneration": "Collapse content generation",
+    "resizeGeneration": "Resize content generation panel",
+    "recentGenerations": "Generation history",
+    "runningCount": "{{count}} in progress",
+    "noDocumentsHint": "This knowledge base has no available documents. Add sources first.",
+    "documentsProcessingHint": "Documents are being processed. Generation will be available when they are ready.",
+    "create": "Start task",
+    "createFirst": "Start first task",
+    "createTitle": "Start AI task",
+    "createDescription": "Choose sources and add generation instructions",
+    "sharedGenerationNotice": "Generated content will be saved to this knowledge base's generation history and will be visible to everyone who can access the knowledge base.",
+    "start": "Start generation",
+    "started": "Generation started. Track its status under Generation history.",
+    "creating": "Creating...",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving...",
+    "saveToKnowledge": "Save to knowledge base",
+    "saveToKnowledgeHint": "Edit the title and content before saving it as a searchable Markdown document.",
+    "savedToKnowledge": "Saved as a knowledge document",
+    "saveErrors": {
+      "permissionChanged": "You no longer have permission to save to this knowledge base.",
+      "targetMissing": "This knowledge base is no longer available.",
+      "invalidContent": "The document title or content is invalid.",
+      "saveFailed": "Failed to save the knowledge document."
+    },
+    "moreActions": "More actions",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this generation record? Its result will be permanently deleted. Source documents will not be affected.",
+    "retry": "Retry",
+    "generating": "Generating...",
+    "stalled": "Generation may have stalled",
+    "stalledHint": "This execution has not completed for a while. You can retry; results from the old attempt cannot overwrite the new one.",
+    "failed": "Generation failed",
+    "failedHint": "Please try again later.",
+    "operationFailed": "Operation failed",
+    "loadFailed": "Failed to load tasks",
+    "empty": "No generated content yet",
+    "emptyHint": "Choose a capability above to start generating content.",
+    "emptyReadOnlyHint": "Content generated by editors will appear here.",
+    "titleLabel": "Title (optional)",
+    "titlePlaceholder": "A default title will be generated",
+    "instructionLabel": "Additional instructions (optional)",
+    "instructionPlaceholder": "For example: emphasize risks, conclusions, and next steps",
+    "selectedDocuments": "{{count}} selected documents will be used",
+    "allDocuments": "All indexed documents will be used",
+    "wholeKnowledgeBase": "Entire knowledge base · {{count}} documents",
+    "wholeKnowledgeBaseShort": "Entire knowledge base",
+    "addMaterials": "Add sources",
+    "source": "Sources to use",
+    "sourceCount": "{{count}} sources",
+    "adjustSources": "Adjust",
+    "sourceBrowser": {
+      "documents": "Knowledge base documents",
+      "questionHint": "Questions use only selected documents",
+      "workspaceHint": "Chat and generation use only selected documents",
+      "generationHint": "Generate using only selected documents"
+    },
+    "action": {
+      "briefing": "Generate briefing",
+      "mind_map": "Generate mind map",
+      "presentation": "Generate PPT"
+    },
+    "sourceDialog": {
+      "title": "Choose sources",
+      "description": "Use all available documents by default, or choose specific documents.",
+      "all": "All available documents",
+      "allHint": "Use the current {{count}} available documents",
+      "defaultAllHint": "Use all {{count}} available documents by default",
+      "selectedHint": "{{count}} documents selected",
+      "search": "Search documents...",
+      "empty": "No documents found",
+      "clear": "Use all documents",
+      "apply": "Confirm selection",
+      "status": {
+        "not_indexed": "Not indexed",
+        "queued": "Queued",
+        "pending_conversion": "Pending",
+        "converting": "Processing",
+        "indexing": "Indexing",
+        "success": "Available",
+        "failed": "Index failed",
+        "unavailable": "Unavailable"
+      }
+    },
+    "mobile": {
+      "sources": "Sources",
+      "chat": "Chat",
+      "generation": "Generate"
+    },
+    "type": {
+      "briefing": "Briefing",
+      "briefingHint": "Structured Markdown summary",
+      "mindMap": "Mind map",
+      "mindMapHint": "Explore, expand, and ask follow-up questions",
+      "presentationHint": "Create a presentation in a new task"
+    },
+    "presentationPrompt": "Generate a PPT based on the currently selected knowledge base documents",
+    "presentationDialog": {
+      "description": "A default prompt will be added for you to edit before sending.",
+      "notice": "The presentation will be generated as a personal task, visible only to you, and will not be saved to this knowledge base's generation history.",
+      "continue": "Edit prompt"
+    },
+    "mindMap": {
+      "ask": "Ask AI",
+      "expand": "Expand node",
+      "collapse": "Collapse node",
+      "question": "Based on the current knowledge base, explain “{{title}}” from this mind map in detail.",
+      "path": "Its path in the mind map is: {{path}}.",
+      "instruction": "Explain its core meaning, relationships with parent and child topics, and key facts or conclusions. Cite knowledge base sources.",
+      "invalid": "This mind map has an invalid data format."
+    },
+    "status": {
+      "queued": "Queued",
+      "running": "Generating",
+      "stalled": "May be stalled",
+      "succeeded": "Completed",
+      "failed": "Failed"
+    }
+  },
   "chatPage": {
     "title": "Knowledge Base Chat",
     "summary": "Summary",
@@ -884,6 +1094,110 @@
       "title": "Cannot Access Knowledge Base",
       "description": "You do not have permission to access this knowledge base. If you have any questions, please contact the knowledge base creator or administrator.",
       "backButton": "Back to Knowledge Base List"
+    }
+  },
+  "codeWiki": {
+    "outline": {
+      "title": "On this page",
+      "label": "Page outline"
+    },
+    "list": {
+      "empty": "No code wikis yet",
+      "emptyHint": "Create one from a repository you can read.",
+      "neverGenerated": "Not generated yet",
+      "lastGenerated": "Updated {{when}}",
+      "atCommit": "at {{commit}}",
+      "pages_one": "{{count}} page",
+      "pages_other": "{{count}} pages"
+    },
+    "create": {
+      "title": "New code wiki",
+      "repository": "Repository",
+      "name": "Name",
+      "namePlaceholder": "Leave blank to use the repository name",
+      "submit": "Create",
+      "noBoundModel": "The code wiki agent has no model bound, so generation cannot run.",
+      "repositoryRequired": "Select or enter a repository address",
+      "fromMyRepositories": "From my repositories",
+      "byUrl": "By repository address",
+      "checking": "Checking the repository…",
+      "notReadable": "Cannot read this repository. Check the address, or add a token for this domain.",
+      "publicRepository": "Public repository",
+      "privateRepository": "Private repository",
+      "language": "Generation language",
+      "languageZh": "Chinese",
+      "languageEn": "English",
+      "alreadyBuilt": "{{count}} other wiki(s) already document this repository — you could ask for a share",
+      "ownedBy": "owned by {{owner}} — ask them for a share",
+      "showGenerationTask": "Show generation runs",
+      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id.",
+      "modelLabel": "Generation model",
+      "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
+      "modelPlaceholder": "Select a model",
+      "modelRequired": "Select the model to generate with"
+    },
+    "reader": {
+      "regenerate": "Regenerate",
+      "regenerating": "Generating…",
+      "upToDate": "Already up to date with the repository",
+      "started": "Generation started",
+      "back": "Back to the page",
+      "askPlaceholder": "Ask about this wiki",
+      "sectionOnly": "This section has no page of its own",
+      "empty": "This wiki has no pages yet",
+      "emptyHint": "Generate it to see its documentation here.",
+      "generating": "Generating…",
+      "previousRunStalled": "The previous run stalled; you can start another",
+      "linkNotFound": "This link points to a page that does not exist",
+      "backToChat": "Back to conversation",
+      "openNavigation": "Page navigation",
+      "generateFirst": "Generate",
+      "regenerateConfirmTitle": "Regenerate this wiki?",
+      "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
+      "emptyGenerating": "This wiki is being generated",
+      "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
+      "emptyFailed": "The last run did not finish",
+      "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
+    },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "Document Management",
+      "generatedContent": "Wiki",
+      "userContent": "Documents",
+      "permissions": "Permissions"
+    },
+    "history": {
+      "title": "Generation history",
+      "never": "Never generated",
+      "running": "Generating",
+      "stalled": "Last run stalled",
+      "lastFailed": "Last run failed",
+      "completed": "Generated",
+      "updated": "Updated {{when}}",
+      "current": "Current",
+      "none": "No runs yet",
+      "mode": {
+        "full": "Full",
+        "incremental": "Incremental",
+        "custom": "Custom"
+      },
+      "commitUnreported": "no commit reported",
+      "taskFailed": "The task failed",
+      "republish": "Restore this version",
+      "republished": "This version is published again",
+      "republishedDescription": "The page content has been refreshed.",
+      "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
+      "republishConfirmTitle": "Restore this version?",
+      "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "viewFailure": "View full error",
+      "failureDetailsTitle": "Generation error",
+      "failureDetailsDescription": "Full error message from this generation run."
+    },
+    "failure": {
+      "task_ended_without_report": "The task ended without reporting a result",
+      "task_not_created": "The generation task could not be created",
+      "worker_abandoned": "The worker stopped reporting and the run was reclaimed",
+      "publish_refused": "The version was written but refused by the publish gate"
     }
   }
 }

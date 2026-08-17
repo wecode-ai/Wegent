@@ -64,7 +64,7 @@ class GerritProvider(RepositoryProvider):
                 entries.append(
                     {
                         "git_domain": info.get("git_domain", ""),
-                        "git_token": info.get("git_token", ""),
+                        "git_token": self.decrypt_token(info.get("git_token", "")),
                         "user_name": info.get("user_name", ""),
                         "type": info.get("type", ""),
                         "auth_type": info.get("auth_type", "digest"),

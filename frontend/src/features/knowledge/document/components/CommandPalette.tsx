@@ -11,7 +11,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Search, BookOpen, Database, Users } from 'lucide-react'
+import { Search, Users } from 'lucide-react'
+import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -204,11 +205,10 @@ export function CommandPalette({
                           )}
                           data-testid={`search-result-kb-${kb.id}`}
                         >
-                          {kb.kb_type === 'classic' ? (
-                            <Database className="w-4 h-4 text-text-secondary flex-shrink-0" />
-                          ) : (
-                            <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
-                          )}
+                          <KnowledgeBaseIcon
+                            kbType={kb.kb_type}
+                            className="w-4 h-4 flex-shrink-0"
+                          />
                           <span className="flex-1 text-left truncate">{kb.name}</span>
                           <span className="text-xs text-text-muted truncate max-w-32">
                             {kb.namespace === 'default'

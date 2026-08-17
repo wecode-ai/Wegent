@@ -59,6 +59,46 @@ def find_skill_by_name(
         if skill:
             return skill
 
+        from app.services.skill_binding_service import skill_binding_service
+
+        bound_skill_ids = skill_binding_service.list_group_skill_ids(
+            db,
+            team_namespace,
+            owner_user_id,
+        )
+        if bound_skill_ids:
+            skill = (
+                db.query(Kind)
+                .filter(
+                    Kind.id.in_(bound_skill_ids),
+                    Kind.kind == "Skill",
+                    Kind.name == skill_name,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if skill:
+                return skill
+
+    from app.services.skill_binding_service import skill_binding_service
+
+    user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+        db, owner_user_id
+    )
+    if user_default_skill_ids:
+        skill = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(user_default_skill_ids),
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if skill:
+            return skill
+
     return (
         db.query(Kind)
         .filter(
@@ -79,8 +119,59 @@ def find_skill_by_ref(
     is_public: bool,
     user_id: int,
     team_namespace: str | None = None,
+    skill_id: int | None = None,
 ) -> Kind | None:
     """Find a skill by explicit name/namespace/public metadata."""
+    if skill_id is not None:
+        skill = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if not skill:
+            return None
+
+        if skill.user_id in {0, user_id}:
+            return skill
+
+        from app.services.skill_binding_service import skill_binding_service
+
+        if skill_binding_service.can_user_access_skill(
+            db,
+            skill=skill,
+            user_id=user_id,
+        ) and skill_id in skill_binding_service.list_user_default_skill_ids(
+            db, user_id
+        ):
+            return skill
+        if (
+            team_namespace
+            and team_namespace != "default"
+            and (
+                (
+                    skill.namespace == team_namespace
+                    and skill_binding_service.can_user_access_skill(
+                        db,
+                        skill=skill,
+                        user_id=user_id,
+                    )
+                )
+                or skill_binding_service.is_skill_available_to_group(
+                    db,
+                    group_namespace=team_namespace,
+                    skill_id=skill_id,
+                    user_id=user_id,
+                )
+            )
+        ):
+            return skill
+        return None
+
     if is_public:
         return (
             db.query(Kind)
@@ -197,6 +288,52 @@ def resolve_skill_refs_by_names(
             if skill.name in remaining:
                 resolved[skill.name] = build_skill_ref_meta(skill)
                 remaining.remove(skill.name)
+
+    if remaining and namespace != "default":
+        from app.services.skill_binding_service import skill_binding_service
+
+        bound_skill_ids = skill_binding_service.list_group_skill_ids(
+            db,
+            namespace,
+            user_id,
+        )
+        if bound_skill_ids:
+            bound_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.id.in_(bound_skill_ids),
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining),
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
+            for skill in bound_skills:
+                if skill.name in remaining:
+                    resolved[skill.name] = build_skill_ref_meta(skill)
+                    remaining.remove(skill.name)
+
+    if remaining:
+        from app.services.skill_binding_service import skill_binding_service
+
+        user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+            db, user_id
+        )
+        if user_default_skill_ids:
+            bound_skills = (
+                db.query(Kind)
+                .filter(
+                    Kind.id.in_(user_default_skill_ids),
+                    Kind.kind == "Skill",
+                    Kind.name.in_(remaining),
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
+            for skill in bound_skills:
+                if skill.name in remaining:
+                    resolved[skill.name] = build_skill_ref_meta(skill)
+                    remaining.remove(skill.name)
 
     if remaining:
         public_skills = (

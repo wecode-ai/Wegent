@@ -8,6 +8,11 @@ import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 const ADMIN_USERS_READY_SELECTOR =
   'h2:has-text("User Management"), h2:has-text("用户管理"), button:has-text("Create User"), button:has-text("创建用户")'
 
+type CreatedUser = {
+  id: number
+  user_name: string
+}
+
 test.describe('Admin - User Management', () => {
   let adminPage: AdminPage
   let apiClient: ApiClient
@@ -187,32 +192,18 @@ test.describe('Admin - User Management', () => {
       role: 'user',
     })
 
-    if (!createResponse.data) {
-      expect(true).toBe(true)
-      return
-    }
+    expect(createResponse.status).toBe(201)
+    const createdUser = createResponse.data as CreatedUser
+    expect(createdUser.user_name).toBe(testUsername)
 
     // Refresh page
     await page.reload()
     await adminPage.waitForPageLoad()
 
-    // Try to find and click edit button
-    const userCard = page.locator(`div:has-text("${testUsername}")`).first()
-    if (await userCard.isVisible({ timeout: 5000 }).catch(() => false)) {
-      const editButton = userCard.locator('button[title*="Edit"], button:has-text("Edit")').first()
-      if (await editButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await editButton.click()
-        const dialogVisible = await page
-          .locator('[role="dialog"]')
-          .isVisible({ timeout: 5000 })
-          .catch(() => false)
-        expect(dialogVisible || true).toBe(true)
-      } else {
-        expect(true).toBe(true)
-      }
-    } else {
-      expect(true).toBe(true)
-    }
+    const userCard = page.getByTestId(`user-card-${createdUser.id}`)
+    await expect(userCard).toContainText(testUsername)
+    await userCard.getByTestId(`edit-user-${createdUser.id}`).click()
+    await expect(page.locator('[role="dialog"]')).toBeVisible()
   })
 
   test('should delete a user', async ({ page }) => {
@@ -224,69 +215,29 @@ test.describe('Admin - User Management', () => {
       role: 'user',
     })
 
-    if (!createResponse.data) {
-      expect(true).toBe(true)
-      return
-    }
+    expect(createResponse.status).toBe(201)
+    const createdUser = createResponse.data as CreatedUser
+    expect(createdUser.user_name).toBe(testUsername)
 
     // Refresh page
     await page.reload()
     await adminPage.waitForPageLoad()
 
-    // Try to find and click delete button
-    const userCard = page.locator(`div:has-text("${testUsername}")`).first()
-    if (await userCard.isVisible({ timeout: 5000 }).catch(() => false)) {
-      const deleteButton = userCard
-        .locator('button[title*="Delete"], button:has-text("Delete")')
-        .first()
-      if (await deleteButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await deleteButton.click()
+    const userCard = page.getByTestId(`user-card-${createdUser.id}`)
+    await expect(userCard).toContainText(testUsername)
+    await userCard.getByTestId(`delete-user-${createdUser.id}`).click()
 
-        // Confirm delete
-        const confirmButton = page
-          .locator(
-            '[role="alertdialog"] button:has-text("Delete"), [role="alertdialog"] button:has-text("删除"), [role="dialog"] button:has-text("Delete")'
-          )
-          .first()
-        if (await confirmButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await confirmButton.click()
-          await page.waitForTimeout(1000)
-        }
+    const confirmButton = page
+      .locator(
+        '[role="alertdialog"] button:has-text("Delete"), [role="alertdialog"] button:has-text("删除"), [role="dialog"] button:has-text("Delete")'
+      )
+      .first()
+    await expect(confirmButton).toBeVisible()
+    await confirmButton.click()
 
-        // Wait for toast
-        await adminPage.waitForToast().catch(() => {})
-
-        // Note: Backend performs soft delete (deactivate), so user may still appear
-        // in the list if "show inactive" is checked. We verify the delete action succeeded
-        // by checking the toast message or that the user is marked as inactive.
-        await page.reload()
-        await adminPage.waitForPageLoad()
-
-        // The user should either be gone from the default list (without inactive users)
-        // or marked as inactive. Either way, the delete action succeeded.
-        const exists = await adminPage.userExists(testUsername)
-
-        // If user still exists, check if they're marked as inactive
-        if (exists) {
-          const inactiveTag = page.locator(
-            `div:has-text("${testUsername}") >> text=Inactive, div:has-text("${testUsername}") >> text=已停用`
-          )
-          const isInactive = await inactiveTag.isVisible({ timeout: 2000 }).catch(() => false)
-          // User should be marked as inactive after soft delete
-          expect(isInactive || true).toBe(true)
-        } else {
-          // User is not visible (filtered out) - delete succeeded
-          expect(exists).toBe(false)
-        }
-
-        // Clear testUsername as it's already deleted/deactivated
-        testUsername = ''
-      } else {
-        expect(true).toBe(true)
-      }
-    } else {
-      expect(true).toBe(true)
-    }
+    await expect.poll(async () => (await apiClient.adminGetUser(createdUser.id)).status).toBe(404)
+    await expect(page.getByTestId(`user-card-${createdUser.id}`)).toHaveCount(0)
+    testUsername = ''
   })
 
   test('should validate required fields when creating user', async ({ page }) => {

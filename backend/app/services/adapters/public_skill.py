@@ -7,12 +7,43 @@ Public Skill service for managing system-level Skills (user_id=0)
 """
 
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import ObjectMeta, Skill, SkillSpec, SkillStatus
+
+
+def _sanitize_skill_source(source: Any) -> Any:
+    """Remove embedded Git credentials from public skill source metadata."""
+    if not isinstance(source, dict):
+        return source
+
+    sanitized_source = source.copy()
+    repo_url = sanitized_source.get("repo_url")
+    if not isinstance(repo_url, str) or "@" not in repo_url:
+        return sanitized_source
+
+    has_scheme = "://" in repo_url
+    parsed = urlsplit(repo_url if has_scheme else f"//{repo_url}")
+    if "@" not in parsed.netloc:
+        return sanitized_source
+
+    sanitized_url = urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc.rsplit("@", 1)[-1],
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+    sanitized_source["repo_url"] = (
+        sanitized_url if has_scheme else sanitized_url.removeprefix("//")
+    )
+    return sanitized_source
 
 
 class PublicSkillAdapter:
@@ -24,6 +55,10 @@ class PublicSkillAdapter:
         spec = {}
         if isinstance(kind.json, dict):
             spec = kind.json.get("spec", {})
+        capability = spec.get("capability", {})
+        marketplace_tags = (
+            capability.get("tags", []) if isinstance(capability, dict) else []
+        )
 
         return {
             "id": kind.id,
@@ -35,11 +70,13 @@ class PublicSkillAdapter:
             "version": spec.get("version"),
             "author": spec.get("author"),
             "tags": spec.get("tags"),
+            "marketplaceTags": marketplace_tags,
             "bindShells": spec.get("bindShells"),
             "visible": spec.get("visible", True),
             "is_active": kind.is_active,
             "is_public": True,
             "user_id": kind.user_id,
+            "source": _sanitize_skill_source(spec.get("source")),
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
         }

@@ -1,17 +1,41 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { RefObject } from 'react'
-import { baseKeymap } from 'prosemirror-commands'
+import {
+  chainCommands,
+  deleteSelection,
+  joinBackward,
+  joinForward,
+  splitBlock,
+} from 'prosemirror-commands'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
-import type { Node as ProseMirrorNode } from 'prosemirror-model'
+import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
-import { EditorView } from 'prosemirror-view'
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
+import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
+import { ComposerLinkNodeView } from './ComposerLinkNodeView'
+import type { ComposerLinkPayload } from './composerLinks'
+import {
+  allocateComposerDiagnosticId,
+  classifyComposerInputData,
+  diagnosticKeyboardKey,
+  recordComposerDiagnostic,
+  roundComposerDuration,
+} from './composerDiagnostics'
 import {
   composerSchema,
   createComposerDocument,
   OBJECT_REPLACEMENT_CHARACTER,
   serializeComposerDocument,
+  serializeComposerLinkNode,
   serializeComposerSlice,
 } from './composerProseMirrorModel'
 
@@ -38,9 +62,16 @@ interface ComposerProseMirrorEditorProps {
   onKeyUp: (event: KeyboardEvent) => void
   onCompositionStart: () => void
   onCompositionEnd: () => void
+  onBlur?: () => void
   onPaste: (event: ClipboardEvent) => boolean
   onDrop: (event: DragEvent) => boolean
   onOpenMentionFile?: (path: string) => void
+  onOpenMentionPlugin?: (reference: PluginReference) => void
+  onEditComposerLink?: (
+    payload: ComposerLinkPayload,
+    anchor?: HTMLElement,
+    range?: { start: number; end: number }
+  ) => void
   onClick: () => void
   onFocus: () => void
   disabled?: boolean
@@ -52,6 +83,7 @@ interface ComposerProseMirrorEditorProps {
 }
 
 const EXTERNAL_VALUE_META = 'composer-external-value'
+const SLOW_INPUT_FRAME_MS = 32
 
 export const ComposerProseMirrorEditor = forwardRef<
   ComposerEditorHandle,
@@ -60,9 +92,10 @@ export const ComposerProseMirrorEditor = forwardRef<
   const mountRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const textareaRefRef = useRef(props.textareaRef)
-  const initialPropsRef = useRef(props)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
+  const composerDiagnosticIdRef = useRef<number | null>(null)
+  const [hasContent, setHasContent] = useState(props.value !== '')
   callbacksRef.current = props
 
   useLayoutEffect(() => {
@@ -85,7 +118,12 @@ export const ComposerProseMirrorEditor = forwardRef<
       setValue(value, selectionOffset = value.length) {
         const view = viewRef.current
         if (!view) return
-        replaceComposerValue(view, value, selectionOffset)
+        recordComposerDiagnostic('value-set', {
+          composerId: composerDiagnosticIdRef.current,
+          valueLength: value.length,
+          selectionEnd: selectionOffset,
+        })
+        replaceComposerValue(view, value, selectionOffset, false, true)
       },
     }),
     []
@@ -94,7 +132,18 @@ export const ComposerProseMirrorEditor = forwardRef<
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
-    const initialProps = initialPropsRef.current
+    const initialProps = callbacksRef.current
+    const composerId = allocateComposerDiagnosticId()
+    composerDiagnosticIdRef.current = composerId
+    recordComposerDiagnostic('editor-mounted', {
+      composerId,
+      valueLength: initialProps.value.length,
+    })
+    internalValueRef.current = initialProps.value
+    let lastBeforeInputAt: number | null = null
+    let inputFrameStartedAt: number | null = null
+    let inputFrameRequest: number | null = null
+    let inputFrameEventCount = 0
 
     const view: EditorView = new EditorView(mount, {
       state: EditorState.create({
@@ -105,17 +154,48 @@ export const ComposerProseMirrorEditor = forwardRef<
               return !transaction.docChanged || !containsObjectReplacementCharacter(transaction.doc)
             },
           }),
+          new Plugin({
+            props: {
+              decorations(state) {
+                if (
+                  !state.selection.empty ||
+                  !state.selection.$head.parent.isTextblock ||
+                  state.selection.$head.parent.content.size > 0
+                ) {
+                  return null
+                }
+                return DecorationSet.create(state.doc, [
+                  Decoration.widget(
+                    state.selection.head,
+                    () => {
+                      const caret = document.createElement('span')
+                      caret.className = 'composer-empty-caret'
+                      caret.setAttribute('aria-hidden', 'true')
+                      return caret
+                    },
+                    { key: 'composer-empty-caret', side: -1 }
+                  ),
+                ])
+              },
+            },
+          }),
           history(),
           keymap({
             'Mod-z': undo,
             'Mod-y': redo,
             'Shift-Mod-z': redo,
-            'Shift-Enter': (state, dispatch) => {
-              dispatch?.(state.tr.replaceSelectionWith(composerSchema.nodes.hard_break.create()))
-              return true
+            Backspace: chainCommands(deleteSelection, joinBackward),
+            Delete: chainCommands(deleteSelection, joinForward),
+            'Shift-Enter': (state, dispatch, view) => {
+              const handled = splitBlock(
+                state,
+                dispatch ? transaction => dispatch(transaction.scrollIntoView()) : undefined,
+                view
+              )
+              if (handled && dispatch && view) keepTrailingComposerCaretVisible(view)
+              return handled
             },
           }),
-          keymap(baseKeymap),
         ],
       }),
       attributes: editorAttributes(initialProps),
@@ -125,25 +205,63 @@ export const ComposerProseMirrorEditor = forwardRef<
       editable: () => !callbacksRef.current.disabled,
       nodeViews: {
         composer_mention(node, view, getPos) {
-          return new ComposerMentionNodeView(node, view, getPos, path =>
-            callbacksRef.current.onOpenMentionFile?.(path)
+          return new ComposerMentionNodeView(
+            node,
+            view,
+            getPos,
+            path => callbacksRef.current.onOpenMentionFile?.(path),
+            reference => callbacksRef.current.onOpenMentionPlugin?.(reference)
           )
+        },
+        composer_link(node, view, getPos) {
+          return new ComposerLinkNodeView(node, view, getPos, {
+            onEditLink: (payload, anchor, range) =>
+              callbacksRef.current.onEditComposerLink?.(payload, anchor, range),
+          })
         },
       },
       dispatchTransaction(transaction) {
+        const transactionStartedAt = performance.now()
         const nextState = view.state.apply(transaction)
         view.updateState(nextState)
         const snapshot = readComposerSnapshot(nextState)
         internalValueRef.current = snapshot.value
+        setHasContent(snapshot.value !== '')
         if (transaction.docChanged && !transaction.getMeta(EXTERNAL_VALUE_META)) {
           callbacksRef.current.onChange(snapshot.value)
         }
         callbacksRef.current.onSnapshotChange(snapshot)
+        if (transaction.docChanged) {
+          recordComposerDiagnostic('transaction', {
+            composerId,
+            docChanged: true,
+            external: Boolean(transaction.getMeta(EXTERNAL_VALUE_META)),
+            viewIsComposing: view.composing,
+            valueLength: snapshot.value.length,
+            selectionStart: snapshot.selectionStart,
+            selectionEnd: snapshot.selectionEnd,
+            transactionMs: performance.now() - transactionStartedAt,
+            elapsedMs: lastBeforeInputAt === null ? null : performance.now() - lastBeforeInputAt,
+          })
+          lastBeforeInputAt = null
+        }
       },
       handleTextInput(_view, from, to, text): boolean {
         if (!text.includes(OBJECT_REPLACEMENT_CHARACTER)) return false
         const sanitizedText = text.replaceAll(OBJECT_REPLACEMENT_CHARACTER, '')
         if (sanitizedText) view.dispatch(view.state.tr.insertText(sanitizedText, from, to))
+        return true
+      },
+      handlePaste(view, event) {
+        const text =
+          event.clipboardData?.getData('text/plain') || event.clipboardData?.getData('text')
+        if (!text) return false
+        const pastedDocument = createComposerDocument(text)
+        let transaction = view.state.tr.replaceSelection(new Slice(pastedDocument.content, 1, 1))
+        transaction = transaction.setSelection(TextSelection.atEnd(transaction.doc))
+        view.dispatch(
+          transaction.setMeta('paste', true).setMeta('uiEvent', 'paste').scrollIntoView()
+        )
         return true
       },
       handleDOMEvents: {
@@ -158,10 +276,20 @@ export const ComposerProseMirrorEditor = forwardRef<
           return false
         },
         compositionstart() {
+          recordComposerDiagnostic('composition-start', {
+            composerId,
+            viewIsComposing: view.composing,
+            valueLength: internalValueRef.current.length,
+          })
           callbacksRef.current.onCompositionStart()
           return false
         },
         compositionend() {
+          recordComposerDiagnostic('composition-end', {
+            composerId,
+            viewIsComposing: view.composing,
+            valueLength: internalValueRef.current.length,
+          })
           callbacksRef.current.onCompositionEnd()
           return false
         },
@@ -173,10 +301,29 @@ export const ComposerProseMirrorEditor = forwardRef<
           callbacksRef.current.onFocus()
           return false
         },
+        blur() {
+          callbacksRef.current.onBlur?.()
+          return false
+        },
       },
     })
 
     const handleKeyDownCapture = (event: KeyboardEvent) => {
+      const diagnosticKey = diagnosticKeyboardKey(event.key)
+      if (diagnosticKey) {
+        recordComposerDiagnostic('keyboard', {
+          composerId,
+          key: diagnosticKey,
+          code: event.code,
+          eventIsComposing: event.isComposing,
+          viewIsComposing: view.composing,
+          shiftKey: event.shiftKey,
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          valueLength: internalValueRef.current.length,
+        })
+      }
       if (selectAllComposerContent(view, event)) {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -201,6 +348,36 @@ export const ComposerProseMirrorEditor = forwardRef<
       event.stopImmediatePropagation()
     }
     const handleBeforeInputCapture = (event: InputEvent) => {
+      const now = performance.now()
+      lastBeforeInputAt = now
+      inputFrameStartedAt ??= now
+      inputFrameEventCount += 1
+      recordComposerDiagnostic('before-input', {
+        composerId,
+        inputType: event.inputType,
+        eventIsComposing: event.isComposing,
+        viewIsComposing: view.composing,
+        valueLength: internalValueRef.current.length,
+        ...classifyComposerInputData(event.data),
+      })
+      if (inputFrameRequest === null) {
+        inputFrameRequest = window.requestAnimationFrame(() => {
+          const frameDelayMs =
+            inputFrameStartedAt === null ? 0 : performance.now() - inputFrameStartedAt
+          if (frameDelayMs >= SLOW_INPUT_FRAME_MS) {
+            recordComposerDiagnostic('input-frame', {
+              composerId,
+              frameDelayMs: roundComposerDuration(frameDelayMs),
+              eventCount: inputFrameEventCount,
+              viewIsComposing: view.composing,
+              valueLength: internalValueRef.current.length,
+            })
+          }
+          inputFrameRequest = null
+          inputFrameStartedAt = null
+          inputFrameEventCount = 0
+        })
+      }
       const handledByComposer = callbacksRef.current.onBeforeInput(
         event,
         readComposerSnapshot(view.state)
@@ -220,6 +397,12 @@ export const ComposerProseMirrorEditor = forwardRef<
     callbacksRef.current.onSnapshotChange(readComposerSnapshot(view.state))
 
     return () => {
+      if (inputFrameRequest !== null) window.cancelAnimationFrame(inputFrameRequest)
+      recordComposerDiagnostic('editor-unmounted', {
+        composerId,
+        valueLength: internalValueRef.current.length,
+      })
+      composerDiagnosticIdRef.current = null
       if (viewRef.current === view) viewRef.current = null
       if (textareaRefRef.current.current === view.dom) {
         ;(textareaRefRef.current as { current: HTMLElement | null }).current = null
@@ -245,13 +428,20 @@ export const ComposerProseMirrorEditor = forwardRef<
     const view = viewRef.current
     if (!view || props.value === internalValueRef.current) return
     const selectionOffset = view.hasFocus() ? props.value.length : undefined
+    recordComposerDiagnostic('external-value-apply', {
+      composerId: composerDiagnosticIdRef.current,
+      valueLength: props.value.length,
+      selectionEnd: selectionOffset ?? null,
+      viewIsComposing: view.composing,
+    })
+    setHasContent(props.value !== '')
     replaceComposerValue(view, props.value, selectionOffset, true)
   }, [props.value])
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <div ref={mountRef} />
-      {!props.value && (
+      {!hasContent && (
         <div
           className={`${props.className} pointer-events-none absolute inset-0 !text-text-muted/55`}
         >
@@ -270,8 +460,19 @@ function editorAttributes(props: ComposerProseMirrorEditorProps): Record<string,
     spellcheck: 'true',
     rows: String(props.rows),
     placeholder: props.placeholder,
-    class: `${props.className} relative z-30 whitespace-pre-wrap break-words`,
+    class: `${props.className} composer-prosemirror-editor relative z-30 whitespace-pre-wrap break-words`,
   }
+}
+
+function keepTrailingComposerCaretVisible(view: EditorView): void {
+  window.requestAnimationFrame(() => {
+    const selectionAtEnd = view.state.selection.head === view.state.doc.content.size - 1
+    if (!selectionAtEnd || view.dom.scrollHeight <= view.dom.clientHeight) return
+
+    // WebKit reports the rectangle before consecutive trailing BR nodes, so
+    // ProseMirror cannot scroll the actual caret into view on its own.
+    view.dom.scrollTop = view.dom.scrollHeight - view.dom.clientHeight
+  })
 }
 
 function defineComposerValueProperty(view: EditorView): void {
@@ -307,19 +508,13 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
     event.shiftKey ||
     event.altKey ||
     event.ctrlKey ||
+    event.metaKey ||
     !view.state.selection.empty
   ) {
     return false
   }
 
   const { $head } = view.state.selection
-  if (event.metaKey) {
-    return setComposerSelection(
-      view,
-      event,
-      event.key === 'ArrowLeft' ? $head.start() : $head.end()
-    )
-  }
   if (event.key === 'ArrowLeft' && $head.pos === $head.start()) {
     return setComposerSelection(view, event, $head.pos)
   }
@@ -346,7 +541,10 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
   }
 
   const adjacentNode = event.key === 'ArrowLeft' ? $head.nodeBefore : $head.nodeAfter
-  if (adjacentNode?.type === composerSchema.nodes.composer_mention) {
+  if (
+    adjacentNode?.type === composerSchema.nodes.composer_mention ||
+    adjacentNode?.type === composerSchema.nodes.composer_link
+  ) {
     const nextPosition =
       event.key === 'ArrowLeft'
         ? $head.pos - adjacentNode.nodeSize
@@ -354,18 +552,21 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
     return setComposerSelection(view, event, nextPosition)
   }
 
-  const domMention = findComposerMentionFromDOMSelection(view)
-  if (!domMention) return false
-  const position = view.posAtDOM(domMention, 0)
+  const domAtom = findComposerAtomFromDOMSelection(view)
+  if (!domAtom) return false
+  const position = view.posAtDOM(domAtom, 0)
   return setComposerSelection(view, event, event.key === 'ArrowLeft' ? position : position + 1)
 }
 
-function findComposerMentionFromDOMSelection(view: EditorView): HTMLElement | null {
+function findComposerAtomFromDOMSelection(view: EditorView): HTMLElement | null {
   const anchorNode = view.dom.ownerDocument.getSelection()?.anchorNode
   const anchorElement =
     anchorNode instanceof HTMLElement ? anchorNode : (anchorNode?.parentElement ?? null)
-  const mention = anchorElement?.closest<HTMLElement>('[data-composer-skill-reference]') ?? null
-  return mention && view.dom.contains(mention) ? mention : null
+  const atom =
+    anchorElement?.closest<HTMLElement>(
+      '[data-composer-skill-reference], [data-composer-link-url]'
+    ) ?? null
+  return atom && view.dom.contains(atom) ? atom : null
 }
 
 function setComposerSelection(view: EditorView, event: KeyboardEvent, position: number): boolean {
@@ -407,7 +608,8 @@ function replaceComposerValue(
   view: EditorView,
   value: string,
   selectionOffset?: number,
-  external = false
+  external = false,
+  scrollSelectionIntoView = false
 ): void {
   if (serializeComposerDocument(view.state.doc) === value) {
     if (selectionOffset === undefined) return
@@ -415,9 +617,13 @@ function replaceComposerValue(
       view.state.doc,
       positionFromSerializedOffset(view.state.doc, selectionOffset)
     )
-    if (selection.eq(view.state.selection)) return
+    if (selection.eq(view.state.selection)) {
+      if (scrollSelectionIntoView) view.dispatch(view.state.tr.scrollIntoView())
+      return
+    }
     let selectionTransaction = view.state.tr.setSelection(selection)
     if (external) selectionTransaction = selectionTransaction.setMeta(EXTERNAL_VALUE_META, true)
+    if (scrollSelectionIntoView) selectionTransaction = selectionTransaction.scrollIntoView()
     view.dispatch(selectionTransaction)
     return
   }
@@ -433,45 +639,66 @@ function replaceComposerValue(
     )
   }
   if (external) transaction = transaction.setMeta(EXTERNAL_VALUE_META, true)
+  if (scrollSelectionIntoView) transaction = transaction.scrollIntoView()
   view.dispatch(transaction)
 }
 
 function serializedOffsetFromPosition(doc: ProseMirrorNode, position: number): number {
   let serializedOffset = 0
-  const paragraph = doc.firstChild
-  if (!paragraph) return 0
-
-  paragraph.forEach((node, nodeOffset) => {
-    const nodeStart = nodeOffset + 1
-    if (nodeStart >= position) return
+  doc.descendants((node, nodeStart) => {
+    if (nodeStart >= position) return false
+    if (node.type === composerSchema.nodes.paragraph) {
+      if (nodeStart > 0 && position > nodeStart) serializedOffset += 1
+      return true
+    }
     if (node.isText) {
       serializedOffset += Math.min(node.text?.length ?? 0, position - nodeStart)
-      return
+      return false
     }
     if (node.type === composerSchema.nodes.composer_mention) {
       if (position >= nodeStart + node.nodeSize) {
         serializedOffset += String(node.attrs.reference ?? '').length
       }
-      return
+      return false
+    }
+    if (node.type === composerSchema.nodes.composer_link) {
+      if (position >= nodeStart + node.nodeSize) {
+        serializedOffset += serializeComposerLinkNode(node).length
+      }
+      return false
     }
     if (node.type === composerSchema.nodes.hard_break && position >= nodeStart + node.nodeSize) {
       serializedOffset += 1
     }
+    return false
   })
   return serializedOffset
 }
 
 function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number): number {
-  const paragraph = doc.firstChild
-  if (!paragraph) return 1
   const normalizedTarget = Math.max(0, targetOffset)
   let serializedOffset = 0
   let position = doc.content.size - 1
   let resolved = false
 
-  paragraph.forEach((node, nodeOffset) => {
-    if (resolved) return
-    const nodeStart = nodeOffset + 1
+  doc.descendants((node, nodeStart) => {
+    if (resolved) return false
+    if (node.type === composerSchema.nodes.paragraph) {
+      if (normalizedTarget === serializedOffset) {
+        position = nodeStart + 1
+        resolved = true
+        return false
+      }
+      if (nodeStart > 0) {
+        serializedOffset += 1
+        if (normalizedTarget <= serializedOffset) {
+          position = nodeStart + 1
+          resolved = true
+          return false
+        }
+      }
+      return true
+    }
     if (node.isText) {
       const length = node.text?.length ?? 0
       if (normalizedTarget <= serializedOffset + length) {
@@ -480,15 +707,17 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
       } else {
         serializedOffset += length
       }
-      return
+      return false
     }
 
     const serializedLength =
       node.type === composerSchema.nodes.composer_mention
         ? String(node.attrs.reference ?? '').length
-        : node.type === composerSchema.nodes.hard_break
-          ? 1
-          : 0
+        : node.type === composerSchema.nodes.composer_link
+          ? serializeComposerLinkNode(node).length
+          : node.type === composerSchema.nodes.hard_break
+            ? 1
+            : 0
     if (normalizedTarget <= serializedOffset) {
       position = nodeStart
       resolved = true
@@ -498,6 +727,7 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
     } else {
       serializedOffset += serializedLength
     }
+    return false
   })
   return position
 }

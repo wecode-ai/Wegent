@@ -19,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -35,6 +36,9 @@ import {
   ValidationStatusResponse,
 } from '@/apis/shells'
 import SoftwareRequirements from './SoftwareRequirements'
+import { CapabilityScopeSelector } from '@/features/resource-library/components/CapabilityScopeSelector'
+import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
+import type { Group } from '@/types/group'
 
 // Polling configuration
 const POLLING_INTERVAL = 2000 // 2 seconds
@@ -56,6 +60,7 @@ interface ShellEditDialogProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  publicationGroups?: Group[]
 }
 
 const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
@@ -65,9 +70,22 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
   toast,
   scope = 'personal',
   groupName,
+  publicationGroups,
 }) => {
   const { t } = useTranslation()
   const isEditing = !!shell
+  const publicationNamespace =
+    shell?.namespace || (scope === 'group' && groupName ? groupName : 'default')
+  const publicationScope = useCapabilityPublicationScope({
+    enabled: publicationGroups !== undefined,
+    open,
+    resourceType: 'shell',
+    sourceName: shell?.name,
+    sourceNamespace: publicationNamespace,
+    groups: publicationGroups || [],
+    defaultTarget: publicationNamespace === 'default' ? 'personal' : 'team',
+    defaultGroupNames: publicationNamespace === 'default' ? [] : [publicationNamespace],
+  })
 
   // Form state
   const [name, setName] = useState('')
@@ -400,6 +418,18 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
       }
     }
 
+    if (
+      publicationGroups &&
+      publicationScope.target === 'team' &&
+      publicationScope.groupNames.length === 0
+    ) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:new_capability.select_groups'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       if (isEditing && shell) {
@@ -407,9 +437,6 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           displayName: displayName.trim() || undefined,
           baseImage: baseImage.trim() || undefined,
           requiresWorkspace,
-        })
-        toast({
-          title: t('common:shells.update_success'),
         })
       } else {
         await shellApis.createShell(
@@ -420,13 +447,20 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             baseImage: baseImage.trim(),
             requiresWorkspace,
           },
-          groupName
+          scope === 'group' ? groupName : undefined
         )
-        toast({
-          title: t('common:shells.create_success'),
-        })
       }
 
+      if (publicationGroups) {
+        await publicationScope.savePublicationScope({
+          sourceName: name.trim(),
+          sourceNamespace: publicationNamespace,
+          displayName: displayName.trim() || name.trim(),
+        })
+      }
+      toast({
+        title: isEditing ? t('common:shells.update_success') : t('common:shells.create_success'),
+      })
       onClose()
     } catch (error) {
       toast({
@@ -479,6 +513,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
           <DialogTitle>
             {isEditing ? t('common:shells.edit_title') : t('common:shells.create_title')}
           </DialogTitle>
+          <DialogDescription>{t('common:shells.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -690,6 +725,19 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
               </p>
             )}
           </div>
+
+          {publicationGroups && (
+            <div data-testid="shell-publish-scope-section">
+              <CapabilityScopeSelector
+                value={publicationScope.target}
+                groups={publicationScope.writableGroups}
+                groupNames={publicationScope.groupNames}
+                onChange={publicationScope.handleChange}
+                existingResource={isEditing}
+                multipleGroups
+              />
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
@@ -711,7 +759,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             </Button>
             <Button
               onClick={handleSave}
-              disabled={saving || validating || isSaveDisabled()}
+              disabled={saving || validating || isSaveDisabled() || publicationScope.loading}
               title={getSaveButtonTooltip()}
               className="bg-primary hover:bg-primary/90"
             >

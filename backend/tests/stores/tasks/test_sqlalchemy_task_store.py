@@ -227,60 +227,6 @@ def test_create_task_resource_persists_task_without_preallocated_id(
     assert task.user_id == 10
 
 
-def test_list_accessible_active_tasks_for_user_includes_owned_and_member(
-    test_db: Session,
-) -> None:
-    store = SqlAlchemyTaskStore()
-    owned = _task(task_id=111, user_id=10)
-    joined = _task(task_id=112, user_id=20)
-    copied_joined = _task(task_id=114, user_id=20)
-    deleted_joined = _task(
-        task_id=113,
-        user_id=20,
-        is_active=TaskResource.STATE_DELETED,
-    )
-    test_db.add_all([owned, joined, copied_joined, deleted_joined])
-    test_db.add_all(
-        [
-            ResourceMember(
-                resource_type=ResourceType.TASK,
-                resource_id=joined.id,
-                entity_type="user",
-                entity_id="10",
-                user_id=10,
-                role=ResourceRole.Reporter.value,
-                status=MemberStatus.APPROVED,
-                copied_resource_id=0,
-            ),
-            ResourceMember(
-                resource_type=ResourceType.TASK,
-                resource_id=deleted_joined.id,
-                entity_type="user",
-                entity_id="10",
-                user_id=10,
-                role=ResourceRole.Reporter.value,
-                status=MemberStatus.APPROVED,
-                copied_resource_id=0,
-            ),
-            ResourceMember(
-                resource_type=ResourceType.TASK,
-                resource_id=copied_joined.id,
-                entity_type="user",
-                entity_id="10",
-                user_id=10,
-                role=ResourceRole.Reporter.value,
-                status=MemberStatus.APPROVED,
-                copied_resource_id=999,
-            ),
-        ]
-    )
-    test_db.commit()
-
-    tasks = store.list_accessible_active_tasks_for_user(test_db, user_id=10)
-
-    assert {task.id for task in tasks} == {owned.id, joined.id, copied_joined.id}
-
-
 def test_task_access_store_rejects_stale_member_without_active_task(
     test_db: Session,
 ) -> None:
@@ -527,3 +473,31 @@ def test_list_workspaces_by_refs_uses_named_lookup_and_filters_inactive(
     )
 
     assert [workspace.id for workspace in workspaces] == [active_workspace.id]
+
+
+def test_a_system_namespace_task_is_hidden_from_lists_but_reachable_by_id(
+    test_db: Session,
+) -> None:
+    """Both halves, because a feature depends on them differing.
+
+    A code wiki's generation runs are filed here so they do not bury the
+    conversations the user actually started. That is only acceptable because the task
+    stays openable: the wiki's run history links to it by id, and if lookup filtered
+    the namespace too, hiding a run would make it unreachable rather than unlisted.
+    """
+    store = SqlAlchemyTaskStore()
+    listed = _task(task_id=41, user_id=77)
+    hidden = _task(task_id=42, user_id=77, namespace="system")
+    test_db.add_all([listed, hidden])
+    test_db.commit()
+
+    ids, _total = store.list_accessible_task_ids(
+        test_db, user_id=77, skip=0, limit=50, extra_limit=0
+    )
+    owned, _owned_total = store.list_owned_task_ids(
+        test_db, user_id=77, skip=0, limit=50, extra_limit=0
+    )
+
+    assert hidden.id not in ids and listed.id in ids
+    assert hidden.id not in owned and listed.id in owned
+    assert store.get_active_non_deleted_task(test_db, task_id=hidden.id) == hidden

@@ -18,6 +18,39 @@ use super::util::{
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeSupervisorSuggestion {
+    pub id: String,
+    pub message: String,
+    pub rationale: String,
+    pub status: String,
+    pub created_at: i64,
+    pub resolved_at: Option<i64>,
+    pub source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeSupervisorState {
+    pub mode: String,
+    pub status: String,
+    pub instructions: String,
+    #[serde(default)]
+    pub model_selection: Option<Value>,
+    #[serde(default = "default_supervisor_interval_seconds")]
+    pub interval_seconds: u64,
+    pub last_evaluated_at: Option<i64>,
+    #[serde(default)]
+    pub last_content_hash: Option<String>,
+    pub last_error: Option<String>,
+    pub suggestions: Vec<RuntimeSupervisorSuggestion>,
+}
+
+fn default_supervisor_interval_seconds() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct RuntimeTaskLink {
     pub local_task_id: String,
@@ -26,17 +59,27 @@ pub(crate) struct RuntimeTaskLink {
     pub title: String,
     pub runtime: String,
     pub status: String,
+    #[serde(skip)]
     pub running: bool,
+    pub continuable: bool,
+    pub thread_status: String,
+    pub turn_status: Option<String>,
     pub goal_status: Option<String>,
+    pub supervisor: Option<RuntimeSupervisorState>,
     #[serde(skip)]
     pub git_info: Option<Value>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub completed_at: Option<i64>,
     pub runtime_handle: Value,
     pub parent: Option<Value>,
     pub ephemeral: bool,
+    pub runtime_project_key: Option<String>,
+    pub runtime_workspace_roots: Vec<String>,
     #[serde(skip)]
     pub list_order: Option<usize>,
+    #[serde(skip)]
+    pub sidebar_order: Option<usize>,
     #[serde(skip)]
     pub group_workspace_path: Option<String>,
     #[serde(skip)]
@@ -49,22 +92,40 @@ pub(crate) struct RuntimeTaskLink {
 
 impl RuntimeTaskLink {
     pub fn new_pending(local_task_id: String, workspace_path: String, title: String) -> Self {
+        Self::new_pending_with_runtime(local_task_id, workspace_path, title, "codex")
+    }
+
+    pub fn new_pending_with_runtime(
+        local_task_id: String,
+        workspace_path: String,
+        title: String,
+        runtime: impl Into<String>,
+    ) -> Self {
+        let runtime = runtime.into();
         Self {
             local_task_id,
             thread_id: None,
             workspace_path,
             title,
-            runtime: "codex".to_owned(),
-            status: "running".to_owned(),
-            running: true,
+            runtime: runtime.clone(),
+            status: "active".to_owned(),
+            running: false,
+            continuable: true,
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
-            runtime_handle: json!({}),
+            completed_at: None,
+            runtime_handle: json!({ "runtime": runtime }),
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -88,14 +149,22 @@ impl RuntimeTaskLink {
             runtime,
             status: "active".to_owned(),
             running: false,
+            continuable: true,
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
+            completed_at: None,
             runtime_handle,
             parent: Some(parent),
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -107,18 +176,16 @@ impl RuntimeTaskLink {
         thread: &Value,
         local_link: Option<RuntimeTaskLink>,
         workspace_path: String,
+        execution_running: bool,
     ) -> Self {
         let thread_id = string_field(thread, "id").unwrap_or_default();
         let local_archived = local_link
             .as_ref()
             .is_some_and(|link| link.status == "archived");
-        let local_terminal_status = local_link
-            .as_ref()
-            .and_then(|link| local_terminal_status_if_current(link, thread));
-        let local_running = local_link.as_ref().is_some_and(|link| link.running);
         let goal_status = local_link
             .as_ref()
             .and_then(|link| link.goal_status.clone());
+        let supervisor = local_link.as_ref().and_then(|link| link.supervisor.clone());
         let mut git_info = thread
             .get("gitInfo")
             .or_else(|| thread.get("git_info"))
@@ -131,18 +198,26 @@ impl RuntimeTaskLink {
         ) {
             git_info.insert("currentBranch".to_owned(), Value::String(current_branch));
         }
-        let status = if local_archived {
-            "archived".to_owned()
-        } else if local_running {
-            "running".to_owned()
-        } else if let Some(status) = &local_terminal_status {
-            status.clone()
-        } else {
-            thread_status(thread)
-        };
-        let running = !local_archived
-            && local_terminal_status.is_none()
-            && (local_running || normalized_running_status(&status));
+        let running =
+            !local_archived && (execution_running || codex_thread_has_in_progress_turn(thread));
+        let mut status = merged_task_status(thread, running, local_archived);
+        let mut thread_status =
+            codex_thread_status_type(thread).unwrap_or_else(|| "notLoaded".to_owned());
+        let mut turn_status = task_turn_status(thread, running);
+        if !running {
+            if runtime_status_is_running(&status) {
+                status = "active".to_owned();
+            }
+            if runtime_status_is_running(&thread_status) {
+                thread_status = "idle".to_owned();
+            }
+            if turn_status
+                .as_deref()
+                .is_some_and(runtime_status_is_running)
+            {
+                turn_status = Some("completed".to_owned());
+            }
+        }
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -159,17 +234,35 @@ impl RuntimeTaskLink {
             runtime: "codex".to_owned(),
             status,
             running,
+            continuable: !local_archived,
+            thread_status,
+            turn_status,
             goal_status,
+            supervisor,
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
+            completed_at: if running {
+                local_link.as_ref().and_then(|link| link.completed_at)
+            } else {
+                timestamp_ms_field(thread, "updatedAt")
+                    .or_else(|| local_link.as_ref().and_then(|link| link.completed_at))
+            },
             runtime_handle: local_link
                 .as_ref()
                 .map(|link| link.runtime_handle.clone())
                 .unwrap_or_else(|| json!({})),
             parent: local_link.as_ref().and_then(|link| link.parent.clone()),
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
+            runtime_project_key: local_link
+                .as_ref()
+                .and_then(|link| link.runtime_project_key.clone()),
+            runtime_workspace_roots: local_link
+                .as_ref()
+                .map(|link| link.runtime_workspace_roots.clone())
+                .unwrap_or_default(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -186,37 +279,28 @@ impl RuntimeTaskLink {
             runtime: self.runtime.clone(),
             status: self.status.clone(),
             running: self.running,
+            continuable: self.continuable,
+            thread_status: self.thread_status.clone(),
+            turn_status: self.turn_status.clone(),
             goal_status: self.goal_status.clone(),
+            supervisor: self.supervisor.clone(),
             git_info: self.git_info.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            completed_at: self.completed_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
+            runtime_project_key: self.runtime_project_key.clone(),
+            runtime_workspace_roots: self.runtime_workspace_roots.clone(),
             list_order: self.list_order,
+            sidebar_order: self.sidebar_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
             pinned: self.pinned,
             pinned_order: self.pinned_order,
         }
     }
-}
-
-fn local_terminal_status_if_current(link: &RuntimeTaskLink, thread: &Value) -> Option<String> {
-    if link.running || !is_terminal_status(&link.status) {
-        return None;
-    }
-    let local_is_current = timestamp_ms_field(thread, "updatedAt")
-        .map(|thread_updated_at| link.updated_at >= thread_updated_at)
-        .unwrap_or(true);
-    local_is_current.then(|| link.status.clone())
-}
-
-fn is_terminal_status(status: &str) -> bool {
-    matches!(
-        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "done" | "complete" | "completed" | "failed" | "error" | "cancelled" | "canceled"
-    )
 }
 
 fn git_branch_at_workspace(workspace_path: &str) -> Option<String> {
@@ -250,14 +334,22 @@ impl Default for RuntimeTaskLink {
             runtime: "codex".to_owned(),
             status: "active".to_owned(),
             running: false,
+            continuable: true,
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
+            completed_at: None,
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            runtime_project_key: None,
+            runtime_workspace_roots: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -281,7 +373,10 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_source: String,
     pub project_roots: Vec<String>,
     pub project_pinned: bool,
+    pub project_pinned_order: Option<usize>,
+    pub project_active: bool,
     pub project_appearance: Option<Value>,
+    pub default_project_space: Option<Value>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -299,7 +394,10 @@ impl Default for RuntimeWorkspaceLink {
             project_source: "legacy_root".to_owned(),
             project_roots: Vec::new(),
             project_pinned: false,
+            project_pinned_order: None,
+            project_active: false,
             project_appearance: None,
+            default_project_space: None,
         }
     }
 }
@@ -397,8 +495,15 @@ pub(crate) fn workspace_response(
                 workspace_json["projectSource"] = Value::String(workspace.project_source.clone());
                 workspace_json["projectRoots"] = json!(workspace.project_roots);
                 workspace_json["projectPinned"] = Value::Bool(workspace.project_pinned);
+                if let Some(order) = workspace.project_pinned_order {
+                    workspace_json["projectPinnedOrder"] = json!(order);
+                }
+                workspace_json["projectActive"] = Value::Bool(workspace.project_active);
                 if let Some(appearance) = workspace.project_appearance.clone() {
                     workspace_json["projectAppearance"] = appearance;
+                }
+                if let Some(default_project_space) = workspace.default_project_space.clone() {
+                    workspace_json["defaultProjectSpace"] = default_project_space;
                 }
             }
             if let Some(remote_host_id) = remote_host_id {
@@ -431,15 +536,18 @@ fn compare_runtime_task_links(
     match (left.list_order, right.list_order) {
         (Some(left_order), Some(right_order)) => left_order
             .cmp(&right_order)
-            .then_with(|| right.updated_at.cmp(&left.updated_at))
+            .then_with(|| runtime_task_sort_time(right).cmp(&runtime_task_sort_time(left)))
             .then_with(|| left.local_task_id.cmp(&right.local_task_id)),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => right
-            .updated_at
-            .cmp(&left.updated_at)
+        (None, None) => runtime_task_sort_time(right)
+            .cmp(&runtime_task_sort_time(left))
             .then_with(|| left.local_task_id.cmp(&right.local_task_id)),
     }
+}
+
+fn runtime_task_sort_time(link: &RuntimeTaskLink) -> i64 {
+    link.completed_at.unwrap_or(link.created_at)
 }
 
 pub(crate) fn archived_conversations_response(
@@ -536,7 +644,30 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
         task.insert("worktreeId".to_owned(), Value::String(worktree_id));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
+    if let Some(queue_position) = link
+        .runtime_handle
+        .get("queuePosition")
+        .and_then(Value::as_u64)
+    {
+        task.insert("queuePosition".to_owned(), json!(queue_position));
+    }
     task.insert("running".to_owned(), Value::Bool(link.running));
+    task.insert("continuable".to_owned(), Value::Bool(link.continuable));
+    task.insert(
+        "threadStatus".to_owned(),
+        Value::String(link.thread_status.clone()),
+    );
+    if let Some(turn_status) = link.turn_status.clone() {
+        task.insert("turnStatus".to_owned(), Value::String(turn_status));
+    }
+    if let Some(goal_status) = link.goal_status.clone() {
+        task.insert("goalStatus".to_owned(), Value::String(goal_status));
+    }
+    if let Some(supervisor) = link.supervisor.clone() {
+        if let Ok(supervisor) = serde_json::to_value(supervisor) {
+            task.insert("supervisor".to_owned(), supervisor);
+        }
+    }
     task.insert("pinned".to_owned(), Value::Bool(link.pinned));
     if let Some(order) = link.pinned_order {
         task.insert("pinnedOrder".to_owned(), json!(order));
@@ -544,7 +675,7 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(thread_id) = link.thread_id.clone() {
         task.insert("threadId".to_owned(), Value::String(thread_id));
     }
-    if let Some(order) = link.list_order {
+    if let Some(order) = link.sidebar_order {
         task.insert("sidebarOrder".to_owned(), json!(order));
     }
     if let Some(git_info) = link.git_info {
@@ -559,6 +690,9 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
         "updatedAt".to_owned(),
         Value::Number(link.updated_at.into()),
     );
+    if let Some(completed_at) = link.completed_at {
+        task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
+    }
     if let Some(parent) = link.parent {
         task.insert("parent".to_owned(), parent);
     }
@@ -685,6 +819,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
         key,
         "message"
             | "messages"
+            | "userMessagePresentations"
             | "cachedMessage"
             | "cachedMessages"
             | "cached_message"
@@ -693,24 +828,89 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
 }
 
 fn thread_status(thread: &Value) -> String {
-    match string_field(thread, "status")
-        .unwrap_or_else(|| "active".to_owned())
+    match codex_thread_status_type(thread)
+        .unwrap_or_else(|| "idle".to_owned())
         .replace(['_', '-'], "")
         .to_ascii_lowercase()
         .as_str()
     {
         "archived" => "archived",
-        "failed" | "error" => "failed",
+        "systemerror" | "failed" | "error" => "failed",
+        "active" | "running" | "inprogress" => "running",
         _ => "active",
     }
     .to_owned()
 }
 
-fn normalized_running_status(status: &str) -> bool {
+fn merged_task_status(thread: &Value, running: bool, archived: bool) -> String {
+    if archived {
+        return "archived".to_owned();
+    }
+    if running {
+        return "running".to_owned();
+    }
+    thread_status(thread)
+}
+
+fn task_turn_status(thread: &Value, running: bool) -> Option<String> {
+    if running {
+        return Some("inProgress".to_owned());
+    }
+    thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.last())
+        .and_then(|turn| string_field(turn, "status"))
+        .map(normalize_codex_turn_status)
+}
+
+pub(super) fn codex_thread_has_in_progress_turn(thread: &Value) -> bool {
+    thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|turn| string_field(turn, "status"))
+        .any(|status| runtime_status_is_running(&status))
+}
+
+pub(super) fn codex_thread_in_progress_turn_id(thread: &Value) -> Option<String> {
+    thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .rev()
+        .find(|turn| {
+            string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
+        })
+        .and_then(|turn| string_field(turn, "id"))
+}
+
+fn normalize_codex_turn_status(status: String) -> String {
+    match status.replace(['_', '-'], "").to_ascii_lowercase().as_str() {
+        "inprogress" | "running" | "active" => "inProgress".to_owned(),
+        "interrupted" | "cancelled" | "canceled" | "aborted" => "interrupted".to_owned(),
+        "failed" | "error" => "failed".to_owned(),
+        _ => "completed".to_owned(),
+    }
+}
+
+pub(super) fn runtime_status_is_running(status: &str) -> bool {
     matches!(
         status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "running" | "inprogress" | "busy" | "pending"
+        "active" | "running" | "inprogress" | "busy" | "pending"
     )
+}
+
+fn codex_thread_status_type(thread: &Value) -> Option<String> {
+    let status = thread.get("status")?;
+    status.as_str().map(str::to_owned).or_else(|| {
+        status
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
 }
 
 #[cfg(test)]
@@ -718,6 +918,38 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn runtime_task_link_does_not_persist_running_state() {
+        let link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+
+        let serialized = serde_json::to_value(&link).expect("task link should serialize");
+        assert!(serialized.get("running").is_none());
+
+        let restored: RuntimeTaskLink = serde_json::from_value(json!({
+            "local_task_id": "task-1",
+            "running": true,
+        }))
+        .expect("task link should deserialize");
+        assert!(!restored.running);
+    }
+
+    #[test]
+    fn pending_runtime_task_link_preserves_selected_runtime() {
+        let link = RuntimeTaskLink::new_pending_with_runtime(
+            "task-claude".to_owned(),
+            "/tmp/project".to_owned(),
+            "Claude task".to_owned(),
+            "claude_code",
+        );
+
+        assert_eq!(link.runtime, "claude_code");
+        assert_eq!(link.runtime_handle["runtime"], "claude_code");
+    }
 
     #[test]
     fn workspace_response_omits_runtime_handle_messages_from_task_list() {
@@ -740,6 +972,13 @@ mod tests {
                         ],
                     }
                 ],
+                "userMessagePresentations": [{
+                    "clientUserMessageId": "runtime-local-pane-1",
+                    "references": [{
+                        "token": "$plugin:skill",
+                        "href": "/tmp/plugin/skill/SKILL.md"
+                    }]
+                }],
             }),
             ..RuntimeTaskLink::default()
         };
@@ -750,6 +989,7 @@ mod tests {
         assert_eq!(handle["threadId"], "thread-1");
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
+        assert!(handle.get("userMessagePresentations").is_none());
     }
 
     #[test]
@@ -765,6 +1005,7 @@ mod tests {
             }),
             None,
             "/workspace/project".to_owned(),
+            false,
         );
 
         let workspaces = workspace_response(vec![task], Vec::new());
@@ -812,19 +1053,76 @@ mod tests {
     }
 
     #[test]
-    fn thread_list_running_status_does_not_drive_task_running() {
+    fn executor_execution_state_drives_task_running() {
         let link = RuntimeTaskLink::from_thread_metadata(
             &json!({
                 "id": "thread-1",
-                "status": "running",
+                "status": {"type": "active", "activeFlags": []},
                 "cwd": "/workspace/project",
             }),
             None,
             "/workspace/project".to_owned(),
+            true,
         );
 
-        assert_eq!(link.status, "active");
-        assert!(!link.running);
+        assert_eq!(link.status, "running");
+        assert!(link.running);
+    }
+
+    #[test]
+    fn provider_in_progress_turn_keeps_task_running_after_local_execution_settles() {
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active", "activeFlags": []},
+                "cwd": "/workspace/project",
+                "turns": [{"id": "turn-1", "status": "inProgress"}],
+            }),
+            None,
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert_eq!(link.status, "running");
+        assert!(link.running);
+        assert_eq!(link.thread_status, "active");
+        assert_eq!(link.turn_status.as_deref(), Some("inProgress"));
+    }
+
+    #[test]
+    fn active_thread_keeps_previous_completion_time_for_sorting() {
+        let local_link = RuntimeTaskLink {
+            completed_at: Some(1_780_000_000_000),
+            ..RuntimeTaskLink::default()
+        };
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active", "activeFlags": []},
+                "updatedAt": 1_780_000_100_000_i64,
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            true,
+        );
+
+        assert_eq!(link.completed_at, Some(1_780_000_000_000));
+    }
+
+    #[test]
+    fn completed_thread_uses_its_final_update_time_for_sorting() {
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": "idle",
+                "updatedAt": 1_780_000_100_000_i64,
+            }),
+            None,
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert_eq!(link.completed_at, Some(1_780_000_100_000));
     }
 
     #[test]
@@ -845,11 +1143,63 @@ mod tests {
             }),
             Some(local_link),
             "/workspace/project".to_owned(),
+            false,
         );
 
         assert_eq!(link.status, "active");
         assert!(!link.running);
         assert_eq!(link.goal_status.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn idle_thread_uses_provider_turn_status() {
+        for (provider_status, turn_status) in [
+            ("completed", "completed"),
+            ("interrupted", "interrupted"),
+            ("failed", "failed"),
+        ] {
+            let link = RuntimeTaskLink::from_thread_metadata(
+                &json!({
+                    "id": "thread-1",
+                    "status": "idle",
+                    "cwd": "/workspace/project",
+                    "turns": [{"status": provider_status}],
+                }),
+                None,
+                "/workspace/project".to_owned(),
+                false,
+            );
+
+            assert_eq!(link.status, "active");
+            assert!(!link.running);
+            assert!(link.continuable);
+            assert_eq!(link.thread_status, "idle");
+            assert_eq!(link.turn_status.as_deref(), Some(turn_status));
+        }
+    }
+
+    #[test]
+    fn current_turn_state_is_exposed_separately_from_conversation_lifecycle() {
+        let mut link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active", "activeFlags": []},
+                "cwd": "/workspace/project",
+                "turns": [{"status": "inProgress"}],
+            }),
+            None,
+            "/workspace/project".to_owned(),
+            true,
+        );
+        link.goal_status = Some("active".to_owned());
+        let payload = local_task_json(link);
+
+        assert_eq!(payload["status"], "running");
+        assert_eq!(payload["running"], true);
+        assert_eq!(payload["continuable"], true);
+        assert_eq!(payload["threadStatus"], "active");
+        assert_eq!(payload["turnStatus"], "inProgress");
+        assert_eq!(payload["goalStatus"], "active");
     }
 
     #[test]

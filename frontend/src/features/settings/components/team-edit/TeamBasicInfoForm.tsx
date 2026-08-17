@@ -6,28 +6,35 @@
 
 import React from 'react'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TeamIconPicker } from '../teams/TeamIconPicker'
-import { HelpCircle } from 'lucide-react'
+import { HelpCircle, Lock, LockKeyholeOpen } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { TaskType } from '@/types/api'
+import type { TaskType, TeamInputPlaceholder } from '@/types/api'
 import QuickPhraseEditor from './QuickPhraseEditor'
+import InputPlaceholderEditor from './InputPlaceholderEditor'
 
 interface TeamBasicInfoFormProps {
   name: string
   setName: (name: string) => void
+  nameEditable?: boolean
+  onToggleNameEdit?: () => void
   displayName: string
   setDisplayName: (displayName: string) => void
   description: string
   setDescription: (description: string) => void
   quickPhrases?: string[]
   onQuickPhrasesChange?: (quickPhrases: string[]) => void
+  inputPlaceholder: TeamInputPlaceholder
+  onInputPlaceholderChange: (value: TeamInputPlaceholder) => void
   bindMode: TaskType[]
   setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
-  setIcon?: (icon: string) => void
+  setIcon?: (icon: string | null) => void
+  onUploadIcon?: (file: File) => Promise<string>
   requiresWorkspace?: boolean | null
   setRequiresWorkspace?: (value: boolean | null) => void
 }
@@ -35,16 +42,21 @@ interface TeamBasicInfoFormProps {
 export default function TeamBasicInfoForm({
   name,
   setName,
+  nameEditable = true,
+  onToggleNameEdit,
   displayName,
   setDisplayName,
   description,
   setDescription,
   quickPhrases,
   onQuickPhrasesChange,
+  inputPlaceholder,
+  onInputPlaceholderChange,
   bindMode,
   setBindMode,
   icon,
   setIcon,
+  onUploadIcon,
   requiresWorkspace,
   setRequiresWorkspace,
 }: TeamBasicInfoFormProps) {
@@ -62,14 +74,40 @@ export default function TeamBasicInfoForm({
             {t('common:team.name')} <span className="text-red-400">*</span>
           </Label>
           <div className="flex items-center gap-2">
-            {setIcon && <TeamIconPicker value={icon} onChange={setIcon} />}
+            {setIcon && (
+              <TeamIconPicker value={icon} onChange={setIcon} onUploadImage={onUploadIcon} />
+            )}
             <Input
               id="teamName"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('common:team.name_placeholder')}
               className="bg-base flex-1"
+              disabled={!nameEditable}
+              data-testid="team-technical-name-input"
             />
+            {onToggleNameEdit && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0 text-warning hover:bg-warning/10 hover:text-warning"
+                onClick={onToggleNameEdit}
+                aria-label={t(
+                  nameEditable ? 'common:teams.lock_technical_name' : 'common:teams.force_edit_name'
+                )}
+                title={t(
+                  nameEditable ? 'common:teams.lock_technical_name' : 'common:teams.force_edit_name'
+                )}
+                data-testid="enable-team-technical-name-edit"
+              >
+                {nameEditable ? (
+                  <LockKeyholeOpen className="h-4 w-4" />
+                ) : (
+                  <Lock className="h-4 w-4" />
+                )}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -146,6 +184,11 @@ export default function TeamBasicInfoForm({
           <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">{t('settings:team.input_placeholder.label')}</Label>
+        <InputPlaceholderEditor value={inputPlaceholder} onChange={onInputPlaceholderChange} />
+      </div>
 
       {/* Requires Workspace Toggle - Only show when code mode is selected */}
       {showRequiresWorkspace && (

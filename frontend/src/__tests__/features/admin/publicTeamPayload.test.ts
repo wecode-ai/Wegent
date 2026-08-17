@@ -4,6 +4,7 @@
 
 import type { AdminPublicTeam } from '@/apis/admin'
 import {
+  buildPublicTeamJson,
   buildPublicTeamUpdateData,
   resolvePublicTeamName,
 } from '@/features/admin/utils/publicTeamPayload'
@@ -68,6 +69,52 @@ describe('publicTeamPayload', () => {
       namespace: 'community',
       json: { metadata: { name: 'json-agent' } },
       is_active: true,
+    })
+  })
+
+  it('preserves marketplace metadata while making spec.icon canonical', () => {
+    const teamJson = buildPublicTeamJson({
+      baseJson: {
+        metadata: { name: 'old-agent', labels: { source: 'system' } },
+        spec: {
+          capability: {
+            tags: ['technical_development'],
+            icon: '/legacy-market-icon.png',
+          },
+          customField: 'keep-me',
+        },
+      },
+      name: 'new-agent',
+      displayName: 'New Agent',
+      description: 'Build software',
+      bindMode: ['chat'],
+      icon: '/api/resource-library/assets/team-icons/12',
+      requiresWorkspace: true,
+      inputPlaceholder: {
+        zh: '描述要生成的视频',
+        mobile: { zh: '描述你想创作的内容' },
+      },
+      mode: 'solo',
+      members: [{ botName: 'coder', botPrompt: '' }],
+    })
+
+    expect(teamJson).toMatchObject({
+      metadata: {
+        name: 'new-agent',
+        labels: { source: 'system' },
+      },
+      spec: {
+        icon: '/api/resource-library/assets/team-icons/12',
+        inputPlaceholder: {
+          zh: '描述要生成的视频',
+          mobile: { zh: '描述你想创作的内容' },
+        },
+        customField: 'keep-me',
+        capability: {
+          tags: ['technical_development'],
+          icon: undefined,
+        },
+      },
     })
   })
 })

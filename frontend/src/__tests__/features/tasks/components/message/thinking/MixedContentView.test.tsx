@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import MixedContentView from '@/features/tasks/components/message/thinking/MixedContentView'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -85,6 +85,488 @@ const createSuccessfulFormOutput = (form: Record<string, unknown>) =>
   })
 
 describe('MixedContentView', () => {
+  it('renders the image generation placeholder while the task is running', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="RUNNING"
+        theme="light"
+        blocks={[
+          {
+            id: 'image-placeholder',
+            type: 'image',
+            status: 'streaming',
+            is_placeholder: true,
+            image_urls: [],
+            image_count: 0,
+            image_size: '1512x648',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('image-generation-placeholder')).toHaveAccessibleName(
+      'image.generating 0%'
+    )
+    expect(screen.getByTestId('image-generation-placeholder').style.aspectRatio).toBe('1512 / 648')
+    expect(screen.getByTestId('image-generation-placeholder').style.height).toBe('220px')
+    expect(screen.queryByText('image.generating')).not.toBeInTheDocument()
+  })
+
+  it('uses a fixed 220 pixel width for portrait image placeholders', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="RUNNING"
+        theme="light"
+        blocks={[
+          {
+            id: 'portrait-image-placeholder',
+            type: 'image',
+            status: 'streaming',
+            is_placeholder: true,
+            image_urls: [],
+            image_count: 0,
+            image_size: '648x1512',
+          },
+        ]}
+      />
+    )
+
+    const placeholder = screen.getByTestId('image-generation-placeholder')
+    expect(placeholder.style.aspectRatio).toBe('648 / 1512')
+    expect(placeholder.style.width).toBe('220px')
+  })
+
+  it('caps estimated image generation progress at 99 percent after two minutes', () => {
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2026-08-07T00:00:00Z'))
+
+    try {
+      render(
+        <MixedContentView
+          thinking={null}
+          content=""
+          taskStatus="RUNNING"
+          theme="light"
+          blocks={[
+            {
+              id: 'image-placeholder',
+              type: 'image',
+              status: 'streaming',
+              is_placeholder: true,
+              image_urls: [],
+              image_count: 0,
+            },
+          ]}
+        />
+      )
+
+      act(() => {
+        jest.advanceTimersByTime(120_000)
+      })
+
+      expect(screen.getByTestId('image-generation-placeholder')).toHaveAccessibleName(
+        'image.generating 99%'
+      )
+      const placeholder = screen.getByTestId('image-generation-placeholder')
+      expect(placeholder.style.aspectRatio).toBe('1 / 1')
+      expect(placeholder.querySelector('svg')).not.toBeInTheDocument()
+      expect(screen.getByText('99%')).toHaveClass('right-3', 'top-3', 'text-black')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('continues estimated image generation progress from the placeholder timestamp', () => {
+    jest.useFakeTimers()
+    jest.setSystemTime(new Date('2026-08-07T00:01:00Z'))
+
+    try {
+      render(
+        <MixedContentView
+          thinking={null}
+          content=""
+          taskStatus="RUNNING"
+          theme="light"
+          blocks={[
+            {
+              id: 'image-placeholder',
+              type: 'image',
+              status: 'streaming',
+              is_placeholder: true,
+              image_urls: [],
+              image_count: 0,
+              image_size: '1512x648',
+              timestamp: new Date('2026-08-07T00:00:00Z').getTime(),
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByTestId('image-generation-placeholder')).toHaveAccessibleName(
+        'image.generating 49%'
+      )
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('hides a stale image placeholder after the task fails', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="FAILED"
+        theme="light"
+        blocks={[
+          {
+            id: 'image-placeholder',
+            type: 'image',
+            status: 'streaming',
+            is_placeholder: true,
+            image_urls: [],
+            image_count: 0,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('image-generation-placeholder')).not.toBeInTheDocument()
+  })
+
+  it('hides a stale video placeholder after the task fails', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="FAILED"
+        theme="light"
+        blocks={[
+          {
+            id: 'video-placeholder',
+            type: 'video',
+            status: 'streaming',
+            is_placeholder: true,
+            video_url: '',
+            video_progress: 5,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('video-player')).not.toBeInTheDocument()
+  })
+
+  it('does not render the provider progress message below a video placeholder', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="RUNNING"
+        theme="light"
+        blocks={[
+          {
+            id: 'video-placeholder',
+            type: 'video',
+            status: 'streaming',
+            is_placeholder: true,
+            video_url: '',
+            video_progress: 5,
+            content: 'Starting video generation...',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('video-player')).toBeInTheDocument()
+    expect(screen.queryByText('Starting video generation...')).not.toBeInTheDocument()
+  })
+
+  it('hides an error video block after generation fails', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="FAILED"
+        theme="light"
+        blocks={[
+          {
+            id: 'video-error',
+            type: 'video',
+            status: 'error',
+            is_placeholder: false,
+            video_url: '',
+            video_progress: 0,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('video-player')).not.toBeInTheDocument()
+  })
+
+  it('hides redundant completion text when a generated image is already displayed', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content="Image generation completed"
+        theme="light"
+        blocks={[
+          {
+            id: 'generated-image',
+            type: 'image',
+            status: 'done',
+            image_urls: ['/generated.png'],
+            image_count: 1,
+            is_placeholder: false,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('image-gallery')).toBeInTheDocument()
+    expect(screen.queryByText('Image generation completed')).not.toBeInTheDocument()
+  })
+
+  it('renders child agent output inside an expandable subagent block', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            title: 'Inspect backend',
+            agent_type: 'Explore',
+            summary: 'Inspection completed',
+            status: 'done',
+            children: [
+              {
+                id: 'child-text',
+                type: 'text',
+                parent_tool_use_id: 'Agent_0',
+                content: 'Found the parser path',
+                status: 'done',
+              },
+              {
+                id: 'child-tool',
+                type: 'tool',
+                parent_tool_use_id: 'Agent_0',
+                tool_use_id: 'child-tool',
+                tool_name: 'Read',
+                status: 'done',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const subagent = screen.getByTestId('subagent-block')
+    expect(subagent).toHaveTextContent('Inspect backend')
+    expect(screen.queryByText('Found the parser path')).not.toBeInTheDocument()
+
+    fireEvent.click(subagent)
+
+    expect(screen.getByText('Inspection completed')).toBeInTheDocument()
+    expect(screen.getByText('Found the parser path')).toBeInTheDocument()
+    expect(screen.getByTestId('tool-block')).toBeInTheDocument()
+  })
+
+  it('rebuilds subagent children from persisted flat blocks after refresh', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            title: 'Write essays',
+            agent_type: 'Agent',
+            status: 'invoking',
+            children: [],
+          },
+          {
+            id: 'Write_1',
+            type: 'tool',
+            parent_tool_use_id: 'Agent_0',
+            tool_use_id: 'Write_1',
+            tool_name: 'Write',
+            status: 'done',
+          },
+          {
+            id: 'Write_2',
+            type: 'tool',
+            parent_tool_use_id: 'Agent_0',
+            tool_use_id: 'Write_2',
+            tool_name: 'Write',
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    const subagent = screen.getByTestId('subagent-block')
+    expect(screen.queryAllByTestId('tool-block')).toHaveLength(0)
+
+    fireEvent.click(subagent)
+
+    expect(screen.getAllByTestId('tool-block')).toHaveLength(2)
+  })
+
+  it('groups consecutive parallel subagents into one native execution block', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            title: 'Two Sum solution',
+            status: 'done',
+            children: [
+              {
+                id: 'Write_0',
+                type: 'tool',
+                parent_tool_use_id: 'Agent_0',
+                tool_use_id: 'Write_0',
+                tool_name: 'Write',
+                status: 'done',
+              },
+            ],
+          },
+          {
+            id: 'Agent_1',
+            type: 'subagent',
+            tool_use_id: 'Agent_1',
+            title: 'Reverse linked list',
+            status: 'done',
+            children: [
+              {
+                id: 'Write_1',
+                type: 'tool',
+                parent_tool_use_id: 'Agent_1',
+                tool_use_id: 'Write_1',
+                tool_name: 'Write',
+                status: 'done',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-group-block')).toBeInTheDocument()
+    expect(screen.queryByTestId('subagent-block')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('subagent-tree-item')).toHaveLength(2)
+    expect(screen.getAllByTestId('tool-block')).toHaveLength(1)
+
+    fireEvent.click(screen.getByTestId('subagent-tree-toggle-Agent_1'))
+    expect(screen.getAllByTestId('tool-block')).toHaveLength(1)
+
+    fireEvent.click(screen.getByTestId('subagent-group-toggle'))
+    expect(screen.queryByTestId('subagent-tree-item')).not.toBeInTheDocument()
+  })
+
+  it('renders queued, running, and completed subagent lifecycle states explicitly', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_queued',
+            type: 'subagent',
+            tool_use_id: 'Agent_queued',
+            title: 'Waiting task',
+            status: 'queued',
+          },
+          {
+            id: 'Agent_running',
+            type: 'subagent',
+            tool_use_id: 'Agent_running',
+            title: 'Running task',
+            status: 'invoking',
+          },
+          {
+            id: 'Agent_done',
+            type: 'subagent',
+            tool_use_id: 'Agent_done',
+            title: 'Completed task',
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-tree-status-Agent_queued')).toHaveTextContent(
+      'thinking.subagent.status_queued'
+    )
+    expect(screen.getByTestId('subagent-tree-status-Agent_running')).toHaveTextContent(
+      'thinking.subagent.status_running'
+    )
+    expect(screen.getByTestId('subagent-tree-status-Agent_done')).toHaveTextContent(
+      'thinking.subagent.status_completed'
+    )
+  })
+
+  it('does not treat a queued standalone subagent as completed', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_queued',
+            type: 'subagent',
+            tool_use_id: 'Agent_queued',
+            title: 'Waiting task',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-status')).toHaveTextContent(
+      'thinking.subagent.status_queued'
+    )
+  })
+
+  it('collapses additional subagents behind a show-all action', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={Array.from({ length: 7 }, (_, index) => ({
+          id: `Agent_${index}`,
+          type: 'subagent' as const,
+          tool_use_id: `Agent_${index}`,
+          title: `Task ${index + 1}`,
+          status: 'done' as const,
+        }))}
+      />
+    )
+
+    expect(screen.getAllByTestId('subagent-tree-item')).toHaveLength(5)
+    fireEvent.click(screen.getByTestId('subagent-group-show-all'))
+    expect(screen.getAllByTestId('subagent-tree-item')).toHaveLength(7)
+  })
+
   it('renders interactive forms from render_payload', () => {
     const renderPayload = {
       type: 'interactive_form_question',

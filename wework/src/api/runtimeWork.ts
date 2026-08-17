@@ -10,8 +10,12 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeIMNotificationPresenceResponse,
+  RuntimeIMNotificationPresenceUpdateRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
@@ -19,6 +23,12 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorRunNowRequest,
+  RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
@@ -36,7 +46,10 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeSettings,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
@@ -47,12 +60,16 @@ import type {
   RuntimeWorkspaceSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
   RuntimeProjectTaskReorderRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskPinRequest,
@@ -63,16 +80,30 @@ import type {
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
-import type { HttpClient } from './http'
+import type { HttpClient, HttpRequestOptions } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
 
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
-    listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      return client.get('/runtime-work')
+    prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {
+      void data
+      return Promise.resolve(true)
+    },
+    listRuntimeWork(
+      requestOptions?: Pick<HttpRequestOptions, 'signal'>
+    ): Promise<RuntimeWorkListResponse> {
+      return requestOptions
+        ? client.get('/runtime-work', requestOptions)
+        : client.get('/runtime-work')
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return client.get('/runtime-work/keybindings')
+    },
+    getRuntimeSettings(): Promise<RuntimeSettings> {
+      return client.get('/runtime-work/settings')
+    },
+    updateRuntimeSettings(data: RuntimeSettings): Promise<RuntimeSettings> {
+      return client.put('/runtime-work/settings', data)
     },
     updateKeybindings(data: {
       keybindings: KeybindingOverride[]
@@ -116,6 +147,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
     },
+    interruptAndSendRuntimeMessage(
+      data: RuntimeInterruptAndSendRequest
+    ): Promise<RuntimeSendResponse> {
+      return client.post('/runtime-work/interrupt-and-send', data)
+    },
     rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/rollback', data)
     },
@@ -135,8 +171,34 @@ export function createRuntimeWorkApi(client: HttpClient) {
     clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
       return client.post('/runtime-work/goal/clear', data)
     },
+    getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/get', data)
+    },
+    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/set', data)
+    },
+    clearRuntimeSupervisor(
+      data: RuntimeSupervisorClearRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/clear', data)
+    },
+    runRuntimeSupervisorNow(
+      data: RuntimeSupervisorRunNowRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/run-now', data)
+    },
+    resolveRuntimeSupervisor(
+      data: RuntimeSupervisorResolveRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/resolve', data)
+    },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)
+    },
+    upsertLocalRuntimeProject(
+      data: RuntimeLocalProjectUpsertRequest
+    ): Promise<RuntimeLocalProjectUpsertResponse> {
+      return client.post('/runtime-work/projects/local', data)
     },
     renameRuntimeWorkspace(
       data: RuntimeWorkspaceRenameRequest
@@ -162,6 +224,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeProjectAppearanceRequest
     ): Promise<RuntimeSidebarMutationResponse> {
       return client.post('/runtime-work/sidebar/projects/appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/sync-remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/activate', data)
     },
     reorderRuntimeProjectTasks(
       data: RuntimeProjectTaskReorderRequest
@@ -201,6 +273,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeGlobalIMNotificationUpdateRequest
     ): Promise<RuntimeIMNotificationSettingsResponse> {
       return client.put('/runtime-work/im-notifications/global', data)
+    },
+    updateImNotificationPresence(
+      data: RuntimeIMNotificationPresenceUpdateRequest
+    ): Promise<RuntimeIMNotificationPresenceResponse> {
+      return client.put('/runtime-work/im-notifications/presence', data)
     },
     subscribeRuntimeTaskNotifications(
       data: RuntimeTaskIMNotificationSubscriptionRequest
@@ -257,6 +334,14 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return client.post('/runtime-work/cancel', address)
+    },
+    forceStartRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+      return client.post('/runtime-work/force-start', address)
+    },
+    reorderQueuedRuntimeTask(
+      data: RuntimeTaskQueueReorderRequest
+    ): Promise<RuntimeTaskQueueReorderResponse> {
+      return client.post('/runtime-work/queue/reorder', data)
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)

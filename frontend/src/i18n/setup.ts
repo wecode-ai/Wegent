@@ -43,7 +43,9 @@ async function loadTranslations() {
       try {
         // Dynamically import JSON file with error handling
         const translationModule = await import(`./locales/${lng}/${ns}.json`)
-        resources[lng][ns] = translationModule.default ?? translationModule
+        resources[lng][ns] = JSON.parse(
+          JSON.stringify(translationModule.default ?? translationModule)
+        ) as unknown
       } catch (error) {
         // If file doesn't exist, use empty object
         console.warn(`Translation file not found: ./locales/${lng}/${ns}.json`, error)
@@ -58,6 +60,16 @@ async function loadTranslations() {
 // Initialize i18next
 export async function initI18n() {
   const resources = await loadTranslations()
+
+  if (i18next.isInitialized) {
+    for (const [language, namespaces] of Object.entries(resources)) {
+      for (const [namespace, translations] of Object.entries(namespaces)) {
+        i18next.addResourceBundle(language, namespace, translations, true, true)
+      }
+    }
+
+    return i18next
+  }
 
   await i18next.use(initReactI18next).init({
     lng: process.env.I18N_LNG || 'en', // default language is English

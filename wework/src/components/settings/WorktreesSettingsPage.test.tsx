@@ -38,14 +38,14 @@ describe('WorktreesSettingsPage', () => {
     getWorktreeSettings.mockResolvedValue({
       deviceId: 'local-device',
       worktreeRoot: '',
-      resolvedWorktreeRoot: '/Users/me/.wecode/wegent-executor/workspace/worktrees',
+      resolvedWorktreeRoot: '/Users/me/.wework/workspace/worktrees',
       autoCleanupEnabled: true,
       keepCount: 15,
     })
     updateWorktreeSettings.mockImplementation(async data => ({
       deviceId: 'local-device',
       worktreeRoot: '',
-      resolvedWorktreeRoot: '/Users/me/.wecode/wegent-executor/workspace/worktrees',
+      resolvedWorktreeRoot: '/Users/me/.wework/workspace/worktrees',
       autoCleanupEnabled: data.autoCleanupEnabled ?? true,
       keepCount: data.keepCount ?? 15,
     }))
@@ -56,7 +56,7 @@ describe('WorktreesSettingsPage', () => {
         {
           deviceId: 'local-device',
           worktreeId: 'runtime-1',
-          path: '/Users/me/.wecode/wegent-executor/workspace/worktrees/runtime-1/repo',
+          path: '/Users/me/.wework/workspace/worktrees/runtime-1/repo',
           repositoryName: 'repo',
           sourcePath: '/Users/me/repo',
           state: 'active',
@@ -64,7 +64,7 @@ describe('WorktreesSettingsPage', () => {
             {
               deviceId: 'local-device',
               taskId: 'runtime-1',
-              workspacePath: '/Users/me/.wecode/wegent-executor/workspace/worktrees/runtime-1/repo',
+              workspacePath: '/Users/me/.wework/workspace/worktrees/runtime-1/repo',
               title: 'Fix settings',
               status: 'active',
               running: false,
@@ -132,7 +132,7 @@ describe('WorktreesSettingsPage', () => {
         {
           deviceId: 'local-device',
           worktreeId: 'runtime-restorable',
-          path: '/Users/me/.wecode/wegent-executor/workspace/worktrees/restorable/repo',
+          path: '/Users/me/.wework/workspace/worktrees/restorable/repo',
           repositoryName: 'repo',
           sourcePath: '/Users/me/repo',
           state: 'restorable',
@@ -174,7 +174,7 @@ describe('WorktreesSettingsPage', () => {
     await waitFor(() =>
       expect(deleteWorktree).toHaveBeenCalledWith({
         deviceId: 'local-device',
-        path: '/Users/me/.wecode/wegent-executor/workspace/worktrees/runtime-1/repo',
+        path: '/Users/me/.wework/workspace/worktrees/runtime-1/repo',
         preserveSnapshot: true,
       })
     )

@@ -1,0 +1,3052 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleUserRound,
+  Cloud,
+  Copy,
+  Ellipsis,
+  GitBranch,
+  Grid3X3,
+  HardDrive,
+  ListTodo,
+  LockKeyhole,
+  Plus,
+  Search,
+} from 'lucide-react'
+import type {
+  CloudLoopItem,
+  CloudMyWorkItem,
+  CloudProject,
+  CloudProjectMember,
+} from '@/api/deliveries'
+import type { AITableField } from '@/api/aitable'
+import { ApiError } from '@/api/http'
+import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
+import {
+  DesktopSidebarHeader,
+  DesktopSidebarNavItem,
+} from '@/components/layout/DesktopSidebarPrimitives'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { Tooltip } from '@/components/ui/tooltip'
+import type {
+  DeliveryApi,
+  ProjectSpaceLocation,
+  WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
+import { AITableView } from '@/features/todo/AITableView'
+import type {
+  ProjectWithTasks,
+  RuntimeProjectSpaceRef,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+  User as UserProfile,
+} from '@/types/api'
+import { CloudTodoModal as Modal } from './CloudTodoModal'
+import { CloudMyWorkView } from './CloudMyWorkView'
+import {
+  CloudTodoBoardCard,
+  CloudTodoCardContent,
+  type BoardCardDisplaySettings,
+} from './CloudTodoBoardCard'
+import { CloudProjectManageView } from './CloudProjectManageView'
+import { waitForDwsAuthentication } from './dwsAuth'
+import { ProjectAutomationView } from './ProjectAutomationView'
+import {
+  type LocatedProjectSpace,
+  projectSpaceKey,
+  projectSpaceRef,
+  projectSupportsRobotAutomation,
+  sameProjectSpace,
+} from './projectSpaceSelection'
+import { CloudProjectsHome } from './CloudProjectsHome'
+import { CloudFilesView } from './CloudFilesView'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
+import { GlobalTodoSearch } from './GlobalTodoSearch'
+import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
+import { TaskSearchPanel } from './TaskSearchPanel'
+import { TodoEditor } from './TodoEditor'
+import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
+import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
+import { AiChatModal } from './AiChatModal'
+
+type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
+type RootView = 'projects' | 'my-work'
+type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
+type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
+
+const nativeBoardGroupFields: AITableField[] = [
+  { id: 'status', name: '状态', type: 'status', config: null, raw: {} },
+  { id: 'priority', name: '优先级', type: 'singleSelect', config: null, raw: {} },
+  { id: 'assignee', name: '负责人', type: 'user', config: null, raw: {} },
+  { id: 'tag', name: '标签', type: 'tag', config: null, raw: {} },
+]
+
+const nativeBoardStatusColors: Record<
+  CloudLoopItem['status'],
+  'gray' | 'blue' | 'orange' | 'purple' | 'green'
+> = {
+  inbox: 'gray',
+  pending: 'blue',
+  in_progress: 'orange',
+  in_review: 'purple',
+  completed: 'green',
+}
+
+function aitableCellLabels(value: unknown): string[] {
+  if (value === null || value === undefined || value === '') return []
+  return (Array.isArray(value) ? value : [value])
+    .map(entry => {
+      if (typeof entry === 'object' && entry !== null) {
+        const object = entry as Record<string, unknown>
+        return String(object.name ?? object.title ?? object.text ?? '')
+      }
+      return String(entry)
+    })
+    .filter(Boolean)
+}
+
+function AITableGroupFieldPicker({
+  fields,
+  value,
+  onChange,
+  testIdPrefix = 'dingtalk-board-group',
+  searchPlaceholder = '搜索表格字段',
+}: {
+  fields: AITableField[]
+  value: string
+  onChange: (fieldId: string) => void
+  testIdPrefix?: string
+  searchPlaceholder?: string
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const selected = fields.find(field => field.id === value)
+  const visibleFields = fields
+    .filter(field => `${field.name} ${field.type}`.toLowerCase().includes(query.toLowerCase()))
+    .sort((left, right) => {
+      const recommended = (field: AITableField) =>
+        /状态|负责人|优先级|所属项目/.test(field.name) ? 0 : 1
+      return recommended(left) - recommended(right)
+    })
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-by`}
+        onClick={() => setOpen(current => !current)}
+        className="flex h-8 min-w-32 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
+        aria-expanded={open}
+      >
+        <span className="max-w-32 truncate">{selected?.name ?? '选择分组字段'}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-9 z-40 w-64 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-lg">
+          <label className="flex h-8 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+            <Search className="h-3.5 w-3.5" />
+            <input
+              autoFocus
+              data-testid={`${testIdPrefix}-search`}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder={searchPlaceholder}
+              className="min-w-0 flex-1 bg-transparent text-xs text-text-primary outline-none"
+            />
+          </label>
+          <div className="mt-1 max-h-72 overflow-y-auto overscroll-contain">
+            {visibleFields.map(field => (
+              <button
+                key={field.id}
+                type="button"
+                data-testid={`${testIdPrefix}-option-${field.id}`}
+                onClick={() => {
+                  onChange(field.id)
+                  setOpen(false)
+                  setQuery('')
+                }}
+                className={cn(
+                  'flex h-9 w-full items-center rounded-lg px-2.5 text-left text-sm hover:bg-muted',
+                  field.id === value && 'bg-muted font-medium'
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate">{field.name}</span>
+                <span className="ml-2 shrink-0 text-xs text-text-muted">{field.type}</span>
+                {field.id === value ? <Check className="ml-2 h-3.5 w-3.5" /> : null}
+              </button>
+            ))}
+            {visibleFields.length === 0 ? (
+              <p className="px-3 py-6 text-center text-xs text-text-muted">没有匹配字段</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+type LocatedCloudProject = LocatedProjectSpace
+type LocatedLoopItem = CloudLoopItem & {
+  project_store?: RuntimeProjectSpaceRef['projectStore']
+}
+type LocatedMyWorkItem = CloudMyWorkItem & {
+  project_store: RuntimeProjectSpaceRef['projectStore']
+}
+
+interface AvailableProjectSpaceApi {
+  api: DeliveryApi
+  location: ProjectSpaceLocation
+}
+
+interface CloudTodoWorkspaceProps {
+  user: UserProfile
+  localProjects: ProjectWithTasks[]
+  runtimeWork?: RuntimeWorkListResponse | null
+  services: WorkbenchServices
+  activeProjectRef?: RuntimeProjectSpaceRef | null
+  focusedItemId?: string | null
+  onFocusedItemHandled?: () => void
+  onActiveProjectChange?: (project: LocatedCloudProject | null) => void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+}
+
+const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
+  inbox: '新建或拖拽任务到这里收集',
+  pending: '拖拽任务到这里等待开始',
+  in_progress: '拖拽任务到这里开始处理',
+  in_review: '等待确认的任务会显示在这里',
+  completed: '已完成的任务会归档在这里',
+}
+
+function boardStatusFromDropId(id: string | number | undefined): string | null {
+  if (typeof id !== 'string' || !id.startsWith('todo-column:')) return null
+  return id.slice('todo-column:'.length) || null
+}
+
+function itemMatchesAssigneeGroup(item: CloudLoopItem, groupValue: string): boolean {
+  if (groupValue.startsWith('agent:')) {
+    return item.assignee_agent_id === groupValue.slice('agent:'.length)
+  }
+  if (groupValue === '') {
+    return !item.assignee_user_id && !item.assignee_agent_id
+  }
+  return String(item.assignee_user_id ?? '') === groupValue
+}
+
+// Signature of a board snapshot (items plus the load error). The poll compares
+// against the last applied snapshot so unchanged fetches do not re-render the
+// workspace (and downstream views such as the automation queue) every 15s.
+function boardSnapshotKey(items: CloudLoopItem[], error: string | null): string {
+  return `${error ?? ''}\u0000${JSON.stringify(items)}`
+}
+
+function boardCardIdFromDropId(id: string | number | undefined): string | null {
+  if (typeof id !== 'string' || !id.startsWith('todo-card:')) return null
+  return id.slice('todo-card:'.length)
+}
+
+// Cards sit inside their lane dropzone, so both match under the pointer.
+// Prefer the card target: dropping on a card inserts before it, dropping on
+// the lane itself appends at the end.
+const boardCollisionDetection: CollisionDetection = args => {
+  const collisions = pointerWithin(args)
+  const cardCollision = collisions.find(collision => boardCardIdFromDropId(collision.id))
+  return cardCollision ? [cardCollision] : collisions.slice(0, 1)
+}
+
+function TodoColumnDropzone({ status, children }: { status: string; children: React.ReactNode }) {
+  const { isOver, setNodeRef } = useDroppable({ id: `todo-column:${status}` })
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`cloud-todo-column-dropzone-${status}`}
+      className={cn(
+        'min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-y-contain px-2 pb-2 pt-2 transition-colors',
+        isOver && 'rounded-xl bg-muted ring-1 ring-inset ring-focus/50'
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
+// Placeholder shown while a project's items load. Renders the familiar board
+// column layout with pulsing blocks instead of content, matching the modern
+// skeleton ("留白加载") pattern.
+function CloudTodoBoardSkeleton() {
+  return (
+    <div
+      data-testid="cloud-todo-board-loading"
+      aria-busy="true"
+      className="flex h-full min-h-0 items-start gap-3.5 px-6"
+    >
+      {columns.map((column, columnIndex) => (
+        <section
+          key={column.status}
+          className="flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5"
+        >
+          <header className="flex items-center px-2.5 pb-2 pt-1.5">
+            <span className={cn('mr-2 h-2 w-2 rounded-full', columnDotClasses[column.status])} />
+            <span className="text-sm font-semibold">{column.label}</span>
+          </header>
+          <div className="animate-pulse space-y-2 px-2 pb-2 pt-2">
+            {Array.from({ length: columnIndex % 2 === 0 ? 2 : 1 }, (_, cardIndex) => (
+              <div
+                key={cardIndex}
+                className="rounded-xl border border-border bg-background px-3 py-3 shadow-sm"
+              >
+                <div className="h-3 w-24 rounded-md bg-text-primary/10" />
+                <div className="mt-2.5 h-4 w-4/5 rounded-md bg-text-primary/10" />
+                <div className="mt-2.5 flex items-center gap-2">
+                  <div className="h-4 w-12 rounded-full bg-text-primary/10" />
+                  <div className="ml-auto h-3 w-9 rounded-md bg-text-primary/10" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function cloudProjectRequestError(cause: unknown): string {
+  if (!(cause instanceof ApiError)) {
+    return cause instanceof Error ? cause.message : '创建项目空间失败'
+  }
+  if (cause.status === 422) {
+    const payload = cause.detail as { errors?: Array<{ loc?: string[]; msg?: string }> } | undefined
+    const fieldError = payload?.errors?.[0]
+    return fieldError?.msg
+      ? `${fieldError.loc?.at(-1) ?? '参数'}：${fieldError.msg}`
+      : '项目标识只能包含 2–16 位字母和数字'
+  }
+  if (cause.status === 404) {
+    return '项目空间接口返回 404，请重启当前分支的 Backend 后重试'
+  }
+  return cause.message || `创建项目空间失败（HTTP ${cause.status}）`
+}
+
+function ProjectDialog({
+  availableApis,
+  defaultLocation,
+  onClose,
+  onCreated,
+}: {
+  availableApis: AvailableProjectSpaceApi[]
+  defaultLocation: ProjectSpaceLocation
+  onClose: () => void
+  onCreated: (project: CloudProject, location: ProjectSpaceLocation) => void
+}) {
+  const { t } = useTranslation('common')
+  const initialLocation =
+    availableApis.find(option => option.location === defaultLocation)?.location ??
+    availableApis[0]?.location ??
+    'local'
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [location, setLocation] = useState<ProjectSpaceLocation>(initialLocation)
+  const [taskProvider, setTaskProvider] = useState<ProjectTaskProvider>('local')
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private')
+  const [repositoryAddress, setRepositoryAddress] = useState('')
+  const [token, setToken] = useState('')
+  const [aitableUrl, setAitableUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const repositoryProvider = taskProvider === 'github' || taskProvider === 'gitlab'
+  const isAITableProvider = taskProvider === 'dingtalk_aitable'
+  const aitableLink = parseDingTalkAITableLink(aitableUrl)
+  const canSubmit = Boolean(
+    name.trim() &&
+    (!repositoryProvider || repositoryAddress.trim()) &&
+    (!isAITableProvider || aitableLink) &&
+    !saving
+  )
+
+  async function submit() {
+    if (!canSubmit) return
+    setSaving(true)
+    setError(null)
+    try {
+      const selectedApi = availableApis.find(option => option.location === location)?.api
+      if (!selectedApi) throw new Error('所选项目空间位置当前不可用')
+      const providerConfig = isAITableProvider
+        ? {
+            base_id: aitableLink!.baseId,
+            table_id: aitableLink!.tableId,
+            source_url: aitableLink!.url,
+            ...(aitableLink!.viewId ? { view_id: aitableLink!.viewId } : {}),
+          }
+        : repositoryProvider
+          ? {
+              ...repositoryProviderConfig(repositoryAddress, taskProvider),
+              ...(token.trim() ? { token: token.trim() } : {}),
+            }
+          : {}
+      const project = await selectedApi.createCloudProject({
+        name: name.trim(),
+        description: description.trim(),
+        task_provider: taskProvider,
+        provider_config: providerConfig,
+        ...(location === 'cloud' ? { visibility } : {}),
+      })
+      track('feature_action_completed', { domain: 'project_space', action: 'create' })
+      onCreated(project, location)
+    } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
+      setError(cloudProjectRequestError(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal title="新建项目空间" width="wide" onClose={onClose}>
+      <div className="min-h-0 space-y-5 overflow-y-auto px-5 pb-5 pt-4">
+        <label className="block text-sm font-medium text-text-primary">
+          名称
+          <input
+            data-testid="cloud-project-name"
+            value={name}
+            onChange={event => {
+              setName(event.target.value)
+              setError(null)
+            }}
+            className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-base font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+            placeholder="例如：Wegent V4"
+            autoFocus
+          />
+        </label>
+
+        <section>
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-sm font-medium text-text-primary">保存位置</h3>
+            <p className="text-xs text-text-muted">创建后不可更改</p>
+          </div>
+          <div
+            className={cn(
+              'mt-2 grid gap-2',
+              availableApis.length > 1 ? 'grid-cols-2' : 'grid-cols-1'
+            )}
+          >
+            {availableApis.map(option => {
+              const selected = location === option.location
+              const isLocal = option.location === 'local'
+              const LocationIcon = isLocal ? HardDrive : Cloud
+              return (
+                <button
+                  key={option.location}
+                  type="button"
+                  data-testid={`cloud-project-location-${option.location}`}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    setLocation(option.location)
+                    setError(null)
+                  }}
+                  className={cn(
+                    'flex min-h-16 items-start gap-3 rounded-xl border px-3 py-3 text-left transition',
+                    selected
+                      ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                      : 'border-border hover:bg-muted/40'
+                  )}
+                >
+                  <LocationIcon className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {isLocal ? '本地空间' : '云端空间'}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-4 text-text-muted">
+                      {isLocal
+                        ? '保存在当前设备，可接入 GitHub 或 GitLab Issues'
+                        : '保存在 Wegent 云端，可在不同设备访问'}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        {location === 'cloud' && (
+          <section>
+            <h3 className="text-sm font-medium text-text-primary">
+              {t('todo.project_visibility')}
+            </h3>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {(
+                [
+                  [
+                    'private',
+                    LockKeyhole,
+                    t('todo.project_visibility_private'),
+                    t('todo.project_visibility_private_description'),
+                  ],
+                  [
+                    'public',
+                    Cloud,
+                    t('todo.project_visibility_public'),
+                    t('todo.project_visibility_public_description'),
+                  ],
+                ] as const
+              ).map(([value, VisibilityIcon, label, detail]) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`cloud-project-visibility-${value}`}
+                  aria-pressed={visibility === value}
+                  onClick={() => setVisibility(value)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2.5 text-left transition',
+                    visibility === value
+                      ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                      : 'border-border hover:bg-muted/40'
+                  )}
+                >
+                  <VisibilityIcon className="h-4 w-4 text-text-secondary" />
+                  <span className="mt-2 block text-sm font-medium">{label}</span>
+                  <span className="mt-0.5 block text-xs text-text-muted">{detail}</span>
+                </button>
+              ))}
+            </div>
+            {visibility === 'public' && (
+              <p className="mt-2 text-xs leading-4 text-text-muted">
+                {t('todo.project_visibility_public_notice')}
+              </p>
+            )}
+          </section>
+        )}
+
+        <section>
+          <h3 className="text-sm font-medium text-text-primary">任务来源</h3>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {(
+              [
+                ['local', ListTodo, '内置任务', location === 'local' ? '保存在本机' : '保存在云端'],
+                ['github', GitBranch, 'GitHub', '读取 Issues'],
+                ['gitlab', GitBranch, 'GitLab', '读取 Issues'],
+                ['dingtalk_aitable', Grid3X3, '钉钉多维表格', '同步表格记录'],
+              ] as const
+            ).map(([value, ProviderIcon, label, detail]) => (
+              <button
+                key={value}
+                type="button"
+                data-testid={`cloud-project-task-provider-${value}`}
+                aria-pressed={taskProvider === value}
+                onClick={() => {
+                  setTaskProvider(value)
+                  setError(null)
+                }}
+                className={cn(
+                  'rounded-xl border px-3 py-2.5 text-left transition',
+                  taskProvider === value
+                    ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                    : 'border-border hover:bg-muted/40'
+                )}
+              >
+                <ProviderIcon className="h-4 w-4 text-text-secondary" />
+                <span className="mt-2 block text-sm font-medium">{label}</span>
+                <span className="mt-0.5 block text-xs text-text-muted">{detail}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {repositoryProvider && (
+          <section className="space-y-4 rounded-xl bg-muted/40 p-3">
+            <label className="block text-sm font-medium text-text-primary">
+              仓库地址
+              <input
+                data-testid="cloud-project-provider-repository"
+                value={repositoryAddress}
+                onChange={event => {
+                  setRepositoryAddress(event.target.value)
+                  setError(null)
+                }}
+                className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+                placeholder={
+                  taskProvider === 'github'
+                    ? 'https://github.com/owner/repository'
+                    : 'https://gitlab.com/group/project'
+                }
+              />
+              <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                支持 HTTPS、SSH 或 owner/repository 格式；自托管地址会自动识别。
+              </span>
+            </label>
+            <label className="block text-sm font-medium text-text-primary">
+              访问令牌
+              <span className="ml-1 text-xs font-normal text-text-muted">可选</span>
+              <div className="relative mt-2">
+                <LockKeyhole className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-text-muted" />
+                <input
+                  data-testid="cloud-project-provider-token"
+                  type="password"
+                  autoComplete="new-password"
+                  value={token}
+                  onChange={event => setToken(event.target.value)}
+                  className="h-10 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+                  placeholder="私有仓库需要访问令牌"
+                />
+              </div>
+              <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                {location === 'cloud'
+                  ? '令牌会加密保存在 Wegent Backend，并安全下发给本地 Executor。'
+                  : '令牌会加密保存在当前设备，不会写入项目文件。'}
+              </span>
+            </label>
+          </section>
+        )}
+
+        {isAITableProvider && (
+          <section className="space-y-4 rounded-xl bg-muted/40 p-3">
+            <label className="block text-sm font-medium text-text-primary">
+              多维表格链接
+              <input
+                data-testid="cloud-project-aitable-url"
+                value={aitableUrl}
+                onChange={event => {
+                  setAitableUrl(event.target.value)
+                  setError(null)
+                }}
+                className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                placeholder="粘贴 alidocs.dingtalk.com 多维表格链接"
+              />
+              {aitableUrl && !aitableLink ? (
+                <span className="mt-1.5 block text-xs font-normal text-destructive">
+                  无法识别这个链接，请复制打开多维表格后的完整浏览器地址。
+                </span>
+              ) : (
+                <span className="mt-1.5 block text-xs font-normal text-text-muted">
+                  将自动识别表格和当前数据表，无需查找内部 ID。
+                </span>
+              )}
+            </label>
+            <p className="text-xs text-text-muted">
+              表格读写统一由本机 Executor 通过 DWS
+              执行。创建后连接钉钉账号，并确保该账号已获得此表格权限。
+            </p>
+          </section>
+        )}
+
+        <label className="block text-sm font-medium text-text-primary">
+          说明
+          <span className="ml-1 text-xs font-normal text-text-muted">可选</span>
+          <textarea
+            value={description}
+            onChange={event => setDescription(event.target.value)}
+            className="mt-2 h-20 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm font-normal text-text-primary outline-none transition focus:border-focus focus:ring-2 focus:ring-focus/15"
+            placeholder="这个项目空间用于什么？"
+          />
+        </label>
+
+        {error && (
+          <p
+            className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            role="alert"
+          >
+            {error}
+          </p>
+        )}
+      </div>
+      <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3.5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          data-testid="cloud-project-create-confirm"
+          disabled={!canSubmit}
+          onClick={() => void submit()}
+          className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? '正在创建…' : '创建项目'}
+        </button>
+      </footer>
+    </Modal>
+  )
+}
+
+export function CloudTodoWorkspace({
+  user,
+  localProjects,
+  runtimeWork,
+  services,
+  activeProjectRef,
+  focusedItemId,
+  onFocusedItemHandled,
+  onActiveProjectChange,
+}: CloudTodoWorkspaceProps) {
+  const { t } = useTranslation('common')
+  const projectSpaceApis = useMemo(() => {
+    if (services.projectSpaceApis) return services.projectSpaceApis
+    return {
+      cloud: services.deliveryApi,
+      defaultLocation: 'cloud' as const,
+    }
+  }, [services])
+  const availableProjectSpaceApis = useMemo(
+    () =>
+      (['local', 'cloud'] as const).flatMap(location => {
+        const api = projectSpaceApis[location]
+        return api ? [{ api, location }] : []
+      }),
+    [projectSpaceApis]
+  )
+  const [localProjectSpaces, setLocalProjectSpaces] = useState<LocatedCloudProject[]>([])
+  const [cloudProjectSpaces, setCloudProjectSpaces] = useState<LocatedCloudProject[]>([])
+  const projects = useMemo(
+    () => [...localProjectSpaces, ...cloudProjectSpaces],
+    [cloudProjectSpaces, localProjectSpaces]
+  )
+  const replaceProject = useCallback(
+    (currentProject: LocatedCloudProject, updated: CloudProject) => {
+      const setProjectSpaces =
+        currentProject.location === 'local' ? setLocalProjectSpaces : setCloudProjectSpaces
+      setProjectSpaces(current =>
+        current.map(project =>
+          projectSpaceKey(projectSpaceRef(project)) ===
+          projectSpaceKey(projectSpaceRef(currentProject))
+            ? { ...updated, location: currentProject.location }
+            : project
+        )
+      )
+    },
+    []
+  )
+  const removeProjectFromList = useCallback((projectToRemove: LocatedCloudProject) => {
+    const setProjectSpaces =
+      projectToRemove.location === 'local' ? setLocalProjectSpaces : setCloudProjectSpaces
+    const key = projectSpaceKey(projectSpaceRef(projectToRemove))
+    setProjectSpaces(current =>
+      current.filter(project => projectSpaceKey(projectSpaceRef(project)) !== key)
+    )
+  }, [])
+  const prependProject = useCallback((project: LocatedCloudProject) => {
+    const setProjectSpaces =
+      project.location === 'local' ? setLocalProjectSpaces : setCloudProjectSpaces
+    setProjectSpaces(current => [project, ...current])
+  }, [])
+  const [projectCounts, setProjectCounts] = useState<Record<string, number>>({})
+  const [projectMembers, setProjectMembers] = useState<Record<string, CloudProjectMember[]>>({})
+  // Active robots of the selected project, used to resolve the assignee name
+  // of robot-assigned tasks (local loop items only carry the agent id).
+  const [projectAgents, setProjectAgents] = useState<Record<string, ProjectChatAgent[]>>({})
+  // Every project's loop items, cached for the projects-home overview
+  // (stats, recent activity). Keyed by project store and project id.
+  const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
+  const [internalSelectedProjectRef, setSelectedProjectRef] =
+    useState<RuntimeProjectSpaceRef | null>(null)
+  const selectedProjectRef =
+    activeProjectRef === undefined ? internalSelectedProjectRef : activeProjectRef
+  const selectedProjectId = selectedProjectRef?.projectId ?? null
+  const [items, setItems] = useState<LocatedLoopItem[]>([])
+  // Which project's items are currently in `items`. Anything else rendered on
+  // the board would be stale, so the board shows the skeleton instead.
+  const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
+  const [localMyWork, setLocalMyWork] = useState<LocatedMyWorkItem[]>([])
+  const [cloudMyWork, setCloudMyWork] = useState<LocatedMyWorkItem[]>([])
+  const myWork = useMemo(() => [...localMyWork, ...cloudMyWork], [cloudMyWork, localMyWork])
+  const [rootView, setRootView] = useState<RootView>('projects')
+  const [projectView, setProjectView] = useState<ProjectView>('board')
+  const [selectedItem, setSelectedItem] = useState<LocatedLoopItem | null>(null)
+  // Items of the detail drawer's project when it differs from the board project,
+  // so the drawer can stay open without switching the board view.
+  const [detailItems, setDetailItems] = useState<LocatedLoopItem[]>([])
+  const [createProjectOpen, setCreateProjectOpen] = useState(false)
+  const [createTodoOpen, setCreateTodoOpen] = useState(false)
+  const [createTodoParent, setCreateTodoParent] = useState<LocatedLoopItem | null>(null)
+  const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
+  const [boardParentId, setBoardParentId] = useState<string | null>(null)
+  const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
+  const [aiChatOpen, setAiChatOpen] = useState(false)
+  const [aiChatEverOpened, setAiChatEverOpened] = useState(false)
+  const [aitableFields, setAitableFields] = useState<AITableField[]>([])
+  const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
+  const [aitableGroupFilter, setAitableGroupFilter] = useState('')
+  const [aitableBoardQuery, setAitableBoardQuery] = useState('')
+  const [nativeGroupBy, setNativeGroupBy] = useState<NativeBoardGroupBy>('status')
+  const [nativeGroupFilter, setNativeGroupFilter] = useState('')
+  const [nativeBoardQuery, setNativeBoardQuery] = useState('')
+  const [groupScopeBusy, setGroupScopeBusy] = useState(false)
+  const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
+  const boardSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  )
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('')
+  const [projectSearchOpen, setProjectSearchOpen] = useState(false)
+  const [projectSearchQuery, setProjectSearchQuery] = useState('')
+  const [projectSearchFilters, setProjectSearchFilters] =
+    useState<TaskSearchFilters>(emptyTaskSearchFilters)
+  const locallyRequestedProjectRef = useRef<RuntimeProjectSpaceRef | null | undefined>(undefined)
+  const focusedItemRequestRef = useRef<string | null>(null)
+  const projectHeaderRef = useRef<HTMLElement>(null)
+  const projectHeaderContentRef = useRef<HTMLDivElement>(null)
+  const projectHeaderTabsRef = useRef<HTMLElement>(null)
+  const projectHeaderAskAiRef = useRef<HTMLButtonElement>(null)
+  const projectHeaderSearchRef = useRef<HTMLButtonElement>(null)
+  const projectHeaderTagRef = useRef<HTMLSpanElement>(null)
+  const projectHeaderAddRef = useRef<HTMLButtonElement>(null)
+  const projectHeaderNaturalWidthsRef = useRef({
+    tabs: 0,
+    askAi: 0,
+    search: 0,
+    tag: 0,
+    add: 0,
+  })
+  const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
+  const boardSnapshotSignatureRef = useRef<string | null>(null)
+
+  const resetProjectViewState = useCallback(() => {
+    setProjectView('board')
+    setBoardParentId(null)
+    setNativeGroupFilter('')
+    setNativeBoardQuery('')
+    setProjectSearchOpen(false)
+    setProjectSearchQuery('')
+    setProjectSearchFilters(emptyTaskSearchFilters)
+  }, [])
+
+  useEffect(() => {
+    if (activeProjectRef === undefined) return
+    if (sameProjectSpace(locallyRequestedProjectRef.current, activeProjectRef)) {
+      locallyRequestedProjectRef.current = undefined
+      return
+    }
+    resetProjectViewState()
+  }, [activeProjectRef, resetProjectViewState])
+
+  useLayoutEffect(() => {
+    const header = projectHeaderRef.current
+    const content = projectHeaderContentRef.current
+    if (!header || !content) return
+
+    const compute = () => {
+      if (header.clientWidth <= 0) return
+      const style = getComputedStyle(header)
+      const base =
+        header.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      const rememberWidth = (
+        key: keyof typeof projectHeaderNaturalWidthsRef.current,
+        el: HTMLElement | null
+      ) => {
+        const measured = el?.getBoundingClientRect().width ?? 0
+        if (measured > projectHeaderNaturalWidthsRef.current[key]) {
+          projectHeaderNaturalWidthsRef.current[key] = measured
+        }
+        return projectHeaderNaturalWidthsRef.current[key] > 0
+          ? projectHeaderNaturalWidthsRef.current[key] + 8
+          : 0
+      }
+      const contentW = content.scrollWidth
+      const tabsW = rememberWidth('tabs', projectHeaderTabsRef.current)
+      const askAiW = projectAssistantOpen
+        ? 0
+        : rememberWidth('askAi', projectHeaderAskAiRef.current)
+      const searchW = rememberWidth('search', projectHeaderSearchRef.current)
+      const tagW = rememberWidth('tag', projectHeaderTagRef.current)
+      const addW = rememberWidth('add', projectHeaderAddRef.current)
+      const tabsDropdownW = 96
+      const compactControlW = 48
+
+      const usedAt = (lv: number): number => {
+        let used = contentW + 8
+        used += lv < 2 ? tabsW : tabsDropdownW
+        used += lv >= 1 ? compactControlW : searchW
+        used += lv >= 1 ? (tagW > 0 ? compactControlW : 0) : tagW
+        if (!projectAssistantOpen) used += lv >= 1 ? compactControlW : askAiW
+        used += lv >= 1 ? compactControlW : addW
+        return used
+      }
+
+      let next = 0
+      while (next < 2 && usedAt(next) > base) next += 1
+      setProjectHeaderLevel(next)
+    }
+
+    compute()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(compute)
+    observer.observe(header)
+    return () => observer.disconnect()
+  }, [items, projectAssistantOpen, projectHeaderLevel, projectView, selectedProjectId])
+
+  const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
+  const [cloudProjectsLoading, setCloudProjectsLoading] = useState(Boolean(projectSpaceApis.cloud))
+  const [localProjectsError, setLocalProjectsError] = useState<string | null>(null)
+  const [localProjectsRefreshNonce, setLocalProjectsRefreshNonce] = useState(0)
+  const [boardError, setBoardError] = useState<string | null>(null)
+  const [dingtalkAuthPrompt, setDingtalkAuthPrompt] = useState(false)
+  const [dingtalkAuthBusy, setDingtalkAuthBusy] = useState(false)
+  const [boardRefreshNonce, setBoardRefreshNonce] = useState(0)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
+  const [projectMenuId, setProjectMenuId] = useState<string | null>(null)
+  const [renameProject, setRenameProject] = useState<LocatedCloudProject | null>(null)
+  const [renameProjectName, setRenameProjectName] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [archiveProject, setArchiveProject] = useState<LocatedCloudProject | null>(null)
+  const [archiveItem, setArchiveItem] = useState<CloudLoopItem | null>(null)
+  const [archiveBusy, setArchiveBusy] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  useEffect(() => {
+    if (projectMenuId === null) return
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (
+        event.target instanceof Element &&
+        !event.target.closest('[data-cloud-project-menu-root]')
+      ) {
+        setProjectMenuId(null)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProjectMenuId(null)
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [projectMenuId])
+  // Applies a freshly fetched board snapshot. `boardError` distinguishes a
+  // loaded-but-empty project (renders empty columns) from a failed fetch
+  // (renders the skeleton plus the error banner instead of an empty board).
+  const applyBoardItems = useCallback(
+    (spaceKey: string, fetchedItems: CloudLoopItem[], error: string | null) => {
+      console.info('[Wework project board] snapshot applied', {
+        projectSpace: spaceKey,
+        itemCount: fetchedItems.length,
+        outcome: error ? 'failed' : 'loaded',
+      })
+      setItems(fetchedItems)
+      setItemsProjectKey(spaceKey)
+      setBoardError(error)
+    },
+    []
+  )
+  const connectDingTalkBoard = async () => {
+    if (!services.dwsApi || dingtalkAuthBusy) return
+    setDingtalkAuthBusy(true)
+    try {
+      await services.dwsApi.login()
+      await waitForDwsAuthentication(services.dwsApi)
+      setBoardRefreshNonce(value => value + 1)
+    } catch (cause) {
+      setDingtalkAuthPrompt(true)
+      setBoardError(cause instanceof Error ? cause.message : '连接钉钉失败')
+    } finally {
+      setDingtalkAuthBusy(false)
+    }
+  }
+  const selectedProject =
+    projects.find(
+      project =>
+        project.id === selectedProjectRef?.projectId &&
+        project.project_store === selectedProjectRef.projectStore
+    ) ?? null
+  const selectedProjectKey = selectedProject
+    ? projectSpaceKey(projectSpaceRef(selectedProject))
+    : null
+  const projectForItem = useCallback(
+    (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
+      if (item.project_store) {
+        return projects.find(project =>
+          sameProjectSpace(projectSpaceRef(project), {
+            projectStore: item.project_store!,
+            projectId: item.cloud_project_id,
+          })
+        )
+      }
+      if (selectedProject?.id === item.cloud_project_id) return selectedProject
+      const matches = projects.filter(project => project.id === item.cloud_project_id)
+      return matches.length === 1 ? matches[0] : undefined
+    },
+    [projects, selectedProject]
+  )
+  const locateItems = useCallback(
+    <T extends CloudLoopItem>(
+      sourceItems: T[],
+      projectStore: RuntimeProjectSpaceRef['projectStore']
+    ): Array<T & { project_store: RuntimeProjectSpaceRef['projectStore'] }> =>
+      sourceItems.map(item => ({ ...item, project_store: projectStore })),
+    []
+  )
+  const updateMyWorkItem = useCallback(
+    (updated: CloudLoopItem) => {
+      const current = myWork.find(entry => entry.id === updated.id)
+      const project = projectForItem(current ?? updated)
+      if (!project) return
+      const setSourceMyWork = project.location === 'local' ? setLocalMyWork : setCloudMyWork
+      setSourceMyWork(current =>
+        current.map(entry => (entry.id === updated.id ? { ...entry, ...updated } : entry))
+      )
+    },
+    [myWork, projectForItem]
+  )
+  const selectedProjectAutomationSupported = selectedProject
+    ? projectSupportsRobotAutomation(selectedProject)
+    : false
+  const apiForProject = useCallback(
+    (project: LocatedCloudProject | null | undefined) => {
+      if (!project) return undefined
+      if (project.task_provider === 'dingtalk_aitable' && projectSpaceApis.local) {
+        return projectSpaceApis.local
+      }
+      return projectSpaceApis[project.location]
+    },
+    [projectSpaceApis]
+  )
+  const selectedProjectServices = selectedProject
+    ? services.projectSpaceDetailServices?.[selectedProject.location]
+    : undefined
+  const selectedProjectApi =
+    selectedProject?.task_provider === 'dingtalk_aitable'
+      ? apiForProject(selectedProject)
+      : selectedProjectServices?.deliveryApi
+  const selectedProjectAgentApi = selectedProjectServices?.projectChatAgentApi
+  const selectedProjectChatClient = selectedProjectServices?.projectChatClient
+  const selectedProjectSelfManagedExecution = selectedProject?.location === 'local'
+  const selectedProjectLocation = selectedProject?.location
+  const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
+  // Stable handle for the automation queue: the cloud executions API is
+  // wrapped once per selected project API instead of being recreated on every
+  // render, so unrelated workspace re-renders do not restart the queue load
+  // (which flashed the loading state).
+  const automationExecutionApi = useMemo(() => {
+    if (selectedProject?.location === 'local' && selectedProjectServices?.loopItemExecutionApi) {
+      return selectedProjectServices.loopItemExecutionApi
+    }
+    if (!selectedProjectApi) return undefined
+    return {
+      list: (projectId: string, options: { agent_id?: string; status?: string }) =>
+        selectedProjectApi
+          .listLoopItemExecutions(projectId, options)
+          .then(response => response.items),
+      stop: (projectId: string, executionId: number) =>
+        selectedProjectApi.stopExecution(projectId, executionId),
+    }
+  }, [selectedProject?.location, selectedProjectApi, selectedProjectServices?.loopItemExecutionApi])
+  const selectedProjectAgents = useMemo(
+    () => (selectedProjectKey ? (projectAgents[selectedProjectKey] ?? []) : []),
+    [projectAgents, selectedProjectKey]
+  )
+  const agentNameById = useMemo(() => {
+    const names: Record<string, string> = {}
+    for (const agent of selectedProjectAgents) names[agent.id] = agent.name
+    return names
+  }, [selectedProjectAgents])
+  const boardCardDisplay: BoardCardDisplaySettings = {
+    showAssignee: selectedProject?.card_display?.show_assignee ?? true,
+    showPriority: selectedProject?.card_display?.show_priority ?? true,
+    showTags: selectedProject?.card_display?.show_tags ?? true,
+    showDate: selectedProject?.card_display?.show_date ?? true,
+  }
+  const personalGroupKey = selectedProject
+    ? `wework-board-group:${user.id}:${selectedProject.id}`
+    : null
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedProjectKey || !selectedProjectAgentApi) return
+    let cancelled = false
+    void selectedProjectAgentApi
+      .list(selectedProjectId)
+      .then(agents => {
+        if (cancelled) return
+        setProjectAgents(current => ({
+          ...current,
+          [selectedProjectKey]: agents.filter(agent => agent.status === 'active'),
+        }))
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectAgents(current => ({ ...current, [selectedProjectKey]: [] }))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProjectAgentApi, selectedProjectId, selectedProjectKey])
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedProjectLocation) return
+    track('board_view_opened', {
+      source: selectedProjectLocation,
+      view: projectView,
+    })
+  }, [projectView, selectedProjectId, selectedProjectLocation])
+  const nativeStatuses =
+    selectedProject?.board_config?.statuses ??
+    columns.map(column => ({
+      id: column.status,
+      name: column.label,
+      color: nativeBoardStatusColors[column.status],
+    }))
+
+  useEffect(() => {
+    if (!selectedProject || isAITableProject) return
+    const personal = personalGroupKey ? localStorage.getItem(personalGroupKey) : null
+    // The selected project changes the external localStorage key we synchronize from.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNativeGroupBy(
+      personal === 'status' ||
+        personal === 'priority' ||
+        personal === 'assignee' ||
+        personal === 'tag'
+        ? personal
+        : (selectedProject.board_config?.group_by ?? 'status')
+    )
+  }, [isAITableProject, personalGroupKey, selectedProject])
+
+  const selectedGroupField = aitableFields.find(field => field.id === aitableGroupFieldId)
+  const configuredGroupValues = Array.isArray(selectedGroupField?.config?.options)
+    ? selectedGroupField.config.options.flatMap(option => aitableCellLabels(option))
+    : []
+  const aitableGroupValues = Array.from(
+    new Set([
+      ...configuredGroupValues,
+      ...items.flatMap(item => aitableCellLabels(item.source_cells?.[aitableGroupFieldId])),
+      ...(items.some(item => !aitableCellLabels(item.source_cells?.[aitableGroupFieldId]).length)
+        ? ['未设置']
+        : []),
+    ])
+  )
+  // Distinct tags across the project (registry plus item usage), used by the
+  // board tag grouping and filter.
+  const availableTags = Array.from(
+    new Set([...(selectedProject?.tags ?? []), ...items.flatMap(item => item.tags ?? [])])
+  ).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+  const boardColumns = isAITableProject
+    ? aitableGroupValues.map((groupValue, index) => ({
+        key: `field-${aitableGroupFieldId}-${groupValue}`,
+        label: groupValue,
+        status: 'inbox' as CloudLoopItem['status'],
+        sourceStatus: null,
+        groupValue,
+        dotClass: ['bg-zinc-400', 'bg-indigo-500', 'bg-amber-500', 'bg-violet-500'][index % 4],
+      }))
+    : nativeGroupBy === 'priority'
+      ? (['none', 'low', 'medium', 'high', 'urgent'] as const).map(priority => ({
+          key: `priority-${priority}`,
+          label: priority === 'none' ? '普通' : priority,
+          status: 'inbox',
+          sourceStatus: null,
+          groupValue: priority,
+          dotClass: columnDotClasses[priority] ?? 'bg-zinc-400',
+        }))
+      : nativeGroupBy === 'assignee'
+        ? [
+            ...Array.from(
+              new Map(
+                [
+                  ...(selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []),
+                  ...items.flatMap(item =>
+                    item.assignee_user_id && item.assignee_name
+                      ? [{ user_id: item.assignee_user_id, user_name: item.assignee_name }]
+                      : []
+                  ),
+                ].map(member => [member.user_id, member])
+              ).values()
+            ).map(member => ({
+              key: `assignee-${member.user_id}`,
+              label: member.user_name,
+              status: 'inbox',
+              sourceStatus: null,
+              groupValue: String(member.user_id),
+              dotClass: 'bg-indigo-500',
+            })),
+            ...Array.from(
+              new Map(
+                [
+                  ...selectedProjectAgents.map(agent => ({
+                    agent_id: agent.id,
+                    agent_name: agent.name,
+                  })),
+                  ...items.flatMap(item =>
+                    item.assignee_agent_id
+                      ? [
+                          {
+                            agent_id: item.assignee_agent_id,
+                            agent_name:
+                              item.assignee_agent_name ||
+                              agentNameById[item.assignee_agent_id] ||
+                              '',
+                          },
+                        ]
+                      : []
+                  ),
+                ].map(agent => [agent.agent_id, agent])
+              ).values()
+            ).map(agent => ({
+              key: `assignee-agent-${agent.agent_id}`,
+              label: agent.agent_name || agent.agent_id,
+              status: 'inbox',
+              sourceStatus: null,
+              groupValue: `agent:${agent.agent_id}`,
+              dotClass: 'bg-indigo-500',
+            })),
+            {
+              key: 'assignee-unassigned',
+              label: '未指定',
+              status: 'inbox',
+              sourceStatus: null,
+              groupValue: '',
+              dotClass: 'bg-zinc-400',
+            },
+          ]
+        : nativeGroupBy === 'tag'
+          ? [
+              ...availableTags.map(tag => ({
+                key: `tag-${tag}`,
+                label: tag,
+                status: 'inbox' as CloudLoopItem['status'],
+                sourceStatus: null,
+                groupValue: tag,
+                dotClass: 'bg-zinc-400',
+              })),
+              {
+                key: 'tag-untagged',
+                label: '无标签',
+                status: 'inbox' as CloudLoopItem['status'],
+                sourceStatus: null,
+                groupValue: '',
+                dotClass: 'bg-zinc-400',
+              },
+            ]
+          : nativeStatuses.map(status => ({
+              key: status.id,
+              label: status.name,
+              status: status.id,
+              sourceStatus: null,
+              groupValue: status.id,
+              dotClass:
+                boardStatusColorClasses[status.color] ??
+                columnDotClasses[status.id] ??
+                'bg-zinc-400',
+            }))
+  const aitableApi = isAITableProject ? services.aitableApi : undefined
+
+  useEffect(() => {
+    if (!isAITableProject || !selectedProject || !aitableApi) return
+    let active = true
+    void aitableApi
+      .describe(selectedProject.id)
+      .then(description => {
+        if (!active) return
+        setAitableFields(description.fields)
+        const mapping = selectedProject.provider_config.board_mapping
+        const mappedStatus =
+          typeof mapping === 'object' && mapping !== null
+            ? (mapping as Record<string, unknown>).status_field_id
+            : null
+        const defaultField =
+          description.fields.find(field => field.id === mappedStatus) ??
+          description.fields.find(field => /select|member|checkbox/i.test(field.type)) ??
+          description.fields[0]
+        setAitableGroupFieldId(current =>
+          description.fields.some(field => field.id === current)
+            ? current
+            : (defaultField?.id ?? '')
+        )
+      })
+      .catch(cause => {
+        if (active) setBoardError(cause instanceof Error ? cause.message : '读取钉钉字段失败')
+      })
+    return () => {
+      active = false
+    }
+  }, [aitableApi, isAITableProject, selectedProject])
+
+  const canCreateBoardTask = selectedProject !== null
+  // Only render board items that belong to the selected project. On a project
+  // switch this flips to the skeleton in the same render, before the fetch.
+  // `boardError` distinguishes a failed fetch (skeleton stays) from a
+  // successfully loaded but empty project (renders the empty columns).
+  const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
+  const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
+  const selectedItemApi = apiForProject(selectedItemProject)
+  // Source for the detail drawer / creation dialog when the selected todo lives
+  // in a project other than the one shown on the board.
+  const detailAllItems =
+    selectedItemProject &&
+    !sameProjectSpace(projectSpaceRef(selectedItemProject), selectedProjectRef)
+      ? detailItems
+      : items
+  const createTodoProject = createTodoParent
+    ? (projectForItem(createTodoParent) ?? null)
+    : selectedProject
+  const createTodoApi = apiForProject(createTodoProject)
+  const boardParent = items.find(item => item.id === boardParentId) ?? null
+  const boardLayerCount = items.filter(item => item.parent_id === boardParentId).length
+  const boardBreadcrumb: CloudLoopItem[] = []
+  let breadcrumbItem = boardParent
+  const breadcrumbIds = new Set<string>()
+  while (breadcrumbItem && !breadcrumbIds.has(breadcrumbItem.id)) {
+    boardBreadcrumb.unshift(breadcrumbItem)
+    breadcrumbIds.add(breadcrumbItem.id)
+    breadcrumbItem = items.find(candidate => candidate.id === breadcrumbItem?.parent_id) ?? null
+  }
+
+  function applyProjectSelection(project: LocatedCloudProject | null) {
+    const ref = project ? projectSpaceRef(project) : null
+    locallyRequestedProjectRef.current = ref
+    setSelectedProjectRef(ref)
+    resetProjectViewState()
+  }
+
+  function selectProject(project: LocatedCloudProject | null) {
+    applyProjectSelection(project)
+    onActiveProjectChange?.(project)
+  }
+
+  async function renameSelectedProject() {
+    if (!renameProject) return
+    const api = apiForProject(renameProject)
+    if (!api) throw new Error('项目空间接口当前不可用')
+    setRenameBusy(true)
+    setRenameError(null)
+    try {
+      const updated = await api.updateCloudProject(renameProject.id, {
+        name: renameProjectName.trim(),
+        version: renameProject.version,
+      })
+      replaceProject(renameProject, updated)
+      track('feature_action_completed', { domain: 'project_space', action: 'rename' })
+      setRenameProject(null)
+    } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
+      setRenameError(cause instanceof Error ? cause.message : '修改项目名称失败')
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
+  async function confirmArchiveProject() {
+    if (!archiveProject || archiveBusy) return
+    const api = apiForProject(archiveProject)
+    if (!api) return
+    setArchiveBusy(true)
+    setArchiveError(null)
+    try {
+      await api.archiveCloudProject(archiveProject.id, archiveProject.version)
+      removeProjectFromList(archiveProject)
+      setProjectCounts(current => {
+        const next = { ...current }
+        delete next[projectSpaceKey(projectSpaceRef(archiveProject))]
+        return next
+      })
+      if (sameProjectSpace(selectedProjectRef, projectSpaceRef(archiveProject))) {
+        selectProject(null)
+      }
+      track('feature_action_completed', { domain: 'project_space', action: 'delete' })
+      setArchiveProject(null)
+    } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
+      setArchiveError(cause instanceof Error ? cause.message : '归档项目失败')
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
+
+  async function confirmArchiveItem() {
+    if (!archiveItem || archiveBusy) return
+    const api = apiForProject(projectForItem(archiveItem))
+    if (!api) return
+    setArchiveBusy(true)
+    setArchiveError(null)
+    try {
+      await api.archiveLoopItem(archiveItem.id)
+      const archivedIds = new Set([archiveItem.id])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const candidate of items) {
+          if (
+            candidate.parent_id &&
+            archivedIds.has(candidate.parent_id) &&
+            !archivedIds.has(candidate.id)
+          ) {
+            archivedIds.add(candidate.id)
+            changed = true
+          }
+        }
+      }
+      setItems(current => current.filter(item => !archivedIds.has(item.id)))
+      const archiveProjectKey = selectedProjectKey
+      if (archiveProjectKey) {
+        setProjectItems(current => ({
+          ...current,
+          [archiveProjectKey]: (current[archiveProjectKey] ?? []).filter(
+            item => !archivedIds.has(item.id)
+          ),
+        }))
+        setProjectCounts(current => ({
+          ...current,
+          [archiveProjectKey]: Math.max(0, (current[archiveProjectKey] ?? 0) - archivedIds.size),
+        }))
+      }
+      if (boardParentId && archivedIds.has(boardParentId)) setBoardParentId(null)
+      if (selectedItem && archivedIds.has(selectedItem.id)) setSelectedItem(null)
+      track('feature_action_completed', { domain: 'board_item', action: 'delete' })
+      setArchiveItem(null)
+    } catch (cause) {
+      track('operation_failed', { operation: 'board_item_action' })
+      setArchiveError(cause instanceof Error ? cause.message : '归档任务失败')
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setGlobalSearchOpen(true)
+      } else if (event.key === 'Escape') {
+        setGlobalSearchOpen(false)
+        setProjectSearchOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleGlobalSearchShortcut)
+    return () => window.removeEventListener('keydown', handleGlobalSearchShortcut)
+  }, [])
+
+  function openTodoCreation(
+    parent: CloudLoopItem | null,
+    status: CloudLoopItem['status'] = 'inbox'
+  ) {
+    setCreateTodoParent(parent)
+    setCreateTodoStatus(status)
+    setCreateTodoOpen(true)
+  }
+
+  function retryLocalProjects() {
+    setLocalProjectsError(null)
+    setLocalProjectsLoading(true)
+    setLocalProjectsRefreshNonce(current => current + 1)
+  }
+
+  useEffect(() => {
+    const api = projectSpaceApis.local
+    if (!api) return
+    let active = true
+    void api
+      .listCloudProjects()
+      .then(response => {
+        if (!active) return
+        setLocalProjectsError(null)
+        setLocalProjectSpaces(
+          response.items.map(project => ({
+            ...project,
+            project_store: 'local',
+            location: 'local',
+          }))
+        )
+      })
+      .catch(error => {
+        console.error('[Wework project spaces] local list failed', error)
+        if (active) {
+          setLocalProjectsError(error instanceof Error ? error.message : '本地项目空间加载失败')
+        }
+      })
+      .finally(() => {
+        if (active) setLocalProjectsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [localProjectsRefreshNonce, projectSpaceApis.local])
+
+  useEffect(() => {
+    const api = projectSpaceApis.cloud
+    if (!api) return
+    let active = true
+    void api
+      .listCloudProjects()
+      .then(response => {
+        if (!active) return
+        setCloudProjectSpaces(
+          response.items.map(project => ({
+            ...project,
+            project_store: 'backend',
+            location: 'cloud',
+          }))
+        )
+      })
+      .catch(error => {
+        console.warn('[Wework project spaces] cloud list failed', error)
+        if (active) setCloudProjectSpaces([])
+      })
+      .finally(() => {
+        if (active) setCloudProjectsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [projectSpaceApis.cloud])
+  useEffect(() => {
+    if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
+    let active = true
+    const refreshItems = () => {
+      const prepare =
+        selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
+          ? services.aitableApi.configureProject(selectedProject)
+          : Promise.resolve()
+      void prepare
+        .then(() => selectedProjectApi.listLoopItems(selectedProjectId))
+        .then(response => {
+          if (!active) return
+          setDingtalkAuthPrompt(false)
+          const signature = boardSnapshotKey(response.items, null)
+          if (boardSnapshotSignatureRef.current === signature) return
+          boardSnapshotSignatureRef.current = signature
+          const locatedItems = locateItems(response.items, selectedProject.project_store)
+          applyBoardItems(selectedProjectKey, locatedItems, null)
+          // Keep the projects-home cache in sync with the board fetch.
+          setProjectItems(current => ({ ...current, [selectedProjectKey]: locatedItems }))
+          setProjectCounts(current => ({
+            ...current,
+            [selectedProjectKey]: response.items.length,
+          }))
+          // Only sync the open drawer when it belongs to this project; a drawer
+          // opened from another view (e.g. my work) must not be closed here.
+          setSelectedItem(current =>
+            current &&
+            sameProjectSpace(
+              {
+                projectStore: current.project_store ?? selectedProject.project_store,
+                projectId: current.cloud_project_id,
+              },
+              projectSpaceRef(selectedProject)
+            )
+              ? (locatedItems.find(item => item.id === current.id) ?? null)
+              : current
+          )
+        })
+        .catch(async error => {
+          console.error('[Wework project board] issue refresh failed', {
+            projectId: selectedProjectId,
+            error,
+          })
+          if (!active) return
+          if (selectedProject?.task_provider === 'dingtalk_aitable' && services.dwsApi) {
+            try {
+              const status = await services.dwsApi.authStatus()
+              if (!status.authenticated || status.token_valid === false) {
+                if (!active) return
+                setDingtalkAuthPrompt(true)
+                applyBoardItems(selectedProjectKey, [], null)
+                return
+              }
+            } catch {
+              // Fall through to the raw board error.
+            }
+          }
+          if (!active) return
+          setDingtalkAuthPrompt(false)
+          const message = error instanceof Error ? error.message : '任务加载失败'
+          const signature = boardSnapshotKey([], message)
+          if (boardSnapshotSignatureRef.current === signature) return
+          boardSnapshotSignatureRef.current = signature
+          applyBoardItems(selectedProjectKey, [], message)
+        })
+    }
+    refreshItems()
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshItems()
+    }, 15_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [
+    applyBoardItems,
+    boardRefreshNonce,
+    selectedProject,
+    selectedProjectApi,
+    selectedProjectId,
+    selectedProjectKey,
+    locateItems,
+    services.aitableApi,
+    services.dwsApi,
+  ])
+  useEffect(() => {
+    if (!selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
+    let active = true
+    void selectedProjectApi
+      .listCloudProjectMembers(selectedProjectId)
+      .then(members => {
+        if (active) setProjectMembers(current => ({ ...current, [selectedProjectKey]: members }))
+      })
+      .catch(error => {
+        console.warn('[Wework project board] member refresh failed', {
+          projectId: selectedProjectId,
+          error,
+        })
+      })
+    return () => {
+      active = false
+    }
+  }, [selectedProjectApi, selectedProjectId, selectedProjectKey])
+  useEffect(() => {
+    if (!focusedItemId) {
+      focusedItemRequestRef.current = null
+      return
+    }
+    if (!selectedProjectId || !selectedProjectKey || itemsProjectKey !== selectedProjectKey) return
+    const requestKey = `${selectedProjectKey}:${focusedItemId}`
+    if (focusedItemRequestRef.current === requestKey) return
+    const focusedItem = items.find(item => item.id === focusedItemId)
+    if (!focusedItem || focusedItem.can_view_detail === false) return
+    focusedItemRequestRef.current = requestKey
+    let active = true
+    queueMicrotask(() => {
+      if (!active) return
+      setRootView('projects')
+      setProjectView('board')
+      setBoardParentId(focusedItem.parent_id)
+      setSelectedItem(focusedItem)
+      onFocusedItemHandled?.()
+    })
+    return () => {
+      active = false
+    }
+  }, [
+    focusedItemId,
+    items,
+    itemsProjectKey,
+    onFocusedItemHandled,
+    selectedProjectId,
+    selectedProjectKey,
+  ])
+  useEffect(() => {
+    if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
+    const api = projectSpaceApis.local
+    if (!api) return
+    let active = true
+    void api
+      .listMyWork()
+      .then(response => {
+        if (active) setLocalMyWork(locateItems(response.items, 'local'))
+      })
+      .catch(error => {
+        console.error('[Wework project spaces] local my work failed', error)
+        if (active) setLocalMyWork([])
+      })
+    return () => {
+      active = false
+    }
+  }, [locateItems, projectSpaceApis.local, rootView, selectedProjectId])
+
+  useEffect(() => {
+    if (rootView !== 'my-work' && !(rootView === 'projects' && !selectedProjectId)) return
+    const api = projectSpaceApis.cloud
+    if (!api) return
+    let active = true
+    void api
+      .listMyWork()
+      .then(response => {
+        if (active) setCloudMyWork(locateItems(response.items, 'backend'))
+      })
+      .catch(error => {
+        console.warn('[Wework project spaces] cloud my work failed', error)
+        if (active) setCloudMyWork([])
+      })
+    return () => {
+      active = false
+    }
+  }, [locateItems, projectSpaceApis.cloud, rootView, selectedProjectId])
+  useEffect(() => {
+    if (!globalSearchOpen) return
+    let active = true
+    void Promise.allSettled(
+      projects.map(async project => {
+        const api = apiForProject(project)
+        if (!api) return null
+        const response = await api.listLoopItems(project.id)
+        return { project, items: response.items }
+      })
+    ).then(results => {
+      if (!active) return
+      setProjectItems(current => {
+        const next = { ...current }
+        results.forEach(result => {
+          if (result.status === 'fulfilled' && result.value) {
+            next[projectSpaceKey(projectSpaceRef(result.value.project))] = result.value.items
+          }
+        })
+        return next
+      })
+    })
+    return () => {
+      active = false
+    }
+  }, [apiForProject, globalSearchOpen, projects])
+  // Load the drawer project's items when the drawer shows a todo from a project
+  // other than the one on the board, so subtasks and parent options stay correct.
+  useEffect(() => {
+    if (
+      !selectedItem ||
+      (selectedItemProject &&
+        sameProjectSpace(projectSpaceRef(selectedItemProject), selectedProjectRef))
+    ) {
+      return
+    }
+    const detailApi = apiForProject(selectedItemProject)
+    if (!detailApi) return
+    let active = true
+    void detailApi.listLoopItems(selectedItem.cloud_project_id).then(response => {
+      if (active && selectedItemProject) {
+        setDetailItems(locateItems(response.items, selectedItemProject.project_store))
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [apiForProject, locateItems, selectedItem, selectedItemProject, selectedProjectRef])
+
+  async function moveItem(itemId: string, columnKey: string, beforeItemId: string | null = null) {
+    const item = items.find(candidate => candidate.id === itemId)
+    const column = boardColumns.find(candidate => candidate.key === columnKey)
+    if (!item || !column || item.can_edit === false || isAITableProject) return
+    const reordered =
+      nativeGroupBy === 'status'
+        ? reorderLaneItems(items, itemId, column.status, beforeItemId)
+        : null
+    const previousItems = items
+    if (reordered) {
+      setItems(reordered.items)
+    } else {
+      setItems(current =>
+        current.map(candidate => {
+          if (candidate.id !== itemId) return candidate
+          if (nativeGroupBy === 'priority') {
+            return { ...candidate, priority: column.groupValue as CloudLoopItem['priority'] }
+          }
+          if (nativeGroupBy === 'assignee') {
+            return column.groupValue.startsWith('agent:')
+              ? {
+                  ...candidate,
+                  assignee_user_id: null,
+                  assignee_agent_id: column.groupValue.slice('agent:'.length),
+                }
+              : {
+                  ...candidate,
+                  assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                  assignee_agent_id: null,
+                }
+          }
+          return { ...candidate, tags: column.groupValue ? [column.groupValue] : [] }
+        })
+      )
+    }
+    setBoardError(null)
+    try {
+      const itemApi = apiForProject(projectForItem(item))
+      if (!itemApi) throw new Error('项目空间当前不可用')
+      const update =
+        nativeGroupBy === 'status'
+          ? { status: column.status }
+          : nativeGroupBy === 'priority'
+            ? { priority: column.groupValue as CloudLoopItem['priority'] }
+            : nativeGroupBy === 'assignee'
+              ? column.groupValue.startsWith('agent:')
+                ? {
+                    assignee_user_id: null,
+                    assignee_agent_id: column.groupValue.slice('agent:'.length),
+                  }
+                : {
+                    assignee_user_id: column.groupValue ? Number(column.groupValue) : null,
+                    assignee_agent_id: null,
+                  }
+              : { tags: column.groupValue ? [column.groupValue] : [] }
+      const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
+      const locatedUpdated = { ...updated, project_store: item.project_store }
+      setItems(current =>
+        current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
+      )
+      setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
+      if (reordered) {
+        await itemApi.reorderLoopItems(item.cloud_project_id, {
+          parent_id: item.parent_id,
+          status: column.status,
+          item_ids: reordered.laneIds,
+        })
+      }
+      track('board_item_moved', {
+        group_by: nativeGroupBy,
+        reordered: beforeItemId !== null,
+        source: projectForItem(item)?.location ?? 'unknown',
+      })
+    } catch (cause) {
+      setItems(previousItems)
+      setBoardError(cause instanceof Error ? cause.message : '移动任务失败')
+      track('operation_failed', { operation: 'board_item_move' })
+    }
+  }
+
+  function finishBoardDrop(event: DragEndEvent) {
+    setActiveDragItemId(null)
+    const activeId = String(event.active.id)
+    const beforeCardId = boardCardIdFromDropId(event.over?.id)
+    if (beforeCardId) {
+      if (beforeCardId === activeId) return
+      const target = items.find(candidate => candidate.id === beforeCardId)
+      const targetColumn = target
+        ? boardColumns.find(column => {
+            if (nativeGroupBy === 'priority') return target.priority === column.groupValue
+            if (nativeGroupBy === 'assignee') {
+              return itemMatchesAssigneeGroup(target, column.groupValue)
+            }
+            if (nativeGroupBy === 'tag') {
+              return column.groupValue
+                ? (target.tags ?? []).includes(column.groupValue)
+                : !(target.tags ?? []).length
+            }
+            return target.status === column.status
+          })
+        : null
+      if (targetColumn) void moveItem(activeId, targetColumn.key, beforeCardId)
+      return
+    }
+    const status = boardStatusFromDropId(event.over?.id)
+    if (status) {
+      const column = boardColumns.find(candidate => candidate.key === status)
+      if (column) void moveItem(activeId, column.key)
+    }
+  }
+
+  function savePersonalGroupBy(groupBy: NativeBoardGroupBy) {
+    setNativeGroupBy(groupBy)
+    setNativeGroupFilter('')
+    if (personalGroupKey) localStorage.setItem(personalGroupKey, groupBy)
+  }
+
+  async function saveGlobalGroupBy() {
+    if (!selectedProject || groupScopeBusy) return
+    const projectApi = projectSpaceApis[selectedProject.location] ?? selectedProjectApi
+    if (!projectApi) return
+    setGroupScopeBusy(true)
+    setBoardError(null)
+    try {
+      const updated = await projectApi.updateCloudProject(selectedProject.id, {
+        version: selectedProject.version,
+        board_config: {
+          group_by: nativeGroupBy,
+          statuses: nativeStatuses,
+        },
+      })
+      if (personalGroupKey) localStorage.removeItem(personalGroupKey)
+      replaceProject(selectedProject, updated)
+      track('feature_action_completed', { domain: 'project_space', action: 'save_grouping' })
+    } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
+      setBoardError(cause instanceof Error ? cause.message : '保存全局分组失败')
+    } finally {
+      setGroupScopeBusy(false)
+    }
+  }
+
+  const aiChatProject = selectedItemProject
+
+  return (
+    <div
+      className={cn(
+        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary'
+      )}
+      data-testid="cloud-todo-workspace"
+      data-sidebar-collapsed={sidebarCollapsed}
+    >
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside
+          className={cn(
+            'relative shrink-0 overflow-hidden border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-200',
+            sidebarCollapsed ? 'w-0 border-r-0' : 'w-[240px]'
+          )}
+        >
+          <div className="flex h-full w-[240px] flex-col px-1.5 pt-1.5">
+            <DesktopSidebarHeader
+              actionsTestId="cloud-todo-sidebar-chrome-controls"
+              actions={
+                <>
+                  <DesktopWindowControls
+                    sidebarCollapsed={false}
+                    onToggleSidebar={() => setSidebarCollapsed(true)}
+                    className="gap-0"
+                    toggleTestId="cloud-todo-collapse-sidebar"
+                  />
+                  <Tooltip label={t('workbench.search')} side="bottom" align="end">
+                    <button
+                      type="button"
+                      data-testid="cloud-search-toggle"
+                      onClick={() => setGlobalSearchOpen(true)}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                      aria-label={t('workbench.search')}
+                    >
+                      <Search className="h-4 w-4" />
+                    </button>
+                  </Tooltip>
+                </>
+              }
+            />
+            <nav className="space-y-0.5">
+              <DesktopSidebarNavItem
+                icon={Cloud}
+                label="项目空间"
+                selected={rootView === 'projects'}
+                onClick={() => {
+                  setRootView('projects')
+                  selectProject(null)
+                  setSelectedItem(null)
+                }}
+              />
+              <DesktopSidebarNavItem
+                icon={CircleUserRound}
+                label="我的工作"
+                testId="cloud-my-work"
+                selected={rootView === 'my-work'}
+                onClick={() => setRootView('my-work')}
+              />
+            </nav>
+            <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
+              项目空间
+              <Tooltip
+                label={t('todo.new_project_space', '新建项目空间')}
+                side="bottom"
+                align="end"
+                className="ml-auto"
+              >
+                <button
+                  type="button"
+                  data-testid="cloud-project-add"
+                  onClick={() => setCreateProjectOpen(true)}
+                  className="h-6 w-6 rounded-md hover:bg-muted"
+                  aria-label={t('todo.new_project_space', '新建项目空间')}
+                >
+                  <Plus className="mx-auto h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
+              {projects.map(project => {
+                const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
+                const spaceKey = projectSpaceKey(projectSpaceRef(project))
+                return (
+                  <div
+                    key={spaceKey}
+                    data-cloud-project-menu-root
+                    className={cn(
+                      'group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5',
+                      rootView === 'projects' &&
+                        sameProjectSpace(selectedProjectRef, projectSpaceRef(project))
+                        ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                        : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+                    )}
+                  >
+                    <button
+                      type="button"
+                      data-testid={`cloud-sidebar-project-${project.id}`}
+                      onClick={() => {
+                        selectProject(project)
+                        setRootView('projects')
+                        setProjectView('board')
+                        setSelectedItem(null)
+                      }}
+                      className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base"
+                    >
+                      <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
+                      <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
+                    </button>
+                    {projectCounts[spaceKey] ? (
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover:hidden">
+                        {projectCounts[spaceKey]}
+                      </span>
+                    ) : null}
+                    <Tooltip
+                      label={t('todo.project_actions', '项目操作')}
+                      side="bottom"
+                      align="end"
+                    >
+                      <button
+                        type="button"
+                        data-testid={`cloud-sidebar-project-more-${project.id}`}
+                        onClick={() => {
+                          setProjectMenuId(current => (current === project.id ? null : project.id))
+                        }}
+                        className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
+                        aria-expanded={projectMenuId === project.id}
+                        aria-label={t('todo.project_actions', '项目操作')}
+                      >
+                        <Ellipsis className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
+                    {projectMenuId === project.id ? (
+                      <div
+                        data-testid={`cloud-sidebar-project-menu-${project.id}`}
+                        role="menu"
+                        className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
+                      >
+                        {project.created_by_user_id === user.id ||
+                        project.access_role === 'Owner' ||
+                        project.access_role === 'Maintainer' ? (
+                          <>
+                            <button
+                              type="button"
+                              data-testid={`cloud-sidebar-rename-project-${project.id}`}
+                              onClick={() => {
+                                setRenameProject(project)
+                                setRenameProjectName(project.name)
+                                setRenameError(null)
+                                setProjectMenuId(null)
+                              }}
+                              role="menuitem"
+                              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                            >
+                              <span className="w-3.5 text-center" aria-hidden="true">
+                                Aa
+                              </span>
+                              修改项目名称
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`cloud-sidebar-archive-project-${project.id}`}
+                              onClick={() => {
+                                setArchiveError(null)
+                                setArchiveProject(project)
+                                setProjectMenuId(null)
+                              }}
+                              role="menuitem"
+                              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                            >
+                              <span className="w-3.5 text-center" aria-hidden="true">
+                                ×
+                              </span>
+                              归档项目
+                            </button>
+                          </>
+                        ) : null}
+                        <button
+                          type="button"
+                          data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
+                          onClick={() => {
+                            void copyTextToClipboard(String(project.id)).then(() => {
+                              setCopiedProjectId(project.id)
+                              window.setTimeout(() => setCopiedProjectId(null), 2000)
+                            })
+                            setProjectMenuId(null)
+                          }}
+                          role="menuitem"
+                          className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                        >
+                          {copiedProjectId === project.id ? (
+                            <Check className="h-3.5 w-3.5 text-green-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                          {copiedProjectId === project.id
+                            ? t('todo.project_id_copied', '项目 ID 已复制')
+                            : t('todo.copy_project_id', '复制项目 ID')}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </aside>
+        <main className="relative flex min-w-0 flex-1 flex-col">
+          {!selectedProject && (
+            <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+          )}
+          {sidebarCollapsed && (
+            <div
+              data-testid="cloud-todo-collapsed-chrome-controls"
+              className="absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
+            >
+              <DesktopWindowControls
+                sidebarCollapsed
+                onToggleSidebar={() => setSidebarCollapsed(false)}
+                className="gap-1"
+                toggleTestId="cloud-todo-expand-sidebar"
+              />
+            </div>
+          )}
+          {!selectedProject && projects.length > 0 && localProjectsError ? (
+            <div
+              data-testid="local-project-spaces-error"
+              className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
+            >
+              <span>本地项目空间加载失败：{localProjectsError}</span>
+              <button
+                type="button"
+                data-testid="local-project-spaces-retry"
+                onClick={retryLocalProjects}
+                className="h-7 shrink-0 rounded-md border border-destructive/30 px-2 text-xs font-medium hover:bg-destructive/10"
+              >
+                {t('common.retry', '重试')}
+              </button>
+            </div>
+          ) : null}
+          {rootView === 'my-work' ? (
+            <CloudMyWorkView
+              items={myWork}
+              // Open the detail drawer in place instead of jumping to the board.
+              onSelectItem={item => {
+                if (item.can_view_detail !== false) setSelectedItem(item)
+              }}
+              onApproveItem={async item => {
+                const api = apiForProject(projectForItem(item))
+                if (!api) return
+                try {
+                  const updated = await api.approveLoopItemRun(
+                    item.cloud_project_id,
+                    item.id,
+                    item.version
+                  )
+                  updateMyWorkItem(updated)
+                } catch (error) {
+                  console.error('[Wework] Failed to approve task from my work', error)
+                }
+              }}
+            />
+          ) : !selectedProject && projects.length === 0 && localProjectsError ? (
+            <div
+              data-testid="local-project-spaces-error"
+              className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-destructive"
+            >
+              <span>本地项目空间加载失败：{localProjectsError}</span>
+              <button
+                type="button"
+                data-testid="local-project-spaces-retry"
+                onClick={retryLocalProjects}
+                className="h-8 rounded-lg border border-destructive/30 px-3 text-sm font-medium hover:bg-destructive/10"
+              >
+                {t('common.retry', '重试')}
+              </button>
+            </div>
+          ) : (projectSpaceApis.local ? localProjectsLoading : cloudProjectsLoading) ? (
+            <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
+              正在加载项目空间…
+            </div>
+          ) : !selectedProject && projects.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center">
+              <Cloud className="h-8 w-8 text-text-muted" />
+              <h1 className="mt-4 text-heading-md font-semibold">创建第一个项目空间</h1>
+              <p className="mt-2 text-sm text-text-muted">
+                共享任务、文件与交付，让成员和 AI 在不同本地工作区协作。
+              </p>
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(true)}
+                className="mt-5 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
+              >
+                新建项目空间
+              </button>
+            </div>
+          ) : !selectedProject ? (
+            <CloudProjectsHome
+              projects={projects}
+              projectCounts={projectCounts}
+              projectMembers={projectMembers}
+              projectItems={projectItems}
+              myWork={myWork}
+              searchQuery=""
+              onCreateProject={() => setCreateProjectOpen(true)}
+              onSelectProject={selectProject}
+              onManageProject={project => {
+                selectProject(project)
+                setProjectView('manage')
+              }}
+              onSelectItem={item => {
+                if (item.can_view_detail !== false) setSelectedItem(item)
+              }}
+              onOpenMyWork={() => setRootView('my-work')}
+            />
+          ) : (
+            <>
+              <header
+                ref={projectHeaderRef}
+                data-testid="cloud-project-header"
+                className={cn(
+                  'relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6',
+                  sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
+                )}
+              >
+                <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                <div
+                  ref={projectHeaderContentRef}
+                  className="relative z-10 flex min-w-0 items-center"
+                >
+                  {selectedProject.location === 'local' ? (
+                    <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
+                  ) : (
+                    <Cloud className="h-4 w-4 shrink-0 text-text-muted" />
+                  )}
+                  <span className="ml-2 min-w-0 truncate text-base font-semibold">
+                    {selectedProject.name}
+                  </span>
+                  <span className="ml-2 shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                    {selectedProject.location === 'local' ? '本地' : '云端'}
+                  </span>
+                </div>
+                {projectHeaderLevel < 2 ? (
+                  <nav
+                    ref={projectHeaderTabsRef}
+                    className="relative z-10 ml-8 flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
+                  >
+                    <button
+                      type="button"
+                      data-testid="cloud-project-board-view"
+                      onClick={() => setProjectView('board')}
+                      className={cn(
+                        'rounded-md px-3.5 py-1 text-sm',
+                        projectView === 'board'
+                          ? 'bg-background font-medium text-text-primary shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary'
+                      )}
+                    >
+                      看板
+                    </button>
+                    {isAITableProject && aitableApi ? (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-table-view"
+                        onClick={() => setProjectView('table')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'table'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        数据视图
+                      </button>
+                    ) : null}
+                    {selectedProject.access_role !== 'RestrictedAnalyst' && (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-files-view"
+                        onClick={() => setProjectView('files')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'files'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        文件
+                      </button>
+                    )}
+                    {selectedProject.access_role !== 'RestrictedAnalyst' &&
+                    selectedProjectAutomationSupported ? (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-automation-view"
+                        onClick={() => setProjectView('automation')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'automation'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        自动化
+                      </button>
+                    ) : null}
+                    {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') && (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-manage-view"
+                        onClick={() => setProjectView('manage')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'manage'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        管理
+                      </button>
+                    )}
+                  </nav>
+                ) : (
+                  <span
+                    ref={projectHeaderTabsRef}
+                    className="relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
+                  >
+                    <select
+                      aria-label="视图切换"
+                      value={projectView}
+                      onChange={event => setProjectView(event.target.value as ProjectView)}
+                      className="h-8 cursor-pointer bg-transparent text-xs outline-none"
+                    >
+                      <option value="board">看板</option>
+                      {isAITableProject && aitableApi ? (
+                        <option value="table">数据视图</option>
+                      ) : null}
+                      {selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                        <option value="files">文件</option>
+                      ) : null}
+                      {selectedProject.access_role !== 'RestrictedAnalyst' &&
+                      selectedProjectAutomationSupported ? (
+                        <option value="automation">自动化</option>
+                      ) : null}
+                      {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') ? (
+                        <option value="manage">管理</option>
+                      ) : null}
+                    </select>
+                    <ChevronDown className="h-3 w-3" />
+                  </span>
+                )}
+                <span className="flex-1" />
+                {selectedProject && !projectAssistantOpen ? (
+                  <Tooltip label={t('workbench.project_chat')} side="bottom" align="end">
+                    <button
+                      ref={projectHeaderAskAiRef}
+                      type="button"
+                      data-testid="cloud-project-ask-ai"
+                      aria-label={t('workbench.project_chat')}
+                      onClick={() => {
+                        setProjectAssistantOpen(true)
+                      }}
+                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+                    >
+                      <Bot className="h-3.5 w-3.5" />
+                      {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
+                    </button>
+                  </Tooltip>
+                ) : null}
+                {projectView === 'board' && (
+                  <>
+                    <Tooltip label={t('todo.search_tasks', '搜索任务')} side="bottom" align="end">
+                      <button
+                        ref={projectHeaderSearchRef}
+                        type="button"
+                        data-testid="cloud-project-task-search-toggle"
+                        aria-label={t('todo.search_tasks', '搜索任务')}
+                        onClick={() => setProjectSearchOpen(current => !current)}
+                        className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                        {projectHeaderLevel < 1 ? t('todo.search_tasks', '搜索任务') : null}
+                      </button>
+                    </Tooltip>
+                    {projectSearchOpen && (
+                      <TaskSearchPanel
+                        items={items}
+                        members={
+                          selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []
+                        }
+                        query={projectSearchQuery}
+                        filters={projectSearchFilters}
+                        tags={availableTags}
+                        onQueryChange={setProjectSearchQuery}
+                        onFiltersChange={setProjectSearchFilters}
+                        onSelect={item => {
+                          if (item.can_view_detail === false) return
+                          setSelectedItem(item)
+                          setProjectSearchOpen(false)
+                        }}
+                      />
+                    )}
+                    {canCreateBoardTask && (
+                      <Tooltip label={t('todo.new_task', '新建任务')} side="bottom" align="end">
+                        <button
+                          ref={projectHeaderAddRef}
+                          type="button"
+                          data-testid="cloud-todo-add"
+                          aria-label={t('todo.new_task', '新建任务')}
+                          onClick={() =>
+                            openTodoCreation(projectView === 'board' ? boardParent : null)
+                          }
+                          className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          {projectHeaderLevel < 1 ? t('todo.new_task', '新建任务') : null}
+                        </button>
+                      </Tooltip>
+                    )}
+                  </>
+                )}
+              </header>
+              {projectView === 'files' && selectedProjectApi ? (
+                <CloudFilesView api={selectedProjectApi} project={selectedProject} />
+              ) : projectView === 'table' && isAITableProject && aitableApi ? (
+                <AITableView api={aitableApi} project={selectedProject} />
+              ) : projectView === 'automation' &&
+                selectedProjectAutomationSupported &&
+                selectedProjectApi ? (
+                <ProjectAutomationView
+                  api={selectedProjectApi}
+                  projectChatAgentApi={selectedProjectAgentApi}
+                  projectAutomationApi={selectedProjectServices?.projectAutomationApi}
+                  executionApi={automationExecutionApi}
+                  deviceApi={selectedProjectServices?.deviceApi}
+                  modelApi={selectedProjectServices?.modelApi}
+                  teamApi={selectedProjectServices?.teamApi}
+                  localProjects={localProjects}
+                  runtimeWork={runtimeWork}
+                  project={selectedProject}
+                  currentUserId={selectedProject.current_user_id}
+                  canManageAgents={['Owner', 'Maintainer'].includes(
+                    selectedProject.access_role ?? 'Owner'
+                  )}
+                  onOpenTask={item => {
+                    setDetailItems(current =>
+                      current.some(existing => existing.id === item.id)
+                        ? current
+                        : [...current, item]
+                    )
+                    setSelectedItem(item)
+                  }}
+                />
+              ) : projectView === 'manage' && selectedProjectApi ? (
+                <CloudProjectManageView
+                  api={selectedProjectApi}
+                  aitableApi={aitableApi}
+                  dwsApi={services.dwsApi}
+                  project={selectedProject}
+                  boardCardDisplay={boardCardDisplay}
+                  onProjectUpdated={updated => replaceProject(selectedProject, updated)}
+                />
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col pb-6 pt-4">
+                  {isAITableProject ? (
+                    <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
+                      <AITableGroupFieldPicker
+                        fields={aitableFields}
+                        value={aitableGroupFieldId}
+                        onChange={fieldId => {
+                          setAitableGroupFieldId(fieldId)
+                          setAitableGroupFilter('')
+                        }}
+                      />
+                      <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
+                        {aitableGroupFilter || `全部${selectedGroupField?.name ?? '记录'}`}
+                        <ChevronDown className="ml-2 h-3 w-3" />
+                        <select
+                          data-testid="dingtalk-board-assignee-filter"
+                          value={aitableGroupFilter}
+                          onChange={event => setAitableGroupFilter(event.target.value)}
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          aria-label="分组值筛选"
+                        >
+                          <option value="">全部</option>
+                          {aitableGroupValues.map(name => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                      <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+                        <Search className="h-3.5 w-3.5" />
+                        <input
+                          data-testid="dingtalk-board-search"
+                          value={aitableBoardQuery}
+                          onChange={event => setAitableBoardQuery(event.target.value)}
+                          placeholder="搜索记录"
+                          className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+                        />
+                      </label>
+                      <span className="ml-auto text-xs text-text-muted">
+                        数据由钉钉托管 · AI 可直接管理
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
+                      <AITableGroupFieldPicker
+                        fields={nativeBoardGroupFields}
+                        value={nativeGroupBy}
+                        testIdPrefix="cloud-board-group"
+                        searchPlaceholder="搜索分组字段"
+                        onChange={fieldId => savePersonalGroupBy(fieldId as NativeBoardGroupBy)}
+                      />
+                      <label className="relative inline-flex h-8 cursor-pointer items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
+                        <span data-testid="cloud-board-group-filter-label">
+                          {nativeGroupFilter
+                            ? boardColumns.find(column => column.key === nativeGroupFilter)?.label
+                            : `全部${nativeBoardGroupFields.find(field => field.id === nativeGroupBy)?.name ?? '任务'}`}
+                        </span>
+                        <ChevronDown className="ml-2 h-3 w-3" />
+                        <select
+                          data-testid="cloud-board-group-filter"
+                          value={nativeGroupFilter}
+                          onChange={event => setNativeGroupFilter(event.target.value)}
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          aria-label="分组值筛选"
+                        >
+                          <option value="">全部</option>
+                          {boardColumns.map(column => (
+                            <option key={column.key} value={column.key}>
+                              {column.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+                        <Search className="h-3.5 w-3.5" />
+                        <input
+                          data-testid="cloud-board-search"
+                          value={nativeBoardQuery}
+                          onChange={event => setNativeBoardQuery(event.target.value)}
+                          placeholder="搜索任务"
+                          className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+                        />
+                      </label>
+                      {personalGroupKey && localStorage.getItem(personalGroupKey) ? (
+                        <button
+                          type="button"
+                          data-testid="cloud-board-save-global"
+                          disabled={
+                            groupScopeBusy ||
+                            !['Owner', 'Maintainer'].includes(
+                              selectedProject.access_role ?? 'Owner'
+                            )
+                          }
+                          onClick={() => void saveGlobalGroupBy()}
+                          className="h-8 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                        >
+                          应用到全局
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                  <nav
+                    data-testid="cloud-todo-board-breadcrumb"
+                    aria-label="任务层级"
+                    className="px-6"
+                  >
+                    {boardParent ? (
+                      <>
+                        <div className="flex h-7 items-center gap-1 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setBoardParentId(null)}
+                            className="rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+                          >
+                            顶层任务
+                          </button>
+                          {boardBreadcrumb.map(parent => (
+                            <span key={parent.id} className="flex min-w-0 items-center gap-1">
+                              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                              <button
+                                type="button"
+                                data-testid={`cloud-todo-board-breadcrumb-${parent.id}`}
+                                onClick={() => setBoardParentId(parent.id)}
+                                className={cn(
+                                  'max-w-48 truncate rounded-lg px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary',
+                                  parent.id === boardParentId && 'font-medium text-text-primary'
+                                )}
+                              >
+                                {parent.title}
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
+                          <h1 className="text-heading-sm font-semibold">{boardParent.title}</h1>
+                          <span className="text-xs text-text-muted">
+                            {boardLayerCount} 个任务 · 仅显示当前层的直接子任务
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
+                        <h1 className="text-heading-sm font-semibold">
+                          {isAITableProject ? '父任务' : '顶层任务'}
+                        </h1>
+                        <span className="text-xs text-text-muted">
+                          {boardLayerCount} {isAITableProject ? '条记录' : '个任务'}
+                        </span>
+                      </div>
+                    )}
+                  </nav>
+                  {isAITableProject && dingtalkAuthPrompt && !boardItemsLoading ? (
+                    <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
+                      <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
+                      <button
+                        type="button"
+                        data-testid="aitable-board-dws-login"
+                        disabled={dingtalkAuthBusy}
+                        onClick={() => void connectDingTalkBoard()}
+                        className="h-7 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition hover:bg-muted disabled:opacity-50"
+                      >
+                        {dingtalkAuthBusy
+                          ? t('todo.dingtalk_board_connecting')
+                          : t('todo.dingtalk_board_connect')}
+                      </button>
+                    </div>
+                  ) : boardError ? (
+                    <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
+                      {boardError}
+                    </p>
+                  ) : null}
+                  {boardItemsLoading ? (
+                    <div className="min-h-0 flex-1 overflow-x-auto">
+                      <CloudTodoBoardSkeleton />
+                    </div>
+                  ) : (
+                    <div className="min-h-0 flex-1 overflow-x-auto">
+                      <DndContext
+                        sensors={boardSensors}
+                        collisionDetection={boardCollisionDetection}
+                        onDragStart={event => setActiveDragItemId(String(event.active.id))}
+                        onDragCancel={() => setActiveDragItemId(null)}
+                        onDragEnd={finishBoardDrop}
+                      >
+                        <div className="flex h-full min-h-0 items-start gap-3.5 px-6">
+                          {boardColumns.map(column => {
+                            const columnItems = items.filter(
+                              item =>
+                                item.parent_id === boardParentId &&
+                                (!isAITableProject ||
+                                  !column.groupValue ||
+                                  (column.groupValue === '未设置'
+                                    ? !aitableCellLabels(item.source_cells?.[aitableGroupFieldId])
+                                        .length
+                                    : aitableCellLabels(
+                                        item.source_cells?.[aitableGroupFieldId]
+                                      ).includes(column.groupValue))) &&
+                                (isAITableProject ||
+                                  (nativeGroupBy === 'status'
+                                    ? item.status === column.status
+                                    : nativeGroupBy === 'priority'
+                                      ? item.priority === column.groupValue
+                                      : nativeGroupBy === 'assignee'
+                                        ? itemMatchesAssigneeGroup(item, column.groupValue)
+                                        : column.groupValue
+                                          ? (item.tags ?? []).includes(column.groupValue)
+                                          : !(item.tags ?? []).length)) &&
+                                (isAITableProject ||
+                                  !nativeGroupFilter ||
+                                  column.key === nativeGroupFilter) &&
+                                (isAITableProject ||
+                                  !nativeBoardQuery.trim() ||
+                                  `${item.title} ${item.description ?? ''}`
+                                    .toLowerCase()
+                                    .includes(nativeBoardQuery.trim().toLowerCase())) &&
+                                (!aitableGroupFilter || column.groupValue === aitableGroupFilter) &&
+                                (!aitableBoardQuery.trim() ||
+                                  `${item.title} ${item.description ?? ''}`
+                                    .toLowerCase()
+                                    .includes(aitableBoardQuery.trim().toLowerCase()))
+                            )
+                            return (
+                              <section
+                                key={column.key}
+                                data-testid={`cloud-todo-column-${column.key}`}
+                                className={cn(
+                                  'group flex max-h-full w-[292px] shrink-0 flex-col rounded-2xl bg-muted p-0.5',
+                                  // While a drag is active, outline every column with a dashed
+                                  // border at its natural (content) height so each one reads as
+                                  // a potential drop target without any layout shift.
+                                  activeDragItemId !== null &&
+                                    'outline-dashed outline-1 -outline-offset-1 outline-border'
+                                )}
+                              >
+                                <header className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
+                                  <span className="flex min-w-0 items-center">
+                                    <span
+                                      className={cn('mr-2 h-2 w-2 rounded-full', column.dotClass)}
+                                    />
+                                    <span className="text-sm font-semibold">{column.label}</span>
+                                    <span className="ml-2 text-xs text-text-muted">
+                                      {columnItems.length}
+                                    </span>
+                                  </span>
+                                  {canCreateBoardTask &&
+                                    !isAITableProject &&
+                                    nativeGroupBy === 'status' && (
+                                      <Tooltip
+                                        label={t(
+                                          'todo.new_task_in_column',
+                                          '在{{column}}中新建任务',
+                                          { column: column.label }
+                                        )}
+                                        side="bottom"
+                                        align="end"
+                                      >
+                                        <button
+                                          type="button"
+                                          data-testid={`cloud-todo-column-add-${column.key}`}
+                                          onClick={() =>
+                                            openTodoCreation(boardParent, column.status)
+                                          }
+                                          className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 group-hover:opacity-100"
+                                          aria-label={t(
+                                            'todo.new_task_in_column',
+                                            '在{{column}}中新建任务',
+                                            { column: column.label }
+                                          )}
+                                        >
+                                          <Plus className="h-3.5 w-3.5" />
+                                        </button>
+                                      </Tooltip>
+                                    )}
+                                </header>
+                                <TodoColumnDropzone status={column.key}>
+                                  {columnItems.map(item => (
+                                    <CloudTodoBoardCard
+                                      key={item.id}
+                                      item={item}
+                                      childCount={
+                                        items.filter(child => child.parent_id === item.id).length
+                                      }
+                                      onClick={() => {
+                                        if (item.can_view_detail !== false) setSelectedItem(item)
+                                      }}
+                                      onAddChild={() => openTodoCreation(item)}
+                                      onOpenChildren={() => setBoardParentId(item.id)}
+                                      onArchive={() => {
+                                        setArchiveError(null)
+                                        setArchiveItem(item)
+                                      }}
+                                      onOpenActivity={
+                                        selectedProject.location === 'cloud'
+                                          ? () => {
+                                              if (item.can_view_detail !== false)
+                                                setSelectedItem(item)
+                                            }
+                                          : undefined
+                                      }
+                                      display={boardCardDisplay}
+                                      agentNames={agentNameById}
+                                      dragDisabled={isAITableProject}
+                                      archiveDisabled={selectedProject.task_provider !== 'local'}
+                                    />
+                                  ))}
+                                  {columnItems.length === 0 && columnEmptyHints[column.status] && (
+                                    <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-text-muted">
+                                      {columnEmptyHints[column.status]}
+                                    </div>
+                                  )}
+                                </TodoColumnDropzone>
+                                {canCreateBoardTask &&
+                                  !isAITableProject &&
+                                  nativeGroupBy === 'status' && (
+                                    <div className="shrink-0 px-2 pb-2">
+                                      <button
+                                        type="button"
+                                        data-testid={`cloud-todo-column-bottom-add-${column.key}`}
+                                        onClick={() => openTodoCreation(boardParent, column.status)}
+                                        className="flex h-9 w-full items-center gap-2 rounded-xl border border-dashed border-transparent bg-muted px-2.5 text-sm text-text-muted hover:border-border hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+                                        aria-label={`在${column.label}中新建任务`}
+                                      >
+                                        <Plus className="h-4 w-4" />
+                                        新建任务
+                                      </button>
+                                    </div>
+                                  )}
+                              </section>
+                            )
+                          })}
+                        </div>
+                        <DragOverlay dropAnimation={null}>
+                          {activeDragItemId ? (
+                            <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
+                              <CloudTodoCardContent
+                                item={items.find(item => item.id === activeDragItemId)!}
+                                display={boardCardDisplay}
+                                agentNames={agentNameById}
+                              />
+                            </div>
+                          ) : null}
+                        </DragOverlay>
+                      </DndContext>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </main>
+        {selectedProject && projectAssistantOpen ? (
+          <ProjectSpaceChatSidebar
+            key={`${selectedProject.id}:project`}
+            project={selectedProject}
+            localProjects={localProjects}
+            onClose={() => {
+              setProjectAssistantOpen(false)
+            }}
+          />
+        ) : null}
+      </div>
+
+      {globalSearchOpen && (
+        <GlobalTodoSearch
+          projects={projects}
+          projectItems={projectItems}
+          projectMembers={projectMembers}
+          query={globalSearchQuery}
+          onQueryChange={setGlobalSearchQuery}
+          onClose={() => setGlobalSearchOpen(false)}
+          onSelectProject={project => {
+            selectProject(project)
+            setRootView('projects')
+            setProjectView('board')
+            setSelectedItem(null)
+            setGlobalSearchOpen(false)
+          }}
+          onSelectItem={(project, item) => {
+            if (item.can_view_detail === false) return
+            selectProject(project)
+            setRootView('projects')
+            setProjectView('board')
+            setSelectedItem({ ...item, project_store: project.project_store })
+            setGlobalSearchOpen(false)
+          }}
+        />
+      )}
+      {selectedItem && selectedItem.can_view_detail !== false && selectedItemApi && (
+        <TodoEditor
+          key={selectedItem.id}
+          mode="edit"
+          api={selectedItemApi}
+          projectChatAgentApi={selectedProjectAgentApi}
+          projectChatClient={selectedProjectChatClient}
+          selfManagedExecution={selectedProjectSelfManagedExecution}
+          currentUserId={user.id}
+          localProjects={localProjects}
+          aitableApi={
+            selectedItemProject?.task_provider === 'dingtalk_aitable'
+              ? services.aitableApi
+              : undefined
+          }
+          item={selectedItem}
+          project={selectedItemProject}
+          allItems={detailAllItems}
+          onClose={() => {
+            setSelectedItem(null)
+            setAiChatOpen(false)
+          }}
+          onOpenAiChat={() => {
+            setAiChatEverOpened(true)
+            setAiChatOpen(true)
+          }}
+          onAddChild={() => openTodoCreation(selectedItem)}
+          onUpdated={updated => {
+            const locatedUpdated = {
+              ...updated,
+              project_store: selectedItem.project_store,
+            }
+            setItems(current =>
+              current.map(item => (item.id === updated.id ? locatedUpdated : item))
+            )
+            setDetailItems(current =>
+              current.map(item => (item.id === updated.id ? locatedUpdated : item))
+            )
+            updateMyWorkItem(locatedUpdated)
+            setSelectedItem(locatedUpdated)
+            track('feature_action_completed', { domain: 'board_item', action: 'update' })
+          }}
+        />
+      )}
+      {selectedItem && aiChatProject && (aiChatEverOpened || aiChatOpen) ? (
+        <AiChatModal
+          key={`ai-chat-${selectedItem.id}`}
+          project={aiChatProject}
+          localProjects={localProjects}
+          task={selectedItem ?? undefined}
+          open={aiChatOpen}
+          onClose={() => setAiChatOpen(false)}
+        />
+      ) : null}
+      {createProjectOpen && (
+        <ProjectDialog
+          availableApis={availableProjectSpaceApis}
+          defaultLocation={projectSpaceApis.defaultLocation}
+          onClose={() => setCreateProjectOpen(false)}
+          onCreated={(project, location) => {
+            const locatedProject: LocatedCloudProject = {
+              ...project,
+              project_store: location === 'local' ? 'local' : 'backend',
+              location,
+            }
+            const spaceKey = projectSpaceKey(projectSpaceRef(locatedProject))
+            const projectApi = projectSpaceApis[location]
+            prependProject(locatedProject)
+            if (projectApi) {
+              void projectApi
+                .listCloudProjectMembers(project.id)
+                .then(members =>
+                  setProjectMembers(current => ({ ...current, [spaceKey]: members }))
+                )
+            }
+            applyProjectSelection(locatedProject)
+            onActiveProjectChange?.(locatedProject)
+            setCreateProjectOpen(false)
+          }}
+        />
+      )}
+      {createTodoOpen && createTodoProject && createTodoApi && (
+        <TodoEditor
+          mode="create"
+          api={createTodoApi}
+          projectChatAgentApi={selectedProjectAgentApi}
+          project={createTodoProject}
+          initialParent={createTodoParent}
+          initialStatus={createTodoStatus}
+          allItems={createTodoParent ? detailAllItems : items}
+          onClose={() => {
+            setCreateTodoOpen(false)
+            setCreateTodoParent(null)
+          }}
+          onCreated={item => {
+            const locatedItem = {
+              ...item,
+              project_store: createTodoProject.project_store,
+            }
+            if (
+              selectedProject &&
+              sameProjectSpace(projectSpaceRef(createTodoProject), projectSpaceRef(selectedProject))
+            ) {
+              setItems(current => [...current, locatedItem])
+            } else {
+              setDetailItems(current => [...current, locatedItem])
+            }
+            const targetProjectKey = projectSpaceKey(projectSpaceRef(createTodoProject))
+            setProjectCounts(current => ({
+              ...current,
+              [targetProjectKey]: (current[targetProjectKey] ?? 0) + 1,
+            }))
+            setCreateTodoOpen(false)
+            setCreateTodoParent(null)
+            if (item.assignee_agent_id) setSelectedItem(locatedItem)
+            track('board_item_created', {
+              has_parent: item.parent_id !== null,
+              source: createTodoProject.location,
+            })
+          }}
+        />
+      )}
+      {renameProject && (
+        <Modal title="修改项目名称" onClose={() => !renameBusy && setRenameProject(null)}>
+          <div className="px-5 pb-5 pt-4">
+            <label className="block text-sm font-medium text-text-secondary">
+              项目名称
+              <input
+                data-testid="cloud-project-rename-input"
+                value={renameProjectName}
+                autoFocus
+                onFocus={event => event.currentTarget.select()}
+                onChange={event => {
+                  setRenameProjectName(event.target.value)
+                  setRenameError(null)
+                }}
+                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+              />
+            </label>
+            <p className="mt-2 text-xs text-text-muted">新名称会显示在项目空间和看板侧栏中。</p>
+            {renameError ? <p className="mt-3 text-xs text-red-600">{renameError}</p> : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRenameProject(null)}
+                disabled={renameBusy}
+                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                data-testid="cloud-project-rename-confirm"
+                disabled={!renameProjectName.trim() || renameBusy}
+                onClick={() => void renameSelectedProject()}
+                className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+              >
+                {renameBusy ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {(archiveProject || archiveItem) && (
+        <Modal
+          title={archiveProject ? '归档项目？' : '归档任务？'}
+          onClose={() => {
+            if (archiveBusy) return
+            setArchiveProject(null)
+            setArchiveItem(null)
+            setArchiveError(null)
+          }}
+        >
+          <div className="px-5 pb-5 pt-4">
+            <p className="text-sm leading-5 text-text-secondary">
+              {archiveProject
+                ? `“${archiveProject.name}”及其中任务将从项目列表中隐藏。`
+                : `“${archiveItem?.title}”${items.some(item => item.parent_id === archiveItem?.id) ? '及其子任务' : ''}将从看板中隐藏。`}
+            </p>
+            <p className="mt-2 text-xs text-text-muted">归档数据会保留，不会立即永久删除。</p>
+            {archiveError ? <p className="mt-3 text-xs text-red-600">{archiveError}</p> : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                data-testid="cloud-archive-cancel"
+                disabled={archiveBusy}
+                onClick={() => {
+                  setArchiveProject(null)
+                  setArchiveItem(null)
+                  setArchiveError(null)
+                }}
+                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                data-testid={
+                  archiveProject ? 'cloud-project-archive-confirm' : 'cloud-todo-archive-confirm'
+                }
+                disabled={archiveBusy}
+                onClick={() => {
+                  void (archiveProject ? confirmArchiveProject() : confirmArchiveItem())
+                }}
+                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {archiveBusy ? '归档中…' : '确认归档'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}

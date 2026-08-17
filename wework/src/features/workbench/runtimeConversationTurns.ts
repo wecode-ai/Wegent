@@ -1,0 +1,930 @@
+import type { RuntimePaneMessageAction } from './runtimePaneMessages'
+import { getLatestThinkingContent, resolveStreamingThinkingContent } from '@wegent/chat-core'
+import { parseCodeCommentContexts } from '@/lib/code-comment-context'
+import type {
+  ProcessingBlock,
+  RuntimeAssistantDisplayItem,
+  RuntimeConversationItem,
+  RuntimeConversationTurn,
+  WorkbenchMessage,
+} from '@/types/workbench'
+
+const RUNTIME_RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
+
+export function mergeRuntimeConversationTurns(
+  localTurns: RuntimeConversationTurn[],
+  snapshotTurns: RuntimeConversationTurn[]
+): RuntimeConversationTurn[] {
+  if (snapshotTurns.length === 0) return localTurns
+  const localIndexByTurnId = new Map(
+    localTurns.flatMap((turn, index) => (turn.id === null ? [] : [[turn.id, index] as const]))
+  )
+  const localIndexByClientUserMessageId = new Map(
+    localTurns.flatMap((turn, index) =>
+      runtimeConversationTurnClientUserMessageIds(turn).map(id => [id, index] as const)
+    )
+  )
+  const emittedLocalIndexes = new Set<number>()
+  const snapshotUserMessageIds = new Set(
+    snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds)
+  )
+  const merged = snapshotTurns.map(snapshotTurn => {
+    const localIndex =
+      (snapshotTurn.id === null ? undefined : localIndexByTurnId.get(snapshotTurn.id)) ??
+      runtimeConversationTurnClientUserMessageIds(snapshotTurn)
+        .map(id => localIndexByClientUserMessageId.get(id))
+        .find((index): index is number => index !== undefined)
+    if (localIndex === undefined) return snapshotTurn
+    emittedLocalIndexes.add(localIndex)
+    return mergeRuntimeConversationTurn(localTurns[localIndex], snapshotTurn)
+  })
+
+  localTurns.forEach((turn, index) => {
+    if (emittedLocalIndexes.has(index)) return
+    if (
+      runtimeConversationTurnClientUserMessageIds(turn).some(id => snapshotUserMessageIds.has(id))
+    ) {
+      return
+    }
+    if (turn.id === null || !snapshotTurns.some(snapshotTurn => snapshotTurn.id === turn.id)) {
+      merged.push(turn)
+    }
+  })
+  return orderRuntimeConversationTurns(merged)
+}
+
+function runtimeConversationTurnClientUserMessageIds(turn: RuntimeConversationTurn): string[] {
+  return Array.from(
+    new Set([
+      ...(turn.clientUserMessageId ? [turn.clientUserMessageId] : []),
+      ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
+    ])
+  )
+}
+
+export function reduceRuntimeConversationTurns(
+  turns: RuntimeConversationTurn[],
+  action: RuntimePaneMessageAction
+): RuntimeConversationTurn[] {
+  switch (action.type) {
+    case 'reset':
+      return seedRuntimeConversationTurns(action.messages, turns)
+    case 'user_added':
+      return appendOptimisticUser(turns, action.message)
+    case 'assistant_started':
+      return updateStartedTurn(turns, action)
+    case 'assistant_chunk':
+      return updateTurn(turns, action.subtaskId, turn => {
+        let items = hasAssistantChunkProgress(action)
+          ? settleRuntimeReconnectingBlocks(turn.items)
+          : turn.items
+        items = upsertReasoningChunk(items, action.subtaskId, action.reasoningChunk)
+        items = upsertBlocks(items, action.blocks)
+        if (action.content) {
+          if (action.itemId) {
+            items = upsertAssistantText(
+              items,
+              action.itemId,
+              action.content,
+              action.contentMode,
+              action.offset
+            )
+          } else {
+            console.warn('[Wework] Dropped runtime assistant text without Codex item identity', {
+              subtaskId: action.subtaskId,
+            })
+          }
+        }
+        return {
+          ...turn,
+          items,
+          status: 'streaming',
+          streamingThinkingContent: resolveRuntimeStreamingThinkingContent(turn, action, items),
+        }
+      })
+    case 'assistant_cached':
+      return updateTurn(turns, action.subtaskId, turn => ({
+        ...turn,
+        items: upsertBlocks(turn.items, action.blocks),
+        status: 'streaming',
+        streamingThinkingContent: undefined,
+      }))
+    case 'assistant_done':
+      return updateTurn(turns, action.subtaskId, turn => {
+        const items = applyCompletedAssistantContent(
+          settleProcessingBlocks(
+            upsertBlocks(settleRuntimeReconnectingBlocks(turn.items), action.blocks)
+          ),
+          turn.id,
+          action.itemId,
+          action.content
+        )
+        return {
+          ...turn,
+          items,
+          status: 'done',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          fileChanges: action.fileChanges ?? turn.fileChanges,
+          error: undefined,
+          errorType: undefined,
+        }
+      })
+    case 'assistant_cancelled':
+      return updateTurn(turns, action.subtaskId, turn => {
+        return {
+          ...turn,
+          items: settleRuntimeReconnectingBlocks(turn.items),
+          status: 'cancelled',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          stoppedNotice: true,
+        }
+      })
+    case 'assistant_error':
+      return updateTurn(turns, action.subtaskId, turn => {
+        return {
+          ...turn,
+          items: settleRuntimeReconnectingBlocks(turn.items),
+          status: 'failed',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          error: action.error,
+          errorType: action.errorType,
+        }
+      })
+    case 'file_changes_updated':
+      return updateTurn(turns, action.subtaskId, turn => ({
+        ...turn,
+        fileChanges: action.fileChanges,
+      }))
+    case 'block_created':
+      return updateTurn(turns, action.subtaskId, turn => {
+        const currentItems = isRuntimeReconnectingBlock(action.block)
+          ? turn.items
+          : settleRuntimeReconnectingBlocks(turn.items)
+        const items = replaceAssistantTextWithBlock(
+          currentItems,
+          action.replaceAssistantTextItemId,
+          action.block
+        )
+        return {
+          ...turn,
+          items,
+          streamingThinkingContent:
+            action.block.type === 'thinking' || action.block.type === 'tool'
+              ? getLatestThinkingContent(processingBlocks(items))
+              : action.block.type === 'text' || action.block.type === 'plan'
+                ? undefined
+                : turn.streamingThinkingContent,
+        }
+      })
+    case 'block_updated':
+      return updateTurn(turns, action.subtaskId, turn => {
+        const currentItems = turn.items.some(
+          item =>
+            item.type === 'block' &&
+            item.id === action.blockId &&
+            isRuntimeReconnectingBlock(item.block)
+        )
+          ? turn.items
+          : settleRuntimeReconnectingBlocks(turn.items)
+        const previousBlock = turn.items.find(
+          item => item.type === 'block' && item.id === action.blockId
+        )
+        const items = currentItems.map(item =>
+          item.type === 'block' && item.id === action.blockId
+            ? {
+                ...item,
+                block: mergeProcessingBlockUpdate(item.block, action.updates),
+              }
+            : item
+        )
+        return {
+          ...turn,
+          items,
+          streamingThinkingContent:
+            previousBlock?.type === 'block' && previousBlock.block.type === 'thinking'
+              ? getLatestThinkingContent(processingBlocks(items))
+              : previousBlock?.type === 'block' &&
+                  (previousBlock.block.type === 'text' || previousBlock.block.type === 'plan')
+                ? undefined
+                : turn.streamingThinkingContent,
+        }
+      })
+  }
+}
+
+export function projectRuntimeConversationTurns(
+  turns: RuntimeConversationTurn[]
+): WorkbenchMessage[] {
+  return turns.flatMap(projectRuntimeConversationTurn)
+}
+
+export function appendRuntimeConversationGuidance(
+  turns: RuntimeConversationTurn[],
+  turnId: string | undefined,
+  guidance: WorkbenchMessage & { role: 'user'; runtimeGuidance: true }
+): RuntimeConversationTurn[] {
+  if (!turnId) return turns
+  const withoutOptimisticDuplicate = turns
+    .filter(
+      turn =>
+        !(
+          turn.id === null &&
+          turn.clientUserMessageId === guidance.id &&
+          turn.items.every(item => item.type === 'user_message' && item.id === guidance.id)
+        )
+    )
+    .map(turn =>
+      turn.id !== turnId
+        ? {
+            ...turn,
+            items: turn.items.filter(
+              item => item.type !== 'user_message' || item.id !== guidance.id
+            ),
+          }
+        : turn
+    )
+  return updateTurn(withoutOptimisticDuplicate, turnId, turn => {
+    const existingIndex = turn.items.findIndex(
+      item => item.type === 'user_message' && item.id === guidance.id
+    )
+    if (existingIndex >= 0) {
+      return {
+        ...turn,
+        items: replaceAt(turn.items, existingIndex, {
+          id: guidance.id,
+          type: 'user_message',
+          message: { ...guidance, subtaskId: turnId, turnId },
+        }),
+      }
+    }
+    const userItem: RuntimeConversationItem = {
+      id: guidance.id,
+      type: 'user_message',
+      message: { ...guidance, subtaskId: turnId, turnId },
+    }
+    return {
+      ...turn,
+      items: [...turn.items, userItem],
+    }
+  })
+}
+
+function mergeRuntimeConversationTurn(
+  local: RuntimeConversationTurn,
+  snapshot: RuntimeConversationTurn
+): RuntimeConversationTurn {
+  const items = mergeRuntimeConversationItems(local.items, snapshot.items)
+  const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
+  const preserveStreamingThinking =
+    snapshot.status === 'streaming' &&
+    assistantTextContent(local.items) === assistantTextContent(snapshot.items)
+  return {
+    ...local,
+    ...snapshot,
+    clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
+    runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
+    items,
+    status: preserveLocalFailure ? local.status : snapshot.status,
+    completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
+    error: preserveLocalFailure ? local.error : snapshot.error,
+    errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
+    streamingThinkingContent: preserveStreamingThinking
+      ? getLatestThinkingContent(processingBlocks(items))
+      : snapshot.streamingThinkingContent,
+  }
+}
+
+function earliestRuntimeMessageIndex(
+  local: RuntimeConversationTurn,
+  snapshot: RuntimeConversationTurn
+): number | undefined {
+  const indexes = [local.runtimeMessageIndex, snapshot.runtimeMessageIndex].filter(
+    (index): index is number => typeof index === 'number'
+  )
+  return indexes.length > 0 ? Math.min(...indexes) : undefined
+}
+
+function orderRuntimeConversationTurns(
+  turns: RuntimeConversationTurn[]
+): RuntimeConversationTurn[] {
+  const indexedTurns = turns.map((turn, index) => ({
+    turn,
+    index,
+    timestamp: runtimeConversationTurnTimestamp(turn),
+  }))
+  if (indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)) {
+    return indexedTurns
+      .sort(
+        (left, right) =>
+          left.turn.runtimeMessageIndex! - right.turn.runtimeMessageIndex! ||
+          left.index - right.index
+      )
+      .map(({ turn }) => turn)
+  }
+  if (indexedTurns.every(({ timestamp }) => timestamp !== undefined)) {
+    return indexedTurns
+      .sort((left, right) => left.timestamp! - right.timestamp! || left.index - right.index)
+      .map(({ turn }) => turn)
+  }
+  return turns
+}
+
+function runtimeConversationTurnTimestamp(turn: RuntimeConversationTurn): number | undefined {
+  for (const item of turn.items) {
+    const value =
+      item.type === 'user_message'
+        ? item.message.createdAt
+        : item.type === 'assistant_text'
+          ? item.createdAt
+          : item.block.createdAt
+    const timestamp = typeof value === 'number' ? value : Date.parse(value ?? '')
+    if (Number.isFinite(timestamp)) return timestamp
+  }
+  return undefined
+}
+
+function mergeRuntimeConversationItems(
+  localItems: RuntimeConversationItem[],
+  snapshotItems: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  const reconciledLocalItems = localItems.filter(
+    localItem =>
+      !snapshotItems.some(snapshotItem =>
+        isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
+      )
+  )
+  const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
+  const mergedSnapshotItems = snapshotItems.map(item =>
+    mergeRuntimeConversationItem(localById.get(item.id), item)
+  )
+  const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
+  const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
+  for (let snapshotIndex = 0; snapshotIndex < mergedSnapshotItems.length; snapshotIndex += 1) {
+    const snapshotItem = mergedSnapshotItems[snapshotIndex]
+    if (!snapshotItem || mergedLocalItems.some(item => item.id === snapshotItem.id)) {
+      continue
+    }
+
+    const nextSnapshotItem = mergedSnapshotItems
+      .slice(snapshotIndex + 1)
+      .find(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    if (nextSnapshotItem) {
+      const insertionIndex = mergedLocalItems.findIndex(item => item.id === nextSnapshotItem.id)
+      mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
+      continue
+    }
+
+    const previousSnapshotItem = mergedSnapshotItems
+      .slice(0, snapshotIndex)
+      .findLast(item => mergedLocalItems.some(localItem => localItem.id === item.id))
+    const insertionIndex = previousSnapshotItem
+      ? mergedLocalItems.findIndex(item => item.id === previousSnapshotItem.id) + 1
+      : mergedLocalItems.length
+    mergedLocalItems.splice(insertionIndex, 0, snapshotItem)
+  }
+  return mergedLocalItems
+}
+
+function isEquivalentAssistantTextRepresentation(
+  local: RuntimeConversationItem,
+  snapshot: RuntimeConversationItem
+): boolean {
+  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  const localContent = assistantTextRepresentationContent(local)
+  const snapshotContent = assistantTextRepresentationContent(snapshot)
+  return localContent !== undefined && localContent === snapshotContent
+}
+
+function assistantTextRepresentationContent(item: RuntimeConversationItem): string | undefined {
+  if (item.type === 'assistant_text') return item.content
+  return item.type === 'block' && item.block.type === 'text' ? item.block.content : undefined
+}
+
+function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
+  snapshot: RuntimeConversationItem
+): RuntimeConversationItem {
+  if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
+
+  return {
+    ...snapshot,
+    block: preserveProcessingBlockTiming(local.block, snapshot.block),
+  }
+}
+
+function seedRuntimeConversationTurns(
+  messages: WorkbenchMessage[],
+  currentTurns: RuntimeConversationTurn[]
+): RuntimeConversationTurn[] {
+  let turns = currentTurns
+  for (const message of messages) {
+    if (message.role !== 'user') continue
+    const existing = turns.some(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === message.id)
+    )
+    if (!existing) {
+      turns = appendOptimisticUser(turns, message)
+    }
+  }
+  return turns
+}
+
+function appendOptimisticUser(
+  turns: RuntimeConversationTurn[],
+  message: WorkbenchMessage
+): RuntimeConversationTurn[] {
+  if (message.role !== 'user') return turns
+  if (
+    turns.some(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === message.id)
+    )
+  ) {
+    return turns
+  }
+  return [
+    ...turns,
+    {
+      id: null,
+      clientUserMessageId: message.id,
+      items: [{ id: message.id, type: 'user_message', message: { ...message, role: 'user' } }],
+      status: 'pending',
+    },
+  ]
+}
+
+function updateStartedTurn(
+  turns: RuntimeConversationTurn[],
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_started' }>
+): RuntimeConversationTurn[] {
+  if (!action.subtaskId) return turns
+  const existingIndex = turns.findIndex(turn => turn.id === action.subtaskId)
+  if (existingIndex >= 0) {
+    return replaceAt(turns, existingIndex, {
+      ...turns[existingIndex],
+      status: 'streaming',
+      completedAt: undefined,
+      error: undefined,
+      errorType: undefined,
+      stoppedNotice: undefined,
+    })
+  }
+  const optimisticIndex = action.clientUserMessageId
+    ? turns.findIndex(
+        turn =>
+          turn.clientUserMessageId === action.clientUserMessageId ||
+          turn.items.some(
+            item => item.type === 'user_message' && item.id === action.clientUserMessageId
+          )
+      )
+    : turns.findLastIndex(
+        turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+      )
+  if (optimisticIndex >= 0) {
+    const optimistic = turns[optimisticIndex]
+    return replaceAt(turns, optimisticIndex, {
+      ...optimistic,
+      id: action.subtaskId,
+      status: 'streaming',
+      completedAt: undefined,
+      error: undefined,
+      errorType: undefined,
+      stoppedNotice: undefined,
+      items: optimistic.items.map(item =>
+        item.type === 'user_message'
+          ? {
+              ...item,
+              message: {
+                ...item.message,
+                subtaskId: action.subtaskId,
+                turnId: action.subtaskId,
+              },
+            }
+          : item
+      ),
+    })
+  }
+  return [
+    ...turns,
+    {
+      id: action.subtaskId,
+      items: [],
+      status: 'streaming',
+    },
+  ]
+}
+
+function updateTurn(
+  turns: RuntimeConversationTurn[],
+  turnId: string | undefined,
+  update: (turn: RuntimeConversationTurn) => RuntimeConversationTurn
+): RuntimeConversationTurn[] {
+  if (!turnId) return turns
+  const index = turns.findIndex(turn => turn.id === turnId)
+  if (index < 0) return turns
+  return replaceAt(turns, index, update(turns[index]))
+}
+
+function upsertAssistantText(
+  items: RuntimeConversationItem[],
+  itemId: string,
+  content: string,
+  contentMode: 'delta' | 'snapshot' | undefined,
+  offset: number | undefined
+): RuntimeConversationItem[] {
+  const index = items.findIndex(item => item.type === 'assistant_text' && item.id === itemId)
+  if (index < 0) {
+    return [
+      ...items,
+      {
+        id: itemId,
+        type: 'assistant_text',
+        content,
+        streamTextOffset:
+          contentMode === 'snapshot' || offset === undefined ? undefined : offset + content.length,
+        createdAt: new Date().toISOString(),
+      },
+    ]
+  }
+  const current = items[index]
+  if (current.type !== 'assistant_text') return items
+  if (contentMode === 'snapshot') {
+    return replaceAt(items, index, {
+      ...current,
+      content,
+      streamTextOffset: undefined,
+    })
+  }
+  const mergedContent =
+    offset === undefined
+      ? `${current.content}${content}`
+      : `${current.content.slice(0, offset)}${content}${current.content.slice(
+          offset + content.length
+        )}`
+  return replaceAt(items, index, {
+    ...current,
+    content: mergedContent,
+    streamTextOffset: offset === undefined ? undefined : offset + content.length,
+  })
+}
+
+function applyCompletedAssistantContent(
+  items: RuntimeConversationItem[],
+  turnId: string | null,
+  itemId: string | undefined,
+  content: string | undefined
+): RuntimeConversationItem[] {
+  if (!content) return items
+  const lastUserIndex = items.findLastIndex(item => item.type === 'user_message')
+  const hasStreamedAssistantText = items.some(
+    (item, index) => index > lastUserIndex && item.type === 'assistant_text'
+  )
+  if (hasStreamedAssistantText) return items
+  const matchingProcessTextIndex = items.findLastIndex(
+    item => item.type === 'block' && item.block.type === 'text' && item.block.content === content
+  )
+  if (matchingProcessTextIndex >= 0) {
+    return replaceAt(items, matchingProcessTextIndex, {
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
+      type: 'assistant_text',
+      content,
+      createdAt: new Date().toISOString(),
+    })
+  }
+  const retained = items.filter(
+    (item, index) => index <= lastUserIndex || item.type !== 'assistant_text'
+  )
+  return [
+    ...retained,
+    {
+      id: itemId ?? `runtime-final:${turnId ?? 'pending'}`,
+      type: 'assistant_text',
+      content,
+      createdAt: new Date().toISOString(),
+    },
+  ]
+}
+
+function upsertReasoningChunk(
+  items: RuntimeConversationItem[],
+  subtaskId: string | undefined,
+  reasoningChunk: string | undefined
+): RuntimeConversationItem[] {
+  if (!subtaskId || !reasoningChunk) return items
+  const itemId = `runtime-reasoning:${subtaskId}`
+  const index = items.findIndex(item => item.type === 'block' && item.id === itemId)
+  if (index < 0) {
+    return [
+      ...items,
+      {
+        id: itemId,
+        type: 'block',
+        block: {
+          id: itemId,
+          subtaskId,
+          type: 'thinking',
+          content: reasoningChunk,
+          status: 'streaming',
+          createdAt: Date.now(),
+        },
+      },
+    ]
+  }
+  const current = items[index]
+  if (current.type !== 'block' || current.block.type !== 'thinking') return items
+  return replaceAt(items, index, {
+    ...current,
+    block: {
+      ...current.block,
+      content: `${current.block.content}${reasoningChunk}`,
+      status: 'streaming',
+    },
+  })
+}
+
+function upsertBlocks(
+  items: RuntimeConversationItem[],
+  blocks: ProcessingBlock[] | undefined
+): RuntimeConversationItem[] {
+  if (!blocks?.length) return items
+  let next = items
+  for (const block of blocks) {
+    const exactIndex = next.findIndex(item => item.type === 'block' && item.id === block.id)
+    const contextCompactionIndex =
+      exactIndex < 0 && isContextCompactionBlock(block)
+        ? next.findIndex(
+            item =>
+              item.type === 'block' &&
+              item.block.subtaskId === block.subtaskId &&
+              isContextCompactionBlock(item.block)
+          )
+        : -1
+    const index = exactIndex >= 0 ? exactIndex : contextCompactionIndex
+    const canonicalItem: RuntimeConversationItem = {
+      id: block.id,
+      type: 'block',
+      block:
+        index >= 0 && next[index]?.type === 'block'
+          ? preserveProcessingBlockTiming(next[index].block, block)
+          : block,
+    }
+    next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
+  }
+  return next
+}
+
+function isContextCompactionBlock(block: ProcessingBlock): boolean {
+  return block.type === 'tool' && block.toolName === 'context_compaction'
+}
+
+function replaceAssistantTextWithBlock(
+  items: RuntimeConversationItem[],
+  assistantTextItemId: string | undefined,
+  block: ProcessingBlock
+): RuntimeConversationItem[] {
+  if (!assistantTextItemId) return upsertBlocks(items, [block])
+  const index = items.findIndex(
+    item => item.type === 'assistant_text' && item.id === assistantTextItemId
+  )
+  if (index < 0) return upsertBlocks(items, [block])
+  return replaceAt(items, index, {
+    id: block.id,
+    type: 'block',
+    block,
+  })
+}
+
+function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {
+  const messages: WorkbenchMessage[] = []
+  let assistantItems: RuntimeConversationItem[] = []
+  let followsGuidance = false
+
+  const flushAssistant = (isLast: boolean, splitBefore: boolean) => {
+    const shouldProjectEmptyAssistant =
+      isLast && turn.status !== 'done' && (turn.id !== null || turn.stoppedNotice === true)
+    if (assistantItems.length === 0 && !shouldProjectEmptyAssistant) {
+      return
+    }
+    const textItems = assistantItems.filter(item => item.type === 'assistant_text')
+    const blocks = processingBlocks(assistantItems)
+    const firstItem = assistantItems[0]
+    const createdAt =
+      textItems[0]?.createdAt ??
+      (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : new Date().toISOString())
+    messages.push({
+      id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? 'pending'}:${
+        firstItem?.id ?? 'assistant'
+      }`,
+      role: 'assistant',
+      content: textItems.map(item => item.content).join('\n\n'),
+      status: isLast ? turnStatus(turn) : 'done',
+      runtimeStatus: isLast ? turn.status : 'done',
+      subtaskId: turn.id ?? undefined,
+      turnId: turn.id ?? undefined,
+      runtimeMessageIndex: turn.runtimeMessageIndex,
+      blocks: blocks.length > 0 ? blocks : undefined,
+      runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(item =>
+        item.type === 'assistant_text'
+          ? [{ id: item.id, type: item.type, content: item.content }]
+          : item.type === 'block'
+            ? [{ id: item.id, type: item.type }]
+            : []
+      ),
+      fileChanges: isLast ? turn.fileChanges : undefined,
+      error: isLast ? turn.error : undefined,
+      errorType: isLast ? turn.errorType : undefined,
+      completedAt: isLast ? turn.completedAt : undefined,
+      stoppedNotice: isLast ? turn.stoppedNotice : undefined,
+      streamingThinkingContent: isLast ? turn.streamingThinkingContent : undefined,
+      references: isLast ? turn.references : undefined,
+      memoryCitations: isLast ? turn.memoryCitations : undefined,
+      runtimeGuidanceSplitBefore: splitBefore || undefined,
+      runtimeGuidanceContinuation: followsGuidance || undefined,
+      createdAt,
+    })
+    assistantItems = []
+    followsGuidance = false
+  }
+
+  for (const item of turn.items) {
+    if (item.type === 'user_message') {
+      const hadAssistant = assistantItems.length > 0
+      flushAssistant(false, hadAssistant)
+      const parsedContexts = parseCodeCommentContexts(item.message.content)
+      messages.push(
+        parsedContexts
+          ? {
+              ...item.message,
+              content: parsedContexts.content,
+              codeComments: item.message.codeComments?.length
+                ? item.message.codeComments
+                : parsedContexts.codeComments,
+            }
+          : item.message
+      )
+      followsGuidance = item.message.runtimeGuidance === true
+      if (followsGuidance && turn.id !== null) {
+        const block = projectedGuidanceBlock(item.message, turn.id)
+        assistantItems.push({ id: block.id, type: 'block', block })
+      }
+      continue
+    }
+    assistantItems.push(item)
+  }
+  flushAssistant(true, false)
+  return messages
+}
+
+function projectedGuidanceBlock(
+  message: WorkbenchMessage & { role: 'user' },
+  turnId: string
+): ProcessingBlock {
+  const createdAt = Date.parse(message.createdAt ?? '')
+  return {
+    id: `runtime-view-guidance:${message.id}`,
+    subtaskId: turnId,
+    type: 'tool',
+    toolName: 'conversation_guidance',
+    toolInput: { message: message.content },
+    status: message.status === 'pending' ? 'streaming' : 'done',
+    createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+  }
+}
+
+function turnStatus(turn: RuntimeConversationTurn): WorkbenchMessage['status'] {
+  if (turn.status === 'cancelled') return 'done'
+  return turn.status
+}
+
+function resolveRuntimeStreamingThinkingContent(
+  turn: RuntimeConversationTurn,
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_chunk' }>,
+  items: RuntimeConversationItem[]
+): string | undefined {
+  return resolveStreamingThinkingContent({
+    previousContent: turn.streamingThinkingContent,
+    reasoningChunk: action.reasoningChunk,
+    content: action.content,
+    incomingBlocks: action.blocks,
+    blocks: processingBlocks(items),
+  })
+}
+
+function processingBlocks(items: RuntimeConversationItem[]): ProcessingBlock[] {
+  return items.flatMap(item => (item.type === 'block' ? [item.block] : []))
+}
+
+function settleProcessingBlocks(items: RuntimeConversationItem[]): RuntimeConversationItem[] {
+  const completedAt = Date.now()
+  return items.map(item => {
+    if (item.type !== 'block') return item
+    if (item.block.status === 'done' || item.block.status === 'error') return item
+    return {
+      ...item,
+      block: {
+        ...item.block,
+        status: 'done',
+        completedAt: item.block.completedAt ?? completedAt,
+      } as ProcessingBlock,
+    }
+  })
+}
+
+function settleRuntimeReconnectingBlocks(
+  items: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  // A WebView refresh can miss the dedicated completion event. Any later turn
+  // progress proves the connection recovered, so the transient block must settle.
+  const completedAt = Date.now()
+  return items.map(item => {
+    if (
+      item.type !== 'block' ||
+      !isRuntimeReconnectingBlock(item.block) ||
+      item.block.status === 'done' ||
+      item.block.status === 'error'
+    ) {
+      return item
+    }
+    return {
+      ...item,
+      block: {
+        ...item.block,
+        status: 'done',
+        completedAt: item.block.completedAt ?? completedAt,
+      },
+    }
+  })
+}
+
+function hasAssistantChunkProgress(
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_chunk' }>
+): boolean {
+  if (action.content || action.reasoningChunk) return true
+  return Boolean(action.blocks?.some(block => !isRuntimeReconnectingBlock(block)))
+}
+
+function isRuntimeReconnectingBlock(block: ProcessingBlock): boolean {
+  return block.type === 'tool' && block.toolName === RUNTIME_RECONNECTING_TOOL_NAME
+}
+
+function assistantTextContent(items: RuntimeConversationItem[]): string {
+  return items.flatMap(item => (item.type === 'assistant_text' ? [item.content] : [])).join('\n\n')
+}
+
+function mergeProcessingBlockUpdate(
+  block: ProcessingBlock,
+  updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
+): ProcessingBlock {
+  const { durationMs, ...directUpdates } = updates
+  let merged = {
+    ...block,
+    ...directUpdates,
+    ...(durationMs !== undefined && {
+      durationMs: Math.max(0, durationMs),
+      completedAt: block.createdAt + Math.max(0, durationMs),
+    }),
+  } as ProcessingBlock
+  if (merged.type === 'tool' && block.type === 'tool') {
+    merged.toolInput = updates.toolInput ?? block.toolInput
+  }
+  const wasActive = block.status !== 'done' && block.status !== 'error'
+  const isComplete = merged.status === 'done' || merged.status === 'error'
+  if (wasActive && isComplete && merged.completedAt === undefined) {
+    merged = { ...merged, completedAt: Date.now() } as ProcessingBlock
+  }
+  return merged
+}
+
+function preserveProcessingBlockTiming(
+  previous: ProcessingBlock,
+  next: ProcessingBlock
+): ProcessingBlock {
+  const previousComplete = previous.status === 'done' || previous.status === 'error'
+  const nextComplete = next.status === 'done' || next.status === 'error'
+  const createdAt = previousComplete ? next.createdAt : previous.createdAt
+  if (previousComplete && nextComplete && previous.completedAt !== undefined) {
+    if (next.completedAt === undefined) {
+      return {
+        ...next,
+        createdAt: previous.createdAt,
+        completedAt: previous.completedAt,
+        durationMs: next.durationMs ?? previous.durationMs,
+      } as ProcessingBlock
+    }
+  }
+  if (createdAt === next.createdAt) return next
+  return {
+    ...next,
+    createdAt,
+    ...(nextComplete &&
+      next.durationMs !== undefined && {
+        completedAt: createdAt + next.durationMs,
+      }),
+  } as ProcessingBlock
+}
+
+function replaceAt<T>(items: T[], index: number, item: T): T[] {
+  return [...items.slice(0, index), item, ...items.slice(index + 1)]
+}

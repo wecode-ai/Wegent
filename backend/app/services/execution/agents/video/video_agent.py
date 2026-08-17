@@ -8,27 +8,32 @@ Video generation agent.
 Handles video generation workflow:
 1. Intent analysis for follow-up messages (using secondary LLM)
 2. Video generation via provider (Seedance, Runway, etc.)
-3. Progress polling and streaming
-4. Result upload as attachment
+3. Persist polling context and dispatch polling to Celery
+4. Celery handles progress, upload, and terminal events
 """
 
 import asyncio
 import logging
 import uuid
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, Optional
 
+from app.core.shutdown import shutdown_manager
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
-from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
+from .image_staging import stage_video_reference_images
 from .intent_analyzer import VideoIntentAnalyzer, VideoIntentResult
+from .materials import (
+    determine_image_mode,
+    resolve_uploaded_media,
+    validate_reference_materials,
+)
+from .prompt import normalize_video_prompt
 from .providers import get_video_provider
 
 logger = logging.getLogger(__name__)
-
-POLL_INTERVAL_SECONDS = 3
-MAX_POLL_COUNT = 600  # 30 minutes
 
 
 class VideoAgent(PollingAgent):
@@ -37,8 +42,8 @@ class VideoAgent(PollingAgent):
     Handles video generation tasks by:
     1. Analyzing intent for follow-up messages
     2. Creating video generation job via provider
-    3. Polling for progress
-    4. Uploading result as attachment
+    3. Persisting recovery context
+    4. Dispatching durable polling to Celery
     """
 
     @property
@@ -57,9 +62,8 @@ class VideoAgent(PollingAgent):
         1. Emit START event
         2. Analyze intent if follow-up (using secondary model)
         3. Create video generation job via provider
-        4. Poll for progress
-        5. Upload result as attachment
-        6. Emit DONE event
+        4. Persist recovery context
+        5. Dispatch Celery polling and return
 
         Args:
             request: Execution request
@@ -67,7 +71,8 @@ class VideoAgent(PollingAgent):
         """
         from app.services.chat.storage.session import session_manager
 
-        cancel_event = await session_manager.register_stream(request.subtask_id)
+        await session_manager.register_stream(request.subtask_id)
+        await shutdown_manager.register_stream(request.subtask_id)
 
         task_id = request.task_id
         subtask_id = request.subtask_id
@@ -77,36 +82,75 @@ class VideoAgent(PollingAgent):
         # Generate a unique block ID for the video block
         video_block_id = f"video-{uuid.uuid4().hex[:8]}"
 
-        # Emit START event
-        await emitter.emit_start(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            message_id=message_id,
-            data={"shell_type": "Chat"},
-        )
-
-        # Emit placeholder video block immediately after START
-        # This tells the frontend to show a video placeholder frame
-        await self._emit_video_block(
-            emitter=emitter,
-            task_id=task_id,
-            subtask_id=subtask_id,
-            message_id=message_id,
-            block_id=video_block_id,
-            is_placeholder=True,
-            progress=0,
-            status="streaming",
-        )
-
         try:
-            # Step 0: Extract user-provided reference images (highest priority)
-            # If user explicitly uploaded reference images, skip intent analysis
-            user_reference_images = self._extract_reference_images(request)
-            prompt_text, prompt_images = self._normalize_prompt(request.prompt)
-            user_reference_images.extend(prompt_images)
+            # Emit START event
+            await emitter.emit_start(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                data={"shell_type": "Chat"},
+            )
 
-            # Step 1: Intent analysis for follow-ups (only when no user-uploaded images)
-            if not user_reference_images and request.task_id:
+            # Emit placeholder video block immediately after START
+            await self._emit_video_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=video_block_id,
+                is_placeholder=True,
+                progress=0,
+                status="streaming",
+            )
+
+            from app.tasks.video_tasks import update_subtask_video_job
+
+            await asyncio.to_thread(
+                update_subtask_video_job,
+                subtask_id,
+                {
+                    "status": "creating",
+                    "progress": 0,
+                    "video_block_id": video_block_id,
+                },
+            )
+
+            user_id = request.user.get("id") if request.user else request.user_id
+            if not user_id:
+                raise ValueError("Video generation requires an authenticated user")
+
+            # Step 0: Extract user-provided reference materials.
+            reference_image_descriptors = self._extract_reference_images(request)
+            prompt_text, prompt_images = self._normalize_prompt(request.prompt)
+            reference_image_descriptors.extend(
+                {"url": image} for image in prompt_images
+            )
+            uploaded_images, reference_videos, reference_audios = (
+                resolve_uploaded_media(
+                    request.user_subtask_id,
+                    user_id,
+                )
+            )
+            images_by_identity = {
+                self._image_identity(descriptor): descriptor
+                for descriptor in reference_image_descriptors
+            }
+            for descriptor in uploaded_images:
+                identity = self._image_identity(descriptor)
+                existing = images_by_identity.get(identity)
+                if existing is not None:
+                    existing.update(descriptor)
+                    continue
+                reference_image_descriptors.append(descriptor)
+                images_by_identity[identity] = descriptor
+
+            # Step 1: Intent analysis for follow-ups (only without uploaded media).
+            if (
+                not reference_image_descriptors
+                and not reference_videos
+                and not reference_audios
+                and request.task_id
+            ):
                 intent_result = await self._analyze_intent(
                     request=request,
                     emitter=emitter,
@@ -116,16 +160,35 @@ class VideoAgent(PollingAgent):
                 final_prompt = intent_result.merged_prompt
                 reference_image = intent_result.reference_image
                 image_mode = intent_result.image_mode
+                reference_image_descriptors = (
+                    [{"url": reference_image}] if reference_image else []
+                )
             else:
                 # User explicitly provided attachments - use them directly
-                final_prompt = prompt_text or (
-                    request.prompt if isinstance(request.prompt, str) else ""
+                final_prompt = prompt_text
+                reference_image = None
+                image_mode = determine_image_mode(
+                    model_config,
+                    reference_image_descriptors,
+                    reference_videos,
+                    reference_audios,
                 )
-                reference_image = (
-                    user_reference_images[0] if user_reference_images else None
-                )
-                # Only set image_mode when reference_image exists
-                image_mode = "first_frame" if reference_image else None
+
+            validate_reference_materials(
+                model_config,
+                reference_image_descriptors,
+                reference_videos,
+                reference_audios,
+            )
+            reference_image_descriptors = await stage_video_reference_images(
+                reference_image_descriptors,
+                user_id,
+            )
+            reference_image = (
+                reference_image_descriptors[0]["url"]
+                if reference_image_descriptors
+                else None
+            )
 
             # Step 2: Get video provider based on protocol
             # Use 'or' to handle both missing key and None value
@@ -149,123 +212,62 @@ class VideoAgent(PollingAgent):
                 prompt=final_prompt,
                 reference_image=reference_image,
                 image_mode=image_mode,
+                reference_images=reference_image_descriptors,
+                reference_videos=reference_videos,
+                reference_audios=reference_audios,
             )
 
             logger.info(
                 f"[{self.name}] Job created: job_id={job_id}, task_id={task_id}"
             )
 
-            # Step 4: Poll for completion
-            for poll_num in range(1, MAX_POLL_COUNT + 1):
-                # Check cancellation
-                if cancel_event.is_set() or await session_manager.is_cancelled(
-                    subtask_id
-                ):
-                    logger.info(f"[{self.name}] Cancelled: task_id={task_id}")
-                    await emitter.emit(
-                        ExecutionEvent(
-                            type=EventType.CANCELLED,
-                            task_id=task_id,
-                            subtask_id=subtask_id,
-                            message_id=message_id,
-                        )
-                    )
-                    return
+            video_job_data = {
+                "job_id": job_id,
+                "provider": protocol,
+                "status": "polling",
+                "progress": 5,
+                "video_block_id": video_block_id,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "last_poll_at": datetime.now(timezone.utc).isoformat(),
+                "poll_count": 0,
+                "model_name": model_config.get("model_name"),
+                "model_namespace": model_config.get("model_namespace"),
+            }
 
-                status = await provider.get_status(job_id)
+            from app.tasks.video_tasks import dispatch_video_polling_task
 
-                if status.is_completed:
-                    break
-                elif status.is_failed:
-                    raise Exception(status.error or "Video generation failed")
-
-                await self._emit_video_block(
-                    emitter=emitter,
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    message_id=message_id,
-                    block_id=video_block_id,
-                    is_placeholder=True,
-                    progress=min(status.progress, 90),
-                    status="streaming",
-                    message=f"Generating video... {status.progress}%",
-                )
-
-                await asyncio.sleep(POLL_INTERVAL_SECONDS)
-            else:
-                raise Exception("Video generation timed out")
-
-            # Step 5: Get result and upload
-            await self._emit_video_block(
-                emitter=emitter,
-                task_id=task_id,
-                subtask_id=subtask_id,
-                message_id=message_id,
-                block_id=video_block_id,
-                is_placeholder=True,
-                progress=92,
-                status="streaming",
-                message="Fetching video result...",
+            await asyncio.to_thread(
+                update_subtask_video_job,
+                subtask_id,
+                video_job_data,
             )
-
-            result = await provider.get_result(job_id)
-
-            await self._emit_video_block(
-                emitter=emitter,
-                task_id=task_id,
+            dispatch_video_polling_task(
                 subtask_id=subtask_id,
-                message_id=message_id,
-                block_id=video_block_id,
-                is_placeholder=True,
-                progress=95,
-                status="streaming",
-                message="Uploading video file...",
-            )
-
-            user_id = request.user.get("id") if request.user else None
-            attachment_id = await self._upload_attachment(
-                result=result,
+                task_id=task_id,
                 user_id=user_id,
-                task_id=task_id,
-                subtask_id=subtask_id,
-            )
-
-            # Step 6: Emit final video block with actual video data
-            final_video_block = {
-                "id": video_block_id,
-                "type": "video",
-                "status": "done",
-                "is_placeholder": False,
-                "video_url": result.video_url,
-                "video_thumbnail": result.thumbnail,
-                "video_duration": result.duration,
-                "video_attachment_id": attachment_id,
-                "video_progress": 100,
-                "timestamp": int(asyncio.get_event_loop().time() * 1000),
-            }
-
-            result_data = {
-                "value": "Video generation completed",
-                "image": result.thumbnail,  # For follow-up reference
-                "blocks": [final_video_block],
-            }
-
-            await emitter.emit(
-                ExecutionEvent(
-                    type=EventType.DONE,
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    result=result_data,
-                    message_id=message_id,
-                )
+                job_id=job_id,
+                provider_protocol=protocol,
+                video_block_id=video_block_id,
+                model_config=model_config,
+                message_id=message_id,
             )
 
             logger.info(
-                f"[{self.name}] Completed: task_id={task_id}, attachment_id={attachment_id}"
+                f"[{self.name}] Polling dispatched: task_id={task_id}, job_id={job_id}"
             )
 
         except Exception as e:
             logger.exception(f"[{self.name}] Error: task_id={task_id}, error={e}")
+            await self._emit_video_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=video_block_id,
+                is_placeholder=False,
+                progress=0,
+                status="error",
+            )
             await emitter.emit(
                 ExecutionEvent(
                     type=EventType.ERROR,
@@ -275,27 +277,44 @@ class VideoAgent(PollingAgent):
                     message_id=message_id,
                 )
             )
-
         finally:
             await session_manager.unregister_stream(subtask_id)
+            await shutdown_manager.unregister_stream(subtask_id)
 
-    def _extract_reference_images(self, request: ExecutionRequest) -> list[str]:
+    def _extract_reference_images(
+        self,
+        request: ExecutionRequest,
+    ) -> list[dict[str, Any]]:
         """Extract reference images from request.attachments (user-uploaded files).
 
         NOTE:
         - Newer chat flows may provide images via request.prompt vision blocks instead.
           Those are handled by _normalize_prompt().
         """
-        reference_images: list[str] = []
+        reference_images: list[dict[str, Any]] = []
 
         if request.attachments:
             for att in request.attachments:
                 if att.get("mime_type", "").startswith("image/"):
                     url = att.get("url") or att.get("content")
                     if url:
-                        reference_images.append(url)
+                        descriptor: dict[str, Any] = {"url": url}
+                        attachment_id = att.get("id") or att.get("attachment_id")
+                        if isinstance(attachment_id, int):
+                            descriptor["attachment_id"] = attachment_id
+                        reference_images.append(descriptor)
 
         return reference_images
+
+    @staticmethod
+    def _image_identity(image: dict[str, Any]) -> str:
+        attachment_id = image.get("attachment_id")
+        if isinstance(attachment_id, int):
+            return f"attachment:{attachment_id}"
+        url = str(image.get("url") or "")
+        if url:
+            return f"url:{url}"
+        raise ValueError("Video reference image has no stable identity")
 
     def _normalize_prompt(
         self,
@@ -312,10 +331,10 @@ class VideoAgent(PollingAgent):
         - If text contains our context wrapper, prefer the actual user question part
         """
         if isinstance(prompt, str):
-            return extract_user_question(prompt), []
+            return normalize_video_prompt(prompt), []
 
         if not isinstance(prompt, list):
-            return extract_user_question(str(prompt)), []
+            return normalize_video_prompt(str(prompt)), []
 
         text_parts: list[str] = []
         images: list[str] = []
@@ -335,7 +354,7 @@ class VideoAgent(PollingAgent):
                     images.append(image_url)
 
         combined_text = "\n".join(text_parts).strip()
-        combined_text = extract_user_question(combined_text)
+        combined_text = normalize_video_prompt(combined_text)
         return combined_text, images
 
     async def _analyze_intent(
@@ -436,7 +455,7 @@ class VideoAgent(PollingAgent):
             "video_duration": duration,
             "video_attachment_id": attachment_id,
             "video_progress": progress,
-            "content": message,  # Progress message as content
+            "content": "",
             "timestamp": int(asyncio.get_event_loop().time() * 1000),
         }
 
@@ -456,33 +475,4 @@ class VideoAgent(PollingAgent):
                 },
                 message_id=message_id,
             )
-        )
-
-    async def _upload_attachment(
-        self,
-        result,
-        user_id: int,
-        task_id: int,
-        subtask_id: int,
-    ) -> int:
-        """Upload video as attachment.
-
-        Args:
-            result: Video job result
-            user_id: User ID
-            task_id: Task ID
-            subtask_id: Subtask ID
-
-        Returns:
-            Attachment ID (SubtaskContext ID)
-        """
-        from .attachment_uploader import upload_video_attachment
-
-        return await upload_video_attachment(
-            video_url=result.video_url,
-            thumbnail=result.thumbnail,
-            duration=result.duration,
-            user_id=user_id,
-            task_id=task_id,
-            subtask_id=subtask_id,
         )

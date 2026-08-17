@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -249,15 +249,53 @@ class ModelSpec(BaseModel):
         "Only applies when protocol is 'openai'.",
     )
 
-    # Context window and output token limits for LLM models
+    costIndex: Optional[str] = Field(
+        None,
+        coerce_numbers_to_str=True,
+        description="Relative model usage cost. A value of 1 represents the baseline cost.",
+    )
+
+    # Legacy top-level token limits. New configurations should use the
+    # snake_case fields in modelConfig.
     contextWindow: Optional[int] = Field(
         None,
-        description="Maximum context window size in tokens. Used for message compression.",
+        description="Legacy maximum context window size in tokens.",
     )
     maxOutputTokens: Optional[int] = Field(
         None,
-        description="Maximum output tokens the model can generate per response.",
+        description="Legacy maximum output tokens per response.",
     )
+
+    @staticmethod
+    def _model_config_token_limit(value: Any) -> Optional[int]:
+        """Return a numeric token limit from the runtime model config."""
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value
+
+    @field_validator("contextWindow", "maxOutputTokens", mode="before")
+    @classmethod
+    def _normalize_legacy_token_limit(cls, value: Any) -> Optional[int]:
+        """Normalize legacy token limits without Pydantic type coercion."""
+        return cls._model_config_token_limit(value)
+
+    @property
+    def context_window(self) -> Optional[int]:
+        """Return the context window, preferring the runtime model config."""
+        if "context_window" in self.modelConfig:
+            return self._model_config_token_limit(
+                self.modelConfig.get("context_window")
+            )
+        return self._model_config_token_limit(self.contextWindow)
+
+    @property
+    def max_output_tokens(self) -> Optional[int]:
+        """Return the output limit, preferring the runtime model config."""
+        if "max_output_tokens" in self.modelConfig:
+            return self._model_config_token_limit(
+                self.modelConfig.get("max_output_tokens")
+            )
+        return self._model_config_token_limit(self.maxOutputTokens)
 
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(
@@ -294,6 +332,11 @@ class ModelSpec(BaseModel):
     isAdvanced: Optional[bool] = Field(
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
+    )
+    isWeworkAvailable: Optional[bool] = Field(
+        None,
+        description="Whether this model is available in the wework desktop client. "
+        "Only models with this field set to True are returned to wework.",
     )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
@@ -455,11 +498,25 @@ class TeamMember(BaseModel):
     )
 
 
+class LocalizedInputPlaceholder(BaseModel):
+    """Localized input placeholder text."""
+
+    en: Optional[str] = None
+    zh: Optional[str] = None
+
+
+class TeamInputPlaceholder(LocalizedInputPlaceholder):
+    """Team input placeholder text with device-specific overrides."""
+
+    mobile: Optional[LocalizedInputPlaceholder] = None
+    desktop: Optional[LocalizedInputPlaceholder] = None
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
-    collaborationModel: str  # pipeline、route、coordinate、collaborate
+    collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
@@ -469,6 +526,11 @@ class TeamSpec(QuickPhraseMixin):
         "If not set (None), it will be inferred from the underlying shell types. "
         "Set to True to always require workspace, False to never require workspace.",
     )
+    capability: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Capability Center publication metadata.",
+    )
+    inputPlaceholder: Optional[TeamInputPlaceholder] = None
 
 
 class TeamStatus(Status):
@@ -840,6 +902,10 @@ class SkillSpec(BaseModel):
         "Tracks where the skill was imported from (upload or git repository). "
         "Used to enable updating skills from their original Git source.",
     )
+    capability: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Capability Center publication metadata.",
+    )
 
     @field_validator("version", mode="before")
     @classmethod
@@ -951,9 +1017,49 @@ class KnowledgeBaseSpec(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    directAccessRequirement: Literal["read", "edit"] = Field(
+        default="read",
+        description="Minimum capability required for direct knowledge base access",
+    )
     kbType: Optional[str] = Field(
         "notebook",
-        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
+        description=(
+            "What this knowledge base is: 'notebook' or 'classic' select the default "
+            "opening view and may be switched freely; 'code_wiki' binds the knowledge "
+            "base to a source repository and is fixed at creation."
+        ),
+    )
+    source: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Source repository a code wiki is generated from",
+    )
+    language: Optional[str] = Field(
+        None,
+        max_length=10,
+        description=(
+            "Language a code wiki's pages are generated in. Absent falls back to the "
+            "deployment default rather than meaning English, so changing that default "
+            "does not strand wikis created before this field existed."
+        ),
+    )
+    showGenerationTask: bool = Field(
+        False,
+        description=(
+            "Whether this code wiki's generation runs appear in the owner's "
+            "conversation list. Hidden by default: a wiki regenerates on its own, so "
+            "its runs would otherwise fill the list with conversations nobody "
+            "started. A hidden task stays openable by id, and the wiki's own run "
+            "history links to it, so nothing becomes unreachable."
+        ),
+    )
+    publishedGenerationId: int = Field(
+        0,
+        description=(
+            "Generation whose content is currently projected into this knowledge base; "
+            "0 means nothing has been published yet. Sole authority for which version "
+            "is live — never infer it from the latest completed generation, because a "
+            "generation that finished but failed its publish gate is not published."
+        ),
     )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"
@@ -964,6 +1070,14 @@ class KnowledgeBaseSpec(BaseModel):
     summaryEnabled: bool = Field(
         default=False,
         description="Enable automatic summary generation for documents",
+    )
+    executionModelRef: Optional[SummaryModelRef] = Field(
+        None,
+        description=(
+            "Model this knowledge base's own generation runs on. Only a code wiki "
+            "generates; absent means the run inherits the model bound by its team's "
+            "bot, which is what wikis created before this field existed do."
+        ),
     )
     summaryModelRef: Optional[SummaryModelRef] = Field(
         None,
@@ -1188,6 +1302,17 @@ class GitImportRequest(BaseModel):
         None,
         description="List of skill names that can be overwritten if they already exist",
     )
+    marketplace_tags: Optional[List[str]] = Field(
+        None,
+        description="Marketplace tags required when importing public skills",
+    )
+
+
+class GitSkillUpdateRequest(BaseModel):
+    """Update an existing skill from a selected Git repository path."""
+
+    repo_url: str = Field(..., description="Git repository URL")
+    skill_path: str = Field(..., description="Path to the skill in the repository")
 
 
 class GitImportSuccessItem(BaseModel):

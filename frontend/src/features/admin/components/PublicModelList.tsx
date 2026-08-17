@@ -65,6 +65,7 @@ const PublicModelList: React.FC = () => {
     config: string
     is_active: boolean
     is_advanced: boolean
+    is_wework_available: boolean
   }>({
     name: '',
     namespace: 'default',
@@ -73,6 +74,7 @@ const PublicModelList: React.FC = () => {
     config: '{}',
     is_active: true,
     is_advanced: false,
+    is_wework_available: false,
   })
   const [configError, setConfigError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -126,6 +128,15 @@ const PublicModelList: React.FC = () => {
     return ''
   }
 
+  const getSpecBooleanValue = (json: Record<string, unknown>, key: string) => {
+    const spec = json.spec
+    if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
+      const value = (spec as Record<string, unknown>)[key]
+      return typeof value === 'boolean' ? value : false
+    }
+    return false
+  }
+
   const applyGroupingToConfig = (config: Record<string, unknown>) => {
     const nextConfig = { ...config }
     const currentSpec = nextConfig.spec
@@ -145,6 +156,12 @@ const PublicModelList: React.FC = () => {
       spec.modelSubGroup = trimmedSubGroup
     } else {
       delete spec.modelSubGroup
+    }
+
+    if (formData.is_wework_available) {
+      spec.isWeworkAvailable = true
+    } else {
+      delete spec.isWeworkAvailable
     }
 
     nextConfig.spec = spec
@@ -269,6 +286,7 @@ const PublicModelList: React.FC = () => {
       config: '{}',
       is_active: true,
       is_advanced: false,
+      is_wework_available: false,
     })
     setConfigError('')
     setSelectedModel(null)
@@ -284,6 +302,7 @@ const PublicModelList: React.FC = () => {
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
       is_advanced: model.is_advanced ?? false,
+      is_wework_available: getSpecBooleanValue(model.json, 'isWeworkAvailable'),
     })
     setIsEditDialogOpen(true)
   }
@@ -494,6 +513,26 @@ const PublicModelList: React.FC = () => {
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
             </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="create-is-wework-available">
+                {t('admin:public_models.form.is_wework_available')}
+              </Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-text-muted">
+                  {formData.is_wework_available
+                    ? t('admin:public_models.status.wework_available')
+                    : t('admin:public_models.status.wework_unavailable')}
+                </span>
+                <Switch
+                  id="create-is-wework-available"
+                  data-testid="public-model-wework-available-switch"
+                  checked={formData.is_wework_available}
+                  onCheckedChange={checked =>
+                    setFormData({ ...formData, is_wework_available: checked })
+                  }
+                />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
@@ -599,6 +638,26 @@ const PublicModelList: React.FC = () => {
                   id="edit-is-advanced"
                   checked={formData.is_advanced}
                   onCheckedChange={checked => setFormData({ ...formData, is_advanced: checked })}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-is-wework-available">
+                {t('admin:public_models.form.is_wework_available')}
+              </Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-text-muted">
+                  {formData.is_wework_available
+                    ? t('admin:public_models.status.wework_available')
+                    : t('admin:public_models.status.wework_unavailable')}
+                </span>
+                <Switch
+                  id="edit-is-wework-available"
+                  data-testid="public-model-edit-wework-available-switch"
+                  checked={formData.is_wework_available}
+                  onCheckedChange={checked =>
+                    setFormData({ ...formData, is_wework_available: checked })
+                  }
                 />
               </div>
             </div>

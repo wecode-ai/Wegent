@@ -8,6 +8,9 @@ export function localRuntimeAttachments(attachments: Attachment[]): Attachment[]
   return attachments.filter(hasLocalPath).map(attachment => {
     const runtimeAttachment = { ...attachment }
     delete runtimeAttachment.text_content
+    delete runtimeAttachment.ui_group_id
+    delete runtimeAttachment.ui_group_role
+    delete runtimeAttachment.ui_kind
     return runtimeAttachment
   })
 }

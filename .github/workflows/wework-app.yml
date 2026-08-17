@@ -3,8 +3,16 @@ name: Wework App
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "Release channel. Beta users receive both Beta and stable updates."
+        type: choice
+        options:
+          - stable
+          - beta
+        required: true
+        default: stable
       version:
-        description: "Optional Wework version override, for example 0.1.0 or v0.1.0. If empty, auto-increment from latest wework-vX.Y.Z tag"
+        description: "Optional stable version override, for example 1.2.3. Beta versions are always generated automatically."
         type: string
         required: false
       publish_release:
@@ -12,10 +20,6 @@ on:
         type: boolean
         required: false
         default: false
-  push:
-    tags:
-      - "wework-v*"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -31,6 +35,8 @@ jobs:
       release_tag: ${{ steps.version.outputs.release_tag }}
       release_sha: ${{ steps.version-files.outputs.release_sha }}
       version: ${{ steps.version.outputs.value }}
+      channel: ${{ steps.version.outputs.channel }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
 
     steps:
@@ -53,57 +59,9 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
           PUBLISH_RELEASE: ${{ github.event_name == 'push' || github.event.inputs.publish_release == 'true' }}
-        run: |
-          set -euo pipefail
-
-          validate_version() {
-            local version="$1"
-            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "Error: Invalid Wework version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
-              exit 1
-            fi
-          }
-
-          bump_patch() {
-            local version="$1"
-            IFS='.' read -r major minor patch <<< "$version"
-            echo "${major}.${minor}.$((patch + 1))"
-          }
-
-          if [ -n "${INPUT_VERSION:-}" ]; then
-            version="${INPUT_VERSION#v}"
-            validate_version "$version"
-          elif [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            version="${GITHUB_REF_NAME#wework-v}"
-            validate_version "$version"
-          else
-            latest_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
-            if [ -z "$latest_tag" ]; then
-              version="0.0.1"
-            else
-              latest_version="${latest_tag#wework-v}"
-              validate_version "$latest_version"
-              version="$(bump_patch "$latest_version")"
-            fi
-          fi
-
-          publish_release="${PUBLISH_RELEASE:-false}"
-          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            publish_release="true"
-          fi
-
-          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            release_tag="$GITHUB_REF_NAME"
-          else
-            release_tag="wework-v$version"
-          fi
-
-          {
-            echo "value=$version"
-            echo "release_tag=$release_tag"
-            echo "publish_release=$publish_release"
-          } >> "$GITHUB_OUTPUT"
+        run: node wework/scripts/resolve-release-version.mjs
 
       - name: Commit Wework version files
         id: version-files
@@ -206,20 +164,22 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
         run: |
           set -euo pipefail
           release_title="Wework $RELEASE_VERSION"
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            release_title="$release_title Beta"
+          fi
           release_notes="$(mktemp)"
           generated_notes="$(mktemp)"
-          previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
+          previous_tag="$(node wework/scripts/resolve-previous-release-tag.mjs)"
 
           if [ -n "$previous_tag" ]; then
-            log_range="${previous_tag}..${RELEASE_SHA}"
-          else
-            log_range="$RELEASE_SHA"
+            export PREVIOUS_TAG="$previous_tag"
           fi
 
-          git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
+          node wework/scripts/generate-release-notes.mjs > "$generated_notes"
 
           if [ ! -s "$generated_notes" ]; then
             echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"
@@ -235,16 +195,6 @@ jobs:
             fi
             echo ""
             cat "$generated_notes"
-            echo ""
-            echo "## macOS Distribution Notes"
-            echo ""
-            echo "Wework macOS DMG build."
-            echo ""
-            echo "This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway."
-            echo ""
-            echo "## Windows Distribution Notes"
-            echo ""
-            echo "Wework Windows x64 NSIS installer."
           } > "$release_notes"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -262,7 +212,7 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 90
     needs: prepare-release
 
     strategy:
@@ -292,6 +242,9 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
@@ -305,17 +258,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Cargo dependencies
+      - name: Cache Cargo sources
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-app-${{ matrix.rust_target }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-app-${{ matrix.rust_target }}-
+            ${{ runner.os }}-wework-app-cargo-sources-v2-
 
       - name: Build local executor sidecar
         working-directory: executor
@@ -328,11 +279,14 @@ jobs:
           chmod 0755 dist/wegent-executor
           dist/wegent-executor --version
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: ${{ matrix.rust_target }}
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Sync Wework version files
         working-directory: wework
@@ -385,17 +339,84 @@ jobs:
           cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
           PY
 
+      - name: Import Apple signing certificate
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          for required_name in \
+            MACOS_CERTIFICATE_BASE64 \
+            MACOS_CERTIFICATE_PASSWORD \
+            MACOS_SIGNING_IDENTITY \
+            APPLE_TEAM_ID; do
+            if [ -z "${!required_name:-}" ]; then
+              echo "Missing GitHub secret: $required_name" >&2
+              exit 1
+            fi
+          done
+
+          certificate_path="$RUNNER_TEMP/wework-signing-certificate.p12"
+          keychain_path="$RUNNER_TEMP/wework-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          cleanup_certificate() {
+            rm -f "$certificate_path"
+          }
+          trap cleanup_certificate EXIT
+
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          chmod 0600 "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          imported_identity="$(
+            security find-identity -v -p codesigning "$keychain_path" \
+              | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' \
+              | head -n 1
+          )"
+          if [ -z "$imported_identity" ]; then
+            echo "The imported p12 does not contain a Developer ID Application identity." >&2
+            exit 1
+          fi
+          if [ "$imported_identity" != "$MACOS_SIGNING_IDENTITY" ]; then
+            echo "The imported signing identity does not match MACOS_SIGNING_IDENTITY." >&2
+            exit 1
+          fi
+          if [[ "$imported_identity" != *"($APPLE_TEAM_ID)" ]]; then
+            echo "The imported signing identity does not belong to APPLE_TEAM_ID." >&2
+            exit 1
+          fi
+
+          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_IDENTITY=$imported_identity" >> "$GITHUB_ENV"
+
       - name: Build Wework app bundle
         working-directory: wework
         env:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          VITE_API_BASE_URL: https://api.wecode.ai/api
-          VITE_SOCKET_BASE_URL: https://api.wecode.ai
-          VITE_WEGENT_BACKEND_URL: http://localhost:8000
+          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
         run: |
           set -euo pipefail
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
@@ -407,44 +428,104 @@ jobs:
             exit 1
           fi
 
+          source scripts/lib/wework-macos-signing.sh
+          wework_sign_prepared_codex_macos_binaries \
+            "$PWD" \
+            "${{ matrix.rust_target }}" \
+            "$MACOS_SIGNING_IDENTITY"
+
           config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
           cleanup() {
             rm -f "$config_override"
           }
           trap cleanup EXIT
           CONFIG_OVERRIDE="$config_override" \
+          BASE_CONFIG="$PWD/src-tauri/tauri.conf.json" \
           VERSION="${{ needs.prepare-release.outputs.version }}" \
-          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/latest/download/latest.json" \
-          TAURI_UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
-          python3 - <<'PY'
-          import json
-          import os
-
-          config = {
-              "version": os.environ["VERSION"],
-              "bundle": {
-                  "createUpdaterArtifacts": True,
-                  "macOS": {
-                      "signingIdentity": "-",
-                      "hardenedRuntime": True,
-                  },
-              },
-              "plugins": {
-                  "updater": {
-                      "endpoints": [os.environ["UPDATER_ENDPOINT"]],
-                      "pubkey": os.environ["TAURI_UPDATER_PUBKEY"],
-                  },
-              },
-          }
-
-          with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-              json.dump(config, handle, indent=2)
-              handle.write("\n")
-          PY
+          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json" \
+          UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
+          SIGNING_IDENTITY="$MACOS_SIGNING_IDENTITY" \
+          ENABLE_INSECURE_TRANSPORT="false" \
+          node scripts/generate-release-config.mjs
           pnpm exec tauri build \
             --target "${{ matrix.rust_target }}" \
             --bundles app,dmg \
+            --features release-devtools \
             --config "$config_override"
+
+      - name: Sign and notarize macOS disk image
+        shell: bash
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+
+          for required_name in APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!required_name:-}" ]; then
+              echo "Missing GitHub secret: $required_name" >&2
+              exit 1
+            fi
+          done
+
+          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
+          if [ -z "$dmg_source" ]; then
+            echo "No .dmg bundle found for signing and notarization." >&2
+            exit 1
+          fi
+
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          notary_result_path="$RUNNER_TEMP/notary-result-${{ matrix.arch }}.json"
+          cleanup_notary_key() {
+            rm -f "$api_key_path"
+          }
+          trap cleanup_notary_key EXIT
+
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$api_key_path"
+          chmod 0600 "$api_key_path"
+
+          codesign --force \
+            --timestamp \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGNING_IDENTITY" \
+            "$dmg_source"
+          codesign --verify --strict --verbose=2 "$dmg_source"
+
+          set +e
+          xcrun notarytool submit "$dmg_source" \
+            --key "$api_key_path" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait \
+            --output-format json > "$notary_result_path"
+          notary_exit_code=$?
+          set -e
+
+          cat "$notary_result_path"
+          if ! jq -e . "$notary_result_path" >/dev/null; then
+            echo "Apple notarization returned an invalid response." >&2
+            exit 1
+          fi
+          submission_id="$(jq -r '.id // empty' "$notary_result_path")"
+          notary_status="$(jq -r '.status // empty' "$notary_result_path")"
+          if [ "$notary_exit_code" -ne 0 ] || [ "$notary_status" != "Accepted" ]; then
+            if [ -n "$submission_id" ]; then
+              xcrun notarytool log "$submission_id" \
+                --key "$api_key_path" \
+                --key-id "$APPLE_API_KEY_ID" \
+                --issuer "$APPLE_API_ISSUER" || true
+            fi
+            echo "Apple notarization did not accept the DMG." >&2
+            exit 1
+          fi
+
+          xcrun stapler staple "$dmg_source"
+          xcrun stapler validate "$dmg_source"
+          {
+            echo "APPLE_NOTARY_SUBMISSION_ID=$submission_id"
+            echo "APPLE_NOTARY_STATUS=$notary_status"
+          } >> "$GITHUB_ENV"
 
       - name: Verify and collect release assets
         id: package
@@ -485,11 +566,12 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign --display --verbose=4 "$app_path"
-          if spctl --assess --type execute --verbose "$app_path"; then
-            echo "Gatekeeper accepted the app bundle."
-          else
-            echo "::warning::Gatekeeper rejected this ad-hoc signed, non-notarized build. Users must click Done if macOS shows Move to Trash, then force-open it from System Settings > Privacy & Security > Open Anyway."
-          fi
+          spctl --assess --type execute --verbose=2 "$app_path"
+          spctl --assess \
+            --type open \
+            --context context:primary-signature \
+            --verbose=2 \
+            "$dmg_source"
           cleanup_mount
           trap - EXIT
 
@@ -508,10 +590,10 @@ jobs:
             echo ""
             echo "- DMG: $(basename "$dmg_path")"
             echo "- Updater archive: $(basename "$archive_path")"
-            echo "- This build is ad-hoc signed and not Apple notarized."
-            echo "- If the first launch dialog shows Move to Trash, click Done instead."
-            echo "- Then force-open from System Settings > Privacy & Security > Open Anyway."
-            echo "- If macOS keeps the quarantine flag: \`xattr -dr com.apple.quarantine /Applications/WeWork.app\`"
+            echo "- Signed with an Apple Developer ID Application certificate."
+            echo "- Apple notarization status: $APPLE_NOTARY_STATUS"
+            echo "- Apple notarization submission: $APPLE_NOTARY_SUBMISSION_ID"
+            echo "- Gatekeeper accepted both the application and DMG."
           } >> "$GITHUB_STEP_SUMMARY"
 
           {
@@ -560,6 +642,14 @@ jobs:
             ${{ steps.package.outputs.signature_path }}
           if-no-files-found: error
 
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${MACOS_KEYCHAIN_PATH:-}" ] && [ -f "$MACOS_KEYCHAIN_PATH" ]; then
+            security delete-keychain "$MACOS_KEYCHAIN_PATH"
+          fi
+
   build-windows:
     name: Build Windows x64
     runs-on: windows-latest
@@ -577,6 +667,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
@@ -590,17 +683,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Cargo dependencies
+      - name: Cache Cargo sources
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-app-x86_64-pc-windows-msvc-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-wework-app-x86_64-pc-windows-msvc-
+            ${{ runner.os }}-wework-app-cargo-sources-v2-
 
       - name: Build local executor sidecar
         shell: pwsh
@@ -613,11 +704,14 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/wegent-executor.exe ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe
           & ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe --version
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: x86_64-pc-windows-msvc
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: x86_64-pc-windows-msvc
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Build Wework app bundle
         shell: pwsh
@@ -625,12 +719,11 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          VITE_API_BASE_URL: https://api.wecode.ai/api
-          VITE_SOCKET_BASE_URL: https://api.wecode.ai
-          VITE_WEGENT_BACKEND_URL: http://localhost:8000
+          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
@@ -646,13 +739,13 @@ jobs:
             bundle = @{ createUpdaterArtifacts = $true }
             plugins = @{
               updater = @{
-                endpoints = @("https://github.com/$env:GH_REPO/releases/latest/download/latest.json")
+                endpoints = @("https://github.com/$env:GH_REPO/releases/download/wework-updater/{{target}}-{{arch}}.json")
                 pubkey = $env:TAURI_UPDATER_PUBKEY
               }
             }
           } | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
 
-          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $configPath
+          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --features release-devtools --config $configPath
 
       - name: Verify and collect release assets
         id: package
@@ -793,7 +886,7 @@ jobs:
           {
             echo "### Wework updater manifest"
             echo ""
-            echo "- Endpoint: https://github.com/${GH_REPO}/releases/latest/download/latest.json"
+            echo "- Version release manifest: https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/latest.json"
             echo "- Version: ${RELEASE_VERSION}"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -822,14 +915,140 @@ jobs:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
         run: |
           set -euo pipefail
           release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
+          make_latest="true"
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            make_latest="false"
+          fi
           gh api \
             --method PATCH \
             "repos/${GH_REPO}/releases/${release_id}" \
             --field draft=false \
-            --field prerelease=false \
-            --raw-field make_latest=true >/dev/null
+            --field prerelease="$PRERELEASE" \
+            --raw-field make_latest="$make_latest" >/dev/null
           release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
-          echo "Published Wework release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published Wework ${RELEASE_CHANNEL} release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"
+
+  publish-channel-manifests:
+    name: Publish channel manifests
+    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
+    needs:
+      - prepare-release
+      - publish-release
+
+    steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout release scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
+          persist-credentials: false
+
+      - name: Publish rolling update manifests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" \
+            --pattern latest.json \
+            --dir "$work_dir"
+
+          if ! gh release view wework-updater >/dev/null 2>&1; then
+            gh release create wework-updater \
+              --target "$RELEASE_SHA" \
+              --title "Wework updater manifests" \
+              --notes "Rolling manifests for the stable and Beta update channels." \
+              --prerelease
+          fi
+
+          is_newer_than_channel() {
+            local channel="$1"
+            local asset_name="${channel}-darwin-aarch64.json"
+            local current_manifest="$work_dir/current-${channel}.json"
+            local assets_file="$work_dir/wework-updater-assets.json"
+            local required_asset
+
+            if ! gh release view wework-updater --json assets > "$assets_file"; then
+              echo "Failed to inspect existing Wework updater assets." >&2
+              return 2
+            fi
+            for required_asset in \
+              "${channel}-darwin-aarch64.json" \
+              "${channel}-darwin-x86_64.json" \
+              "${channel}-windows-x86_64.json"; do
+              if ! jq -e --arg name "$required_asset" \
+                'any(.assets[]; .name == $name)' "$assets_file" >/dev/null; then
+                return 0
+              fi
+            done
+            if ! gh release download wework-updater \
+              --pattern "$asset_name" \
+              --output "$current_manifest" \
+              --clobber; then
+              echo "Failed to download existing ${channel} channel manifest." >&2
+              return 2
+            fi
+
+            current_version="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$current_manifest")"
+            node wework/scripts/update-channel-manifests.mjs \
+              is-newer "$RELEASE_VERSION" "$current_version"
+          }
+
+          publish_channel() {
+            local channel="$1"
+            local comparison_status=0
+            is_newer_than_channel "$channel" || comparison_status=$?
+            case "$comparison_status" in
+              0) ;;
+              1)
+                echo "Keeping newer ${channel} channel manifest."
+                return
+                ;;
+              *)
+                return "$comparison_status"
+                ;;
+            esac
+
+            node wework/scripts/update-channel-manifests.mjs \
+              generate "$work_dir/latest.json" "$work_dir" "$channel"
+
+            gh release upload wework-updater \
+              "$work_dir/${channel}-darwin-aarch64.json" \
+              "$work_dir/${channel}-darwin-x86_64.json" \
+              "$work_dir/${channel}-windows-x86_64.json" \
+              --clobber
+          }
+
+          publish_channel "$RELEASE_CHANNEL"
+          if [ "$RELEASE_CHANNEL" = "stable" ]; then
+            publish_channel beta
+          fi
+
+          {
+            echo "### Wework update channels"
+            echo ""
+            echo "- Published release channel: ${RELEASE_CHANNEL}"
+            echo "- Rolling endpoint: https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json"
+            if [ "$RELEASE_CHANNEL" = "stable" ]; then
+              echo "- Stable releases also advance the Beta channel when they are newer."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

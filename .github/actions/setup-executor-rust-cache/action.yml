@@ -1,0 +1,36 @@
+name: Set up executor Rust cache
+description: Restore executor Cargo sources and enable the shared compiler cache.
+
+inputs:
+  save-cache:
+    description: Whether this job may save the shared Cargo source cache
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up sccache
+      uses: ./.github/actions/setup-sccache
+
+    - name: Restore Cargo sources
+      if: inputs.save-cache != 'true'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
+
+    - name: Cache Cargo sources
+      if: inputs.save-cache == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-

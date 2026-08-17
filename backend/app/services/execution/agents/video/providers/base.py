@@ -8,7 +8,7 @@ Base class for video generation providers.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 
 @dataclass
@@ -29,6 +29,7 @@ class VideoJobResult:
     thumbnail: Optional[str] = None  # Base64
     duration: Optional[float] = None
     image: Optional[str] = None  # For follow-up reference
+    metadata: dict[str, Any] | None = None
 
 
 class VideoProvider(ABC):
@@ -46,6 +47,9 @@ class VideoProvider(ABC):
         prompt: str,
         reference_image: Optional[str] = None,
         image_mode: Optional[Literal["first_frame", "last_frame", "reference"]] = None,
+        reference_images: Optional[list] = None,
+        reference_videos: Optional[list] = None,
+        reference_audios: Optional[list] = None,
     ) -> str:
         """
         Create video generation job.

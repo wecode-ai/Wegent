@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
-import type { TeamBot, Team, PaginationParams, TaskType } from '@/types/api'
+import type { TeamBot, Team, PaginationParams, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
 
 // Team Request/Response Types
@@ -17,8 +17,14 @@ export interface CreateTeamRequest {
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library
+  inputPlaceholder?: TeamInputPlaceholder | null
   quick_phrases?: string[]
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
+}
+
+export interface TeamIdentityConfirmation {
+  forceIdentityChange: true
+  confirmName: string
 }
 
 export interface TeamListResponse {
@@ -147,12 +153,27 @@ export const teamApis = {
     const query = params.toString() ? `?${params.toString()}` : ''
     return apiClient.post(`/teams/${id}/copy${query}`)
   },
-  async deleteTeam(id: number, force: boolean = false): Promise<void> {
-    const queryParams = force ? '?force=true' : ''
-    await apiClient.delete(`/teams/${id}${queryParams}`)
+  async deleteTeam(id: number, confirmName?: string): Promise<void> {
+    const params = new URLSearchParams()
+    if (confirmName !== undefined) {
+      params.set('force', 'true')
+      params.set('confirm_name', confirmName)
+    }
+    const query = params.toString() ? `?${params.toString()}` : ''
+    await apiClient.delete(`/teams/${id}${query}`)
   },
-  async updateTeam(id: number, data: CreateTeamRequest): Promise<Team> {
-    return apiClient.put(`/teams/${id}`, data)
+  async updateTeam(
+    id: number,
+    data: CreateTeamRequest,
+    identityConfirmation?: TeamIdentityConfirmation
+  ): Promise<Team> {
+    const params = new URLSearchParams()
+    if (identityConfirmation) {
+      params.set('force_identity_change', 'true')
+      params.set('confirm_name', identityConfirmation.confirmName)
+    }
+    const query = params.toString() ? `?${params.toString()}` : ''
+    return apiClient.put(`/teams/${id}${query}`, data)
   },
   async shareTeam(id: number): Promise<TeamShareResponse> {
     return apiClient.post(`/teams/${id}/share`)

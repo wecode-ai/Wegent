@@ -12,10 +12,13 @@ Tests the image generation agent workflow including:
 """
 
 import asyncio
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from app.services.attachment.public_link import verify_public_attachment_token
 from shared.models import EventType, ExecutionRequest
 
 
@@ -35,7 +38,7 @@ class TestImageAgent:
     """Tests for ImageAgent."""
 
     @pytest.fixture
-    def mock_session_manager(self):
+    def mock_session_manager(self) -> Generator[MagicMock, None, None]:
         """Create mock session manager."""
         with patch("app.services.chat.storage.session.session_manager") as mock_manager:
             mock_cancel_event = asyncio.Event()
@@ -44,8 +47,18 @@ class TestImageAgent:
             mock_manager.is_cancelled = AsyncMock(return_value=False)
             yield mock_manager
 
+    @pytest.fixture(autouse=True)
+    def mock_shutdown_manager(self) -> Generator[MagicMock, None, None]:
+        """Create mock graceful shutdown manager."""
+        with patch(
+            "app.services.execution.agents.image.image_agent.shutdown_manager"
+        ) as mock_manager:
+            mock_manager.register_stream = AsyncMock(return_value=True)
+            mock_manager.unregister_stream = AsyncMock()
+            yield mock_manager
+
     @pytest.fixture
-    def mock_emitter(self):
+    def mock_emitter(self) -> AsyncMock:
         """Create mock result emitter."""
         emitter = AsyncMock()
         emitter.emit_start = AsyncMock()
@@ -53,7 +66,7 @@ class TestImageAgent:
         return emitter
 
     @pytest.fixture
-    def mock_intent_analyzer(self):
+    def mock_intent_analyzer(self) -> Generator[AsyncMock, None, None]:
         """Mock ImageIntentAnalyzer to prevent DB access in tests."""
         with patch(
             "app.services.execution.agents.image.image_agent.ImageIntentAnalyzer"
@@ -64,7 +77,7 @@ class TestImageAgent:
             yield mock_instance
 
     @pytest.fixture
-    def sample_request(self):
+    def sample_request(self) -> ExecutionRequest:
         """Create sample execution request."""
         return ExecutionRequest(
             task_id=1,
@@ -87,7 +100,12 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_normal_flow(
-        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
+        self,
+        mock_session_manager,
+        mock_shutdown_manager,
+        mock_emitter,
+        mock_intent_analyzer,
+        sample_request,
     ):
         """Test normal execution flow."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -131,7 +149,19 @@ class TestImageAgent:
         assert call_kwargs["subtask_id"] == 100
         assert call_kwargs["message_id"] == 200
 
+        image_block_events = [
+            call[0][0]
+            for call in mock_emitter.emit.call_args_list
+            if call[0][0].type == EventType.CHUNK
+            and call[0][0].result
+            and call[0][0].result.get("blocks")
+        ]
+        assert image_block_events[0].result["blocks"][0]["image_size"] == "2048x2048"
+
         # Verify provider was called with correct prompt
+        mock_get_provider.assert_called_once_with(
+            "seedream", sample_request.model_config
+        )
         mock_provider.generate.assert_called_once()
         call_kwargs = mock_provider.generate.call_args[1]
         assert call_kwargs["prompt"] == "A beautiful sunset over the ocean"
@@ -153,10 +183,17 @@ class TestImageAgent:
 
         # Verify session was unregistered
         mock_session_manager.unregister_stream.assert_called_once_with(100)
+        mock_shutdown_manager.register_stream.assert_awaited_once_with(100)
+        mock_shutdown_manager.unregister_stream.assert_awaited_once_with(100)
 
     @pytest.mark.asyncio
     async def test_execute_with_cancellation(
-        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
+        self,
+        mock_session_manager,
+        mock_shutdown_manager,
+        mock_emitter,
+        mock_intent_analyzer,
+        sample_request,
     ):
         """Test execution with cancellation."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -183,6 +220,7 @@ class TestImageAgent:
 
         # Verify session was unregistered
         mock_session_manager.unregister_stream.assert_called_once_with(100)
+        mock_shutdown_manager.unregister_stream.assert_awaited_once_with(100)
 
     @pytest.mark.asyncio
     async def test_execute_with_cancel_event_set(
@@ -212,7 +250,12 @@ class TestImageAgent:
 
     @pytest.mark.asyncio
     async def test_execute_with_provider_error(
-        self, mock_session_manager, mock_emitter, mock_intent_analyzer, sample_request
+        self,
+        mock_session_manager,
+        mock_shutdown_manager,
+        mock_emitter,
+        mock_intent_analyzer,
+        sample_request,
     ):
         """Test execution with provider error."""
         from app.services.execution.agents.image.image_agent import ImageAgent
@@ -246,8 +289,19 @@ class TestImageAgent:
         assert error_event.subtask_id == 100
         assert "API rate limit exceeded" in error_event.error
 
+        image_block_events = [
+            call[0][0]
+            for call in mock_emitter.emit.call_args_list
+            if call[0][0].type == EventType.CHUNK
+            and call[0][0].result
+            and call[0][0].result.get("blocks")
+        ]
+        assert image_block_events[-1].result["blocks"][0]["status"] == "error"
+        assert image_block_events[-1].result["blocks"][0]["is_placeholder"] is False
+
         # Verify session was unregistered
         mock_session_manager.unregister_stream.assert_called_once_with(100)
+        mock_shutdown_manager.unregister_stream.assert_awaited_once_with(100)
 
     @pytest.mark.asyncio
     async def test_execute_with_no_images_generated(
@@ -331,7 +385,7 @@ class TestImageAgent:
                 await agent.execute(sample_request, mock_emitter)
 
         # Assert
-        # Verify DONE event was emitted with data URL
+        # Verify upload receives the provider data URL while DONE uses the attachment URL
         done_calls = [
             call
             for call in mock_emitter.emit.call_args_list
@@ -340,8 +394,18 @@ class TestImageAgent:
         assert len(done_calls) == 1
         done_event = done_calls[0][0][0]
         image_urls = done_event.result["blocks"][0]["image_urls"]
-        assert len(image_urls) == 1
-        assert image_urls[0].startswith("data:image/jpeg;base64,")
+        assert image_urls == ["/api/attachments/999/download"]
+        image_download_urls = done_event.result["blocks"][0]["image_download_urls"]
+        download_token = parse_qs(urlparse(image_download_urls[0]).query)["token"][0]
+        token_payload = verify_public_attachment_token(download_token)
+        assert token_payload["attachment_id"] == 999
+        assert token_payload["exp"] - token_payload["iat"] == 3600
+        assert (
+            done_event.result["blocks"][0]["image_download_url_expires_in_seconds"]
+            == 3600
+        )
+        uploaded_url = mock_upload.await_args.kwargs["image_url"]
+        assert uploaded_url.startswith("data:image/jpeg;base64,")
 
     @pytest.mark.asyncio
     async def test_execute_with_multiple_images(
@@ -393,8 +457,12 @@ class TestImageAgent:
         done_event = done_calls[0][0][0]
         image_block = done_event.result["blocks"][0]
         assert image_block["image_count"] == 3
-        assert len(image_block["image_urls"]) == 3
-        assert len(image_block["image_attachment_ids"]) == 3
+        assert image_block["image_urls"] == [
+            "/api/attachments/1001/download",
+            "/api/attachments/1002/download",
+            "/api/attachments/1003/download",
+        ]
+        assert image_block["image_attachment_ids"] == [1001, 1002, 1003]
 
     def test_agent_name(self):
         """Test agent name property."""

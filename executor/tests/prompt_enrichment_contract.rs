@@ -3,7 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde_json::json;
-use wegent_executor::prompt_enrichment::inject_kb_meta_prompt;
+use wegent_executor::prompt_enrichment::{inject_kb_meta_prompt, inject_selected_knowledge_prompt};
+
+#[test]
+fn selected_knowledge_prompt_is_injected_for_code_tasks() {
+    let result = inject_selected_knowledge_prompt(
+        &json!("Implement the requested change."),
+        "<selected_knowledge_sources><source provider=\"ap\" /></selected_knowledge_sources>",
+    );
+
+    let text = result.as_str().unwrap();
+    assert!(text.starts_with("<selected_knowledge_sources>"));
+    assert!(text.ends_with("Implement the requested change."));
+}
 
 #[test]
 fn kb_meta_prompt_is_prepended_for_chat_string_prompt() {

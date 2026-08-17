@@ -248,6 +248,33 @@ fn archive_includes_symlink_entries_without_following_targets() {
     assert!(!names.iter().any(|name| name.starts_with("workspace/loop/")));
 }
 
+#[cfg(unix)]
+#[test]
+fn archive_survives_dangling_symlinks() {
+    let root = temp_root("archive-dangling-symlink");
+    let workspace = root.join("workspace").join("10170482707511");
+    let home = root.join("home");
+    write_file(&workspace.join("keep.txt"), "keep");
+    fs::create_dir_all(workspace.join(".gitlab")).unwrap();
+    symlink(
+        workspace.join(".gitlab").join("missing-target.md"),
+        workspace.join(".gitlab").join("CLAUDE.md"),
+    )
+    .unwrap();
+
+    let archive = create_runtime_archive(ArchiveOptions {
+        mode: ArchiveMode::Sandbox,
+        workspace_path: workspace,
+        home_path: home,
+        max_size_bytes: 10 * 1024 * 1024,
+    })
+    .unwrap();
+    let names = archive_names(&archive.bytes);
+
+    assert!(names.contains(&"workspace/keep.txt".to_owned()));
+    assert!(names.contains(&"workspace/.gitlab/CLAUDE.md".to_owned()));
+}
+
 fn archive_names(bytes: &[u8]) -> Vec<String> {
     let decoder = GzDecoder::new(Cursor::new(bytes));
     let mut archive = Archive::new(decoder);

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
@@ -20,6 +21,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -29,6 +31,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
 import {
   modelApis,
   ModelCRD,
@@ -39,7 +42,12 @@ import {
   EmbeddingConfig,
   RerankConfig,
   VideoGenerationConfig,
+  VideoCapabilities,
+  AspectRatioOption,
+  ResolutionOption,
   AvailableModel,
+  UnifiedModel,
+  VisionSidecarModelRef,
 } from '@/apis/models'
 import {
   ImageConfigSection,
@@ -52,6 +60,15 @@ import {
   buildEmbeddingConfig,
   hasImageInputCapability,
 } from '@/features/settings/utils/embedding-model-config'
+import { CapabilityScopeSelector } from '@/features/resource-library/components/CapabilityScopeSelector'
+import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
+import type { Group } from '@/types/group'
+import {
+  matchesVisionSidecarRef,
+  visionSidecarModelKey,
+  visionSidecarModels,
+  visionSidecarRef,
+} from '@/features/settings/utils/vision-sidecar-model'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -68,6 +85,7 @@ export interface ModelFormData {
   customHeaders: string
   contextWindow?: number
   maxOutputTokens?: number
+  costIndex?: string
   // Type-specific configs
   ttsVoice?: string
   ttsSpeed?: number
@@ -80,8 +98,8 @@ export interface ModelFormData {
   rerankTopN?: number
   rerankReturnDocuments?: boolean
   // Video-specific configs
-  videoResolution?: '480p' | '720p' | '1080p'
-  videoRatio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
+  videoResolution?: string
+  videoRatio?: string
   videoDuration?: number
   videoGenerateAudio?: boolean
   videoDraft?: boolean
@@ -90,6 +108,8 @@ export interface ModelFormData {
   videoWatermark?: boolean
   supportsImageInput?: boolean
   supportsVideoInput?: boolean
+  isWeworkAvailable?: boolean
+  visionSidecarModel?: VisionSidecarModelRef
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
@@ -107,6 +127,7 @@ export interface ModelInitialData {
   protocol?: string
   contextWindow?: number
   maxOutputTokens?: number
+  costIndex?: string
   // Type-specific configs
   ttsConfig?: TTSConfig
   sttConfig?: STTConfig
@@ -116,6 +137,8 @@ export interface ModelInitialData {
   imageConfig?: import('@/apis/models').ImageGenerationConfig
   thinkingConfig?: Record<string, unknown>
   modelCapabilities?: ModelCapabilities
+  isWeworkAvailable?: boolean
+  visionSidecarModel?: VisionSidecarModelRef
 }
 
 /**
@@ -169,6 +192,7 @@ interface ModelEditDialogProps {
    * Scope for the model (personal or group)
    */
   scope?: 'personal' | 'group'
+  publicationGroups?: Group[]
 }
 
 // Model category type options
@@ -224,7 +248,7 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'custom', label: 'Custom API' },
   ],
   image: [
-    { value: 'openai', label: 'OpenAI DALL-E', hint: 'DALL-E 3' },
+    { value: 'gpt-image', label: 'OpenAI GPT Image', hint: 'gpt-image-2' },
     { value: 'doubao', label: 'Doubao', hint: '豆包图像生成' },
     { value: 'stability', label: 'Stability AI', hint: 'Stable Diffusion' },
     { value: 'midjourney', label: 'Midjourney', hint: 'Midjourney API' },
@@ -272,6 +296,14 @@ const GEMINI_DEEP_RESEARCH_MODEL_OPTIONS = [
   { value: 'custom', label: 'Custom...' },
 ]
 
+const OPENAI_BASE_URL = 'https://api.openai.com/v1'
+const GPT_IMAGE_DEFAULT_MODEL = 'gpt-image-2'
+
+const GPT_IMAGE_MODEL_OPTIONS = [
+  { value: GPT_IMAGE_DEFAULT_MODEL, label: 'gpt-image-2 (Recommended)' },
+  { value: 'custom', label: 'Custom...' },
+]
+
 const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   open,
   model,
@@ -281,6 +313,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   onSave,
   groupName,
   scope,
+  publicationGroups,
 }) => {
   const { t } = useTranslation()
   // Support both legacy model prop and new initialData prop
@@ -301,22 +334,37 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             baseUrl: model.spec.modelConfig?.env?.base_url,
             customHeaders: model.spec.modelConfig?.env?.custom_headers,
             protocol: model.spec.protocol,
-            contextWindow: model.spec.contextWindow,
-            maxOutputTokens: model.spec.maxOutputTokens,
+            contextWindow: model.spec.modelConfig?.context_window,
+            maxOutputTokens: model.spec.modelConfig?.max_output_tokens,
+            costIndex: model.spec.costIndex,
             ttsConfig: model.spec.ttsConfig,
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
-            modelCapabilities: model.spec.modelCapabilities,
+            modelCapabilities: getModelCapabilitiesFromSpec(model.spec),
             videoConfig: model.spec.videoConfig,
             imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
+            isWeworkAvailable: model.spec.isWeworkAvailable,
+            visionSidecarModel: model.spec.modelConfig?.visionSidecarModel,
           }
         : null)
     )
   }, [initialData, model])
   const isEditing = !!effectiveInitialData
   const isGroupScope = scope === 'group'
+  const publicationNamespace =
+    model?.metadata.namespace || (isGroupScope && groupName ? groupName : 'default')
+  const publicationScope = useCapabilityPublicationScope({
+    enabled: publicationGroups !== undefined,
+    open,
+    resourceType: 'model',
+    sourceName: isEditing ? effectiveInitialData?.name : undefined,
+    sourceNamespace: publicationNamespace,
+    groups: publicationGroups || [],
+    defaultTarget: publicationNamespace === 'default' ? 'personal' : 'team',
+    defaultGroupNames: publicationNamespace === 'default' ? [] : [publicationNamespace],
+  })
 
   // Form state
   const [modelIdName, setModelIdName] = useState('')
@@ -338,6 +386,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // LLM-specific config state
   const [contextWindow, setContextWindow] = useState<number | undefined>(undefined)
   const [maxOutputTokens, setMaxOutputTokens] = useState<number | undefined>(undefined)
+  const [costIndex, setCostIndex] = useState<string | undefined>(undefined)
   // Thinking/Reasoning config (JSON passthrough)
   const [thinkingConfigStr, setThinkingConfigStr] = useState('')
   const [thinkingConfigError, setThinkingConfigError] = useState('')
@@ -367,6 +416,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [videoSeed, setVideoSeed] = useState<number>(-1)
   const [videoCameraFixed, setVideoCameraFixed] = useState<boolean>(false)
   const [videoWatermark, setVideoWatermark] = useState<boolean>(false)
+  const [videoDefaultResolution, setVideoDefaultResolution] = useState('720p')
+  const [videoDefaultRatio, setVideoDefaultRatio] = useState('16:9')
+  const [videoDefaultDuration, setVideoDefaultDuration] = useState(5)
   // Image - use ImageConfigState from extracted component
   const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
 
@@ -374,11 +426,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [supportsImageInput, setSupportsImageInput] = useState(false)
   const [supportsVideoInput, setSupportsVideoInput] = useState(false)
 
+  // Wework desktop client availability
+  const [isWeworkAvailable, setIsWeworkAvailable] = useState(false)
+  const [selectedVisionSidecarKey, setSelectedVisionSidecarKey] = useState('')
+  const [availableVisionModels, setAvailableVisionModels] = useState<UnifiedModel[]>([])
+  const [loadingVisionModels, setLoadingVisionModels] = useState(false)
+
   // Video capabilities state
-  const [capRatios, setCapRatios] = useState<string[]>([])
-  const [capResolutions, setCapResolutions] = useState<string[]>([])
+  const [capRatios, setCapRatios] = useState<AspectRatioOption[]>([])
+  const [capResolutions, setCapResolutions] = useState<ResolutionOption[]>([])
   const [capDurations, setCapDurations] = useState<number[]>([])
   const [customDuration, setCustomDuration] = useState<string>('')
+  const [advancedCapabilities, setAdvancedCapabilities] = useState('')
+  const [advancedCapabilitiesError, setAdvancedCapabilitiesError] = useState('')
 
   // Fetch models state
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -393,8 +453,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   )
   const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
 
-  // Ref for dialog content to use as Popover container (fixes pointer-events issue in Dialog)
-  const dialogContentRef = React.useRef<HTMLDivElement>(null)
+  // Keep the Popover portal container stable across asynchronous form updates.
+  const [dialogContentElement, setDialogContentElement] = useState<HTMLDivElement | null>(null)
 
   // Reset form when dialog opens/closes or initialData changes
   useEffect(() => {
@@ -411,7 +471,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         const protocol = effectiveInitialData.protocol
         // Map model type to provider type
         // For video models, use protocol directly as provider type (seedance, runway, pika, etc.)
-        if (categoryType === 'video' && protocol) {
+        if ((categoryType === 'video' || categoryType === 'image') && protocol) {
           setProviderType(protocol)
         } else if (protocol === 'openai-responses') {
           // Check protocol first for openai-responses and gemini-deep-research
@@ -476,16 +536,29 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setVideoSeed(effectiveInitialData.videoConfig.seed ?? -1)
           setVideoCameraFixed(effectiveInitialData.videoConfig.camera_fixed ?? false)
           setVideoWatermark(effectiveInitialData.videoConfig.watermark ?? false)
+          setVideoDefaultResolution(effectiveInitialData.videoConfig.resolution ?? '720p')
+          setVideoDefaultRatio(effectiveInitialData.videoConfig.ratio ?? '16:9')
+          setVideoDefaultDuration(effectiveInitialData.videoConfig.duration ?? 5)
           // Load capabilities
           const caps = effectiveInitialData.videoConfig.capabilities
           if (caps) {
-            setCapRatios(caps.aspect_ratios?.map(r => r.value) ?? [])
-            setCapResolutions(caps.resolutions?.map(r => r.label) ?? [])
+            setCapRatios(caps.aspect_ratios ?? [])
+            setCapResolutions(caps.resolutions ?? [])
             setCapDurations(caps.durations_sec ?? [])
+            const {
+              aspect_ratios: _aspectRatios,
+              resolutions: _resolutions,
+              durations_sec: _durations,
+              ...advanced
+            } = caps
+            setAdvancedCapabilities(
+              Object.keys(advanced).length ? JSON.stringify(advanced, null, 2) : ''
+            )
           } else {
             setCapRatios([])
             setCapResolutions([])
             setCapDurations([])
+            setAdvancedCapabilities('')
           }
         }
         // Load image-specific configs
@@ -495,6 +568,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Load LLM-specific configs
         setContextWindow(effectiveInitialData.contextWindow)
         setMaxOutputTokens(effectiveInitialData.maxOutputTokens)
+        setCostIndex(effectiveInitialData.costIndex)
         // Load thinking config
         if (
           effectiveInitialData.thinkingConfig &&
@@ -508,6 +582,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Load multimodal capabilities (LLM models)
         setSupportsImageInput(effectiveInitialData.modelCapabilities?.supportsImage ?? false)
         setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
+        // Load wework availability
+        setIsWeworkAvailable(effectiveInitialData.isWeworkAvailable ?? false)
+        setSelectedVisionSidecarKey('')
       } else {
         // Reset for new model
         setModelIdName('')
@@ -538,16 +615,25 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoSeed(-1)
         setVideoCameraFixed(false)
         setVideoWatermark(false)
+        setVideoDefaultResolution('720p')
+        setVideoDefaultRatio('16:9')
+        setVideoDefaultDuration(5)
         // Reset image-specific configs
         setImageConfig(getDefaultImageConfig())
         // Reset multimodal capabilities
         setSupportsImageInput(false)
         setSupportsVideoInput(false)
+        // Reset wework availability
+        setIsWeworkAvailable(false)
+        setSelectedVisionSidecarKey('')
+        setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
         setCapResolutions([])
         setCapDurations([])
         setCustomDuration('')
+        setAdvancedCapabilities('')
+        setAdvancedCapabilitiesError('')
         // Reset LLM-specific configs
         setContextWindow(undefined)
         setMaxOutputTokens(undefined)
@@ -560,26 +646,67 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }, [open, effectiveInitialData])
 
+  useEffect(() => {
+    if (!open || modelCategoryType !== 'llm' || !isWeworkAvailable) {
+      setAvailableVisionModels([])
+      return
+    }
+    let cancelled = false
+    setLoadingVisionModels(true)
+    void modelApis
+      .getUnifiedModels(undefined, true, 'all', undefined, 'llm')
+      .then(response => {
+        if (cancelled) return
+        setAvailableVisionModels(response.data)
+        const initialRef = effectiveInitialData?.visionSidecarModel
+        if (initialRef) {
+          const selected = response.data.find(candidate =>
+            matchesVisionSidecarRef(candidate, initialRef)
+          )
+          setSelectedVisionSidecarKey(selected ? visionSidecarModelKey(selected) : '')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableVisionModels([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingVisionModels(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveInitialData?.visionSidecarModel, isWeworkAvailable, modelCategoryType, open])
+
+  const visionModelOptions = React.useMemo(
+    () => visionSidecarModels(availableVisionModels, modelIdName),
+    [availableVisionModels, modelIdName]
+  )
+
   // Determine model options based on model category type and provider
   // For embedding/rerank/image, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
   // For video models, use provider-specific options
-  const baseModelOptions =
-    modelCategoryType === 'embedding' ||
-    modelCategoryType === 'rerank' ||
-    modelCategoryType === 'image'
-      ? [{ value: 'custom', label: 'Custom...' }]
-      : modelCategoryType === 'video'
-        ? providerType === 'seedance'
-          ? SEEDANCE_MODEL_OPTIONS
-          : [{ value: 'custom', label: 'Custom...' }]
-        : providerType === 'openai' || providerType === 'openai-responses'
-          ? OPENAI_MODEL_OPTIONS
-          : providerType === 'gemini'
-            ? GEMINI_MODEL_OPTIONS
-            : providerType === 'gemini-deep-research'
-              ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
-              : ANTHROPIC_MODEL_OPTIONS
+  const baseModelOptions = React.useMemo(
+    () =>
+      modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
+        ? [{ value: 'custom', label: 'Custom...' }]
+        : modelCategoryType === 'image'
+          ? providerType === 'gpt-image'
+            ? GPT_IMAGE_MODEL_OPTIONS
+            : [{ value: 'custom', label: 'Custom...' }]
+          : modelCategoryType === 'video'
+            ? providerType === 'seedance'
+              ? SEEDANCE_MODEL_OPTIONS
+              : [{ value: 'custom', label: 'Custom...' }]
+            : providerType === 'openai' || providerType === 'openai-responses'
+              ? OPENAI_MODEL_OPTIONS
+              : providerType === 'gemini'
+                ? GEMINI_MODEL_OPTIONS
+                : providerType === 'gemini-deep-research'
+                  ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+                  : ANTHROPIC_MODEL_OPTIONS,
+    [modelCategoryType, providerType]
+  )
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -627,13 +754,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
     // For embedding/rerank/image, automatically set to custom mode
     // For video, reset model selection
-    if (value === 'embedding' || value === 'rerank' || value === 'image') {
+    if (value === 'embedding' || value === 'rerank') {
       setModelId('custom')
       setCustomModelId('')
-      // Reset image-specific configs to defaults when switching to image
-      if (value === 'image') {
-        setImageConfig(getDefaultImageConfig())
-      }
+    } else if (value === 'image') {
+      setModelId(GPT_IMAGE_DEFAULT_MODEL)
+      setCustomModelId('')
+      setBaseUrl(OPENAI_BASE_URL)
+      setImageConfig(getDefaultImageConfig())
     } else if (value === 'video') {
       setModelId('')
       setCustomModelId('')
@@ -681,7 +809,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     // Only set default base URL for LLM models
     if (modelCategoryType === 'llm') {
       if (value === 'openai' || value === 'openai-responses') {
-        setBaseUrl('https://api.openai.com/v1')
+        setBaseUrl(OPENAI_BASE_URL)
       } else if (value === 'gemini') {
         setBaseUrl('https://generativelanguage.googleapis.com')
       } else if (value === 'gemini-deep-research') {
@@ -699,8 +827,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       }
     } else if (modelCategoryType === 'image') {
       // Set default base URL for image providers
-      if (value === 'openai') {
-        setBaseUrl('https://api.openai.com/v1')
+      if (value === 'gpt-image') {
+        setBaseUrl(OPENAI_BASE_URL)
+        setModelId(GPT_IMAGE_DEFAULT_MODEL)
+        setImageConfig(getDefaultImageConfig())
       } else if (value === 'doubao') {
         setBaseUrl('https://ark.cn-beijing.volces.com/api/v3')
       } else {
@@ -737,7 +867,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           | 'anthropic'
           | 'gemini'
           | 'gemini-deep-research'
-          | 'openai-responses',
+          | 'openai-responses'
+          | 'gpt-image',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
@@ -1003,6 +1134,18 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return
     }
 
+    if (
+      publicationGroups &&
+      publicationScope.target === 'team' &&
+      publicationScope.groupNames.length === 0
+    ) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:new_capability.select_groups'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       // Build type-specific config based on modelCategoryType
@@ -1040,16 +1183,39 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      let parsedAdvancedCapabilities: VideoCapabilities = {}
+      if (modelCategoryType === 'video' && advancedCapabilities.trim()) {
+        try {
+          const parsed: unknown = JSON.parse(advancedCapabilities)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Capabilities must be an object')
+          }
+          parsedAdvancedCapabilities = parsed as VideoCapabilities
+          setAdvancedCapabilitiesError('')
+        } catch {
+          setAdvancedCapabilitiesError(t('common:models.video_advanced_capabilities_invalid'))
+          toast({
+            variant: 'destructive',
+            title: t('common:models.video_advanced_capabilities_invalid'),
+          })
+          return
+        }
+      }
+
       // Build video capabilities if any are configured
       const hasCapabilities =
-        capRatios.length > 0 || capResolutions.length > 0 || capDurations.length > 0
+        capRatios.length > 0 ||
+        capResolutions.length > 0 ||
+        capDurations.length > 0 ||
+        Object.keys(parsedAdvancedCapabilities).length > 0
       const capabilities = hasCapabilities
         ? {
+            ...parsedAdvancedCapabilities,
             ...(capRatios.length > 0 && {
-              aspect_ratios: capRatios.map(v => ({ label: v, value: v })),
+              aspect_ratios: capRatios,
             }),
             ...(capResolutions.length > 0 && {
-              resolutions: capResolutions.map(v => ({ label: v })),
+              resolutions: capResolutions,
             }),
             ...(capDurations.length > 0 && { durations_sec: capDurations }),
           }
@@ -1058,17 +1224,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const videoConfig: VideoGenerationConfig | undefined =
         modelCategoryType === 'video'
           ? {
-              // Derive defaults from capabilities (first item = default)
-              resolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
-              ratio: (capRatios[0] || '16:9') as
-                | '16:9'
-                | '4:3'
-                | '1:1'
-                | '3:4'
-                | '9:16'
-                | '21:9'
-                | 'adaptive',
-              duration: capDurations[0] || 5,
+              resolution: capResolutions.some(
+                option => (option.value ?? option.label) === videoDefaultResolution
+              )
+                ? videoDefaultResolution
+                : (capResolutions[0]?.value ?? capResolutions[0]?.label ?? '720p'),
+              ratio: capRatios.some(option => option.value === videoDefaultRatio)
+                ? videoDefaultRatio
+                : (capRatios[0]?.value ?? '16:9'),
+              duration: capDurations.includes(videoDefaultDuration)
+                ? videoDefaultDuration
+                : capDurations[0] || 5,
               generate_audio: videoGenerateAudio,
               draft: videoDraft,
               seed: videoSeed,
@@ -1092,6 +1258,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
           ? rawModelCapabilities
           : undefined
+      const selectedVisionModel =
+        modelCategoryType === 'llm' && isWeworkAvailable
+          ? visionModelOptions.find(
+              candidate => visionSidecarModelKey(candidate) === selectedVisionSidecarKey
+            )
+          : undefined
+      const selectedVisionSidecar = selectedVisionModel
+        ? (visionSidecarRef(selectedVisionModel) ?? undefined)
+        : undefined
 
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
@@ -1132,18 +1307,34 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   thinking_config: parsedThinkingConfig,
                 }),
             },
+            ...(modelCategoryType === 'llm' &&
+              contextWindow && {
+                context_window: contextWindow,
+              }),
+            ...(modelCategoryType === 'llm' &&
+              maxOutputTokens && {
+                max_output_tokens: maxOutputTokens,
+              }),
+            ...(selectedVisionSidecar && { visionSidecarModel: selectedVisionSidecar }),
           },
           modelType: modelCategoryType,
-          // Save protocol for openai-responses and gemini-deep-research to distinguish from regular variants
-          ...(providerType === 'openai-responses' && { protocol: 'openai-responses' }),
+          // Save protocol/apiFormat so downstream routing can pick the right upstream endpoint.
+          // Plain OpenAI maps to Chat Completions; openai-responses maps to Responses.
+          ...(providerType === 'openai' && {
+            protocol: 'openai',
+            apiFormat: 'chat/completions',
+          }),
+          ...(providerType === 'openai-responses' && {
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+          }),
           ...(providerType === 'gemini-deep-research' && { protocol: 'gemini-deep-research' }),
           // Save protocol for video models to specify the provider (seedance, runway, pika, etc.)
           ...(modelCategoryType === 'video' && { protocol: providerType }),
           // Save protocol for image models to specify the provider (openai, doubao, stability, etc.)
           ...(modelCategoryType === 'image' && { protocol: providerType }),
           // LLM-specific fields
-          ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
-          ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
+          ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
           ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
           ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
           ...(ttsConfig && { ttsConfig }),
@@ -1153,6 +1344,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(videoConfig && { videoConfig }),
           ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
           ...(modelCapabilities && { modelCapabilities }),
+          ...(isWeworkAvailable && { isWeworkAvailable: true }),
         },
         status: {
           state: 'Available',
@@ -1174,6 +1366,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         customHeaders,
         contextWindow,
         maxOutputTokens,
+        costIndex,
         ttsVoice,
         ttsSpeed,
         ttsOutputFormat,
@@ -1185,16 +1378,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         rerankTopN,
         rerankReturnDocuments,
         // Video-specific configs (derive defaults from capabilities)
-        videoResolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
-        videoRatio: (capRatios[0] || '16:9') as
-          | '16:9'
-          | '4:3'
-          | '1:1'
-          | '3:4'
-          | '9:16'
-          | '21:9'
-          | 'adaptive',
-        videoDuration: capDurations[0] || 5,
+        videoResolution: videoConfig?.resolution,
+        videoRatio: videoConfig?.ratio,
+        videoDuration: videoConfig?.duration,
         videoGenerateAudio,
         videoDraft,
         videoSeed,
@@ -1202,6 +1388,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         videoWatermark,
         supportsImageInput,
         supportsVideoInput,
+        isWeworkAvailable,
+        visionSidecarModel: selectedVisionSidecar,
       }
 
       // If custom onSave callback is provided, use it
@@ -1214,15 +1402,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Default behavior: use modelApis for user models
         if (isEditing && model) {
           await modelApis.updateModel(model.metadata.name, modelCRD)
-          toast({
-            title: t('common:models.update_success'),
-          })
         } else {
           await modelApis.createModel(modelCRD)
-          toast({
-            title: t('common:models.create_success'),
+        }
+        if (publicationGroups) {
+          await publicationScope.savePublicationScope({
+            sourceName: modelCRD.metadata.name,
+            sourceNamespace: modelCRD.metadata.namespace,
+            displayName: modelCRD.metadata.displayName || modelCRD.metadata.name,
           })
         }
+        toast({
+          title: isEditing ? t('common:models.update_success') : t('common:models.create_success'),
+        })
         onClose()
       }
     } catch (error) {
@@ -1239,14 +1431,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   }
 
   const apiKeyPlaceholder =
-    providerType === 'openai' || providerType === 'openai-responses'
+    providerType === 'openai' || providerType === 'openai-responses' || providerType === 'gpt-image'
       ? 'sk-...'
       : providerType === 'gemini' || providerType === 'gemini-deep-research'
         ? 'AIza...'
         : 'sk-ant-...'
   const baseUrlPlaceholder =
-    providerType === 'openai' || providerType === 'openai-responses'
-      ? 'https://api.openai.com/v1'
+    providerType === 'openai' || providerType === 'openai-responses' || providerType === 'gpt-image'
+      ? OPENAI_BASE_URL
       : providerType === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
         : providerType === 'gemini-deep-research'
@@ -1255,11 +1447,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
-      <DialogContent ref={dialogContentRef} className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        ref={setDialogContentElement}
+        className="max-w-2xl max-h-[90vh] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>
             {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
           </DialogTitle>
+          <DialogDescription>{t('common:models.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -1354,6 +1550,22 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             </div>
           </div>
 
+          {/* Wework availability toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="wework-available" className="text-sm font-medium">
+                {t('common:models.wework_available')}
+              </Label>
+              <p className="text-xs text-text-muted">{t('common:models.wework_available_hint')}</p>
+            </div>
+            <Switch
+              id="wework-available"
+              data-testid="model-wework-available-switch"
+              checked={isWeworkAvailable}
+              onCheckedChange={checked => setIsWeworkAvailable(checked)}
+            />
+          </div>
+
           {/* Provider Type and Model ID - Two columns */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -1416,6 +1628,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     variant="outline"
                     role="combobox"
                     aria-expanded={modelIdPopoverOpen}
+                    data-testid="model-id-select"
                     className="w-full justify-between bg-base font-normal"
                   >
                     {modelId
@@ -1428,7 +1641,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   className="w-[--radix-popover-trigger-width] p-0"
                   align="start"
                   onOpenAutoFocus={e => e.preventDefault()}
-                  container={dialogContentRef.current}
+                  container={dialogContentElement}
                 >
                   <div className="p-2 border-b">
                     <Input
@@ -1436,7 +1649,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       value={modelIdSearch}
                       onChange={e => setModelIdSearch(e.target.value)}
                       className="h-8"
-                      autoFocus
                     />
                   </div>
                   <div className="p-1" style={{ maxHeight: '200px', overflowY: 'auto' }}>
@@ -1487,6 +1699,52 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               )}
             </div>
           </div>
+
+          {modelCategoryType === 'llm' && isWeworkAvailable && (
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <Label htmlFor="vision-sidecar-model" className="text-sm font-medium">
+                {t('common:models.vision_sidecar_model')}
+              </Label>
+              <Select
+                value={selectedVisionSidecarKey || 'disabled'}
+                onValueChange={value =>
+                  setSelectedVisionSidecarKey(value === 'disabled' ? '' : value)
+                }
+                disabled={loadingVisionModels}
+              >
+                <SelectTrigger
+                  id="vision-sidecar-model"
+                  data-testid="vision-sidecar-model-select"
+                  className="bg-base"
+                >
+                  <SelectValue
+                    placeholder={
+                      loadingVisionModels
+                        ? t('common:models.vision_sidecar_loading')
+                        : t('common:models.vision_sidecar_disabled')
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disabled">
+                    {t('common:models.vision_sidecar_disabled')}
+                  </SelectItem>
+                  {visionModelOptions.map(candidate => (
+                    <SelectItem
+                      key={visionSidecarModelKey(candidate)}
+                      value={visionSidecarModelKey(candidate)}
+                    >
+                      {candidate.displayName || candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-text-muted">{t('common:models.vision_sidecar_hint')}</p>
+              {!loadingVisionModels && visionModelOptions.length === 0 && (
+                <p className="text-xs text-warning">{t('common:models.vision_sidecar_empty')}</p>
+              )}
+            </div>
+          )}
 
           {/* API Key */}
           <div className="space-y-2">
@@ -1551,7 +1809,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
           {/* LLM-specific fields - Context Window and Max Output Tokens */}
           {modelCategoryType === 'llm' && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="context_window" className="text-sm font-medium">
                   {t('common:models.context_window')}
@@ -1581,6 +1839,21 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 <p className="text-xs text-text-muted">
                   {t('common:models.max_output_tokens_hint')}
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cost_index" className="text-sm font-medium">
+                  {t('common:models.cost_index')}
+                </Label>
+                <Input
+                  id="cost_index"
+                  data-testid="model-cost-index-input"
+                  type="text"
+                  value={costIndex ?? ''}
+                  onChange={e => setCostIndex(e.target.value || undefined)}
+                  placeholder="1"
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">{t('common:models.cost_index_hint')}</p>
               </div>
             </div>
           )}
@@ -1870,12 +2143,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                         type="button"
                         onClick={() =>
                           setCapRatios(prev =>
-                            prev.includes(ratio) ? prev.filter(r => r !== ratio) : [...prev, ratio]
+                            prev.some(option => option.value === ratio)
+                              ? prev.filter(option => option.value !== ratio)
+                              : [...prev, { label: ratio, value: ratio }]
                           )
                         }
                         className={cn(
                           'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capRatios.includes(ratio)
+                          capRatios.some(option => option.value === ratio)
                             ? 'bg-primary/10 border-primary text-primary'
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
@@ -1898,12 +2173,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                         type="button"
                         onClick={() =>
                           setCapResolutions(prev =>
-                            prev.includes(res) ? prev.filter(r => r !== res) : [...prev, res]
+                            prev.some(option => (option.value ?? option.label) === res)
+                              ? prev.filter(option => (option.value ?? option.label) !== res)
+                              : [...prev, { label: res, value: res }]
                           )
                         }
                         className={cn(
                           'px-3 py-1.5 text-xs rounded-md border transition-colors',
-                          capResolutions.includes(res)
+                          capResolutions.some(option => (option.value ?? option.label) === res)
                             ? 'bg-primary/10 border-primary text-primary'
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
@@ -1912,6 +2189,31 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="space-y-2 mt-4">
+                  <Label htmlFor="video-advanced-capabilities" className="text-sm font-medium">
+                    {t('common:models.video_advanced_capabilities')}
+                  </Label>
+                  <Textarea
+                    id="video-advanced-capabilities"
+                    data-testid="video-advanced-capabilities"
+                    value={advancedCapabilities}
+                    onChange={event => {
+                      setAdvancedCapabilities(event.target.value)
+                      setAdvancedCapabilitiesError('')
+                    }}
+                    placeholder='{"supports_image_input":true,"supports_video_input":true,"generation_modes":[...]}'
+                    className={`min-h-[180px] bg-base font-mono text-xs ${
+                      advancedCapabilitiesError ? 'border-error' : ''
+                    }`}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.video_advanced_capabilities_hint')}
+                  </p>
+                  {advancedCapabilitiesError && (
+                    <p className="text-xs text-error">{advancedCapabilitiesError}</p>
+                  )}
                 </div>
 
                 {/* Supported durations */}
@@ -2118,6 +2420,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               onChange={changes => setImageConfig(prev => ({ ...prev, ...changes }))}
             />
           )}
+
+          {publicationGroups && (
+            <div data-testid="model-publish-scope-section">
+              <CapabilityScopeSelector
+                value={publicationScope.target}
+                groups={publicationScope.writableGroups}
+                groupNames={publicationScope.groupNames}
+                onChange={publicationScope.handleChange}
+                existingResource={isEditing}
+                multipleGroups
+              />
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
@@ -2134,7 +2449,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             <Button variant="outline" onClick={onClose}>
               {t('common:actions.cancel')}
             </Button>
-            <Button variant="primary" onClick={handleSave} disabled={saving}>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              disabled={saving || publicationScope.loading}
+            >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>

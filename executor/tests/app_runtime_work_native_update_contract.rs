@@ -46,7 +46,7 @@ impl Drop for EnvGuard {
 }
 
 #[tokio::test]
-async fn runtime_task_list_trusts_native_thread_status_without_rollout_probe() {
+async fn runtime_task_list_uses_provider_turn_status_without_inheriting_stale_thread_state() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -117,25 +117,41 @@ async fn runtime_task_list_trusts_native_thread_status_without_rollout_probe() {
         .iter()
         .find(|task| task["taskId"] == "thread-running-rollout")
         .unwrap();
+    let running_by_turn = tasks
+        .iter()
+        .find(|task| task["taskId"] == "thread-running-turn")
+        .unwrap();
+    let running_by_thread_status = tasks
+        .iter()
+        .find(|task| task["taskId"] == "thread-running-status")
+        .unwrap();
     let idle = tasks
         .iter()
         .find(|task| task["taskId"] == "thread-idle")
         .unwrap();
-    let active_completed = tasks
+    let native_active = tasks
         .iter()
         .find(|task| task["taskId"] == "thread-active-completed")
         .unwrap();
 
     assert_eq!(running_by_rollout["status"], "active");
     assert_eq!(running_by_rollout["running"], false);
+    assert_eq!(running_by_turn["status"], "running");
+    assert_eq!(running_by_turn["running"], true);
+    assert_eq!(running_by_turn["threadStatus"], "idle");
+    assert_eq!(running_by_turn["turnStatus"], "inProgress");
+    assert_eq!(running_by_thread_status["status"], "active");
+    assert_eq!(running_by_thread_status["running"], false);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
-    assert_eq!(active_completed["status"], "active");
-    assert_eq!(active_completed["running"], false);
+    assert_eq!(native_active["status"], "active");
+    assert_eq!(native_active["running"], false);
+    assert_eq!(native_active["threadStatus"], "idle");
+    assert_eq!(native_active["turnStatus"], "completed");
 }
 
 #[tokio::test]
-async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() {
+async fn runtime_task_list_ignores_persisted_running_state_when_thread_is_idle() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-running-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -206,14 +222,10 @@ async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() 
     assert_eq!(locally_running["title"], "Locally running idle");
     assert_eq!(locally_running["status"], "active");
     assert_eq!(locally_running["running"], false);
-    let persisted: serde_json::Value =
-        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
-    assert_eq!(persisted["tasks"]["local-running-idle"]["status"], "active");
-    assert_eq!(persisted["tasks"]["local-running-idle"]["running"], false);
 }
 
 #[tokio::test]
-async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
+async fn runtime_task_list_ignores_persisted_running_state_when_thread_is_missing() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-missing-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -266,22 +278,11 @@ async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
         .find(|task| task["taskId"] == "local-running-missing")
         .unwrap();
 
-    assert_eq!(missing["status"], "active");
     assert_eq!(missing["running"], false);
-    let persisted: serde_json::Value =
-        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
-    assert_eq!(
-        persisted["tasks"]["local-running-missing"]["status"],
-        "active"
-    );
-    assert_eq!(
-        persisted["tasks"]["local-running-missing"]["running"],
-        false
-    );
 }
 
 #[tokio::test]
-async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_still_looks_running() {
+async fn runtime_task_list_ignores_persisted_failed_state_when_codex_thread_is_idle() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-failed-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -334,8 +335,11 @@ async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_stil
         .find(|task| task["taskId"] == "local-failed-running-rollout")
         .unwrap();
 
-    assert_eq!(locally_failed["status"], "failed");
+    assert_eq!(locally_failed["status"], "active");
     assert_eq!(locally_failed["running"], false);
+    assert_eq!(locally_failed["continuable"], true);
+    assert_eq!(locally_failed["threadStatus"], "idle");
+    assert!(locally_failed["turnStatus"].is_null());
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {

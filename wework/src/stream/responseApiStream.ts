@@ -3,7 +3,8 @@ import type {
   RuntimeContextUsage,
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
-  RuntimePlanEventPayload,
+  RuntimeSupervisorState,
+  RuntimeTaskTitleUpdatedPayload,
   RuntimeTokenUsageBreakdown,
 } from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
@@ -46,9 +47,11 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.block.updated',
   'response.subagent.activity',
   'response.guidance.applied',
+  'runtime.task.title.updated',
   'runtime.goal.updated',
   'runtime.goal.cleared',
   'runtime.goal.continuation',
+  'runtime.supervisor.updated',
   'runtime.plan.updated',
   'thread/tokenUsage/updated',
   'thread.tokenUsage.updated',
@@ -61,22 +64,6 @@ export interface ResponseApiStreamState {
 }
 
 const IMAGE_GENERATION_TOOL_NAME = 'image_generation'
-
-const runtimeTaskPlans = new Map<string, RuntimePlanEventPayload>()
-
-function runtimeTaskPlanKey(
-  payload: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
-): string | null {
-  if (!payload.deviceId || !payload.taskId) return null
-  return `${payload.deviceId}:${payload.taskId}`
-}
-
-export function getCachedRuntimeTaskPlan(
-  address: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
-): RuntimePlanEventPayload | null {
-  const key = runtimeTaskPlanKey(address)
-  return key ? (runtimeTaskPlans.get(key) ?? null) : null
-}
 
 export function createResponseApiStreamState(): ResponseApiStreamState {
   return { toolContexts: new Map() }
@@ -129,6 +116,11 @@ function eventBase(payload: Record<string, unknown>) {
   return {
     taskId: idField(payload, 'taskId') ?? idField(data, 'taskId'),
     subtaskId: idField(payload, 'subtaskId') ?? idField(data, 'subtaskId'),
+    clientUserMessageId:
+      idField(payload, 'clientUserMessageId') ??
+      idField(payload, 'client_user_message_id') ??
+      idField(data, 'clientUserMessageId') ??
+      idField(data, 'client_user_message_id'),
     deviceId: stringField(payload, 'deviceId') ?? stringField(data, 'deviceId'),
   }
 }
@@ -545,6 +537,9 @@ function emitResponseBlockCreated(
   handlers.onBlockCreated?.({
     ...base,
     block: block as ChatBlock,
+    ...(stringField(data, 'replacesItemId') && {
+      replacesItemId: stringField(data, 'replacesItemId'),
+    }),
   })
 }
 
@@ -553,6 +548,13 @@ function emitResponseBlockUpdated(
   base: ReturnType<typeof eventBase>,
   data: Record<string, unknown>
 ): void {
+  const block = data.block
+  if (typeof block === 'object' && block !== null && !Array.isArray(block)) {
+    handlers.onBlockCreated?.({
+      ...base,
+      block: block as ChatBlock,
+    })
+  }
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
   const renderPayload = updates.renderPayload ?? updates.render_payload
@@ -561,6 +563,10 @@ function emitResponseBlockUpdated(
   const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
   const toolOutputOriginalBytes =
     updates.toolOutputOriginalBytes ?? updates.tool_output_original_bytes
+  const completedAt =
+    optionalNumberField(updates, 'completedAt') ?? optionalNumberField(updates, 'completed_at')
+  const durationMs =
+    optionalNumberField(updates, 'durationMs') ?? optionalNumberField(updates, 'duration_ms')
   emitBlockUpdated(
     handlers,
     'response.block.updated',
@@ -586,6 +592,8 @@ function emitResponseBlockUpdated(
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
       }),
+      ...(completedAt !== undefined && { completedAt }),
+      ...(durationMs !== undefined && { durationMs }),
     }
   )
 }
@@ -668,9 +676,21 @@ export function emitResponseApiEvent(
   const data = eventResult(payload)
 
   if (eventName === 'response.created' || eventName === 'response.in_progress') {
+    const generatedUserMessage = asRecord(payload.runtimeGeneratedUserMessage)
+    const generatedUserMessageId = stringField(generatedUserMessage, 'id')
+    const generatedUserMessageContent = stringField(generatedUserMessage, 'message')
     handlers.onChatStart?.({
       ...base,
       shellType: stringField(payload, 'runtime'),
+      ...(generatedUserMessageId &&
+        generatedUserMessageContent && {
+          runtimeGeneratedUserMessage: {
+            id: generatedUserMessageId,
+            message: generatedUserMessageContent,
+            createdAt: optionalNumberField(generatedUserMessage, 'createdAt') ?? Date.now(),
+            source: asRecord(generatedUserMessage.source),
+          },
+        }),
     })
     return
   }
@@ -683,9 +703,28 @@ export function emitResponseApiEvent(
     }
     handlers.onChatChunk?.({
       ...base,
+      itemId: idField(data, 'itemId') ?? idField(data, 'item_id'),
       content,
       ...(eventOffset(payload) !== undefined && { offset: eventOffset(payload) }),
       result: eventResult(payload),
+    })
+    return
+  }
+
+  if (eventName === 'response.output_text.done') {
+    const content =
+      stringField(data, 'text') ?? stringField(data, 'value') ?? stringField(data, 'output_text')
+    const itemId = idField(data, 'itemId') ?? idField(data, 'item_id')
+    if (!content || !itemId) {
+      warnDroppedResponseDelta(eventName, 'missing_completed_text_identity', base, data)
+      return
+    }
+    handlers.onChatChunk?.({
+      ...base,
+      itemId,
+      content,
+      contentMode: 'snapshot',
+      result: data,
     })
     return
   }
@@ -727,12 +766,24 @@ export function emitResponseApiEvent(
     handlers.onGuidanceApplied?.({
       ...base,
       guidanceId: stringField(data, 'guidanceId') ?? stringField(data, 'guidance_id') ?? 'guidance',
+      clientGuidanceId:
+        stringField(data, 'clientGuidanceId') ?? stringField(data, 'client_guidance_id'),
       message: stringField(data, 'message') ?? '',
       appliedAtMs:
         optionalNumberField(data, 'appliedAtMs') ??
         optionalNumberField(data, 'applied_at_ms') ??
         Date.now(),
     })
+    return
+  }
+
+  if (eventName === 'runtime.task.title.updated') {
+    const title = stringField(data, 'title')
+    if (!title) return
+    handlers.onRuntimeTaskTitleUpdated?.({
+      ...base,
+      title,
+    } as RuntimeTaskTitleUpdatedPayload)
     return
   }
 
@@ -751,6 +802,14 @@ export function emitResponseApiEvent(
       ...base,
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: null,
+    })
+    return
+  }
+
+  if (eventName === 'runtime.supervisor.updated') {
+    handlers.onRuntimeSupervisorUpdated?.({
+      ...base,
+      supervisor: (data.supervisor ?? null) as RuntimeSupervisorState | null,
     })
     return
   }
@@ -792,8 +851,6 @@ export function emitResponseApiEvent(
         stepCount: payload.plan.length,
       })
     }
-    const planKey = runtimeTaskPlanKey(payload)
-    if (planKey) runtimeTaskPlans.set(planKey, payload)
     handlers.onRuntimePlanUpdated?.(payload)
     return
   }
@@ -866,6 +923,7 @@ export function emitResponseApiEvent(
       ...base,
       error: errorMessage(payload, data),
       type: stringField(payload, 'type') ?? eventName,
+      shellType: stringField(payload, 'runtime') ?? stringField(data, 'runtime'),
     })
   }
 }

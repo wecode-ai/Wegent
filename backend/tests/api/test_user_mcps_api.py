@@ -15,6 +15,7 @@ from app.api.dependencies import get_db
 from app.api.endpoints.users import router
 from app.core import security
 from app.models.user import User
+from app.services import mcp_provider_registry
 from shared.utils.crypto import is_data_encrypted
 
 
@@ -136,3 +137,39 @@ class TestUserMcpsAPI:
 
         assert response.status_code == 400
         assert "url is required" in response.json()["detail"]
+
+    def test_system_managed_provider_is_not_user_configurable(
+        self,
+        user_mcps_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setitem(
+            mcp_provider_registry.MCP_PROVIDER_REGISTRY,
+            "demo",
+            {
+                "provider_id": "demo",
+                "display_name": "示例知识",
+                "configuration_mode": "system",
+                "message_keywords": ("示例知识",),
+                "services": {
+                    "knowledge": {
+                        "service_id": "knowledge",
+                        "server_name": "demo_knowledge",
+                        "detail_url": "https://example.com/knowledge",
+                        "skill_name": "demo-knowledge",
+                        "display_name": "示例知识库",
+                        "message_keywords": ("知识库",),
+                    }
+                },
+            },
+        )
+        list_response = user_mcps_client.get(
+            "/api/users/me/mcps/providers/demo/services",
+        )
+        update_response = user_mcps_client.put(
+            "/api/users/me/mcps/providers/demo/services/knowledge",
+            json={"enabled": True, "url": "https://example.com/demo-mcp"},
+        )
+
+        assert list_response.status_code == 404
+        assert update_response.status_code == 404

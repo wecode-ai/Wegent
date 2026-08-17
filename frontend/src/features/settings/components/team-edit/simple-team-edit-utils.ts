@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelCategoryType } from '@/apis/models'
 import { filterSelectableShells, type UnifiedShell } from '@/apis/shells'
 import type { Bot, TaskType } from '@/types/api'
 
@@ -9,7 +10,7 @@ export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
 export type ExecutorNormalizationReason = 'requires_claude_code' | null
 
 export interface SimpleBindModeOption {
-  value: Extract<TaskType, 'chat' | 'code' | 'task'>
+  value: Extract<TaskType, 'chat' | 'code' | 'task' | 'video' | 'image'>
   titleKey: string
   descriptionKey: string
 }
@@ -40,6 +41,16 @@ const SIMPLE_BIND_MODE_OPTIONS: SimpleBindModeOption[] = [
     value: 'task',
     titleKey: 'settings:team.simple.bind_mode.task.title',
     descriptionKey: 'settings:team.simple.bind_mode.task.description',
+  },
+  {
+    value: 'video',
+    titleKey: 'settings:team.simple.bind_mode.video.title',
+    descriptionKey: 'settings:team.simple.bind_mode.video.description',
+  },
+  {
+    value: 'image',
+    titleKey: 'settings:team.simple.bind_mode.image.title',
+    descriptionKey: 'settings:team.simple.bind_mode.image.description',
   },
 ]
 
@@ -75,6 +86,12 @@ export function getSimpleExecutorOptions(): SimpleExecutorOption[] {
 
 export function bindModeRequiresClaudeCode(bindMode: TaskType[]): boolean {
   return bindMode.includes('code') || bindMode.includes('task')
+}
+
+export function getModelCategoryTypeForBindMode(bindMode: TaskType[]): ModelCategoryType {
+  if (bindMode.length === 1 && bindMode[0] === 'image') return 'image'
+  if (bindMode.length === 1 && bindMode[0] === 'video') return 'video'
+  return 'llm'
 }
 
 export function isClaudeCodeShell(shell: UnifiedShell | null | undefined): boolean {

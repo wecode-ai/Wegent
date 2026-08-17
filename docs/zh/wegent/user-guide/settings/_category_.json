@@ -1,0 +1,8 @@
+{
+  "label": "Settings",
+  "position": 7,
+  "link": {
+    "type": "doc",
+    "id": "wegent/user-guide/settings/README"
+  }
+}

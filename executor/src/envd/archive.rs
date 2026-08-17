@@ -71,6 +71,10 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
 
     let encoder = GzEncoder::new(Vec::new(), Compression::default());
     let mut builder = Builder::new(encoder);
+    // Store symlinks as symlink entries instead of dereferencing their targets.
+    // Dereferencing a dangling symlink fails to read the (missing) target and
+    // aborts the whole archive; storing the link itself always succeeds.
+    builder.follow_symlinks(false);
     let mut session_file_included = false;
     let mut git_included = false;
     let mut member_count = 0usize;

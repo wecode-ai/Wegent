@@ -10,6 +10,7 @@ import {
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
+import type { MarketplaceTagsResponse, MarketplaceTagsUpdate } from '@/types/marketplace'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
@@ -112,6 +113,120 @@ export interface SystemStats {
   admin_count: number
   total_tasks: number
   total_public_models: number
+}
+
+export interface TaskRunFailureReason {
+  reason: string | null
+  count: number
+  percentage: number
+}
+
+export interface RecentTaskRunFailure {
+  subtask_id: number
+  task_id: number
+  task_title: string
+  user_id: number
+  user_name: string | null
+  client_origin: string
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskRunStats {
+  hours: number
+  window_start: string
+  window_end: string
+  total_runs: number
+  total_is_approximate: boolean
+  failed_runs: number
+  failure_rate: number
+  failure_reasons: TaskRunFailureReason[]
+  recent_failures: RecentTaskRunFailure[]
+  data_as_of: string | null
+}
+
+// Connector App Types
+export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
+export type ConnectorVisibility = 'all' | 'roles'
+export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
+
+export interface ConnectorHttpToolDefinition {
+  name: string
+  description: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  input_schema: Record<string, unknown>
+  argument_locations: Record<string, 'path' | 'query' | 'body'>
+  timeout_seconds: number
+}
+
+export interface ConnectorToolInfo {
+  name: string
+  title: string | null
+  description: string
+  input_schema: Record<string, unknown>
+  connector_id: string
+  raw_tool_name: string
+  model_visible: boolean
+  risk_hints: Record<string, unknown>
+  source_transport: ConnectorTransport
+}
+
+export interface ConnectorToolListResponse {
+  tools: ConnectorToolInfo[]
+}
+
+export interface ConnectorToolCallResponse {
+  content: unknown
+  structured_content: Record<string, unknown> | null
+  is_error: boolean
+}
+
+export interface AdminConnectorApp {
+  id: number
+  slug: string
+  name: string
+  description: string
+  icon_url: string | null
+  enabled: boolean
+  visibility: ConnectorVisibility
+  allowed_roles: string[]
+  auth_type: ConnectorAuthType
+  transport: ConnectorTransport
+  mcp_url: string
+  provider_header_names: string[]
+  provider_headers_configured: boolean
+  forward_user_context_headers: boolean
+  tool_allowlist: string[]
+  http_tools: ConnectorHttpToolDefinition[]
+  connection_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminConnectorAppCreate {
+  slug: string
+  name: string
+  description: string
+  icon_url: string | null
+  enabled: boolean
+  visibility: ConnectorVisibility
+  allowed_roles: string[]
+  auth_type: ConnectorAuthType
+  transport: ConnectorTransport
+  mcp_url: string
+  provider_headers: Record<string, string>
+  forward_user_context_headers?: boolean
+  tool_allowlist: string[]
+  http_tools: ConnectorHttpToolDefinition[]
+}
+
+export type AdminConnectorAppUpdate = Partial<
+  Omit<AdminConnectorAppCreate, 'slug' | 'provider_headers'>
+> & {
+  provider_headers?: Record<string, string>
+  clear_provider_headers?: boolean
 }
 
 // Chat Slogan & Tips Types
@@ -270,6 +385,42 @@ export interface AdminPublicTeamUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+}
+
+export interface AdminPublicTeamIconUpload {
+  asset_id: number
+  url: string
+}
+
+export type AdminMarketplaceResourceType = 'agent' | 'skill'
+
+export interface AdminMarketplaceExampleConversation {
+  title: string
+  url: string
+}
+
+export interface AdminMarketplaceResource {
+  id: number
+  resource_type: AdminMarketplaceResourceType
+  name: string
+  display_name: string
+  description: string | null
+  publisher_user_name: string | null
+  is_system: boolean
+  recommendation_score: number
+  example_conversations: AdminMarketplaceExampleConversation[]
+}
+
+export interface AdminMarketplaceResourceUpdate {
+  recommendation_score?: number
+  example_conversations?: AdminMarketplaceExampleConversation[]
+}
+
+export interface AdminMarketplaceResourceListResponse {
+  items: AdminMarketplaceResource[]
+  total: number
+  page: number
+  limit: number
 }
 
 // Public Bot Types
@@ -739,6 +890,13 @@ export const adminApis = {
     return apiClient.get('/admin/stats')
   },
 
+  /**
+   * Get assistant task run statuses and failure reasons.
+   */
+  async getTaskRunStats(hours: number = 24): Promise<TaskRunStats> {
+    return apiClient.get(`/admin/task-runs/stats?hours=${hours}`)
+  },
+
   // ==================== System Config (Quick Access) ====================
 
   /**
@@ -753,6 +911,14 @@ export const adminApis = {
    */
   async updateQuickAccessConfig(teams: number[]): Promise<{ version: number; teams: number[] }> {
     return apiClient.put('/admin/system-config/quick-access', { teams })
+  },
+
+  async getMarketplaceTagsConfig(): Promise<MarketplaceTagsResponse> {
+    return apiClient.get('/admin/system-config/marketplace-tags')
+  },
+
+  async updateMarketplaceTagsConfig(data: MarketplaceTagsUpdate): Promise<MarketplaceTagsResponse> {
+    return apiClient.put('/admin/system-config/marketplace-tags', data)
   },
 
   // ==================== Chat Slogan & Tips Config ====================
@@ -939,6 +1105,39 @@ export const adminApis = {
    */
   async deletePublicTeam(teamId: number): Promise<void> {
     return apiClient.delete(`/admin/public-teams/${teamId}`)
+  },
+
+  /**
+   * Upload a custom image used as a public team's canonical icon.
+   */
+  async uploadPublicTeamIcon(file: File): Promise<AdminPublicTeamIconUpload> {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.postForm('/admin/public-teams/icon-assets', formData)
+  },
+
+  /**
+   * Delete an uploaded public team icon.
+   */
+  async deletePublicTeamIcon(assetId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-teams/icon-assets/${assetId}`)
+  },
+
+  async getMarketplaceResources(
+    resourceType: AdminMarketplaceResourceType,
+    page: number = 1,
+    limit: number = 50
+  ): Promise<AdminMarketplaceResourceListResponse> {
+    return apiClient.get(
+      `/admin/marketplace-resources?resource_type=${resourceType}&page=${page}&limit=${limit}`
+    )
+  },
+
+  async updateMarketplaceResource(
+    resourceId: number,
+    update: AdminMarketplaceResourceUpdate
+  ): Promise<AdminMarketplaceResource> {
+    return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
   },
 
   // ==================== Public Bot Management ====================
@@ -1205,6 +1404,42 @@ export const adminApis = {
     return apiClient.post(`/admin/device-monitor/devices/${encodeURIComponent(deviceId)}/migrate`, {
       user_id: userId,
       target_host: targetHost,
+    })
+  },
+
+  // ==================== Connector App Management ====================
+
+  async getConnectorApps(): Promise<AdminConnectorApp[]> {
+    return apiClient.get('/admin/connector-apps')
+  },
+
+  async createConnectorApp(data: AdminConnectorAppCreate): Promise<AdminConnectorApp> {
+    return apiClient.post('/admin/connector-apps', data)
+  },
+
+  async updateConnectorApp(
+    appId: number,
+    data: AdminConnectorAppUpdate
+  ): Promise<AdminConnectorApp> {
+    return apiClient.patch(`/admin/connector-apps/${appId}`, data)
+  },
+
+  async disableConnectorApp(appId: number): Promise<void> {
+    return apiClient.delete(`/admin/connector-apps/${appId}`)
+  },
+
+  async discoverConnectorAppTools(appId: number): Promise<ConnectorToolListResponse> {
+    return apiClient.post(`/admin/connector-apps/${appId}/tools/discover`, {})
+  },
+
+  async testConnectorAppTool(
+    appId: number,
+    name: string,
+    argumentsValue: Record<string, unknown> = {}
+  ): Promise<ConnectorToolCallResponse> {
+    return apiClient.post(`/admin/connector-apps/${appId}/tools/test`, {
+      name,
+      arguments: argumentsValue,
     })
   },
 

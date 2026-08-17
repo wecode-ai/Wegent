@@ -2,7 +2,122 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getErrorMessageFromCode } from '@/apis/attachments'
+import {
+  downloadAttachment,
+  fetchAttachmentFile,
+  formatsToAcceptString,
+  getErrorMessageFromCode,
+} from '@/apis/attachments'
+
+describe('formatsToAcceptString', () => {
+  it('uses MIME types so the system file picker filters by model formats', () => {
+    expect(formatsToAcceptString(['jpeg', 'jpg', 'png'], 'image/*')).toBe('image/jpeg,image/png')
+  })
+})
+
+describe('fetchAttachmentFile', () => {
+  const originalFetch = global.fetch
+
+  beforeEach(() => {
+    localStorage.setItem('auth_token', 'test-token')
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    localStorage.clear()
+    jest.clearAllMocks()
+  })
+
+  it('fetches a protected attachment as a named File', async () => {
+    const signal = new AbortController().signal
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': "attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A.pdf",
+      }),
+      blob: async () => new Blob(['pdf-data'], { type: 'application/pdf' }),
+    })
+    global.fetch = fetchMock as typeof fetch
+
+    const file = await fetchAttachmentFile(42, { signal })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/attachments/42/download', {
+      method: 'GET',
+      headers: { Authorization: 'Bearer test-token' },
+      signal,
+    })
+    expect(file).toBeInstanceOf(File)
+    expect(file.name).toBe('报告.pdf')
+    expect(file.type).toBe('application/pdf')
+  })
+
+  it('uses the caller-provided filename and omits JWT for share access', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Type': 'application/octet-stream' }),
+      blob: async () => new Blob(['office-data']),
+    })
+    global.fetch = fetchMock as typeof fetch
+
+    const file = await fetchAttachmentFile(9, {
+      filename: 'source.docx',
+      shareToken: 'share-token',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/attachments/9/download?share_token=share-token',
+      expect.objectContaining({ headers: {} })
+    )
+    expect(file.name).toBe('source.docx')
+  })
+
+  it('rejects failed attachment responses', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: new Headers(),
+    }) as typeof fetch
+
+    await expect(fetchAttachmentFile(404)).rejects.toThrow('Failed to fetch attachment (404)')
+  })
+})
+
+describe('downloadAttachment', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    localStorage.clear()
+    jest.restoreAllMocks()
+  })
+
+  it('uses a short-lived token for browser-native streaming downloads', async () => {
+    localStorage.setItem('auth_token', 'test-token')
+    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation()
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ download_token: 'short-lived-token' }),
+    }) as typeof fetch
+
+    await downloadAttachment(42, 'report.pdf')
+
+    expect(global.fetch).toHaveBeenCalledWith('/api/attachments/42/download-token', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer test-token' },
+    })
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(click.mock.instances[0]).toMatchObject({
+      href: expect.stringContaining(
+        '/api/attachments/42/download?download_token=short-lived-token'
+      ),
+      download: 'report.pdf',
+    })
+  })
+})
 
 describe('getErrorMessageFromCode', () => {
   // Mock translation function

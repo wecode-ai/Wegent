@@ -18,11 +18,17 @@ import time
 import uuid
 from typing import List, Optional
 
+from app.core.shutdown import shutdown_manager
+from app.services.context import context_service
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
 from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
+from .download_url import (
+    IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS,
+    build_image_download_url,
+)
 from .intent_analyzer import ImageIntentAnalyzer, ImageIntentResult
 from .providers import get_image_provider
 
@@ -59,39 +65,51 @@ class ImageAgent(PollingAgent):
         from app.services.chat.storage.session import session_manager
 
         cancel_event = await session_manager.register_stream(request.subtask_id)
+        await shutdown_manager.register_stream(request.subtask_id)
 
         task_id = request.task_id
         subtask_id = request.subtask_id
         message_id = request.message_id
         model_config = request.model_config or {}
+        image_size = (model_config.get("imageConfig") or {}).get("size")
 
         # Generate unique block ID for image block
         image_block_id = f"image-{uuid.uuid4().hex[:8]}"
 
-        # Emit START event
-        await emitter.emit_start(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            message_id=message_id,
-            data={"shell_type": "Chat"},
-        )
-
-        # Emit placeholder image block
-        await self._emit_image_block(
-            emitter=emitter,
-            task_id=task_id,
-            subtask_id=subtask_id,
-            message_id=message_id,
-            block_id=image_block_id,
-            is_placeholder=True,
-            status="streaming",
-            message="Generating image...",
-        )
-
         try:
+            # Emit START event
+            await emitter.emit_start(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                data={"shell_type": "Chat"},
+            )
+
+            # Emit placeholder image block
+            await self._emit_image_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=image_block_id,
+                is_placeholder=True,
+                status="streaming",
+                message="Generating image...",
+                image_size=image_size,
+            )
+
             # Check cancellation
             if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
                 logger.info(f"[{self.name}] Cancelled: task_id={task_id}")
+                await self._emit_image_block(
+                    emitter=emitter,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    message_id=message_id,
+                    block_id=image_block_id,
+                    is_placeholder=False,
+                    status="error",
+                )
                 await emitter.emit(
                     ExecutionEvent(
                         type=EventType.CANCELLED,
@@ -190,18 +208,19 @@ class ImageAgent(PollingAgent):
             user_id = request.user.get("id") if request.user else None
             attachment_ids: List[int] = []
             image_urls: List[str] = []
+            image_download_urls: List[str] = []
 
             for i, image in enumerate(result.images):
                 # Get image URL (either direct URL or convert from base64)
                 image_url = image.url
                 if not image_url and image.b64_json:
-                    # For base64, we'll store it directly
-                    image_url = f"data:image/jpeg;base64,{image.b64_json}"
+                    output_format = model_config.get("imageConfig", {}).get(
+                        "output_format"
+                    ) or ("png" if protocol == "gpt-image" else "jpeg")
+                    mime_subtype = "jpeg" if output_format == "jpg" else output_format
+                    image_url = f"data:image/{mime_subtype};base64,{image.b64_json}"
 
                 if image_url:
-                    image_urls.append(image_url)
-
-                    # Upload as attachment
                     attachment_id = await self._upload_attachment(
                         image_url=image_url,
                         image_size=image.size,
@@ -211,16 +230,25 @@ class ImageAgent(PollingAgent):
                         index=i,
                     )
                     attachment_ids.append(attachment_id)
+                    image_urls.append(
+                        context_service.build_attachment_url(attachment_id)
+                    )
+                    image_download_urls.append(build_image_download_url(attachment_id))
 
-            # Emit final image block with actual image data
+            # Emit final image block with persisted attachment URLs
             final_image_block = {
                 "id": image_block_id,
                 "type": "image",
                 "status": "done",
                 "is_placeholder": False,
                 "image_urls": image_urls,
+                "image_download_urls": image_download_urls,
+                "image_download_url_expires_in_seconds": (
+                    IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS
+                ),
                 "image_attachment_ids": attachment_ids,
                 "image_count": len(image_urls),
+                "image_size": image_size,
                 "timestamp": int(time.time() * 1000),
             }
 
@@ -247,6 +275,15 @@ class ImageAgent(PollingAgent):
 
         except Exception as e:
             logger.exception(f"[{self.name}] Error: task_id={task_id}, error={e}")
+            await self._emit_image_block(
+                emitter=emitter,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block_id=image_block_id,
+                is_placeholder=False,
+                status="error",
+            )
             await emitter.emit(
                 ExecutionEvent(
                     type=EventType.ERROR,
@@ -259,6 +296,7 @@ class ImageAgent(PollingAgent):
 
         finally:
             await session_manager.unregister_stream(subtask_id)
+            await shutdown_manager.unregister_stream(subtask_id)
 
     def _extract_reference_images(self, request: ExecutionRequest) -> List[str]:
         """Extract reference images from request.attachments (legacy input).
@@ -361,6 +399,7 @@ class ImageAgent(PollingAgent):
         message: str = "",
         image_urls: Optional[List[str]] = None,
         attachment_ids: Optional[List[int]] = None,
+        image_size: Optional[str] = None,
     ) -> None:
         """Emit image block update."""
         image_block = {
@@ -373,6 +412,8 @@ class ImageAgent(PollingAgent):
             "content": message,
             "timestamp": int(time.time() * 1000),
         }
+        if image_size:
+            image_block["image_size"] = image_size
 
         await emitter.emit(
             ExecutionEvent(

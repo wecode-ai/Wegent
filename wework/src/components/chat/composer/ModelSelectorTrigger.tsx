@@ -1,6 +1,7 @@
 import { ChevronDown } from 'lucide-react'
 import {
   type CSSProperties,
+  type ReactNode,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -10,9 +11,9 @@ import {
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { cn } from '@/lib/utils'
 
-const OPEN_WIDTH = 240
 const CLOSED_MAX_WIDTH = 208
 const HORIZONTAL_CHROME = 36
+const LEADING_ICON_CHROME = 18
 
 interface ModelSelectorTriggerProps {
   buttonRef: RefObject<HTMLButtonElement | null>
@@ -20,11 +21,13 @@ interface ModelSelectorTriggerProps {
   disabled: boolean
   isMobile: boolean
   label: string
+  leadingIcon?: ReactNode
   highlightedLabel?: string
   shortcut?: string | null
   ariaLabel: string
   tooltipLabel: string
   buttonClassName?: string
+  maxClosedWidth?: number
   onToggle: () => void
 }
 
@@ -47,16 +50,19 @@ export function ModelSelectorTrigger({
   disabled,
   isMobile,
   label,
+  leadingIcon,
   highlightedLabel,
   shortcut,
   ariaLabel,
   tooltipLabel,
   buttonClassName,
+  maxClosedWidth = CLOSED_MAX_WIDTH,
   onToggle,
 }: ModelSelectorTriggerProps) {
   const measureRef = useRef<HTMLSpanElement>(null)
   const previousOpenRef = useRef(open)
   const [tooltipSuppressed, setTooltipSuppressed] = useState(false)
+  const hasLeadingIcon = Boolean(leadingIcon)
 
   useEffect(() => {
     if (previousOpenRef.current && !open) {
@@ -74,10 +80,11 @@ export function ModelSelectorTrigger({
         measureRef.current?.scrollWidth ?? 0
       )
       if (measuredWidth <= 0) return
-      const naturalWidth = Math.ceil(measuredWidth) + HORIZONTAL_CHROME
+      const naturalWidth =
+        Math.ceil(measuredWidth) + HORIZONTAL_CHROME + (hasLeadingIcon ? LEADING_ICON_CHROME : 0)
       button.style.setProperty(
-        '--model-selector-closed-width',
-        `${Math.max(64, Math.min(CLOSED_MAX_WIDTH, naturalWidth))}px`
+        '--model-selector-width',
+        `${Math.max(64, Math.min(maxClosedWidth, naturalWidth))}px`
       )
     }
 
@@ -90,12 +97,12 @@ export function ModelSelectorTrigger({
       observer?.disconnect()
       window.removeEventListener('resize', updateWidth)
     }
-  }, [buttonRef, isMobile, label])
+  }, [buttonRef, hasLeadingIcon, isMobile, label, maxClosedWidth])
 
   const desktopStyle: CSSProperties | undefined = isMobile
     ? undefined
     : {
-        width: open ? OPEN_WIDTH : 'var(--model-selector-closed-width, auto)',
+        width: 'var(--model-selector-width, auto)',
       }
   const showTooltip = !isMobile && !open && !tooltipSuppressed
 
@@ -112,7 +119,7 @@ export function ModelSelectorTrigger({
         disabled={disabled}
         style={desktopStyle}
         className={cn(
-          'flex h-8 min-w-8 items-center gap-1 overflow-hidden rounded-full px-2 text-[13px] font-light leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 min-w-8 max-w-full items-center gap-1 overflow-hidden rounded-full px-2 text-sm font-normal leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           !isMobile &&
             'transition-[width,background-color,color,opacity] duration-200 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none',
           buttonClassName
@@ -121,8 +128,11 @@ export function ModelSelectorTrigger({
         aria-label={ariaLabel}
         aria-describedby={showTooltip ? 'model-selector-tooltip' : undefined}
       >
-        <span className="min-w-0 flex-1 truncate text-center">
-          <TriggerLabel label={label} highlightedLabel={highlightedLabel} />
+        <span className="flex min-w-0 flex-1 items-center justify-center gap-1">
+          {leadingIcon}
+          <span className="min-w-0 truncate">
+            <TriggerLabel label={label} highlightedLabel={highlightedLabel} />
+          </span>
         </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
       </button>
@@ -130,7 +140,8 @@ export function ModelSelectorTrigger({
         <span
           ref={measureRef}
           aria-hidden="true"
-          className="pointer-events-none invisible absolute whitespace-nowrap text-[13px] font-light leading-[18px]"
+          data-testid="model-selector-width-measure"
+          className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-sm font-normal leading-[18px]"
         >
           {label}
         </span>
@@ -140,7 +151,7 @@ export function ModelSelectorTrigger({
           id="model-selector-tooltip"
           role="tooltip"
           data-testid="model-selector-tooltip"
-          className="pointer-events-none absolute bottom-[calc(100%+0.5rem)] right-0 z-system-popover flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-popover px-3 text-[13px] font-medium leading-[18px] text-text-primary opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.18)] transition-opacity delay-0 duration-150 group-hover/model-selector:delay-[1500ms] group-hover/model-selector:opacity-100"
+          className="pointer-events-none absolute bottom-[calc(100%+0.5rem)] right-0 z-system-popover flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-popover px-3 text-sm font-medium leading-[18px] text-text-primary opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.18)] transition-opacity delay-0 duration-150 group-hover/model-selector:delay-[1500ms] group-hover/model-selector:opacity-100"
         >
           <span>{tooltipLabel}</span>
           {shortcut ? (

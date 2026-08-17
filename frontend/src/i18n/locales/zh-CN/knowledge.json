@@ -43,9 +43,12 @@
     "selectKnowledgeBase": "选择一个知识库查看文档",
     "selectWholeKb": "选择知识库",
     "selected": "已选择",
-    "selectedDocuments": "已选 {{count}} 个文档",
-    "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
-    "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
+    "scopeAllDocuments": "全部 · {{count}} 文档",
+    "scopeDocumentsCompact_one": "{{count}} 文档",
+    "scopeDocumentsCompact_other": "{{count}} 文档",
+    "scopeFoldersCompact_one": "{{count}} 文件夹",
+    "scopeFoldersCompact_other": "{{count}} 文件夹",
+    "scopeMixedCompact": "{{folderCount}} 文件夹 · {{documentCount}} 文档",
     "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
     "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
     "previewUnavailable": "预览地址不可用"
@@ -103,6 +106,8 @@
       "collapse": "收起",
       "collapseTree": "收起列表",
       "expandTree": "列表",
+      "expandAll": "展开全部",
+      "layeredNav": "返回逐层导航",
       "docCount": "{{count}} 篇",
       "loadingKbs": "加载知识库中..."
     },
@@ -156,8 +161,8 @@
       "wikispace": "知识库",
       "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
       "wikispaceEmpty": "暂无知识库内容",
-      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
-      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
+      "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP 和钉钉文档 MCP"
     },
     "groupFilter": {
       "all": "全部分组"
@@ -210,13 +215,18 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "createDialogDescription": "配置知识库名称、可见范围和检索设置。",
       "createDesc": "创建您的第一个知识库",
-      "notebookDesc": "默认进入笔记本视图，可选择文档并开启对话",
-      "classicDesc": "默认进入文档视图，适合浏览、上传和管理文档",
+      "notebookDesc": "默认进入工作台，可对话并使用工具处理知识和数据",
+      "classicDesc": "默认进入文档管理，适合浏览、上传和维护文档",
       "type": "默认打开方式",
-      "typeNotebook": "笔记本视图",
-      "typeClassic": "文档视图",
+      "typeNotebook": "工作台",
+      "typeClassic": "文档管理",
       "edit": "编辑知识库",
+      "editDialogDescription": "更新知识库基本信息、可见范围和检索设置。",
+      "loadingDetails": "正在加载知识库详情...",
+      "loadDetailsFailed": "无法加载最新的知识库详情。为避免覆盖现有配置，暂时无法编辑。",
+      "retryLoadDetails": "重试",
       "delete": "删除知识库",
       "name": "知识库名称",
       "namePlaceholder": "请输入知识库名称",
@@ -224,6 +234,12 @@
       "nameTooLong": "名称不能超过100个字符",
       "description": "描述",
       "descriptionPlaceholder": "请输入描述（可选）",
+      "directAccessRange": "知识库可见范围",
+      "directAccessRangeDescription": "控制哪些成员可以看到并打开此知识库，不影响通过智能体使用。",
+      "directAccessAllMembers": "所有有权限的成员",
+      "directAccessAllMembersDescription": "有查看或编辑权限的成员均可看到并打开此知识库。",
+      "directAccessEditorsOnly": "仅可编辑成员",
+      "directAccessEditorsOnlyDescription": "非编辑成员无法看到或打开此知识库，但仍可通过已绑定的智能体使用。",
       "documentCount": "文档数量",
       "empty": "暂无知识库",
       "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
@@ -231,15 +247,30 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
+      "categoryFilter": {
+        "label": "知识库类别",
+        "all": "全部",
+        "document": "文档",
+        "code": "代码",
+        "emptyDocument": "暂无文档知识库",
+        "emptyCode": "暂无代码知识库"
+      },
       "currentDefaultView": "当前默认打开方式",
-      "convertToNotebook": "默认打开笔记本视图",
-      "convertToClassic": "默认打开文档视图",
+      "convertToNotebook": "默认打开工作台",
+      "convertToClassic": "默认打开文档管理",
       "changeDefaultView": "修改默认打开方式",
       "changeDefaultViewConfirm": "仅修改下次打开知识库时默认进入的视图，不影响已有内容和权限。",
       "defaultViewUpdateSuccess": "默认打开方式已更新",
       "defaultViewUpdateFailed": "默认打开方式更新失败",
       "targetGroup": "归属",
-      "selectGroup": "选择分组"
+      "selectGroup": "选择分组",
+      "kindDocument": "文档",
+      "kindDocumentDesc": "上传与整理资料",
+      "kindCode": "代码",
+      "kindCodeDesc": "从仓库生成 wiki"
+    },
+    "breadcrumb": {
+      "root": "全部文档"
     },
     "folder": {
       "folderType": "文件夹",
@@ -277,7 +308,7 @@
     },
     "document": {
       "title": "文档",
-      "upload": "添加来源",
+      "upload": "添加资料",
       "edit": "编辑文档",
       "enable": "启用",
       "disable": "停用",
@@ -297,7 +328,35 @@
         "converting": "转换中",
         "convertingHint": "文档正在转换为可检索的格式，可能需要几分钟。",
         "pendingConversion": "待转换",
-        "pendingConversionHint": "文档正在等待转换为可检索的格式。"
+        "pendingConversionHint": "文档正在等待转换为可检索的格式。",
+        "failed": "失败",
+        "failedHint": "文档处理失败，请重新索引；若持续失败，请联系管理员。"
+      },
+      "processingError": {
+        "stage": {
+          "dispatch": "任务提交失败",
+          "conversion": "文档转换失败",
+          "indexing": "文档索引失败",
+          "system": "文档处理失败"
+        },
+        "codes": {
+          "modelQuotaExhausted": "所选模型额度已用完，请切换模型或联系管理员。",
+          "modelPermissionDenied": "当前账号无权使用所选模型，请检查权限或切换模型。",
+          "conversionTimeout": "文档转换超时，请重试。",
+          "conversionServiceUnavailable": "无法连接 MinerU 文档转换服务，请检查服务状态或稍后重试。",
+          "conversionLockTimeout": "文档转换任务等待超时，请重新索引。",
+          "conversionFailed": "文档转换失败，请重试。",
+          "conversionConfigurationError": "文档转换服务配置异常，请联系管理员。",
+          "multimodalEmptyResponse": "多模态模型未返回可用内容，请检查文档或切换模型。",
+          "multimodalModelUnavailable": "多模态模型未配置或不可用，请检查知识库模型设置。",
+          "multimodalFileTooLarge": "媒体文件过大，无法进行多模态处理。",
+          "indexingTimeout": "文档索引超时，请重试。",
+          "indexingFailed": "文档索引失败，请重试。",
+          "indexLockTimeout": "文档索引任务等待超时，请重试。",
+          "indexDispatchFailed": "无法提交文档索引任务，请稍后重试。",
+          "processingFailed": "文档处理失败，请重试。"
+        },
+        "model": "模型"
       },
       "reindex": "重新索引",
       "index": "开始索引",
@@ -371,6 +430,7 @@
         "transferSuccessFolders": "已成功转移 {{folderCount}} 个文件夹",
         "transferSuccessMixed": "已成功转移 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "transferFailed": "转移失败",
+        "transferSelectionLimit": "每次最多选择 {{count}} 个文档和文件夹",
         "noOtherKbs": "没有符合转移规则的目标知识库",
         "errors": {
           "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
@@ -379,6 +439,7 @@
           "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
           "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
           "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "TRANSFER_SELECTION_LIMIT_EXCEEDED": "每次最多转移 200 个文档和文件夹",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }
@@ -387,6 +448,8 @@
         "title": "文档详情",
         "backToList": "返回列表",
         "summary": "文档摘要",
+        "derivedSummary": "AI 摘要（基于解析内容）",
+        "refreshSummary": "刷新 AI 摘要",
         "status": "状态",
         "statusValues": {
           "pending": "待处理",
@@ -397,6 +460,8 @@
         "topics": "主题标签",
         "metaInfo": "元信息",
         "content": "文档内容",
+        "parsedContent": "解析内容",
+        "sourceFile": "原始文件",
         "truncated": "内容已截断",
         "copy": "复制",
         "copied": "已复制",
@@ -429,7 +494,18 @@
         "splitterType": "分段类型",
         "splitterSubtype": "分段子类型",
         "qaPairsDetected": "已识别 {{count}} 个问答对",
-        "contentUpdatedAt": "变更时间"
+        "contentUpdatedAt": "变更时间",
+        "sourcePreview": {
+          "loading": "正在加载原始文件...",
+          "download": "下载原文件",
+          "downloadFailed": "原文件下载失败",
+          "tooLargeTitle": "文件过大，暂不支持在线预览",
+          "tooLargeDescription": "文件大小为 {{size}}，超过当前在线预览上限 {{limit}}，请下载后查看。",
+          "fetchFailedTitle": "无法加载原始文件",
+          "fetchFailedDescription": "原始文件获取失败，请检查网络连接或访问权限后重试。",
+          "renderFailedTitle": "原始文件预览失败",
+          "renderFailedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试预览或下载原文件查看。"
+        }
       },
       "downloadFailed": "下载文件失败",
       "fetchFailed": "获取文档失败",
@@ -444,6 +520,7 @@
       "confirming": "正在创建文档...",
       "summary": "上传完成：{{success}} 个成功，{{failed}} 个失败",
       "status": {
+        "createFailed": "创建文档失败",
         "pending": "等待中",
         "uploading": "上传中",
         "success": "已上传",
@@ -596,6 +673,7 @@
     },
     "formSections": {
       "basic": "基础设置",
+      "access": "访问设置",
       "summary": "摘要设置",
       "guidedQuestions": "引导问题"
     },
@@ -849,6 +927,138 @@
     },
     "analyzing": "正在分析数据表..."
   },
+  "artifact": {
+    "tab": "工具",
+    "title": "工具",
+    "subtitle": "选择一个工具，处理当前知识和数据",
+    "tools": "工具",
+    "showTools": "展开工具面板",
+    "hideTools": "收起工具面板",
+    "generation": "内容生成",
+    "showSources": "展开资料",
+    "hideSources": "收起资料",
+    "resizeSources": "调整资料栏宽度",
+    "showGeneration": "展开内容生成",
+    "hideGeneration": "收起内容生成",
+    "resizeGeneration": "调整内容生成栏宽度",
+    "recentGenerations": "生成记录",
+    "runningCount": "{{count}} 个进行中",
+    "noDocumentsHint": "知识库暂无可用文档，请先添加资料。",
+    "documentsProcessingHint": "文档正在处理中，完成后即可生成。",
+    "create": "开始任务",
+    "createFirst": "开始第一个任务",
+    "createTitle": "开始 AI 任务",
+    "createDescription": "选择资料并补充生成要求",
+    "sharedGenerationNotice": "生成内容将保存到当前知识库的生成记录中，所有可访问该知识库的用户均可查看。",
+    "start": "开始生成",
+    "started": "已开始生成，可在“生成记录”中查看状态",
+    "creating": "正在创建...",
+    "cancel": "取消",
+    "save": "保存",
+    "saving": "保存中...",
+    "saveToKnowledge": "保存到知识库",
+    "saveToKnowledgeHint": "可修改标题和正文，保存后会作为 Markdown 文档参与知识库检索。",
+    "savedToKnowledge": "已保存为知识库文档",
+    "saveErrors": {
+      "permissionChanged": "你已无权向此知识库保存文档。",
+      "targetMissing": "该知识库已不存在或不可访问。",
+      "invalidContent": "文档标题或内容不符合要求。",
+      "saveFailed": "保存知识库文档失败。"
+    },
+    "moreActions": "更多操作",
+    "delete": "删除",
+    "deleteConfirm": "确定删除这个生成记录吗？生成结果将被永久删除，原始知识文档不受影响。",
+    "retry": "重试",
+    "generating": "正在生成...",
+    "stalled": "生成可能已中断",
+    "stalledHint": "执行长时间没有完成，可重试；旧任务结果不会覆盖新一轮生成。",
+    "failed": "生成失败",
+    "failedHint": "请稍后重试。",
+    "operationFailed": "操作失败",
+    "loadFailed": "任务加载失败",
+    "empty": "暂无生成内容",
+    "emptyHint": "点击上方能力，开始生成内容。",
+    "emptyReadOnlyHint": "编辑者生成后，内容会显示在这里。",
+    "titleLabel": "标题（可选）",
+    "titlePlaceholder": "由系统自动生成默认标题",
+    "instructionLabel": "补充要求（可选）",
+    "instructionPlaceholder": "例如：重点突出风险、结论和后续行动",
+    "selectedDocuments": "将使用已选中的 {{count}} 篇文档",
+    "allDocuments": "将使用知识库中全部已索引文档",
+    "wholeKnowledgeBase": "整个知识库 · {{count}} 篇文档",
+    "wholeKnowledgeBaseShort": "整个知识库",
+    "addMaterials": "添加资料",
+    "source": "使用资料",
+    "sourceCount": "{{count}} 篇来源",
+    "adjustSources": "调整",
+    "sourceBrowser": {
+      "documents": "知识库文档",
+      "questionHint": "提问仅基于已选文档",
+      "workspaceHint": "对话和生成仅使用已选文档",
+      "generationHint": "仅使用已选文档生成"
+    },
+    "action": {
+      "briefing": "生成简报",
+      "mind_map": "生成思维导图",
+      "presentation": "生成 PPT"
+    },
+    "sourceDialog": {
+      "title": "选择资料",
+      "description": "默认使用全部可用资料，也可以只使用指定资料。",
+      "all": "全部可用资料",
+      "allHint": "使用当前 {{count}} 篇可用资料",
+      "defaultAllHint": "默认使用全部 {{count}} 篇资料",
+      "selectedHint": "已选择 {{count}} 篇资料",
+      "search": "搜索资料...",
+      "empty": "没有找到资料",
+      "clear": "使用全部资料",
+      "apply": "确认选择",
+      "status": {
+        "not_indexed": "未索引",
+        "queued": "等待索引",
+        "pending_conversion": "等待处理",
+        "converting": "处理中",
+        "indexing": "索引中",
+        "success": "可用",
+        "failed": "索引失败",
+        "unavailable": "不可用"
+      }
+    },
+    "mobile": {
+      "sources": "资料",
+      "chat": "对话",
+      "generation": "生成"
+    },
+    "type": {
+      "briefing": "简报",
+      "briefingHint": "结构化 Markdown 摘要",
+      "mindMap": "思维导图",
+      "mindMapHint": "可浏览、展开并继续追问的知识导图",
+      "presentationHint": "在新任务中制作演示文稿"
+    },
+    "presentationPrompt": "请根据当前选中的知识库文档生成PPT",
+    "presentationDialog": {
+      "description": "系统会填入默认提示词，你可以修改后直接发送。",
+      "notice": "PPT 将作为个人任务生成，仅你可查看，不会保存到当前知识库的生成记录。",
+      "continue": "填写提示词"
+    },
+    "mindMap": {
+      "ask": "问 AI",
+      "expand": "展开节点",
+      "collapse": "收起节点",
+      "question": "请基于当前知识库详细解释思维导图中的“{{title}}”。",
+      "path": "它在思维导图中的路径是：{{path}}。",
+      "instruction": "请说明这个主题的核心含义、它与上下级主题的关系、关键事实或结论，并引用知识库来源。",
+      "invalid": "思维导图数据格式无效。"
+    },
+    "status": {
+      "queued": "等待生成",
+      "running": "生成中",
+      "stalled": "可能已中断",
+      "succeeded": "已完成",
+      "failed": "生成失败"
+    }
+  },
   "chatPage": {
     "title": "知识库对话",
     "summary": "摘要",
@@ -884,6 +1094,110 @@
       "title": "无法访问知识库",
       "description": "您没有该知识库详细信息的访问权限。如有疑问，请联系知识库创建者或管理员。",
       "backButton": "返回知识库列表"
+    }
+  },
+  "codeWiki": {
+    "outline": {
+      "title": "本页目录",
+      "label": "页面目录"
+    },
+    "list": {
+      "empty": "还没有代码 Wiki",
+      "emptyHint": "从一个你有读权限的仓库创建。",
+      "neverGenerated": "尚未生成",
+      "lastGenerated": "更新于 {{when}}",
+      "atCommit": "commit {{commit}}",
+      "pages_one": "{{count}} 个页面",
+      "pages_other": "{{count}} 个页面"
+    },
+    "create": {
+      "title": "新建代码 Wiki",
+      "repository": "仓库",
+      "name": "名称",
+      "namePlaceholder": "留空则使用仓库名",
+      "submit": "创建",
+      "noBoundModel": "代码 Wiki 智能体未绑定模型，无法生成。",
+      "repositoryRequired": "请选择或填写仓库地址",
+      "fromMyRepositories": "从我的仓库选择",
+      "byUrl": "输入仓库地址",
+      "checking": "正在检查仓库…",
+      "notReadable": "无法读取该仓库，请检查地址或为该域名配置 token",
+      "publicRepository": "公开仓库",
+      "privateRepository": "私有仓库",
+      "language": "生成语言",
+      "languageZh": "中文",
+      "languageEn": "English",
+      "alreadyBuilt": "已有 {{count}} 人为此仓库建过 wiki，可以向其索要分享",
+      "ownedBy": "归属 {{owner}}，可向其索要分享",
+      "showGenerationTask": "显示生成任务",
+      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。",
+      "modelLabel": "生成模型",
+      "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
+      "modelPlaceholder": "选择模型",
+      "modelRequired": "请选择生成模型"
+    },
+    "reader": {
+      "regenerate": "重新生成",
+      "regenerating": "生成中…",
+      "upToDate": "仓库自上次生成后没有变化",
+      "started": "已开始生成",
+      "back": "返回文档",
+      "askPlaceholder": "就这个 wiki 提问",
+      "sectionOnly": "该章节没有自己的页面",
+      "empty": "这个 wiki 还没有页面",
+      "emptyHint": "生成一次即可在此查看文档。",
+      "generating": "生成中…",
+      "previousRunStalled": "上次运行已中断，可重新生成",
+      "linkNotFound": "该链接指向的页面不存在",
+      "backToChat": "回到对话",
+      "openNavigation": "页面导航",
+      "generateFirst": "开始生成",
+      "regenerateConfirmTitle": "重新生成这个 wiki？",
+      "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
+      "emptyGenerating": "正在生成这个 wiki",
+      "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
+      "emptyFailed": "上次生成没有完成",
+      "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
+    },
+    "workspace": {
+      "wiki": "Wiki",
+      "documents": "文档管理",
+      "generatedContent": "Wiki",
+      "userContent": "文档",
+      "permissions": "权限管理"
+    },
+    "history": {
+      "title": "生成历史",
+      "never": "尚未生成",
+      "running": "生成中",
+      "stalled": "上次运行已中断",
+      "lastFailed": "上次生成失败",
+      "completed": "已生成",
+      "updated": "更新于 {{when}}",
+      "current": "当前版本",
+      "none": "还没有生成记录",
+      "mode": {
+        "full": "全量",
+        "incremental": "增量",
+        "custom": "自定义"
+      },
+      "commitUnreported": "未记录 commit",
+      "taskFailed": "执行任务失败",
+      "republish": "恢复此版本",
+      "republished": "已恢复该版本",
+      "republishedDescription": "页面内容已刷新。",
+      "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
+      "republishConfirmTitle": "恢复这个版本？",
+      "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",
+      "viewFailure": "查看完整错误",
+      "failureDetailsTitle": "生成错误",
+      "failureDetailsDescription": "本次生成的完整错误信息。"
+    },
+    "failure": {
+      "task_ended_without_report": "执行任务已结束，但没有回报生成结果",
+      "task_not_created": "无法创建执行任务",
+      "worker_abandoned": "执行进程失联，该次运行已被回收",
+      "publish_refused": "版本已写好，但发布被闸门拒绝"
     }
   }
 }

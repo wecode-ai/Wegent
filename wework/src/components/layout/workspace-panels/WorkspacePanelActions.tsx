@@ -1,25 +1,39 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
-import { createHttpClient } from '@/api/http'
-import { createProjectApi } from '@/api/projects'
-import { getRuntimeConfig } from '@/config/runtime'
+import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice, supportsLocalTerminalLaunch } from '@/lib/device-capabilities'
+import {
+  supportsCloudSessions,
+  supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
+} from '@/lib/device-capabilities'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
+  LOCAL_WORKSPACE_OPENERS,
   type LocalWorkspaceOpenerId,
 } from '@/lib/local-workspace-openers'
-import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
+import {
+  isLocalTerminalAvailable,
+  listLocalWorkspaceOpeners,
+  openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
+  type LocalWorkspaceOpenerAvailability,
+} from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { getProjectDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { openExternalUrl } from '@/lib/external-links'
+import {
+  getActiveKeybinding,
+  OPEN_TERMINAL_COMMAND,
+  TOGGLE_SIDE_PANEL_COMMAND,
+} from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
@@ -34,10 +48,13 @@ interface WorkspacePanelActionsProps {
   currentProject?: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
+  workspaceSessionApi?: WorkspaceSessionApi
   environmentInfo: EnvironmentInfo
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
   environmentInfoDocked?: boolean
+  environmentInfoOpen: boolean
+  onEnvironmentInfoOpenChange: (open: boolean) => void
   environmentInfoFloatingFooter?: ReactNode
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -47,9 +64,17 @@ interface WorkspacePanelActionsProps {
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   onOpenEnvironmentChangesReview: () => void
+  onDeliver?: () => void
+  todoLabel?: string
+  onManageTodo?: () => void
+  supervisor?: RuntimeSupervisorState | null
+  onConfigureSupervisor?: () => void
+  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
   rightPanelOpen: boolean
+  rightPanelExpanded: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
+  onToggleRightPanelExpanded: () => void
   onToggleBottomPanel: () => void
 }
 
@@ -58,10 +83,13 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   currentProject = null,
   devices = [],
   workspaceTarget = null,
+  workspaceSessionApi,
   environmentInfo,
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
   environmentInfoDocked = true,
+  environmentInfoOpen,
+  onEnvironmentInfoOpenChange,
   environmentInfoFloatingFooter,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -71,14 +99,27 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
   onOpenEnvironmentChangesReview,
+  onDeliver,
+  todoLabel,
+  onManageTodo,
+  supervisor,
+  onConfigureSupervisor,
+  onRunSupervisorNow,
   rightPanelOpen,
+  rightPanelExpanded,
   bottomPanelOpen,
   onToggleRightPanel,
+  onToggleRightPanelExpanded,
   onToggleBottomPanel,
 }: WorkspacePanelActionsProps) {
   const { t } = useTranslation('common')
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
+  const [openerAvailability, setOpenerAvailability] = useState<Record<
+    LocalWorkspaceOpenerId,
+    boolean | undefined
+  > | null>(null)
+  const [openerLabels, setOpenerLabels] = useState<Record<string, string | undefined>>({})
   const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
   const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
   const showBottomPanelToggle =
@@ -86,11 +127,25 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const showRightPanelToggle =
     mode === 'all' || mode === 'panel-toggles' || mode === 'right-panel-toggle'
   const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
-  const canOpenCodeServer = Boolean(currentProject && codeServerProjectDeviceId)
+  const canOpenCodeServer = Boolean(
+    codeServerProjectDeviceId && (currentProject || workspaceTarget)
+  )
   const codeServerDevice = codeServerProjectDeviceId
-    ? devices.find(device => device.device_id === codeServerProjectDeviceId)
+    ? findWorkbenchDevice(devices, codeServerProjectDeviceId)
     : undefined
-  const codeServerEnabled = Boolean(codeServerDevice && isCloudDevice(codeServerDevice))
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' ||
+    (codeServerDevice &&
+      (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+        supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId)))
+  )
+  const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
+  const codeServerEnabled = Boolean(
+    workspaceSessionApi &&
+    codeServerDevice &&
+    (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+      supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId))
+  )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
   const projectUsesLocalWorkspace = Boolean(
@@ -99,24 +154,73 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       currentProject.config?.workspace?.source === 'local_path')
   )
   const localWorkspaceEnabled = Boolean(
+    !remoteWorkspaceSession &&
     localWorkspacePath?.trim() &&
     isLocalTerminalAvailable() &&
     (projectUsesLocalWorkspace ||
       (codeServerDevice && supportsLocalTerminalLaunch(codeServerDevice)))
   )
+
+  const buildAvailabilityMap = (availability: LocalWorkspaceOpenerAvailability[]) =>
+    Object.fromEntries(availability.map(item => [item.id, item.available])) as Record<
+      LocalWorkspaceOpenerId,
+      boolean | undefined
+    >
+  const buildLabelMap = (availability: LocalWorkspaceOpenerAvailability[]) =>
+    Object.fromEntries(availability.map(item => [item.id, item.label])) as Record<
+      string,
+      string | undefined
+    >
+
+  useEffect(() => {
+    if (!localWorkspaceEnabled) return
+    let cancelled = false
+    void (async () => {
+      const availability = await listLocalWorkspaceOpeners()
+      if (!cancelled) {
+        setOpenerAvailability(buildAvailabilityMap(availability))
+        setOpenerLabels(buildLabelMap(availability))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [localWorkspaceEnabled])
+
+  const availableOpenerIds = openerAvailability
+    ? (Object.keys(openerAvailability) as LocalWorkspaceOpenerId[]).filter(
+        id => openerAvailability[id] === true
+      )
+    : []
+  const defaultOpener = openerAvailability
+    ? (availableOpenerIds[0] ?? null)
+    : DEFAULT_LOCAL_WORKSPACE_OPENER_ID
+  const defaultOpenerLabel =
+    (defaultOpener != null ? openerLabels[defaultOpener] : undefined) ??
+    LOCAL_WORKSPACE_OPENERS.find(opener => opener.id === (defaultOpener ?? 'vscode'))?.label ??
+    'VS Code'
+
+  const handleChooseOther = async () => {
+    const picked = await pickLocalWorkspaceOpenerExe()
+    if (picked) {
+      const availability = await listLocalWorkspaceOpeners()
+      setOpenerAvailability(buildAvailabilityMap(availability))
+      setOpenerLabels(buildLabelMap(availability))
+    }
+  }
+
   const ideTitle = localWorkspaceEnabled
     ? t('workbench.open_project_ide_with', {
-        opener: 'VS Code',
+        opener: defaultOpenerLabel,
       })
     : codeServerEnabled
       ? t('workbench.open_project_ide')
       : t('workbench.project_ide_cloud_only_tooltip')
   const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
   const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
-  const projectApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
+  const rightPanelExpandedTitle = rightPanelExpanded
+    ? t('workbench.restore_right_workspace_panel')
+    : t('workbench.expand_right_workspace_panel')
 
   const getStartFailedMessage = (error: unknown) => {
     if (error instanceof Error && error.message) {
@@ -126,15 +230,31 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   }
 
   const handleOpenCodeServer = async () => {
-    if (!currentProject || ideLoading || !codeServerEnabled) return
+    const workspacePath = localWorkspacePath?.trim()
+    if (
+      !codeServerProjectDeviceId ||
+      !workspaceSessionApi ||
+      ideLoading ||
+      !codeServerEnabled ||
+      (useDeviceCodeServerSession && !workspacePath)
+    ) {
+      return
+    }
     setIdeLoading(true)
     setIdeError(null)
     try {
-      const session = await projectApi.startCodeServerSession(currentProject.id)
+      const session = useDeviceCodeServerSession
+        ? await workspaceSessionApi.startDeviceCodeServer(codeServerProjectDeviceId, workspacePath)
+        : currentProject
+          ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
+          : null
+      if (!session) {
+        throw new Error('IDE session target is missing')
+      }
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
-      await openExternalUrl(session.url)
+      await openExternalUrl(session.url, { target: 'system' })
     } catch (error) {
       console.error('Failed to start project IDE:', error)
       setIdeError(getStartFailedMessage(error))
@@ -144,19 +264,19 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   }
 
   const handleOpenLocalWorkspace = async (
-    opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
+    opener: LocalWorkspaceOpenerId = defaultOpener ?? DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   ) => {
     if (!localWorkspacePath || ideLoading || !localWorkspaceEnabled) return
     setIdeLoading(true)
-    setIdeError(null)
     try {
       await openLocalWorkspace({
         opener,
         path: localWorkspacePath,
       })
     } catch (error) {
+      // Unavailable openers are grayed out before launch, so this only logs
+      // unexpected launch failures instead of showing a modal.
       console.error('Failed to open local workspace:', error)
-      setIdeError(getStartFailedMessage(error))
     } finally {
       setIdeLoading(false)
     }
@@ -170,7 +290,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           info={environmentInfo}
           popoverContainer={environmentInfoPopoverContainer}
           docked={environmentInfoDocked}
-          defaultOpen={Boolean(currentProject)}
+          open={environmentInfoOpen}
+          onOpenChange={onEnvironmentInfoOpenChange}
           floatingFooter={environmentInfoFloatingFooter}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
@@ -181,13 +302,19 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}
           onOpenChangesReview={onOpenEnvironmentChangesReview}
+          onDeliver={onDeliver}
+          todoLabel={todoLabel}
+          onManageTodo={onManageTodo}
+          supervisor={supervisor}
+          onConfigureSupervisor={onConfigureSupervisor}
+          onRunSupervisorNow={onRunSupervisorNow}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (
         <div
           data-testid="local-workspace-titlebar-control"
           className={cn(
-            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-background text-[#6b7280] transition-colors hover:border-border/80 hover:bg-background focus-within:ring-2 focus-within:ring-primary/25',
+            'group inline-flex h-8 shrink-0 items-center overflow-hidden rounded-[14px] border border-border/60 bg-muted text-text-secondary transition-colors hover:border-border/80 focus-within:ring-2 focus-within:ring-focus/70',
             ideLoading && 'cursor-wait opacity-70'
           )}
         >
@@ -195,22 +322,24 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             type="button"
             data-testid="open-code-server-titlebar-button"
             onClick={() => void handleOpenLocalWorkspace()}
-            disabled={ideLoading}
+            disabled={ideLoading || (openerAvailability !== null && defaultOpener === null)}
             className={cn(
-              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
+              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-sm font-medium leading-[18px] text-text-primary transition-colors hover:bg-text-primary/[0.06] active:bg-text-primary/[0.10] focus-visible:outline-none disabled:cursor-wait',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {
-              opener: 'VS Code',
+              opener: defaultOpenerLabel,
             })}
             title={ideTitle}
           >
             {ideLoading ? (
               <Loader2 className="animate-spin" />
             ) : (
-              <LocalWorkspaceOpenerIcon opener="vscode" className="h-4 w-4" />
+              <LocalWorkspaceOpenerIcon opener={defaultOpener ?? 'vscode'} className="h-4 w-4" />
             )}
-            <span className="whitespace-nowrap">{t('workbench.open_workspace_location')}</span>
+            <span data-testid="open-workspace-location-label" className="whitespace-nowrap">
+              {t('workbench.open_workspace_location')}
+            </span>
           </button>
           <LocalWorkspaceOpenerPicker
             ariaLabel={t('workbench.choose_project_ide')}
@@ -219,9 +348,14 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             optionTestIdPrefix="open-local-workspace-option"
             disabled={ideLoading}
             buttonClassName={cn(
-              'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#6b7280] transition-colors hover:bg-black/[0.06] hover:text-[#374151] active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
+              'flex h-8 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-text-primary/[0.06] hover:text-text-primary active:bg-text-primary/[0.10] focus-visible:outline-none disabled:cursor-wait [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]',
               ideLoading && 'cursor-wait opacity-70'
             )}
+            availability={
+              (openerAvailability ?? {}) as Record<LocalWorkspaceOpenerId, boolean | undefined>
+            }
+            labels={openerLabels}
+            onChooseOther={handleChooseOther}
             onSelect={handleOpenLocalWorkspace}
           />
         </div>
@@ -250,10 +384,27 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
       {(showBottomPanelToggle || showRightPanelToggle) && (
         <>
+          {showRightPanelToggle && rightPanelOpen && (
+            <TitlebarTooltip label={rightPanelExpandedTitle} align="end">
+              <button
+                type="button"
+                data-testid="toggle-right-workspace-panel-expanded-button"
+                onClick={onToggleRightPanelExpanded}
+                className={cn(
+                  DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  rightPanelExpanded && 'bg-muted text-text-primary'
+                )}
+                aria-label={rightPanelExpandedTitle}
+                aria-pressed={rightPanelExpanded}
+              >
+                {rightPanelExpanded ? <Minimize2 /> : <Maximize2 />}
+              </button>
+            </TitlebarTooltip>
+          )}
           {showBottomPanelToggle && (
             <TitlebarTooltip
               label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
-              shortcut="Command+J"
+              shortcut={getActiveKeybinding(OPEN_TERMINAL_COMMAND) ?? 'Command+J'}
               align="end"
             >
               <button
@@ -262,7 +413,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
                 onClick={onToggleBottomPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
+                  bottomPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={bottomPanelTitle}
               >
@@ -271,14 +422,18 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             </TitlebarTooltip>
           )}
           {showRightPanelToggle && (
-            <TitlebarTooltip label={rightPanelTitle} shortcut="Alt+Command+B" align="end">
+            <TitlebarTooltip
+              label={rightPanelTitle}
+              shortcut={getActiveKeybinding(TOGGLE_SIDE_PANEL_COMMAND) ?? 'Alt+Command+B'}
+              align="end"
+            >
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-button"
                 onClick={onToggleRightPanel}
                 className={cn(
                   DESKTOP_TOP_BAR_BUTTON_CLASS,
-                  rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
+                  rightPanelOpen && 'bg-muted text-text-primary'
                 )}
                 aria-label={rightPanelTitle}
               >

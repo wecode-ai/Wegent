@@ -7,31 +7,43 @@ from app.api.endpoints import (
     api_keys,
     attachments_open,
     auth,
+    cloud_projects,
+    connector_app_projection,
+    connector_apps,
+    connector_runtime,
     deep_research,
+    deliveries,
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    external_tasks,
+    feedback,
     groups,
     health,
     im_sessions,
     installed_mcps,
     installed_plugins,
     knowledge,
+    knowledge_artifacts,
     knowledge_open,
     knowledge_transfer,
     knowledge_video_upload,
     local_executor,
+    loop_item_executions,
     mcp_providers,
     oidc,
     openapi_responses,
     pet,
+    project_automations,
     projects,
     prompt_optimization,
     quota,
     remote_devices,
     repository,
+    resource_library,
     runtime_work,
     share,
+    sites,
     skill_identity,
     skill_market,
     subtasks,
@@ -72,6 +84,9 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
+from app.api.endpoints.internal import (
+    api_keys_internal_router,
+)
 from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -86,9 +101,11 @@ from app.api.endpoints.internal import (
 from app.api.endpoints.internal import (
     object_storage_router,
     rag_content_router,
+)
+from app.api.endpoints.internal import robot_queue as internal_robot_queue
+from app.api.endpoints.internal import (
     services_router,
     skills_router,
-    subscriptions_router,
     tables_router,
     workspace_archives_router,
 )
@@ -108,11 +125,47 @@ api_router.include_router(
     wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
 )
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(
+    resource_library.router,
+    prefix="/resource-library",
+    tags=["resource-library"],
+)
+api_router.include_router(
+    connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
+)
+api_router.include_router(
+    connector_app_projection.router, prefix="/apps", tags=["apps"]
+)
+api_router.include_router(
+    connector_runtime.router,
+    prefix="/connector-runtime",
+    tags=["connector-runtime"],
+)
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
+api_router.include_router(
+    cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(
+    project_automations.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-automations"],
+)
+api_router.include_router(
+    loop_item_executions.router,
+    prefix="/v1/cloud-projects",
+    tags=["cloud-projects"],
+)
+api_router.include_router(
+    loop_item_executions.claim_router,
+    prefix="/v1",
+    tags=["cloud-projects"],
+)
+api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
+api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(
@@ -162,7 +215,6 @@ api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
 )
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
-api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
 )
@@ -170,6 +222,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
     device_chat_tasks.router, prefix="/device-chat", tags=["device-chat"]
@@ -177,6 +230,11 @@ api_router.include_router(
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_artifacts.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-artifacts"],
 )
 api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]
@@ -213,6 +271,11 @@ api_router.include_router(
     knowledge_open.router,
     prefix="/knowledge",
     tags=["knowledge-open"],
+)
+api_router.include_router(
+    external_tasks.router,
+    prefix="/external/tasks",
+    tags=["external-tasks"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
@@ -310,10 +373,10 @@ api_router.include_router(
     tags=["internal-workspace-archives"],
 )
 api_router.include_router(
-    subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
+    callback_router, prefix="/internal", tags=["internal-callback"]
 )
 api_router.include_router(
-    callback_router, prefix="/internal", tags=["internal-callback"]
+    internal_robot_queue.router, prefix="/internal", tags=["internal-robot-queue"]
 )
 api_router.include_router(
     internal_attachments_router,
@@ -329,4 +392,9 @@ api_router.include_router(
     internal_model_config_router,
     prefix="/internal",
     tags=["internal-model-config"],
+)
+api_router.include_router(
+    api_keys_internal_router,
+    prefix="/internal",
+    tags=["internal-api-keys"],
 )

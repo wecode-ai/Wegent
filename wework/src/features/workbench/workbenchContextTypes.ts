@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -12,13 +13,17 @@ import type {
   LocalDeviceApp,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
+  MultiAttachmentUploadState,
   ModelOptions,
+  ModelSelectionConfig,
+  ModelType,
   PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
   ProjectWithTasks,
   RuntimeGoalClearResponse,
   RuntimeGoalCreateInput,
+  RuntimeAdditionalContext,
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
@@ -26,10 +31,15 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
+  RuntimeName,
   RuntimeSendRequest,
+  RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskQueueReorderRequest,
+  RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -71,26 +81,76 @@ export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
+export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
+
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
+  forceNewTask?: boolean
+  runtime?: RuntimeName
+  runtimeExecutablePath?: string
+  runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
+  modelSelection?: ModelSelectionConfig | null
+  additionalSkills?: SkillRef[]
+  clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
-  ) => void
+  ) => void | Promise<void>
+  additionalContext?: RuntimeAdditionalContext
+  cloudProjectId?: string
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
+  attachments?: Attachment[]
   onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
+}
+
+export interface CreateProjectRuntimeTaskOptions {
+  project?: ProjectWithTasks | null
+  /** Project-space entry points can pin the shell independently from the
+   * globally selected model. */
+  runtime?: RuntimeName
+  attachments?: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
+  collaborationMode?: 'default' | 'plan'
+  deliveryId?: string
+  cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
+  modelId?: string | null
+  /** Full execution model fields resolved from a UnifiedModel; replaces the
+   * global workbench model when provided, matching task-message execution. */
+  executionModel?: {
+    modelId?: string | null
+    modelType?: string | null
+    modelOptions?: ModelOptions
+  } | null
+  /** Model selection used for the created runtime task handle; replaces the
+   * global workbench selection when provided. */
+  modelSelection?: {
+    modelName: string
+    modelType: ModelType | null
+    options: ModelOptions
+  } | null
+  /** Force the runtime task onto a specific device (robot execution
+   * environment), bypassing the default project/standalone device pick. */
+  deviceId?: string | null
+  additionalContext?: RuntimeAdditionalContext
+  onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  silentBusyRetry?: boolean
 }
 
 export interface RuntimePaneGuidanceResult {
@@ -102,21 +162,31 @@ export interface RuntimePaneGuidanceResult {
 
 export interface WorkbenchContextValue {
   services: WorkbenchServices
+  workspaceTabId?: string
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
-  currentRuntimeTaskRunning: boolean
   runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
+    scopeKey: string
+    inputByScope: Readonly<Record<string, string>>
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
+    activeModel?: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    composerError?: string | null
     trialTemplates: PluginPathComponent[]
+    trialPluginName?: string
+    trialPluginApp?: LocalDeviceApp
+    hasConversationContext?: boolean
+    dismissTrialGuide?: () => void
+    applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
+    attachmentStateByScope: Readonly<Record<string, MultiAttachmentUploadState>>
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
     errors: Map<string, string>
@@ -130,12 +200,18 @@ export interface WorkbenchContextValue {
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
+    setInputForScope: (scopeKey: string, value: string) => void
+    setComposerError?: (error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
+    handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
+    addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
     removeAttachment: (attachmentId: number) => Promise<void>
+    removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
     resetAttachments: () => void
+    resetAttachmentsForScope: (scopeKey: string) => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
     listLocalApps: () => Promise<LocalDeviceApp[]>
   }
@@ -151,12 +227,20 @@ export interface WorkbenchContextValue {
   openStandaloneWorkspace: (
     deviceId: string,
     workspacePath: string,
-    label?: string
+    label?: string,
+    projectRoots?: string[]
   ) => Promise<void>
   startNewChat: () => void
+  startNewSkillChat: (
+    skillNames: string[],
+    options?: { allowLocalSkills?: boolean }
+  ) => Promise<boolean>
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
+  reorderQueuedRuntimeTask: (data: RuntimeTaskQueueReorderRequest) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (
@@ -180,11 +264,13 @@ export interface WorkbenchContextValue {
     addresses: RuntimeTaskAddress[],
     options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
-  forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
+  forkCurrentRuntimeTask: (
+    target: RuntimeTaskForkTarget,
+    options?: { lastTurnId?: string; title?: string }
+  ) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
-  markRuntimeTaskStarted: (address: RuntimeTaskAddress) => void
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
@@ -200,8 +286,7 @@ export interface WorkbenchContextValue {
   unsubscribeRuntimeTaskNotifications: (
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
-  rememberExecutionDevice: (deviceId: string) => void
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
@@ -218,6 +303,13 @@ export interface WorkbenchContextValue {
   listGitRepositories: () => Promise<GitRepoInfo[]>
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
+  updateLocalRuntimeProject: (data: {
+    deviceId: string
+    projectKey: string
+    name: string
+    roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
+  }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
   setRuntimeProjectPinned: (data: RuntimeProjectPinRequest) => Promise<void>
@@ -270,6 +362,10 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  interruptAndSendRuntimePaneMessage: (
+    request: RuntimeSendRequest,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   sendRuntimePaneGuidance: (request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>
   compactRuntimePaneTask: (
     address: RuntimeTaskAddress,
@@ -288,17 +384,31 @@ export interface WorkbenchContextValue {
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
-  retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
+  createEphemeralRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  createProjectRuntimeTask: (
+    input: string,
+    options: CreateProjectRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  retryFailedMessage: (
+    messageId: string,
+    messagesOverride?: WorkbenchMessage[],
+    retryUserMessageOverride?: WorkbenchMessage
+  ) => Promise<boolean>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<string>
   revertTurnFileChanges: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<TurnFileChangesSummary>
 }
 
@@ -316,10 +426,7 @@ export type WorkbenchPaneState = Pick<
   | 'error'
 >
 
-export type WorkbenchPaneContextValue = Omit<
-  WorkbenchContextValue,
-  'state' | 'currentRuntimeTaskRunning' | 'cloudWorkStatus'
-> & {
+export type WorkbenchPaneContextValue = Omit<WorkbenchContextValue, 'state' | 'cloudWorkStatus'> & {
   state: WorkbenchPaneState
 }
 
@@ -327,5 +434,9 @@ export interface WorkbenchProviderProps {
   children: ReactNode
   user: User
   services?: WorkbenchServices
+  lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
+  workspaceTabId?: string
+  syncRemoteProjects?: boolean
+  syncRuntimeTaskLifecycle?: boolean
 }

@@ -7,7 +7,7 @@ use std::{
     env, fs,
     future::Future,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
     sync::{
@@ -36,12 +36,14 @@ use crate::{
     claude_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
+    process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
-        collect_claude_stream_summary, extract_claude_tool_results, extract_claude_tool_uses,
-        extract_reasoning, extract_text, ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer,
-        ClaudeStdoutJsonError, ClaudeToolUse,
+        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_child_blocks,
+        extract_claude_result_error, extract_claude_subagent_update, extract_claude_tool_results,
+        extract_claude_tool_uses, extract_reasoning, extract_text, ClaudeAsyncTaskTracker,
+        ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolUse,
     },
 };
 
@@ -609,18 +611,17 @@ async fn handle_deferred_mcp_loop(
         let Some(deferred_tool_use) = summary.deferred_tool_use.clone() else {
             return summary.outcome;
         };
-        // After draining an already answered form, a non-empty final answer is
-        // authoritative; a leftover deferred form is stale Claude session state.
-        if stale_answer_defer_drained
-            && answered_interactive_form_tool_use_id(&request).is_some()
+        let answered_tool_use_id = answered_interactive_form_tool_use_id(&request);
+        if answered_tool_use_id.as_deref() == Some(deferred_tool_use.id.as_str())
+            && crate::agents::interactive_mcp::is_interactive_form_tool(&deferred_tool_use.name)
             && completed_with_content(&summary.outcome)
         {
-            log_executor_event("ignoring stale deferred form after answered drain", &fields);
+            log_executor_event("ignoring stale deferred form after answer", &fields);
             return summary.outcome;
         }
         if !stale_answer_defer_drained
-            && answered_interactive_form_tool_use_id(&request)
-                .is_some_and(|tool_use_id| tool_use_id == deferred_tool_use.id)
+            && answered_tool_use_id.as_deref() == Some(deferred_tool_use.id.as_str())
+            && crate::agents::interactive_mcp::is_interactive_form_tool(&deferred_tool_use.name)
         {
             stale_answer_defer_drained = true;
             log_executor_event("draining stale answered interactive form defer", &fields);
@@ -818,9 +819,8 @@ enum StreamingStdoutOutcome {
 }
 
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
-    let mut command = Command::new(&spec.program);
-    command.args(&spec.args).envs(&spec.env);
-    command.kill_on_drop(true);
+    let mut command = command_from_spec(&spec);
+    hide_windows_console(&mut command);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -867,14 +867,12 @@ async fn run_streaming_command_output<S>(
 where
     S: EventSink,
 {
-    let mut command = Command::new(&spec.program);
+    let mut command = command_from_spec(&spec);
     command
-        .args(&spec.args)
-        .envs(&spec.env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
+    hide_windows_console(&mut command);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -924,6 +922,21 @@ where
     }
     log_executor_event("process finished", &fields);
     outcome
+}
+
+fn command_from_spec(spec: &CommandSpec) -> Command {
+    let extra_env = spec
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .env_clear()
+        .envs(process_environment::process_env(&extra_env))
+        .kill_on_drop(true);
+    command
 }
 
 async fn run_prepared_streaming_command<S>(
@@ -1043,6 +1056,16 @@ where
     let dispatcher = StreamingEventDispatcher::new(sink);
     while let Ok(Some(line)) = lines.next_line().await {
         line_number += 1;
+        let line = match compact_claude_stdout_line(&line, line_number) {
+            Ok(line) => line,
+            Err(error) => {
+                dispatcher.flush().await;
+                return StreamingStdoutOutcome::InvalidJson {
+                    stdout: output,
+                    error,
+                };
+            }
+        };
         output.push_str(&line);
         output.push('\n');
         if let Some(file) = debug_stdout_file.as_mut() {
@@ -1061,6 +1084,39 @@ where
             continue;
         };
         async_tasks.observe(&value);
+        if let Some(update) = extract_claude_subagent_update(&value) {
+            let parent_tool_use_id = tool_uses
+                .get(&update.tool_use_id)
+                .and_then(|tool_use| tool_use.parent_tool_use_id.as_deref());
+            emit_claude_subagent_update(
+                &dispatcher,
+                &builder,
+                &update.tool_use_id,
+                &update.status,
+                None,
+                update.summary.as_deref(),
+                parent_tool_use_id,
+                &task_id,
+                &subtask_id,
+            );
+        }
+        for block in extract_claude_child_blocks(&value) {
+            let event = builder.response_child_block_created(
+                &block.id,
+                &block.block_type,
+                &block.parent_tool_use_id,
+                &block.content,
+            );
+            dispatcher.send(
+                event,
+                "streaming child agent block callback failed",
+                vec![
+                    ("task_id", task_id.clone()),
+                    ("subtask_id", subtask_id.clone()),
+                    ("parent_tool_use_id", block.parent_tool_use_id),
+                ],
+            );
+        }
         if let Some(reasoning) = extract_reasoning(&value) {
             if !reasoning.is_empty() {
                 emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
@@ -1077,6 +1133,7 @@ where
                     id: tool_result.tool_use_id.clone(),
                     name: "Tool".to_owned(),
                     input: Value::Object(Default::default()),
+                    parent_tool_use_id: tool_result.parent_tool_use_id.clone(),
                 });
             emit_claude_tool_result(
                 &dispatcher,
@@ -1126,7 +1183,21 @@ fn emit_claude_tool_use(
     task_id: &str,
     subtask_id: &str,
 ) {
-    let event = builder.response_tool_block_created(&tool_use.id, &tool_use.name, &tool_use.input);
+    let event = if is_claude_subagent_tool(&tool_use.name) {
+        builder.response_subagent_block_created(
+            &tool_use.id,
+            &tool_use.name,
+            &tool_use.input,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    } else {
+        builder.response_tool_block_created(
+            &tool_use.id,
+            &tool_use.name,
+            &tool_use.input,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    };
     dispatcher.send(
         event,
         "streaming tool use callback failed",
@@ -1147,8 +1218,23 @@ fn emit_claude_tool_result(
     task_id: &str,
     subtask_id: &str,
 ) {
-    let event =
-        builder.response_tool_block_updated(&tool_use.id, &tool_use.input, output, is_error);
+    let event = if is_claude_subagent_tool(&tool_use.name) {
+        builder.response_subagent_block_updated(
+            &tool_use.id,
+            None,
+            output,
+            None,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    } else {
+        builder.response_tool_block_updated(
+            &tool_use.id,
+            &tool_use.input,
+            output,
+            is_error,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    };
     dispatcher.send(
         event,
         "streaming tool result callback failed",
@@ -1158,6 +1244,40 @@ fn emit_claude_tool_result(
             ("tool_use_id", tool_use.id.clone()),
         ],
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_claude_subagent_update(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    tool_use_id: &str,
+    status: &str,
+    output: Option<&str>,
+    summary: Option<&str>,
+    parent_tool_use_id: Option<&str>,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let event = builder.response_subagent_block_updated(
+        tool_use_id,
+        Some(status),
+        output,
+        summary,
+        parent_tool_use_id,
+    );
+    dispatcher.send(
+        event,
+        "streaming child agent status callback failed",
+        vec![
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("tool_use_id", tool_use_id.to_owned()),
+        ],
+    );
+}
+
+fn is_claude_subagent_tool(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Task") || name.eq_ignore_ascii_case("Agent")
 }
 
 fn emit_reasoning_chunks(
@@ -1290,6 +1410,7 @@ async fn run_prepared_command(
     mut command: Command,
     stdin: Option<String>,
 ) -> std::io::Result<std::process::Output> {
+    hide_windows_console(&mut command);
     let Some(input) = stdin else {
         return command.output().await;
     };
@@ -1449,8 +1570,15 @@ fn debug_claude_stdout_path_for_spec(
     task_id: Option<&str>,
     subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
-    (spec.program == "claude" && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
+    (is_claude_program(&spec.program) && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
+}
+
+fn is_claude_program(program: &str) -> bool {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("claude")
 }
 
 fn env_flag_enabled(name: &str) -> bool {
@@ -1473,16 +1601,51 @@ fn debug_claude_stdout_path(task_id: Option<&str>, subtask_id: Option<&str>) -> 
 }
 
 fn failure_message(stderr: Vec<u8>, stdout: Vec<u8>) -> String {
+    let stdout = decode_output(stdout);
+    if let Some(message) = extract_claude_result_error(&stdout) {
+        return message;
+    }
     let stderr = decode_output(stderr);
     if !stderr.is_empty() {
         return stderr;
     }
-    decode_output(stdout)
+    stdout
 }
 
 fn decode_output(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_owned()
 }
+
+#[cfg(windows)]
+mod windows_console {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    pub trait HideConsole {
+        fn hide_console(&mut self);
+    }
+
+    impl HideConsole for std::process::Command {
+        fn hide_console(&mut self) {
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+
+    impl HideConsole for tokio::process::Command {
+        fn hide_console(&mut self) {
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn hide_windows_console<C: windows_console::HideConsole>(command: &mut C) {
+    command.hide_console();
+}
+
+#[cfg(not(windows))]
+pub fn hide_windows_console<C>(_command: &mut C) {}
 
 #[cfg(test)]
 mod tests {
@@ -1672,6 +1835,15 @@ mod tests {
     }
 
     #[test]
+    fn debug_claude_stdout_accepts_resolved_claude_path() {
+        let _lock = env_lock();
+        let _debug = EnvGuard::set(DEBUG_CLAUDE_STDOUT_ENV, "1");
+        let spec = CommandSpec::new("/usr/bin/claude");
+
+        assert!(debug_claude_stdout_path_for_spec(&spec, Some("1"), Some("2")).is_some());
+    }
+
+    #[test]
     fn command_outcome_fields_include_stderr_preview_on_failure() {
         let fields = command_outcome_fields(&CommandOutcome::Failure {
             stderr: "first line\nsecond line".to_owned(),
@@ -1680,5 +1852,40 @@ mod tests {
         });
 
         assert!(fields.contains(&("stderr_preview", "first line\\nsecond line".to_owned())));
+    }
+
+    #[test]
+    fn failure_message_extracts_claude_terminal_error_from_stdout() {
+        let stdout = concat!(
+            r#"{"type":"system","subtype":"hook_started"}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","is_error":true,"result":"API Error: 502 Bad Gateway"}"#,
+        );
+
+        assert_eq!(
+            failure_message(Vec::new(), stdout.as_bytes().to_vec()),
+            "API Error: 502 Bad Gateway"
+        );
+    }
+
+    #[test]
+    fn failure_message_keeps_stderr_without_terminal_result() {
+        assert_eq!(
+            failure_message(
+                b"command timed out after 300s".to_vec(),
+                br#"{"type":"assistant","message":{"content":[{"text":"partial"}]}}"#.to_vec(),
+            ),
+            "command timed out after 300s"
+        );
+    }
+
+    #[test]
+    fn failure_message_prefers_terminal_result_over_stderr_warning() {
+        let stdout = br#"{"type":"result","is_error":true,"result":"Invalid model ID"}"#.to_vec();
+
+        assert_eq!(
+            failure_message(b"startup hook warning".to_vec(), stdout),
+            "Invalid model ID"
+        );
     }
 }

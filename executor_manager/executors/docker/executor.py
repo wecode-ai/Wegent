@@ -43,6 +43,7 @@ from executor_manager.executors.docker.utils import (
     get_container_status,
     get_running_task_details,
 )
+from executor_manager.utils.executor_info import attach_executor_info
 from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
@@ -185,7 +186,11 @@ class DockerExecutor(Executor):
         try:
             # Determine execution path based on whether container name exists
             if executor_name:
-                self._attach_executor_info(task_dict, execution_status)
+                attach_executor_info(
+                    task_dict,
+                    execution_status["executor_name"],
+                    execution_status.get("executor_namespace"),
+                )
                 # Check if container needs to be recreated (not running or doesn't exist)
                 if self._should_recreate_container(executor_name, task_id):
                     execution_status["executor_name"] = executor_name
@@ -199,7 +204,11 @@ class DockerExecutor(Executor):
                 execution_status["executor_name"] = generate_executor_name(
                     task_id, subtask_id, user_name
                 )
-                self._attach_executor_info(task_dict, execution_status)
+                attach_executor_info(
+                    task_dict,
+                    execution_status["executor_name"],
+                    execution_status.get("executor_namespace"),
+                )
 
                 self._create_new_container(task_dict, task_info, execution_status)
         except Exception as e:
@@ -244,23 +253,6 @@ class DockerExecutor(Executor):
             "user_name": user_name,
             "executor_name": executor_name,
         }
-
-    @staticmethod
-    def _attach_executor_info(task: Dict[str, Any], status: Dict[str, Any]) -> None:
-        """Attach resolved executor info to the payload sent to the container."""
-        executor_name = status.get("executor_name")
-        if not executor_name:
-            return
-
-        executor_namespace = status.get("executor_namespace") or ""
-        metadata = task.get("metadata")
-        if isinstance(metadata, dict):
-            metadata["executor_name"] = executor_name
-            metadata["executor_namespace"] = executor_namespace
-            return
-
-        task["executor_name"] = executor_name
-        task["executor_namespace"] = executor_namespace
 
     def _should_recreate_container(self, executor_name: str, task_id: int) -> bool:
         """Check if container should be recreated due to stale or non-running state.
@@ -1027,6 +1019,9 @@ class DockerExecutor(Executor):
         # Add TASK_API_DOMAIN environment variable for executor to access backend API
         self._add_task_api_domain(cmd)
 
+        # Add the keys the executor needs to read the git token it is handed
+        self._add_git_token_crypto(cmd)
+
         # Add workspace mount
         self._add_workspace_mount(cmd)
 
@@ -1067,6 +1062,30 @@ class DockerExecutor(Executor):
         executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
         if executor_workspace:
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
+
+    def _add_git_token_crypto(self, cmd: List[str]) -> None:
+        """Pass through the keys that decrypt the git token in the task payload.
+
+        The backend sends the token as it is stored, which is encrypted, and the
+        executor decrypts it before cloning. Without these the executor finds a
+        credential it cannot read, drops it, and git falls back to prompting for a
+        username -- surfacing as "could not read Username for ..." with nothing
+        pointing at the missing key.
+
+        Absent values are not forwarded: an empty key would make the executor decrypt
+        with a default that produces a wrong token, which fails as an authentication
+        error rather than as the configuration error it is.
+        """
+        for name in ("GIT_TOKEN_AES_KEY", "GIT_TOKEN_AES_IV"):
+            value = os.getenv(name, "")
+            if value:
+                cmd.extend(["-e", f"{name}={value}"])
+            else:
+                logger.warning(
+                    "%s is not set, so an encrypted git token cannot be read inside "
+                    "the executor and cloning a private repository will fail",
+                    name,
+                )
 
     def _add_network_config(self, cmd: List[str]) -> None:
         """Add network configuration"""

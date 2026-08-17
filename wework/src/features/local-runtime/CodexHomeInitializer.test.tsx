@@ -14,7 +14,7 @@ vi.mock('@/api/local/codexPlugins', () => ({
 }))
 
 const migrationStatus = {
-  weworkCodexHome: '/Users/test/.wegent-executor/codex',
+  weworkCodexHome: '/Users/test/.wework/codex',
   nativeCodexHome: '/Users/test/.codex',
   weworkCodexHomeExists: true,
   nativeCodexHomeExists: true,
@@ -42,12 +42,20 @@ describe('CodexHomeInitializer', () => {
 
     expect(await screen.findByTestId('codex-home-initializer-dialog')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading')).toHaveTextContent('是否导入 Codex 配置？')
+    expect(screen.getByTestId('codex-home-initializer-create-button')).toHaveTextContent('不导入')
+    expect(screen.getByTestId('codex-home-initializer-migrate-button')).toHaveTextContent('导入')
+    expect(screen.queryByText(migrationStatus.nativeCodexHome)).not.toBeInTheDocument()
+    expect(screen.queryByText(migrationStatus.weworkCodexHome)).not.toBeInTheDocument()
   })
 
-  test('creates Wework Codex config with the selected remote apps setting', async () => {
+  test('creates Wework Codex config with apps enabled by default', async () => {
     render(<CodexHomeInitializer />)
 
-    await userEvent.click(await screen.findByTestId('codex-home-initializer-remote-apps-checkbox'))
+    await screen.findByTestId('codex-home-initializer-dialog')
+    expect(
+      screen.queryByTestId('codex-home-initializer-remote-apps-checkbox')
+    ).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('codex-home-initializer-create-button'))
 
     await waitFor(() =>
@@ -57,6 +65,20 @@ describe('CodexHomeInitializer', () => {
       })
     )
     expect(window.localStorage.getItem('wework.plugins.codexMigrationDismissed')).toBe('1')
+  })
+
+  test('migrates native Codex config with apps enabled by default', async () => {
+    render(<CodexHomeInitializer />)
+
+    await screen.findByTestId('codex-home-initializer-dialog')
+    await userEvent.click(screen.getByTestId('codex-home-initializer-migrate-button'))
+
+    await waitFor(() =>
+      expect(localCodexPluginApiMock.initializeCodexHome).toHaveBeenCalledWith({
+        migrateNativeHome: true,
+        remoteAppsEnabled: true,
+      })
+    )
   })
 
   test('keeps prompting after dismissal when the Wework Codex config is still missing', async () => {
@@ -81,5 +103,37 @@ describe('CodexHomeInitializer', () => {
 
     expect(await screen.findByTestId('workbench-child')).toBeInTheDocument()
     expect(screen.queryByTestId('codex-home-initializer-dialog')).not.toBeInTheDocument()
+  })
+
+  test('surfaces status lookup failures instead of bypassing initialization', async () => {
+    localCodexPluginApiMock.codexHomeMigrationStatus.mockRejectedValue(
+      new Error('Codex home status unavailable')
+    )
+
+    render(
+      <CodexHomeInitializer>
+        <div data-testid="workbench-child" />
+      </CodexHomeInitializer>
+    )
+
+    expect(await screen.findByTestId('codex-home-initializer-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-home-initializer-error')).toHaveTextContent(
+      'Codex home status unavailable'
+    )
+    expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
+  })
+
+  test('uses a localized fallback for non-Error status lookup failures', async () => {
+    localCodexPluginApiMock.codexHomeMigrationStatus.mockRejectedValue(null)
+
+    render(
+      <CodexHomeInitializer>
+        <div data-testid="workbench-child" />
+      </CodexHomeInitializer>
+    )
+
+    expect(await screen.findByTestId('codex-home-initializer-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-home-initializer-error')).toHaveTextContent('工作台暂时不可用')
+    expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
   })
 })

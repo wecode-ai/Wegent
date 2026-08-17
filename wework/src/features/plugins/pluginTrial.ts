@@ -1,18 +1,78 @@
-import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceApp, PluginPathComponent } from '@/types/api'
+import {
+  currentPluginLogoAppearanceMode,
+  resolveInstalledPluginLogoUrl,
+  resolvePluginLogo,
+} from '@/components/plugins/plugin-assets'
+import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
+import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
+import { composerAppPluginKey } from './composerPluginMetadata'
+import { managedMarketplaceName } from './pluginMarketplaceIdentity'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
 export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
 export const LOCAL_PLUGIN_SKILLS_CHANGED_EVENT = 'wework:local-plugin-skills-changed'
 export const FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT = 'wework:focus-plugin-trial-composer'
+export const INSERT_PLUGIN_REFERENCE_EVENT = 'wework:insert-plugin-reference'
+export const SHOW_PLUGIN_TRIAL_GUIDE_EVENT = 'wework:show-plugin-trial-guide'
+
+export function insertPluginReference(reference: string) {
+  window.dispatchEvent(
+    new CustomEvent(INSERT_PLUGIN_REFERENCE_EVENT, {
+      detail: { reference },
+    })
+  )
+}
+
+export function showPluginTrialGuide(
+  pluginName: string,
+  templates: PluginPathComponent[] | undefined,
+  app?: LocalDeviceApp
+) {
+  const normalizedName = pluginName.trim()
+  const availableTemplates = (templates ?? []).filter(template => !template.unavailableReason)
+  if (!normalizedName || availableTemplates.length === 0) return
+  window.dispatchEvent(
+    new CustomEvent(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, {
+      detail: {
+        pluginName: normalizedName,
+        templates: availableTemplates.slice(0, 6),
+        app,
+      },
+    })
+  )
+}
 
 interface PendingPluginTrial {
   input: string
   pluginName: string
   templates: PluginPathComponent[]
+  app?: LocalDeviceApp
+  openInNewChat?: boolean
+}
+
+interface PluginReferenceTrial {
+  pluginName: string
+  marketplaceName: string
+  displayName: string
+  templates?: PluginPathComponent[]
+}
+
+interface PluginTrialOptions {
+  prompt?: string
+  openInNewChat?: boolean
+  reference?: PluginReferenceTrial
+}
+
+function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
+  window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
+  window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
+  return true
 }
 
 function firstPluginSkill(plugin: InstalledPlugin) {
-  return plugin.spec.components.skills.find(skill => skill.path && skill.name)
+  const skills = Array.isArray(plugin.spec.components?.skills) ? plugin.spec.components.skills : []
+  return skills.find(skill => skill.path && skill.name)
 }
 
 function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
@@ -22,16 +82,92 @@ function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
 
 function pluginMentionPath(plugin: InstalledPlugin): string | null {
   const payload = sourcePayload(plugin)
+  const metadataNamespace =
+    typeof plugin.metadata.namespace === 'string' ? plugin.metadata.namespace : null
   const pluginName =
     (typeof payload.pluginName === 'string' && payload.pluginName.trim()) ||
     (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
-    plugin.spec.source.pluginKey
+    plugin.spec.source?.pluginKey
   const marketplaceName =
     (typeof payload.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
-    plugin.metadata.namespace
+    managedMarketplaceName(plugin) ||
+    plugin.spec.source?.marketplace ||
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`
+}
+
+function composerAppForPlugin(plugin: InstalledPlugin): LocalDeviceApp | null {
+  const rawPluginKey = plugin.spec.source.pluginKey
+  const rawMetadataName = typeof plugin.metadata.name === 'string' ? plugin.metadata.name : ''
+  const pluginKey = (rawPluginKey || rawMetadataName).trim().toLowerCase()
+  const displayName = (plugin.spec.displayName || '').trim().toLowerCase()
+  if (!pluginKey && !displayName) return null
+  const apps = getComposerApps()
+  return (
+    apps.find(app => composerAppPluginKey(app).trim().toLowerCase() === pluginKey) ||
+    apps.find(app => (app.pluginKey || '').trim().toLowerCase() === pluginKey) ||
+    apps.find(app => app.name.trim().toLowerCase() === displayName) ||
+    null
+  )
+}
+
+function registerMentionIconFromResolved(
+  reference: string,
+  logo: { url: string; source: string; contrastPad: boolean }
+): void {
+  if (logo.source !== 'provided' || !logo.url) return
+  registerComposerMentionIcon(reference, {
+    url: logo.url,
+    contrastPad: logo.contrastPad,
+  })
+}
+
+function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
+  const pluginKey =
+    plugin.spec.source.pluginKey ||
+    (typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null)
+  const packageLogo = resolvePluginLogo({
+    pluginKey,
+    logo: plugin.spec.interface?.logo,
+    logoDark: plugin.spec.interface?.logoDark,
+    composerIcon: plugin.spec.interface?.composerIcon,
+    appearanceMode: currentPluginLogoAppearanceMode(),
+  })
+  if (packageLogo.source === 'provided' && packageLogo.url) {
+    registerMentionIconFromResolved(reference, packageLogo)
+    return
+  }
+
+  // Connectors often only expose icon_url on the composer app inventory.
+  const composerApp = composerAppForPlugin(plugin)
+  if (!composerApp) return
+  registerMentionIconFromResolved(
+    reference,
+    resolvePluginLogo({
+      pluginKey: composerAppPluginKey(composerApp),
+      logo: composerApp.logoUrl,
+      logoDark: composerApp.logoUrlDark,
+      appearanceMode: currentPluginLogoAppearanceMode(),
+    })
+  )
+}
+
+function pluginTrialApp(plugin: InstalledPlugin): LocalDeviceApp {
+  const pluginKey = plugin.spec.source.pluginKey
+  const name = plugin.spec.displayName || pluginKey
+  const composerApp = composerAppForPlugin(plugin)
+  const packageLight = resolveInstalledPluginLogoUrl(plugin, 'light') || null
+  const packageDark = resolveInstalledPluginLogoUrl(plugin, 'dark') || null
+  return {
+    id: `plugin:${pluginKey}`,
+    name,
+    pluginKey,
+    logoUrl: packageLight || composerApp?.logoUrl || null,
+    logoUrlDark: packageDark || composerApp?.logoUrlDark || null,
+    source: 'installed-plugin',
+  }
 }
 
 function skillFilePath(path: string): string {
@@ -50,22 +186,102 @@ function firstDefaultPrompt(value: unknown): string | null {
   return null
 }
 
+function defaultPromptTemplates(plugin: InstalledPlugin): PluginPathComponent[] {
+  const raw = plugin.spec.interface?.defaultPrompt
+  const prompts = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [])
+    .filter((prompt): prompt is string => typeof prompt === 'string' && Boolean(prompt.trim()))
+    .map(prompt => prompt.trim())
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey || 'this plugin'
+  const guidePrompts =
+    prompts.length > 0
+      ? prompts
+      : [
+          `Use ${pluginName} to summarize the current context and propose next steps`,
+          `Use ${pluginName} to create an editable result from the current materials`,
+          `Use ${pluginName} to inspect the current work and identify issues`,
+        ]
+  return guidePrompts.map((prompt, index) => ({
+    name: prompt,
+    path: `prompt-${index}`,
+    description: prompt,
+  }))
+}
+
+export function pluginTrialTemplates(
+  plugin: InstalledPlugin,
+  selectedPrompt?: string
+): PluginPathComponent[] {
+  const components = plugin.spec.components
+  const templatesOrCommands = Array.isArray(components?.templates)
+    ? components.templates
+    : Array.isArray(components?.commands)
+      ? components.commands
+      : []
+  const nativeTemplates = templatesOrCommands.filter(template => !template.unavailableReason)
+  const templates = nativeTemplates.length > 0 ? nativeTemplates : defaultPromptTemplates(plugin)
+  const normalizedSelectedPrompt = selectedPrompt?.trim()
+  if (!normalizedSelectedPrompt) return templates
+
+  const selectedTitle = normalizedSelectedPrompt.split(/\r?\n/, 1)[0].trim()
+  if (selectedTitle !== normalizedSelectedPrompt) {
+    return [
+      {
+        name: selectedTitle,
+        path: 'selected-use-case',
+        description: normalizedSelectedPrompt,
+      },
+      ...templates.filter(
+        template =>
+          template.name.trim() !== selectedTitle && template.description?.trim() !== selectedTitle
+      ),
+    ]
+  }
+
+  const selectedIndex = templates.findIndex(
+    template =>
+      template.description?.trim() === normalizedSelectedPrompt ||
+      template.name.trim() === normalizedSelectedPrompt
+  )
+  if (selectedIndex < 0) {
+    return [
+      {
+        name: normalizedSelectedPrompt,
+        path: 'selected-use-case',
+        description: normalizedSelectedPrompt,
+      },
+      ...templates,
+    ]
+  }
+  return [templates[selectedIndex], ...templates.filter((_, index) => index !== selectedIndex)]
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function pluginTrialInput(plugin: InstalledPlugin): string | null {
+export function pluginTrialInput(
+  plugin: InstalledPlugin,
+  options: PluginTrialOptions = {}
+): string | null {
   const skill = firstPluginSkill(plugin)
   const pluginPath = pluginMentionPath(plugin)
   const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const referenceOverride = options.reference
   const reference =
-    pluginPath && pluginName
-      ? `[$${pluginName}](${pluginPath})`
-      : skill
-        ? `[$${skill.name}](${skillFilePath(skill.path)})`
-        : null
+    referenceOverride &&
+    referenceOverride.pluginName.trim() &&
+    referenceOverride.marketplaceName.trim() &&
+    referenceOverride.displayName.trim()
+      ? `[$${referenceOverride.displayName.trim()}](plugin://${referenceOverride.pluginName.trim()}@${referenceOverride.marketplaceName.trim()})`
+      : pluginPath && pluginName
+        ? `[$${pluginName}](${pluginPath})`
+        : skill
+          ? `[$${skill.name}](${skillFilePath(skill.path)})`
+          : null
   if (!reference) return null
-  const defaultPrompt = firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
+  registerPluginMentionIcon(plugin, reference)
+  const promptOverride = options.prompt?.trim()
+  const defaultPrompt = promptOverride || firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
   if (!defaultPrompt) return `${reference} `
 
   const skillTokenPattern = skill ? new RegExp(`\\$${escapeRegExp(skill.name)}\\b`, 'g') : null
@@ -76,17 +292,73 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
   return `${reference} ${defaultPrompt}`
 }
 
-export function queuePluginTrial(plugin: InstalledPlugin): boolean {
-  const input = pluginTrialInput(plugin)
+export function queuePluginTrial(
+  plugin: InstalledPlugin,
+  options: PluginTrialOptions = {}
+): boolean {
+  const input = pluginTrialInput(plugin, options)
   if (!input) return false
-  const payload: PendingPluginTrial = {
+  return queuePendingPluginTrial({
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
-    templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
-  }
-  window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
-  window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
-  return true
+    templates: pluginTrialTemplates(plugin, options.prompt),
+    app: pluginTrialApp(plugin),
+    openInNewChat: options.openInNewChat === true,
+  })
+}
+
+export function queuePluginPromptTrial(
+  plugin: InstalledPlugin,
+  prompt: string,
+  { openInNewChat = false }: PluginTrialOptions = {}
+): boolean {
+  const pluginPath = pluginMentionPath(plugin)
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const normalizedPrompt = prompt.trim()
+  if (!pluginPath || !pluginName || !normalizedPrompt) return false
+  const reference = `[$${pluginName}](${pluginPath})`
+  registerPluginMentionIcon(plugin, reference)
+  return queuePendingPluginTrial({
+    input: `${reference} ${normalizedPrompt}`,
+    pluginName,
+    templates: pluginTrialTemplates(plugin, normalizedPrompt),
+    app: pluginTrialApp(plugin),
+    openInNewChat,
+  })
+}
+
+export function queuePluginInputTrial(
+  plugin: InstalledPlugin,
+  input: string,
+  { openInNewChat = false, prompt }: PluginTrialOptions = {}
+): boolean {
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const normalizedInput = input.trim()
+  if (!pluginName || !normalizedInput) return false
+  return queuePendingPluginTrial({
+    input: normalizedInput,
+    pluginName,
+    templates: pluginTrialTemplates(plugin, prompt ?? normalizedInput),
+    openInNewChat,
+  })
+}
+
+export function queuePluginReferenceTrial({
+  pluginName,
+  marketplaceName,
+  displayName,
+  templates = [],
+}: PluginReferenceTrial): boolean {
+  const normalizedPluginName = pluginName.trim()
+  const normalizedMarketplaceName = marketplaceName.trim()
+  const normalizedDisplayName = displayName.trim()
+  if (!normalizedPluginName || !normalizedMarketplaceName || !normalizedDisplayName) return false
+
+  return queuePendingPluginTrial({
+    input: `[$${normalizedDisplayName}](plugin://${normalizedPluginName}@${normalizedMarketplaceName}) `,
+    pluginName: normalizedDisplayName,
+    templates,
+  })
 }
 
 export function consumePluginTrial(): PendingPluginTrial | null {
@@ -100,6 +372,14 @@ export function consumePluginTrial(): PendingPluginTrial | null {
       input: payload.input,
       pluginName: typeof payload.pluginName === 'string' ? payload.pluginName : '',
       templates: Array.isArray(payload.templates) ? payload.templates : [],
+      app:
+        payload.app &&
+        typeof payload.app === 'object' &&
+        typeof payload.app.id === 'string' &&
+        typeof payload.app.name === 'string'
+          ? payload.app
+          : undefined,
+      openInNewChat: payload.openInNewChat === true,
     }
   } catch {
     return null
@@ -112,4 +392,132 @@ export function consumePluginTrialInput(): string | null {
 
 export function notifyLocalPluginSkillsChanged() {
   window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
+}
+
+const PLUGIN_USAGE_STORAGE_KEY = 'wework:plugin-usage-30d'
+const TRIAL_GUIDE_DISMISSED_KEY = 'wework:dismissed-trial-guide'
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
+function normalizePluginKey(pluginName: string): string {
+  return pluginName.trim().toLowerCase()
+}
+
+function readUsageMap(): Record<string, number[]> {
+  try {
+    const raw = window.localStorage.getItem(PLUGIN_USAGE_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([key, value]) =>
+        Array.isArray(value) && value.every(item => typeof item === 'number')
+          ? [[key, value as number[]]]
+          : []
+      )
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeUsageMap(map: Record<string, number[]>): void {
+  window.localStorage.setItem(PLUGIN_USAGE_STORAGE_KEY, JSON.stringify(map))
+}
+
+export function getPluginUseCount30d(pluginName: string): number {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return 0
+  const cutoff = Date.now() - THIRTY_DAYS_MS
+  return (readUsageMap()[key] ?? []).filter(timestamp => timestamp >= cutoff).length
+}
+
+export function recordPluginUsage(pluginName: string): void {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return
+  const map = readUsageMap()
+  const cutoff = Date.now() - THIRTY_DAYS_MS
+  map[key] = [...(map[key] ?? []).filter(timestamp => timestamp >= cutoff), Date.now()]
+  writeUsageMap(map)
+}
+
+const PLUGIN_MENTION_PATTERN = /\[\$([^\]]+)\]\((plugin:\/\/[^)]+)\)/g
+
+export function recordPluginUsageFromInput(input: string): void {
+  const seen = new Set<string>()
+  for (const match of input.matchAll(PLUGIN_MENTION_PATTERN)) {
+    const pluginName = match[1]?.trim()
+    if (!pluginName || seen.has(pluginName)) continue
+    seen.add(pluginName)
+    recordPluginUsage(pluginName)
+  }
+}
+
+function dismissedGuideKey(pluginName: string, scopeKey: string): string {
+  return `${scopeKey}:${normalizePluginKey(pluginName)}`
+}
+
+function readDismissedGuides(): Set<string> {
+  try {
+    const raw = window.sessionStorage.getItem(TRIAL_GUIDE_DISMISSED_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    return new Set(Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeDismissedGuides(keys: Set<string>): void {
+  window.sessionStorage.setItem(TRIAL_GUIDE_DISMISSED_KEY, JSON.stringify([...keys]))
+}
+
+export function isTrialGuideDismissed(pluginName: string, scopeKey: string): boolean {
+  return readDismissedGuides().has(dismissedGuideKey(pluginName, scopeKey))
+}
+
+export function dismissTrialGuide(pluginName: string, scopeKey: string): void {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return
+  const next = readDismissedGuides()
+  next.add(dismissedGuideKey(pluginName, scopeKey))
+  writeDismissedGuides(next)
+}
+
+export function shouldShowPluginTrialGuide(pluginName: string, scopeKey: string): boolean {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return false
+  return getPluginUseCount30d(pluginName) === 0 && !isTrialGuideDismissed(pluginName, scopeKey)
+}
+
+export function buildTrialTemplatePrompt(
+  currentInput: string,
+  template: PluginPathComponent
+): string {
+  const mentionMatch = currentInput.match(/^(\[\$[^\]]+\]\([^)]+\))\s*/)
+  const prefix = mentionMatch?.[1] ?? ''
+  const templateText = template.description?.trim() || template.name.trim()
+  return prefix ? `${prefix} ${templateText} ` : `${templateText} `
+}
+
+export function buildContextualPluginPrompt(
+  currentInput: string,
+  instruction: string,
+  currentIdeaLabel: string
+): string {
+  const mentionMatch = currentInput.match(/^(\[\$[^\]]+\]\([^)]+\))\s*/)
+  const prefix = mentionMatch?.[1] ?? ''
+  const currentIdea = mentionMatch
+    ? currentInput.slice(mentionMatch[0].length).trim()
+    : currentInput.trim()
+  const body = [instruction.trim()]
+  if (currentIdea) body.push(`${currentIdeaLabel.trim()}: ${currentIdea}`)
+  const prompt = body.filter(Boolean).join('\n\n')
+  return prefix ? `${prefix} ${prompt} ` : `${prompt} `
+}
+
+export function buildRefinedPluginPrompt(currentInput: string, refinedPrompt: string): string {
+  const mentionMatch = currentInput.match(/^(\[\$[^\]]+\]\([^)]+\))\s*/)
+  const prefix = mentionMatch?.[1] ?? ''
+  const prompt = refinedPrompt.trim()
+  if (!prompt) return currentInput
+  return prefix ? `${prefix} ${prompt} ` : `${prompt} `
 }

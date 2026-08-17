@@ -1,0 +1,10 @@
+{
+  "models": [
+    {
+      "slug": "wework-vision-sidecar",
+      "display_name": "Vision Sidecar",
+      "description": "Wework text model routed through a configured vision sidecar",
+      "apply_patch_tool_type": "freeform"
+    }
+  ]
+}

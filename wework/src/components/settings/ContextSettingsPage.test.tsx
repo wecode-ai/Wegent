@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AppPreferences } from '@/tauri/appPreferences'
@@ -7,17 +7,25 @@ import { ContextSettingsPage } from './ContextSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  contextCompactionThreshold: 85,
+  supervisorPrinciples: '',
+  experimentalFeaturesEnabled: false,
+  telemetryEnabled: true,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  trayWegentUsageEnabled: true,
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -36,14 +44,25 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    systemDragEnabled: true,
+    preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    contextCompactionThreshold: 85,
+    supervisorPrinciples: '',
+    experimentalFeaturesEnabled: false,
+    telemetryEnabled: true,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
+    trayWegentUsageEnabled: true,
+    appshotsPlaySound: true,
   },
+  CONTEXT_COMPACTION_THRESHOLD_MIN: 1,
+  CONTEXT_COMPACTION_THRESHOLD_MAX: 100,
+  clampContextCompactionThreshold: (value: number) => Math.min(100, Math.max(1, Math.round(value))),
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
 }))
@@ -88,6 +107,33 @@ describe('ContextSettingsPage', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
+  test('saves the context compaction threshold', async () => {
+    render(<ContextSettingsPage />)
+
+    const input = await screen.findByTestId('context-compaction-threshold-input')
+    expect(input).toHaveValue(85)
+
+    await userEvent.clear(input)
+    await userEvent.type(input, '90{Enter}')
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ contextCompactionThreshold: 90 })
+    })
+    expect(input).toHaveValue(90)
+  })
+
+  test('rounds the full numeric input before saving the threshold', async () => {
+    render(<ContextSettingsPage />)
+
+    const input = await screen.findByTestId('context-compaction-threshold-input')
+    fireEvent.change(input, { target: { value: '90.6' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ contextCompactionThreshold: 91 })
+    })
+  })
+
   test('loads and saves Wework custom instructions', async () => {
     render(<ContextSettingsPage />)
 
@@ -105,5 +151,33 @@ describe('ContextSettingsPage', () => {
       expect(saveLocalCodexInstructionsMock).toHaveBeenCalledWith('Prefer TypeScript examples.')
     })
     expect(screen.getByTestId('context-wework-instructions-save-button')).toBeDisabled()
+  })
+
+  test('hides supervisor principles without experimental features', async () => {
+    render(<ContextSettingsPage />)
+
+    await screen.findByTestId('context-terminal-injection-toggle')
+    expect(screen.queryByTestId('context-supervisor-principles-textarea')).not.toBeInTheDocument()
+  })
+
+  test('shows and saves supervisor principles with experimental features', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      experimentalFeaturesEnabled: true,
+    })
+    render(<ContextSettingsPage />)
+
+    const textarea = await screen.findByTestId('context-supervisor-principles-textarea')
+    expect(textarea).toHaveValue('')
+    expect(screen.getByTestId('context-supervisor-principles-save-button')).toBeDisabled()
+
+    await userEvent.type(textarea, '发现偏离目标时先给出最小纠正建议。')
+    await userEvent.click(screen.getByTestId('context-supervisor-principles-save-button'))
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        supervisorPrinciples: '发现偏离目标时先给出最小纠正建议。',
+      })
+    })
   })
 })

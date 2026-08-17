@@ -40,6 +40,7 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
                 {
                     "id": "create_ppt",
                     "title": "创建 PPT",
+                    "cover": "/marketplace-covers/create-ppt.webp",
                     "team_id": 101,
                     "input_presets": [
                         {
@@ -90,8 +91,8 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
             "spec": {
                 "description": f"Description {team_id}",
                 "icon": "sparkles",
+                "bind_mode": ["code"],
                 "quick_phrases": [f"agent phrase {team_id}"],
-                "recommended_mode": "chat",
             },
             "agent_type": "claude",
         }
@@ -101,7 +102,6 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
         "get_team_by_id",
         fake_get_team_by_id,
     )
-
     response = await users_endpoint.get_user_quick_launch(
         db=db,
         current_user=current_user,
@@ -110,7 +110,12 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     assert response.system_functions[0].id == "create_ppt"
     assert [function.id for function in response.system_functions] == ["create_ppt"]
     assert response.system_functions[0].team_id == 101
+    assert response.system_functions[0].cover == "/marketplace-covers/create-ppt.webp"
     assert response.system_functions[0].name == "team-101"
+    assert response.system_functions[0].description == "Description 101"
+    assert response.system_functions[0].icon == "sparkles"
+    assert response.system_functions[0].bind_mode == ["code"]
+    assert response.system_functions[0].recommended_mode == "code"
     assert response.system_functions[0].input_presets[0].id == "roadmap"
     assert (
         response.system_functions[0].input_presets[0].prompt
@@ -134,6 +139,8 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     ].options.selected_skill_names == ["ppt"]
     assert response.favorite_agents[0].team_id == 202
     assert response.favorite_agents[0].title == "Team 202"
+    assert response.favorite_agents[0].bind_mode == ["code"]
+    assert response.favorite_agents[0].recommended_mode == "code"
     assert response.favorite_agents[0].quick_phrases == ["agent phrase 202"]
     assert response.favorite_agents[0].input_presets[0].prompt == "agent phrase 202"
 

@@ -82,6 +82,7 @@ async fn validate_image(request: ExecutionRequest) -> Result<ValidationResult, S
 
 async fn run_check(check: ValidationCheck) -> CheckResult {
     let mut command = Command::new("sh");
+    crate::process::hide_windows_console(&mut command);
     command
         .args(["-c", check.command])
         .stdout(Stdio::piped())

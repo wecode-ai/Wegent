@@ -332,8 +332,11 @@ async def create_sandbox(
         )
 
     if error:
-        # Sandbox created but with error
-        logger.warning(f"[E2B API] Sandbox created with error: {error}")
+        logger.error(f"[E2B API] Sandbox creation failed: {error}")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "sandbox_not_ready", "message": error},
+        )
 
     # Get domain from request for SDK to construct URLs
     domain = get_domain_from_request(http_request)

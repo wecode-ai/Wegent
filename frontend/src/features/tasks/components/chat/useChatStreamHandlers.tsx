@@ -8,6 +8,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task } from '@/types/api'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
+import { resolveTaskExecutionDeviceId } from '@/features/devices/utils/execution-target'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -41,7 +42,17 @@ import type {
   InteractiveFormAnswerPayload,
 } from '@/types/api'
 import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
+import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+import {
+  buildDingTalkKnowledgeRef,
+  normalizeSelectedExternalKnowledgeRefs,
+} from './selectedKnowledge'
+
+export interface SendMessageOptions {
+  interactiveFormAnswer?: InteractiveFormAnswerPayload
+  artifactContext?: ArtifactNodeContext
+}
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
   return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
@@ -97,7 +108,7 @@ export interface UseChatStreamHandlersOptions {
   // Callback when a new task is created (used for binding knowledge base)
   onTaskCreated?: (taskId: number) => void
 
-  // Selected document IDs from DocumentPanel (for notebook mode context injection)
+  // Selected document IDs from KnowledgeSourcePanel (for notebook mode context injection)
   selectedDocumentIds?: number[]
 
   // Skill selection
@@ -120,6 +131,8 @@ export interface GenerateParams {
   ratio?: string
   /** Duration in seconds for video generation */
   duration?: number
+  /** Selected model-defined video generation mode */
+  generation_mode_id?: string
   /** Model name for video/image generation (for display in user message) */
   model?: string
   /** Image size for image generation (e.g., '2048x2048') */
@@ -149,10 +162,7 @@ export interface ChatStreamHandlers {
   sendExpiredGuidanceAsMessage: (id: string) => Promise<void>
 
   // Actions
-  handleSendMessage: (
-    overrideMessage?: string,
-    options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
-  ) => Promise<void>
+  handleSendMessage: (overrideMessage?: string, options?: SendMessageOptions) => Promise<void>
   /**
    * Send a message with a temporary model override (used for regeneration).
    * @param overrideMessage - The message content to send
@@ -306,21 +316,31 @@ export function useChatStreamHandlers({
   // - Send device_id when in device mode (devices page or chat page with device selected) AND team is not Chat Shell
   // - For project conversations, use the project's configured device
   // - This ensures coding tasks don't get routed to devices
-  const effectiveDeviceId =
+  const persistedTaskDeviceId =
+    currentTaskId &&
+    selectedTaskDetail?.id === currentTaskId &&
+    selectedTaskDetail.task_type === 'task'
+      ? selectedTaskDetail.device_id || undefined
+      : undefined
+  const newTaskDeviceId =
     isDeviceMode && !isChatShell(selectedTeam)
       ? projectDeviceId || selectedDeviceId || undefined
       : undefined
+  const effectiveDeviceId = resolveTaskExecutionDeviceId({
+    taskId: currentTaskId,
+    persistedTaskDeviceId,
+    newTaskDeviceId,
+  })
 
   // Refs
   const selectedContextsRef = useRef(selectedContexts)
   selectedContextsRef.current = selectedContexts
-  const lastFailedMessageRef = useRef<string | null>(null)
+  const lastFailedMessageRef = useRef<{
+    message: string
+    options?: SendMessageOptions
+  } | null>(null)
   const handleSendMessageRef = useRef<
-    | ((
-        message?: string,
-        options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
-      ) => Promise<void>)
-    | null
+    ((message?: string, options?: SendMessageOptions) => Promise<void>) | null
   >(null)
   const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
 
@@ -363,7 +383,10 @@ export function useChatStreamHandlers({
   }, [currentTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
   const notifyStreamingJoinWarning = useCallback(
-    (title: string) => toast({ title, variant: 'warning' }),
+    (title: string) => {
+      const notification = toast({ title, variant: 'warning' })
+      return { dismiss: notification.dismiss }
+    },
     [toast]
   )
 
@@ -387,7 +410,7 @@ export function useChatStreamHandlers({
 
   // Helper: handle send errors
   const handleSendError = useCallback(
-    (error: Error, message: string) => {
+    (error: Error, message: string, options?: SendMessageOptions) => {
       if (runtimeDerived?.blocksQueuedDispatch) {
         void recoverCurrentTask('manual-refresh')
         return
@@ -395,7 +418,7 @@ export function useChatStreamHandlers({
 
       resetStreamingState()
       const parsedError = parseError(error)
-      lastFailedMessageRef.current = message
+      lastFailedMessageRef.current = { message, options }
 
       // Use getErrorDisplayMessage for consistent error display logic
       const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
@@ -406,7 +429,8 @@ export function useChatStreamHandlers({
         action: parsedError.retryable
           ? createRetryButton(() => {
               if (lastFailedMessageRef.current && handleSendMessageRef.current) {
-                handleSendMessageRef.current(lastFailedMessageRef.current)
+                const failedMessage = lastFailedMessageRef.current
+                void handleSendMessageRef.current(failedMessage.message, failedMessage.options)
               }
             })
           : undefined,
@@ -431,15 +455,17 @@ export function useChatStreamHandlers({
         GitRepoInfo,
         'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'
       > | null,
-      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+      sendOptions?: SendMessageOptions
     ): PreparedChatSend => {
-      const snapshotAttachments = [...attachments]
-      const snapshotContexts = [...selectedContextsRef.current]
-      const snapshotAdditionalSkills = additionalSkills ? [...additionalSkills] : undefined
+      const isArtifactQuestion = Boolean(sendOptions?.artifactContext)
+      const snapshotAttachments = isArtifactQuestion ? [] : [...attachments]
+      const snapshotContexts = isArtifactQuestion ? [] : [...selectedContextsRef.current]
+      const snapshotAdditionalSkills =
+        !isArtifactQuestion && additionalSkills ? [...additionalSkills] : undefined
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
 
       let finalMessage = message
-      if (Object.keys(externalApiParams).length > 0) {
+      if (!isArtifactQuestion && Object.keys(externalApiParams).length > 0) {
         const paramsJson = JSON.stringify(externalApiParams)
         finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
       }
@@ -480,26 +506,43 @@ export function useChatStreamHandlers({
           }
         })
 
-      snapshotContexts
-        .filter(ctx => ctx.type === 'external_knowledge')
-        .map(ctx => (ctx as ExternalKnowledgeContext).ref)
-        .forEach(ref => {
-          contextItems.push({
-            type: 'external_knowledge',
-            data: {
-              provider: ref.provider,
-              mode: ref.mode,
-              id: ref.id,
-              name: ref.name,
-              scope: ref.scope,
-              target_type: ref.target_type,
-              node_id: ref.node_id,
-              document_id: ref.document_id,
-              parent_id: ref.parent_id,
-              target_name: ref.target_name,
-            },
-          })
+      if (taskType === 'knowledge' && knowledgeBaseId && !sendOptions?.artifactContext) {
+        const workspaceKnowledgeContext = {
+          type: 'knowledge_base' as const,
+          data: {
+            knowledge_id: knowledgeBaseId,
+            document_ids: selectedDocumentIds ?? [],
+            scope_restricted: Boolean(selectedDocumentIds?.length),
+          },
+        }
+        const existingIndex = contextItems.findIndex(
+          item =>
+            item.type === 'knowledge_base' && Number(item.data.knowledge_id) === knowledgeBaseId
+        )
+        if (existingIndex >= 0) {
+          contextItems[existingIndex] = workspaceKnowledgeContext
+        } else {
+          contextItems.push(workspaceKnowledgeContext)
+        }
+      }
+
+      const selectedExternalKnowledgeRefs = normalizeSelectedExternalKnowledgeRefs([
+        ...snapshotContexts
+          .filter(ctx => ctx.type === 'external_knowledge')
+          .map(ctx => (ctx as ExternalKnowledgeContext).ref),
+        ...snapshotContexts
+          .filter(
+            (ctx): ctx is import('@/types/context').DingTalkDocContext =>
+              ctx.type === 'dingtalk_doc'
+          )
+          .map(buildDingTalkKnowledgeRef),
+      ])
+      selectedExternalKnowledgeRefs.forEach(ref => {
+        contextItems.push({
+          type: 'external_knowledge',
+          data: { ...ref },
         })
+      })
 
       let messageWithQueueContent = finalMessage
       const queueMessageContexts = snapshotContexts.filter(ctx => ctx.type === 'queue_message')
@@ -508,18 +551,6 @@ export function useChatStreamHandlers({
           .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
           .join('\n\n---\n\n')
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
-      }
-
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-      if (dingtalkDocContexts.length > 0) {
-        const docRefs = dingtalkDocContexts
-          .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
-          })
-          .join('\n')
-        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
       }
 
       const queueAttachmentIds = queueMessageContexts.flatMap(
@@ -532,6 +563,7 @@ export function useChatStreamHandlers({
 
       if (
         taskType === 'knowledge' &&
+        !sendOptions?.artifactContext &&
         selectedDocumentIds &&
         selectedDocumentIds.length > 0 &&
         knowledgeBaseId
@@ -638,24 +670,25 @@ export function useChatStreamHandlers({
             document_id: tableContext.document_id,
             source_config: tableContext.source_config,
           })
-        } else if (ctx.type === 'external_knowledge') {
-          const externalContext = ctx as ExternalKnowledgeContext
-          pendingContexts.push({
-            id: -(pendingContexts.length + 1),
-            context_type: 'external_knowledge',
-            name: ctx.name,
-            status: 'ready',
-            external_provider: externalContext.ref.provider,
-            external_mode: externalContext.ref.mode,
-            external_id: externalContext.ref.id,
-            external_scope: externalContext.ref.scope,
-            external_target_type: externalContext.ref.target_type,
-            external_node_id: externalContext.ref.node_id,
-            external_document_id: externalContext.ref.document_id,
-            external_parent_id: externalContext.ref.parent_id,
-          })
         }
       }
+
+      selectedExternalKnowledgeRefs.forEach(ref => {
+        pendingContexts.push({
+          id: -(pendingContexts.length + 1),
+          context_type: 'external_knowledge',
+          name: ref.name ?? ref.id,
+          status: 'ready',
+          external_provider: ref.provider,
+          external_mode: ref.mode,
+          external_id: ref.id,
+          external_scope: ref.scope,
+          external_target_type: ref.target_type,
+          external_node_id: ref.node_id,
+          external_document_id: ref.document_id,
+          external_parent_id: ref.parent_id,
+        })
+      })
 
       const request: ContextSendRequest = {
         message: messageWithQueueContent,
@@ -677,6 +710,7 @@ export function useChatStreamHandlers({
           : undefined,
         task_type: taskType,
         knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+        artifact_context: sendOptions?.artifactContext,
         contexts: contextItems.length > 0 ? contextItems : undefined,
         device_id: effectiveDeviceId,
         // Project association for workspace project conversations
@@ -738,7 +772,7 @@ export function useChatStreamHandlers({
           }
         },
         onError: (error: Error) => {
-          handleSendError(error, message)
+          handleSendError(error, message, sendOptions)
         },
       }
 
@@ -1015,16 +1049,13 @@ export function useChatStreamHandlers({
 
   // Core message sending logic
   const handleSendMessage = useCallback(
-    async (
-      overrideMessage?: string,
-      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
-    ) => {
+    async (overrideMessage?: string, sendOptions?: SendMessageOptions) => {
       const message =
         overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
       const hasAttachments = attachments.length > 0
       if (!message && !hasAttachments && !shouldHideChatInput) return
 
-      if (!isAttachmentReadyToSend) {
+      if (!sendOptions?.artifactContext && !isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
           title: '请等待文件上传完成',
@@ -1071,7 +1102,11 @@ export function useChatStreamHandlers({
           .reverse()
           .find(queuedMessage => queuedMessage.status === 'queued')
 
-        if (mergeTarget) {
+        if (
+          mergeTarget &&
+          !prepared.request.artifact_context &&
+          !mergeTarget.snapshot.request.artifact_context
+        ) {
           updateQueuedMessage(mergeTarget.id, queuedMessage => {
             const mergedPrepared = mergePreparedChatSend(queuedMessage.snapshot, prepared)
             return {
@@ -1088,16 +1123,20 @@ export function useChatStreamHandlers({
             snapshot: prepared,
           })
         }
-        setTaskInputMessage('')
-        resetAttachment()
-        resetContexts?.()
+        if (!sendOptions?.artifactContext) {
+          setTaskInputMessage('')
+          resetAttachment()
+          resetContexts?.()
+        }
         setTimeout(() => scrollToBottom(true), 0)
         return
       }
 
-      setTaskInputMessage('')
-      resetAttachment()
-      resetContexts?.()
+      if (!sendOptions?.artifactContext) {
+        setTaskInputMessage('')
+        resetAttachment()
+        resetContexts?.()
+      }
 
       if (!currentTaskId) {
         setPendingTaskId(immediateTaskId)
@@ -1106,7 +1145,7 @@ export function useChatStreamHandlers({
       try {
         await sendPreparedChatMessage(prepared)
       } catch (err) {
-        handleSendError(err as Error, message)
+        handleSendError(err as Error, message, sendOptions)
       }
     },
     [
@@ -1520,7 +1559,6 @@ export function useChatStreamHandlers({
       showRepositorySelector,
       selectedRepo,
       selectedBranch,
-      selectedContexts,
       taskType,
       knowledgeBaseId,
       markTaskAsViewed,

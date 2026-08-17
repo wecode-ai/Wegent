@@ -527,3 +527,54 @@ class TestStreamingServiceReasoning:
         }
         assert output[3]["content"][0]["type"] == "output_text"
         assert output[3]["content"][0]["text"] == "Final answer."
+
+    @pytest.mark.asyncio
+    async def test_subagent_blocks_are_forwarded_and_included_in_completion(
+        self, streaming_service
+    ):
+        async def block_stream():
+            yield StreamingChunk(
+                type="block_created",
+                data={
+                    "block": {
+                        "id": "Agent_0",
+                        "type": "subagent",
+                        "status": "invoking",
+                    }
+                },
+            )
+            yield StreamingChunk(
+                type="block_updated",
+                data={
+                    "block_id": "Agent_0",
+                    "updates": {"summary": "Inspected backend", "status": "done"},
+                },
+            )
+            yield StreamingChunk(type="text", content="Root answer")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="claude-code",
+            chat_stream=block_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        created = next(e for e in events if e["type"] == "response.block.created")
+        updated = next(e for e in events if e["type"] == "response.block.updated")
+        completed = next(e for e in events if e["type"] == "response.completed")
+
+        assert created["block"]["type"] == "subagent"
+        assert updated["updates"] == {
+            "summary": "Inspected backend",
+            "status": "done",
+        }
+        assert completed["response"]["blocks"] == [
+            {
+                "id": "Agent_0",
+                "type": "subagent",
+                "status": "done",
+                "summary": "Inspected backend",
+            }
+        ]

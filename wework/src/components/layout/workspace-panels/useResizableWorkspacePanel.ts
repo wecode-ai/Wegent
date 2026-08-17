@@ -6,14 +6,18 @@ import {
   type PointerEvent,
   type RefObject,
 } from 'react'
+import { DEFAULT_CODE_FONT_SIZE } from '@/features/appearance/typography'
 
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
-const RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH = 260
+export const RIGHT_SPLIT_PANEL_MIN_WIDTH = 260
 const BOTTOM_DEFAULT_HEIGHT = 320
-const BOTTOM_MIN_HEIGHT = 220
 const BOTTOM_MAX_HEIGHT = 560
+const BOTTOM_PANEL_BORDER_HEIGHT = 1
+const BOTTOM_PANEL_TAB_BAR_HEIGHT = 40
+const BOTTOM_TERMINAL_VERTICAL_PADDING = 24
+const TERMINAL_LINE_HEIGHT = 1.2
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
@@ -22,14 +26,16 @@ function clamp(value: number, min: number, max: number) {
 function getRightSplitChatMaxWidth(containerWidth: number) {
   if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_MAX_WIDTH
 
-  return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_COLLAPSE_WIDTH)
+  return Math.max(RIGHT_SPLIT_CHAT_MIN_WIDTH, containerWidth - RIGHT_SPLIT_PANEL_MIN_WIDTH)
 }
 
-function getRightSplitChatDefaultWidth(containerWidth: number) {
+function getRightSplitChatDefaultWidth(containerWidth: number, defaultPanelWidth?: number) {
   if (containerWidth <= 0) return RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
 
   return clamp(
-    RIGHT_SPLIT_CHAT_DEFAULT_WIDTH,
+    defaultPanelWidth === undefined
+      ? RIGHT_SPLIT_CHAT_DEFAULT_WIDTH
+      : containerWidth - defaultPanelWidth,
     RIGHT_SPLIT_CHAT_MIN_WIDTH,
     getRightSplitChatMaxWidth(containerWidth)
   )
@@ -38,11 +44,13 @@ function getRightSplitChatDefaultWidth(containerWidth: number) {
 interface ResizableRightSplitChatOptions {
   containerRef?: RefObject<HTMLElement | null>
   onCollapse?: () => void
+  defaultPanelWidth?: number
 }
 
 export function useResizableRightSplitChat({
   containerRef,
   onCollapse,
+  defaultPanelWidth,
 }: ResizableRightSplitChatOptions = {}) {
   const [width, setWidth] = useState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
   const [resizing, setResizing] = useState(false)
@@ -55,7 +63,9 @@ export function useResizableRightSplitChat({
 
     const applyDefaultWidth = () => {
       if (userSizedRef.current) return
-      setWidth(getRightSplitChatDefaultWidth(container.getBoundingClientRect().width))
+      setWidth(
+        getRightSplitChatDefaultWidth(container.getBoundingClientRect().width, defaultPanelWidth)
+      )
     }
 
     applyDefaultWidth()
@@ -64,7 +74,7 @@ export function useResizableRightSplitChat({
     const observer = new ResizeObserver(applyDefaultWidth)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [containerRef])
+  }, [containerRef, defaultPanelWidth])
 
   useEffect(() => {
     return () => {
@@ -102,7 +112,7 @@ export function useResizableRightSplitChat({
       const applyCollapse = () => {
         collapseFrameRef.current = null
         userSizedRef.current = false
-        setWidth(getRightSplitChatDefaultWidth(containerWidth))
+        setWidth(getRightSplitChatDefaultWidth(containerWidth, defaultPanelWidth))
         onCollapse?.()
       }
 
@@ -141,33 +151,102 @@ export function useResizableRightSplitChat({
   return { width, resizing, handleResizeStart }
 }
 
-export function useResizableBottomPanel() {
+function getBottomPanelMinHeight(codeFontSize: number) {
+  return (
+    BOTTOM_PANEL_BORDER_HEIGHT +
+    BOTTOM_PANEL_TAB_BAR_HEIGHT +
+    BOTTOM_TERMINAL_VERTICAL_PADDING +
+    Math.ceil(codeFontSize * TERMINAL_LINE_HEIGHT)
+  )
+}
+
+export function useResizableBottomPanel(codeFontSize = DEFAULT_CODE_FONT_SIZE) {
   const [height, setHeight] = useState(BOTTOM_DEFAULT_HEIGHT)
+  const [resizing, setResizing] = useState(false)
+  const panelRef = useRef<HTMLElement | null>(null)
+  const resizeFrameRef = useRef<number | null>(null)
+  const activeResizeCleanupRef = useRef<(() => void) | null>(null)
+  const minimumHeight = getBottomPanelMinHeight(codeFontSize)
+  const resolvedHeight = Math.max(height, minimumHeight)
+
+  useEffect(() => {
+    return () => {
+      activeResizeCleanupRef.current?.()
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+      }
+    }
+  }, [])
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
+    activeResizeCleanupRef.current?.()
+
+    const resizeHandle = event.currentTarget
+    if (typeof resizeHandle.setPointerCapture === 'function') {
+      try {
+        resizeHandle.setPointerCapture(event.pointerId)
+      } catch {
+        // Synthetic verification events do not create an active browser pointer.
+      }
+    }
 
     const startY = event.clientY
-    const startHeight = height
+    const startHeight = resolvedHeight
+    let nextHeight = startHeight
+
+    const applyHeight = () => {
+      resizeFrameRef.current = null
+      if (panelRef.current) {
+        panelRef.current.style.flexBasis = `${nextHeight}px`
+        panelRef.current.style.height = `${nextHeight}px`
+      }
+    }
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      setHeight(
-        clamp(startHeight + startY - moveEvent.clientY, BOTTOM_MIN_HEIGHT, BOTTOM_MAX_HEIGHT)
-      )
+      nextHeight = clamp(startHeight + startY - moveEvent.clientY, minimumHeight, BOTTOM_MAX_HEIGHT)
+      if (resizeFrameRef.current !== null) return
+
+      resizeFrameRef.current = window.requestAnimationFrame(applyHeight)
     }
 
-    const handleUp = () => {
+    const cleanupResize = () => {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
+      document.removeEventListener('pointercancel', handleCancel)
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+        resizeFrameRef.current = null
+      }
+      if (resizeHandle.hasPointerCapture?.(event.pointerId)) {
+        resizeHandle.releasePointerCapture(event.pointerId)
+      }
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      activeResizeCleanupRef.current = null
     }
 
+    const finishResize = () => {
+      cleanupResize()
+      if (panelRef.current) {
+        panelRef.current.style.flexBasis = `${nextHeight}px`
+        panelRef.current.style.height = `${nextHeight}px`
+      }
+      setHeight(nextHeight)
+      setResizing(false)
+    }
+
+    const handleUp = () => finishResize()
+    const handleCancel = () => finishResize()
+
+    setResizing(true)
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
+    document.addEventListener('pointercancel', handleCancel)
+    activeResizeCleanupRef.current = cleanupResize
   }
 
-  return { height, handleResizeStart }
+  return { height: resolvedHeight, resizing, panelRef, handleResizeStart }
 }

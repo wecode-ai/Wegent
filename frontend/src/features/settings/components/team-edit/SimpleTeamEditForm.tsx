@@ -5,7 +5,7 @@
 'use client'
 
 import { type ReactNode, useId, useMemo, useState } from 'react'
-import { ChevronDown, SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { ChevronDown, Lock, LockKeyholeOpen, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -29,12 +29,13 @@ import { RichSkillSelector } from '@/features/settings/components/skills/RichSki
 import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
+import type { KnowledgeBaseDefaultRef, TaskType, TeamInputPlaceholder } from '@/types/api'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
 import QuickPhraseEditor from './QuickPhraseEditor'
+import InputPlaceholderEditor from './InputPlaceholderEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
@@ -42,16 +43,20 @@ import type { SimpleExecutorMode } from './simple-team-edit-utils'
 interface SimpleTeamEditFormProps {
   name: string
   setName: (value: string) => void
+  nameEditable?: boolean
+  onToggleNameEdit?: () => void
   displayName: string
   setDisplayName: (value: string) => void
   description: string
   setDescription: (value: string) => void
   quickPhrases: string[]
   onQuickPhrasesChange: (value: string[]) => void
+  inputPlaceholder: TeamInputPlaceholder
+  onInputPlaceholderChange: (value: TeamInputPlaceholder) => void
   bindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
-  setIcon: (value: string) => void
+  setIcon: (value: string | null) => void
   requiresWorkspace: boolean | null
   setRequiresWorkspace: (value: boolean | null) => void
   executorMode: SimpleExecutorMode
@@ -132,12 +137,16 @@ function SimpleSection({
 export default function SimpleTeamEditForm({
   name,
   setName,
+  nameEditable = true,
+  onToggleNameEdit,
   displayName,
   setDisplayName,
   description,
   setDescription,
   quickPhrases,
   onQuickPhrasesChange,
+  inputPlaceholder,
+  onInputPlaceholderChange,
   bindMode,
   setBindMode,
   icon,
@@ -253,7 +262,35 @@ export default function SimpleTeamEditForm({
                 onChange={event => setName(event.target.value)}
                 placeholder={t('common:team.name_placeholder')}
                 className="bg-base"
+                disabled={!nameEditable}
+                data-testid="team-technical-name-input"
               />
+              {onToggleNameEdit && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-warning hover:bg-warning/10 hover:text-warning"
+                  onClick={onToggleNameEdit}
+                  aria-label={t(
+                    nameEditable
+                      ? 'common:teams.lock_technical_name'
+                      : 'common:teams.force_edit_name'
+                  )}
+                  title={t(
+                    nameEditable
+                      ? 'common:teams.lock_technical_name'
+                      : 'common:teams.force_edit_name'
+                  )}
+                  data-testid="enable-team-technical-name-edit"
+                >
+                  {nameEditable ? (
+                    <LockKeyholeOpen className="h-4 w-4" />
+                  ) : (
+                    <Lock className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
             </div>
           </SimpleConfigRow>
 
@@ -284,6 +321,10 @@ export default function SimpleTeamEditForm({
             align="start"
           >
             <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
+          </SimpleConfigRow>
+
+          <SimpleConfigRow label={t('settings:team.input_placeholder.label')} align="start">
+            <InputPlaceholderEditor value={inputPlaceholder} onChange={onInputPlaceholderChange} />
           </SimpleConfigRow>
 
           <SimpleConfigRow

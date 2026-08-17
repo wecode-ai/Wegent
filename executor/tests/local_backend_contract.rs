@@ -14,7 +14,7 @@ use std::{
 use std::{fs, os::unix::fs::PermissionsExt};
 
 use serde_json::{json, Value};
-use tokio::time::timeout;
+use tokio::{sync::broadcast, time::timeout};
 use wegent_executor::{
     config::device::{DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
@@ -24,6 +24,7 @@ use wegent_executor::{
         LocalBackendTransport,
     },
     runner::EventSink,
+    runtime_work::RuntimeWorkRpcHandler,
 };
 
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -74,9 +75,12 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
 
 #[tokio::test]
 async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_files() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("auth-report");
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let mut config = local_backend_config();
@@ -101,7 +105,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
     assert_eq!(
         calls[0].payload["runtime_auth_files"]["codex"],
-        json!({"target_path": "~/.codex/auth.json", "exists": true})
+        json!({"target_path": expected_auth_path, "exists": true})
     );
 }
 
@@ -308,17 +312,26 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     .await;
     assert_eq!(ack, None);
 
-    let emits = transport.wait_for_emits(6).await;
+    let emits = transport.wait_for_emit_event("response.completed").await;
     assert_eq!(emits[0].event, "response.created");
-    assert_eq!(emits[1].event, "response.reasoning_summary_text.delta");
-    assert_eq!(emits[1].payload["data"]["delta"], "abc");
-    assert_eq!(emits[2].event, "response.reasoning_summary_text.delta");
-    assert_eq!(emits[2].payload["data"]["delta"], "def");
-    assert_eq!(emits[3].event, "response.output_text.delta");
-    assert_eq!(emits[3].payload["data"]["delta"], "ans");
-    assert_eq!(emits[4].event, "response.output_text.delta");
-    assert_eq!(emits[4].payload["data"]["delta"], "wer");
-    assert_eq!(emits[5].event, "response.completed");
+    assert_eq!(
+        emits.last().map(|emit| emit.event.as_str()),
+        Some("response.completed")
+    );
+
+    let reasoning = emits
+        .iter()
+        .filter(|emit| emit.event == "response.reasoning_summary_text.delta")
+        .filter_map(|emit| emit.payload["data"]["delta"].as_str())
+        .collect::<String>();
+    assert_eq!(reasoning, "abcdef");
+
+    let output = emits
+        .iter()
+        .filter(|emit| emit.event == "response.output_text.delta")
+        .filter_map(|emit| emit.payload["data"]["delta"].as_str())
+        .collect::<String>();
+    assert_eq!(output, "answer");
 }
 
 #[cfg(unix)]
@@ -382,7 +395,7 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_task_execute_splits_large_claude_assistant_message_into_deltas() {
+async fn local_backend_task_execute_streams_large_claude_assistant_message() {
     let _lock = ENV_LOCK.lock().await;
     let long_text = "abcdefghijklmnopqrstuvwxyz".repeat(7);
     let claude_event = json!({
@@ -424,15 +437,12 @@ async fn local_backend_task_execute_splits_large_claude_assistant_message_into_d
     .await;
     assert_eq!(ack, None);
 
-    let expected_chunks = long_text.chars().count().div_ceil(20);
-    let emits = transport.wait_for_emits(expected_chunks + 2).await;
+    let emits = transport.wait_for_emit_event("response.completed").await;
     assert_eq!(emits[0].event, "response.created");
-    for emit in &emits[1..=expected_chunks] {
-        assert_eq!(emit.event, "response.output_text.delta");
-    }
-    assert_eq!(emits[expected_chunks + 1].event, "response.completed");
-    let streamed = emits[1..=expected_chunks]
+    assert_eq!(emits.last().unwrap().event, "response.completed");
+    let streamed = emits
         .iter()
+        .filter(|event| event.event == "response.output_text.delta")
         .map(|event| event.payload["data"]["delta"].as_str().unwrap())
         .collect::<String>();
     assert_eq!(streamed, long_text);
@@ -482,6 +492,81 @@ async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
     assert!(ack["workspaces"].is_array(), "{ack}");
 }
 
+#[tokio::test]
+async fn local_backend_relays_events_from_shared_app_runtime_handler() {
+    let transport = RecordingTransport::default();
+    let (event_tx, _) = broadcast::channel(8);
+    let handler = Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        "/bin/false",
+        event_tx.clone(),
+    ));
+    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        handler,
+        event_tx.subscribe(),
+    );
+
+    event_tx
+        .send(json!({
+            "type": "event",
+            "event": "runtime.task.completed",
+            "payload": {"task_id": "runtime-1"}
+        }))
+        .unwrap();
+
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if !transport.emits().is_empty() {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let emits = transport.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].event, "runtime:event");
+    assert_eq!(emits[0].payload["event"], "runtime.task.completed");
+}
+
+#[tokio::test]
+async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
+    let transport = RecordingTransport::with_emit_results(vec![
+        Err("Socket.IO client is not connected".to_owned()),
+        Ok(()),
+    ]);
+    let (event_tx, _) = broadcast::channel(8);
+    let handler = Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        "/bin/false",
+        event_tx.clone(),
+    ));
+    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        handler,
+        event_tx.subscribe(),
+    );
+    let event = json!({
+        "type": "event",
+        "event": "runtime.task.completed",
+        "payload": {"task_id": "runtime-1"}
+    });
+
+    event_tx.send(event.clone()).unwrap();
+
+    let emits = transport.wait_for_emits(2).await;
+    assert_eq!(emits.len(), 2);
+    assert_eq!(emits[0].event, "runtime:event");
+    assert_eq!(emits[0].payload, event);
+    assert_eq!(emits[1].event, "runtime:event");
+    assert_eq!(emits[1].payload, event);
+}
+
 #[test]
 fn local_backend_config_uses_device_config_and_normalizes_token() {
     let mut device = DeviceConfig {
@@ -491,7 +576,9 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
         bind_shell: "claudecode".to_owned(),
         connection: wegent_executor::config::device::ConnectionConfig {
             backend_url: "http://localhost:8000".to_owned(),
+            socket_url: "wss://socket.example.com".to_owned(),
             auth_token: "bEaReR\twg-token".to_owned(),
+            runtime_auth_token: "bEaReR\truntime-wg-token".to_owned(),
         },
         ..DeviceConfig::default()
     };
@@ -500,7 +587,9 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     let config = LocalBackendConfig::from_device_config(device);
 
     assert_eq!(config.backend_url, "http://localhost:8000");
+    assert_eq!(config.socket_url, "wss://socket.example.com");
     assert_eq!(config.auth_token, "wg-token");
+    assert_eq!(config.runtime_auth_token, "runtime-wg-token");
     assert_eq!(config.device_id, "device-1");
     assert_eq!(config.runtime_instance_id, "runtime-local");
     assert_eq!(config.device_name, "Device One");
@@ -509,12 +598,15 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.configured_capabilities, vec!["claude"]);
 }
 
-#[test]
-fn local_backend_auth_file_report_and_ip_filter_match_python_contract() {
+#[tokio::test]
+async fn local_backend_auth_file_report_and_ip_filter_follow_runtime_paths() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("missing-auth-report");
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
     assert_eq!(
         build_runtime_auth_file_report(&home),
-        json!({"codex": {"target_path": "~/.codex/auth.json", "exists": false}})
+        json!({"codex": {"target_path": expected_auth_path, "exists": false}})
     );
 
     assert!(is_usable_device_ip("192.0.2.10"));
@@ -533,6 +625,7 @@ struct RecordedCall {
 struct RecordingTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     emits: Arc<Mutex<Vec<RecordedCall>>>,
+    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, wegent_executor::local::backend::EventHandler)>>>,
     disconnects: Arc<Mutex<usize>>,
@@ -543,6 +636,13 @@ impl RecordingTransport {
     fn with_responses(responses: Vec<Value>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(responses.into())),
+            ..Self::default()
+        }
+    }
+
+    fn with_emit_results(results: Vec<Result<(), String>>) -> Self {
+        Self {
+            emit_results: Arc::new(Mutex::new(results.into())),
             ..Self::default()
         }
     }
@@ -573,6 +673,20 @@ impl RecordingTransport {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
+                    return emits;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let emits = self.emits();
+                if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
                 self.notify.notified().await;
@@ -629,7 +743,11 @@ impl LocalBackendTransport for RecordingTransport {
                 payload,
             });
             self.notify.notify_waiters();
-            Ok(())
+            self.emit_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()))
         })
     }
 
@@ -644,7 +762,9 @@ impl LocalBackendTransport for RecordingTransport {
 fn local_backend_config() -> LocalBackendConfig {
     LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
+        socket_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
+        runtime_auth_token: "runtime-wg-token".to_owned(),
         device_id: "device-1".to_owned(),
         runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),
@@ -705,7 +825,6 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    #[cfg(unix)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);

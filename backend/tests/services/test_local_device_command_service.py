@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -168,6 +169,146 @@ def test_turn_file_changes_commands_are_registered():
     assert revert.post_processor == "json"
 
 
+def test_git_hosting_cli_status_commands_are_registered() -> None:
+    from app.services.device.command_registry import resolve_local_device_command
+
+    github = resolve_local_device_command("git_github_cli_status", {})
+    gitlab = resolve_local_device_command("git_gitlab_cli_status", {})
+
+    assert github is not None
+    assert gitlab is not None
+    assert "python3 -c" in github.command
+    assert github.command.endswith(" gh")
+    assert github.post_processor == "json"
+    assert gitlab.command.endswith(" glab")
+    assert gitlab.post_processor == "json"
+
+
+def test_git_hosting_cli_status_reports_missing_tool(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "gh",
+        "installed": False,
+        "authenticated": False,
+        "executablePath": None,
+        "version": None,
+        "detectionError": None,
+    }
+
+
+def test_git_hosting_cli_status_reports_timeout(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "gh"
+    executable.write_text("#!/bin/sh\nexec /bin/sleep 1\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            GIT_HOSTING_CLI_STATUS_SCRIPT,
+            "gh",
+            "0.01",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "gh",
+        "installed": True,
+        "authenticated": False,
+        "executablePath": str(executable),
+        "version": None,
+        "detectionError": "timeout",
+    }
+
+
+def test_gitlab_cli_status_accepts_any_authenticated_host(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "glab"
+    executable.write_text(
+        """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "glab 1.113.0"
+  exit 0
+fi
+printf '%s\\n' \\
+  'gitlab.com' \\
+  '  x gitlab.com: API call failed: 401 Unauthorized' \\
+  'internal.example.com' \\
+  '  ✓ Logged in to internal.example.com as user (keyring)' >&2
+exit 1
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "tool": "glab",
+        "installed": True,
+        "authenticated": True,
+        "executablePath": str(executable),
+        "version": "glab 1.113.0",
+        "detectionError": None,
+    }
+
+
+def test_gitlab_cli_status_rejects_when_every_host_fails(tmp_path: Path) -> None:
+    from app.services.device.command_registry import GIT_HOSTING_CLI_STATUS_SCRIPT
+
+    executable = tmp_path / "glab"
+    executable.write_text(
+        """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "glab 1.113.0"
+  exit 0
+fi
+printf '%s\\n' \\
+  'gitlab.com' \\
+  '  x gitlab.com: API call failed: 401 Unauthorized' >&2
+exit 1
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+    result = subprocess.run(
+        [sys.executable, "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout)["authenticated"] is False
+
+
 @pytest.mark.parametrize(
     "artifact_id",
     [
@@ -231,6 +372,32 @@ def test_runtime_local_turn_file_changes_review_accepts_zero_task_id(tmp_path):
             TURN_FILE_CHANGES_SCRIPT,
             "review",
             "turn-file-changes/0/1700000000000",
+        ],
+        cwd=repo,
+        env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["success"] is True
+    assert payload["diff"].startswith("diff --git a/changed.txt b/changed.txt")
+
+
+def test_runtime_local_turn_file_changes_review_accepts_named_artifact_id(tmp_path):
+    from app.services.device.command_registry import TURN_FILE_CHANGES_SCRIPT
+
+    repo, executor_home = _create_turn_file_changes_artifact(
+        tmp_path, task_id="codex", subtask_id="turn-abc_123"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            TURN_FILE_CHANGES_SCRIPT,
+            "review",
+            "turn-file-changes/codex/turn-abc_123",
         ],
         cwd=repo,
         env={**os.environ, "WEGENT_EXECUTOR_HOME": str(executor_home)},
@@ -406,6 +573,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_remote_url_definition = resolve_local_device_command(
         "git_remote_url", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_github_pull_requests_definition = resolve_local_device_command(
+        "git_github_pull_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_gitlab_merge_requests_definition = resolve_local_device_command(
+        "git_gitlab_merge_requests", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_add_all_definition = resolve_local_device_command(
         "git_add_all", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -515,6 +688,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_remote_url_definition is not None
     assert git_remote_url_definition.command == "git remote get-url origin"
     assert git_remote_url_definition.post_processor is None
+    assert git_github_pull_requests_definition is not None
+    assert "gh pr list --state all" in git_github_pull_requests_definition.command
+    assert git_github_pull_requests_definition.post_processor == "json"
+    assert git_gitlab_merge_requests_definition is not None
+    assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
+    assert git_gitlab_merge_requests_definition.post_processor == "json"
     assert git_add_all_definition is not None
     assert git_add_all_definition.command == "git add --all"
     assert git_add_all_definition.post_processor is None
@@ -2082,7 +2261,7 @@ async def test_execute_configured_device_command_routes_cloud_directory_command_
 
 
 @pytest.mark.asyncio
-async def test_execute_configured_device_command_routes_remote_directory_command(
+async def test_execute_configured_device_command_routes_remote_home_directory_command(
     monkeypatch,
 ):
     """Remote devices should use their submitted device ID for dispatch."""
@@ -2093,7 +2272,7 @@ async def test_execute_configured_device_command_routes_remote_directory_command
         return_value={
             "success": True,
             "exit_code": 0,
-            "stdout": "/srv/repo\n",
+            "stdout": "/home/ubuntu\n",
             "stderr": "",
             "duration": 0.02,
             "timed_out": False,
@@ -2123,16 +2302,88 @@ async def test_execute_configured_device_command_routes_remote_directory_command
         db=object(),
         user_id=7,
         device_id="remote-device",
-        command_key="pwd",
+        command_key="home_dir",
     )
 
-    assert result["stdout"] == "/srv/repo\n"
+    assert result["stdout"] == "/home/ubuntu\n"
     online_mock.assert_awaited_once_with(
         7,
         "remote-device",
         DeviceType.REMOTE,
     )
     assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
+    assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_type", "submitted_device_id", "dispatch_device_id"),
+    [
+        ("cloud", "cloud-crd", "runtime-cloud"),
+        ("remote", "remote-device", "remote-device"),
+    ],
+)
+async def test_execute_configured_device_command_allows_remote_directory_creation(
+    monkeypatch,
+    device_type,
+    submitted_device_id,
+    dispatch_device_id,
+):
+    """Cloud and remote projects should be able to create workspace directories."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
+    device_spec = {"deviceType": device_type}
+    if device_type == "cloud":
+        device_spec["cloudConfig"] = {"deviceId": dispatch_device_id}
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name=submitted_device_id,
+            json={"spec": device_spec},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id=submitted_device_id,
+        command_key="mkdir_p",
+        args=["/workspace/project"],
+    )
+
+    assert result["success"] is True
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id=dispatch_device_id,
+        command="mkdir -p",
+        path=None,
+        args=["/workspace/project"],
+        env={},
+        timeout_seconds=60,
+        max_output_bytes=1024 * 1024,
+    )
 
 
 @pytest.mark.asyncio

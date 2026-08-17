@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import { modelApis } from '@/apis/models'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 
 interface MultimodalModelRef {
   name: string
@@ -37,7 +38,7 @@ export function useModelSupportsVideo(knowledgeBase: KnowledgeBaseLike): boolean
     }
     let cancelled = false
     modelApis
-      .getUnifiedModels(undefined, true, 'all', undefined, 'llm')
+      .getUnifiedModels(undefined, false, 'all', undefined, 'llm')
       .then(response => {
         if (cancelled) return
         const match = (response.data || []).find(
@@ -46,11 +47,9 @@ export function useModelSupportsVideo(knowledgeBase: KnowledgeBaseLike): boolean
             m.namespace === modelRef.namespace &&
             m.type === modelRef.type
         )
-        const capabilities = (match?.config as Record<string, unknown> | undefined)
-          ?.modelCapabilities as Record<string, unknown> | undefined
         // Default to true when the model can't be resolved, so a transient
         // fetch failure does not wrongly block video uploads.
-        setModelSupportsVideo(capabilities?.supportsVideo !== false)
+        setModelSupportsVideo(!match || getModelCapabilities(match).supportsVideo !== false)
       })
       .catch(() => {
         if (!cancelled) setModelSupportsVideo(true)

@@ -72,7 +72,7 @@ describe('RequestUserInputCard', () => {
 
     expect(card).toHaveClass('max-h-[min(60dvh,36rem)]', 'flex', 'flex-col')
     expect(questionsContainer).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto')
-    expect(option).toHaveClass('min-h-9', 'items-start', 'py-2')
+    expect(option).toHaveClass('min-h-9', 'items-start', 'py-1.5')
     expect(option.querySelector('span.min-w-0')).toHaveClass('whitespace-normal', 'break-words')
     expect(option).toHaveTextContent(longLabel)
     expect(option).toHaveTextContent(longDescription)
@@ -189,6 +189,132 @@ describe('RequestUserInputCard', () => {
     await user.click(screen.getByTestId('request-user-input-ignore-button'))
 
     expect(onIgnore).toHaveBeenCalledTimes(1)
+  })
+
+  test('localizes Codex approvals while submitting protocol decision values', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{
+          kind: 'request_user_input',
+          requestId: 44,
+          itemId: 'command-1',
+          interactionKind: 'approval',
+          approvalKind: 'command',
+          command: 'git push origin feature/permission-modes',
+          questions: [
+            {
+              id: '__codex_approval',
+              question: 'command',
+              options: [
+                { label: 'allow_once' },
+                { label: 'allow_session' },
+                { label: 'decline' },
+                { label: 'cancel' },
+              ],
+            },
+          ],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-card')).toHaveTextContent('需要审批')
+    expect(screen.getByTestId('request-user-input-card')).toHaveTextContent(
+      'git push origin feature/permission-modes'
+    )
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-1')).toHaveTextContent(
+      '本会话允许'
+    )
+
+    await user.click(screen.getByTestId('request-user-input-option-__codex_approval-1'))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 44,
+      itemId: 'command-1',
+      answers: {
+        __codex_approval: { answers: ['allow_session'] },
+      },
+    })
+  })
+
+  test('localizes and submits structured Codex approval decisions', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <RequestUserInputCard
+        payload={{
+          kind: 'request_user_input',
+          requestId: 45,
+          itemId: 'command-2',
+          interactionKind: 'approval',
+          approvalKind: 'command',
+          command: 'curl https://example.com',
+          questions: [
+            {
+              id: '__codex_approval',
+              options: [
+                {
+                  label: 'allow_execpolicy:1',
+                  description: 'curl',
+                },
+                {
+                  label: 'apply_network_policy:2',
+                  description: 'allow:example.com',
+                },
+              ],
+            },
+          ],
+        }}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-0')).toHaveTextContent(
+      '允许此命令规则'
+    )
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-0')).toHaveTextContent(
+      'curl'
+    )
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-1')).toHaveTextContent(
+      '始终允许 example.com'
+    )
+
+    await user.click(screen.getByTestId('request-user-input-option-__codex_approval-1'))
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      requestId: 45,
+      itemId: 'command-2',
+      answers: {
+        __codex_approval: { answers: ['apply_network_policy:2'] },
+      },
+    })
+  })
+
+  test('localizes strict permission review decisions', () => {
+    render(
+      <RequestUserInputCard
+        payload={{
+          kind: 'request_user_input',
+          interactionKind: 'approval',
+          approvalKind: 'permissions',
+          questions: [
+            {
+              id: '__codex_approval',
+              options: [{ label: 'allow_turn_strict_review' }],
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-0')).toHaveTextContent(
+      '允许并严格审查'
+    )
+    expect(screen.getByTestId('request-user-input-option-__codex_approval-0')).toHaveTextContent(
+      '逐一审查后续每条命令'
+    )
   })
 
   test('submits with Enter and ignores with Escape', async () => {

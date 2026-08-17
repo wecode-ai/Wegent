@@ -598,6 +598,74 @@ show_docker_compose_install_instructions() {
     exit 1
 }
 
+# Return 0 when a TCP port accepts connections on localhost.
+check_tcp_port_open() {
+    local port=$1
+    nc -z 127.0.0.1 "$port" 2>/dev/null || nc -z localhost "$port" 2>/dev/null
+}
+
+# Check locally installed MySQL/Redis without Docker Compose.
+check_local_mysql_redis() {
+    local mysql_port="${MYSQL_PORT:-3306}"
+    local redis_port="${REDIS_PORT:-6379}"
+    local mysql_open=false
+    local redis_open=false
+
+    if check_tcp_port_open "$mysql_port"; then
+        mysql_open=true
+    fi
+    if check_tcp_port_open "$redis_port"; then
+        redis_open=true
+    fi
+
+    if [ "$mysql_open" = true ] && [ "$redis_open" = true ]; then
+        echo -e "${GREEN}✓ Local MySQL (:$mysql_port) and Redis (:$redis_port) are reachable${NC}"
+        return 0
+    fi
+
+    if [ "$mysql_open" = false ]; then
+        echo -e "${YELLOW}MySQL is not reachable on port $mysql_port${NC}"
+    fi
+    if [ "$redis_open" = false ]; then
+        echo -e "${YELLOW}Redis is not reachable on port $redis_port${NC}"
+    fi
+    return 1
+}
+
+show_local_infra_instructions() {
+    echo -e "${RED}Error: MySQL and Redis are required but not available locally.${NC}"
+    echo ""
+    echo -e "${YELLOW}Choose one of the following:${NC}"
+    echo ""
+    echo -e "  ${GREEN}1. Install Docker Desktop${NC} and re-run this script"
+    echo -e "     ${BLUE}https://www.docker.com/products/docker-desktop/${NC}"
+    echo ""
+    echo -e "  ${GREEN}2. Start local MySQL and Redis${NC} on ports ${MYSQL_PORT:-3306} and ${REDIS_PORT:-6379}"
+    echo ""
+    echo -e "  ${GREEN}3. Start backend/frontend directly${NC} (no Docker Compose):"
+    echo -e "     ${BLUE}cd backend && ./start.sh --port ${BACKEND_PORT:-8000}${NC}"
+    echo -e "     ${BLUE}cd frontend && ./start.sh --port ${WEGENT_FRONTEND_PORT:-3000}${NC}"
+    echo ""
+    exit 1
+}
+
+# Ensure MySQL/Redis for app services that do not require Docker executor containers.
+ensure_mysql_redis_for_app_services() {
+    ensure_internal_service_token
+
+    if check_local_mysql_redis; then
+        return 0
+    fi
+
+    if check_docker_installed && check_docker_ready && detect_docker_compose; then
+        echo -e "${YELLOW}Local MySQL/Redis unavailable; starting them with Docker Compose...${NC}"
+        check_mysql_redis
+        return 0
+    fi
+
+    show_local_infra_instructions
+}
+
 # Check if MySQL and Redis are running
 check_mysql_redis() {
     local mysql_running=false
@@ -2049,29 +2117,39 @@ start_services() {
     local uv_version=$(uv --version 2>&1)
     echo -e "  ${GREEN}✓${NC} uv detected: $uv_version"
 
-    if ! check_docker_installed; then
-        show_docker_install_instructions
+    local require_docker_services=false
+    if [ "$start_executor_manager" = true ] || [ "$start_knowledge_runtime" = true ]; then
+        require_docker_services=true
     fi
-    local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
-    echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
 
-    if ! check_docker_ready; then
-        show_docker_ready_instructions
+    if [ "$require_docker_services" = true ]; then
+        if ! check_docker_installed; then
+            show_docker_install_instructions
+        fi
+        local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
+        echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
+
+        if ! check_docker_ready; then
+            show_docker_ready_instructions
+        fi
+        echo -e "  ${GREEN}✓${NC} Docker daemon is reachable"
+
+        if ! detect_docker_compose; then
+            show_docker_compose_install_instructions
+        fi
+        local compose_version=$($DOCKER_COMPOSE_CMD version 2>&1 | head -n 1)
+        echo -e "  ${GREEN}✓${NC} Docker Compose detected: $compose_version"
+
+        # Docker Compose validates the whole compose file before starting selected
+        # services, so the internal token must exist before any compose command runs.
+        ensure_internal_service_token
+
+        # Check and start MySQL and Redis if needed
+        check_mysql_redis
+    else
+        echo -e "  ${GREEN}✓${NC} Docker not required for selected services"
+        ensure_mysql_redis_for_app_services
     fi
-    echo -e "  ${GREEN}✓${NC} Docker daemon is reachable"
-
-    if ! detect_docker_compose; then
-        show_docker_compose_install_instructions
-    fi
-    local compose_version=$($DOCKER_COMPOSE_CMD version 2>&1 | head -n 1)
-    echo -e "  ${GREEN}✓${NC} Docker Compose detected: $compose_version"
-
-    # Docker Compose validates the whole compose file before starting selected
-    # services, so the internal token must exist before any compose command runs.
-    ensure_internal_service_token
-
-    # Check and start MySQL and Redis if needed
-    check_mysql_redis
 
     # Check libmagic
     check_libmagic_installed
@@ -2198,12 +2276,13 @@ start_services() {
         # BACKEND_INTERNAL_URL: URL passed into task runtime configs such as MCP
         # server URLs. Use TASK_API_DOMAIN so Docker executor containers can
         # reach the host backend instead of receiving localhost.
+        # WEGENT_BACKEND_PUBLIC_URL: URL embedded in runtime MCP configuration.
         # CHAT_SHELL_URL: URL for backend to call chat_shell service
         # LOG_LEVEL: Application log level (DEBUG enables debug logging)
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 
@@ -2297,9 +2376,7 @@ start_services() {
 
         cd "$SCRIPT_DIR/wework"
 
-        export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
-        export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
-        export VITE_SOCKET_BASE_URL=$WEGENT_SOCKET_URL
+        export VITE_WEGENT_BACKEND_URL=http://localhost:$BACKEND_PORT
 
         local wework_cmd="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT"
 

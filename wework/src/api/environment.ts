@@ -1,5 +1,15 @@
 import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } from '@/types/api'
-import type { EnvironmentInfo } from '@/types/environment'
+import type {
+  ChangeRequest,
+  ChangeRequestChecksState,
+  ChangeRequestLookup,
+  ChangeRequestLookupState,
+  ChangeRequestMergeability,
+  ChangeRequestProvider,
+  ChangeRequestState,
+  EnvironmentInfo,
+} from '@/types/environment'
+import { getAppPreferences } from '@/tauri/appPreferences'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
@@ -78,6 +88,261 @@ function outputAsRecord(output: DeviceCommandResponse['stdout']): Record<string,
     : null
 }
 
+function outputAsArray(output: DeviceCommandResponse['stdout']): unknown[] | null {
+  if (typeof output === 'string') {
+    try {
+      const parsed = JSON.parse(output)
+      return Array.isArray(parsed) ? parsed : null
+    } catch {
+      return null
+    }
+  }
+  return Array.isArray(output) ? output : null
+}
+
+function stringValue(record: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string') {
+      return value
+    }
+  }
+  return ''
+}
+
+function booleanValue(record: Record<string, unknown>, ...keys: string[]): boolean {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'boolean') {
+      return value
+    }
+  }
+  return false
+}
+
+function numberValue(record: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+  }
+  return 0
+}
+
+function normalizeChangeRequestState(value: string): ChangeRequestState {
+  const state = value.toLowerCase()
+  if (state === 'merged') return 'merged'
+  if (state === 'closed') return 'closed'
+  return 'open'
+}
+
+function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
+  if (statuses.length === 0) return 'unknown'
+  const normalized = statuses.map(status => status.toLowerCase())
+  if (
+    normalized.some(status =>
+      [
+        'failure',
+        'failed',
+        'error',
+        'cancelled',
+        'canceled',
+        'timed_out',
+        'action_required',
+        'startup_failure',
+        'stale',
+      ].includes(status)
+    )
+  ) {
+    return 'failure'
+  }
+  if (
+    normalized.some(status =>
+      [
+        'pending',
+        'running',
+        'in_progress',
+        'queued',
+        'created',
+        'waiting_for_resource',
+        'preparing',
+        'scheduled',
+        'waiting',
+      ].includes(status)
+    )
+  ) {
+    return 'pending'
+  }
+  if (
+    normalized.every(status =>
+      ['success', 'successful', 'passed', 'skipped', 'neutral', 'manual'].includes(status)
+    )
+  ) {
+    return 'success'
+  }
+  return 'unknown'
+}
+
+function normalizeMergeability(
+  provider: ChangeRequestProvider,
+  record: Record<string, unknown>
+): ChangeRequestMergeability {
+  if (provider === 'github') {
+    const mergeable = stringValue(record, 'mergeable').toLowerCase()
+    const mergeStateStatus = stringValue(record, 'mergeStateStatus').toLowerCase()
+    if (mergeable === 'conflicting' || mergeStateStatus === 'dirty') return 'conflicting'
+    if (mergeable === 'mergeable') return 'mergeable'
+    return 'unknown'
+  }
+
+  if (booleanValue(record, 'has_conflicts', 'hasConflicts')) return 'conflicting'
+  const mergeStatus = stringValue(
+    record,
+    'detailed_merge_status',
+    'detailedMergeStatus',
+    'merge_status',
+    'mergeStatus'
+  ).toLowerCase()
+  if (mergeStatus.includes('conflict') || mergeStatus === 'cannot_be_merged') {
+    return 'conflicting'
+  }
+  if (mergeStatus === 'mergeable' || mergeStatus === 'can_be_merged') return 'mergeable'
+  return 'unknown'
+}
+
+function githubCheckStatuses(record: Record<string, unknown>): string[] {
+  const rollup = record.statusCheckRollup
+  if (!Array.isArray(rollup)) return []
+  const latestChecks = new Map<
+    string,
+    { check: Record<string, unknown>; startedAt: number; index: number }
+  >()
+
+  rollup.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return
+    const check = item as Record<string, unknown>
+    const name = stringValue(check, 'name', 'context')
+    const workflowName = stringValue(check, 'workflowName')
+    const startedAtValue = stringValue(check, 'startedAt', 'completedAt')
+    const startedAt = Date.parse(startedAtValue)
+    const canIdentifyRun = name && Number.isFinite(startedAt)
+    const identity = canIdentifyRun ? `${workflowName}\0${name}` : `unidentified\0${index}`
+    const previous = latestChecks.get(identity)
+
+    if (!previous || startedAt >= previous.startedAt) {
+      latestChecks.set(identity, {
+        check,
+        startedAt: canIdentifyRun ? startedAt : 0,
+        index,
+      })
+    }
+  })
+
+  return Array.from(latestChecks.values())
+    .sort((left, right) => left.index - right.index)
+    .flatMap(({ check }) =>
+      [stringValue(check, 'conclusion') || stringValue(check, 'state', 'status')].filter(Boolean)
+    )
+}
+
+function gitlabCheckStatuses(record: Record<string, unknown>): string[] {
+  const pipeline = record.head_pipeline ?? record.headPipeline ?? record.pipeline
+  if (!pipeline || typeof pipeline !== 'object' || Array.isArray(pipeline)) return []
+  return [stringValue(pipeline as Record<string, unknown>, 'status')].filter(Boolean)
+}
+
+function parseChangeRequest(provider: ChangeRequestProvider, value: unknown): ChangeRequest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const number = numberValue(record, 'number', 'iid')
+  const url = stringValue(record, 'url', 'web_url', 'webUrl')
+  if (!number || !url) return null
+
+  return {
+    provider,
+    number,
+    url,
+    title: stringValue(record, 'title'),
+    state: normalizeChangeRequestState(stringValue(record, 'state')),
+    draft: booleanValue(record, 'isDraft', 'draft'),
+    checks: normalizeChecksState(
+      provider === 'github' ? githubCheckStatuses(record) : gitlabCheckStatuses(record)
+    ),
+    mergeability: normalizeMergeability(provider, record),
+  }
+}
+
+function classifyChangeRequestCommandError(
+  response: DeviceCommandResponse
+): ChangeRequestLookupState {
+  const message = [response.error, response.stderr].filter(Boolean).join('\n').toLowerCase()
+  if (
+    message.includes('not found') ||
+    message.includes('no such file') ||
+    message.includes('executable file')
+  ) {
+    return 'unavailable'
+  }
+  if (
+    message.includes('auth') ||
+    message.includes('login') ||
+    message.includes('token') ||
+    message.includes('unauthorized')
+  ) {
+    return 'unauthenticated'
+  }
+  return 'error'
+}
+
+async function loadChangeRequest(
+  api: DeviceCommandApi,
+  deviceId: string,
+  path: string,
+  remoteUrl: string,
+  branchName: string
+): Promise<ChangeRequestLookup | undefined> {
+  const remote = parseGitRemote(remoteUrl)
+  const branch = branchName.trim()
+  if (!remote || !branch) return undefined
+
+  const provider: ChangeRequestProvider | undefined = remote.host.includes('github')
+    ? 'github'
+    : remote.host.includes('gitlab')
+      ? 'gitlab'
+      : undefined
+  if (!provider) return undefined
+
+  let response: DeviceCommandResponse
+  try {
+    response = await api.executeCommand(deviceId, {
+      command_key: provider === 'github' ? 'git_github_pull_requests' : 'git_gitlab_merge_requests',
+      path,
+      args: [branch],
+      timeout_seconds: 20,
+      max_output_bytes: 256 * 1024,
+    })
+  } catch {
+    return { provider, state: 'error' }
+  }
+  if (!response.success) {
+    return { provider, state: classifyChangeRequestCommandError(response) }
+  }
+
+  const changeRequests = outputAsArray(response.stdout)
+    ?.map(value => parseChangeRequest(provider, value))
+    .filter((value): value is ChangeRequest => Boolean(value))
+    .sort((left, right) => {
+      if (left.state === 'open' && right.state !== 'open') return -1
+      if (right.state === 'open' && left.state !== 'open') return 1
+      return right.number - left.number
+    })
+
+  return changeRequests?.[0]
+    ? { provider, state: 'found', changeRequest: changeRequests[0] }
+    : { provider, state: 'not_found' }
+}
+
 function environmentInfoCacheKey(
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null
@@ -102,10 +367,6 @@ function environmentInfoCacheKey(
 
 function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
   return { ...info }
-}
-
-function isNotGitRepositoryError(error: unknown): boolean {
-  return error instanceof Error && /not a git repository/i.test(error.message)
 }
 
 function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
@@ -297,10 +558,28 @@ async function runGitCommand(
   const response = await api.executeCommand(deviceId, request)
 
   if (!response.success) {
-    throw new Error(response.error || response.stderr || `${commandKey} failed`)
+    throw new Error(
+      [response.error, response.stderr].filter(Boolean).join('\n') || `${commandKey} failed`
+    )
   }
 
   return outputAsString(response.stdout).trim()
+}
+
+async function probeGitRepository(
+  api: DeviceCommandApi,
+  deviceId: string,
+  path: string
+): Promise<boolean> {
+  const response = await api.executeCommand(deviceId, {
+    command_key: 'git_is_worktree',
+    path,
+    args: [path],
+    timeout_seconds: 10,
+    max_output_bytes: 4096,
+  })
+
+  return response.success && outputAsString(response.stdout).trim() === 'true'
 }
 
 async function generateCommitMessage(
@@ -432,6 +711,10 @@ async function loadProjectEnvironmentUncached(
       runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(() => ''),
     ])
     const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
+    const changeRequestStatusEnabled = (await getAppPreferences()).changeRequestStatusEnabled
+    const changeRequest = changeRequestStatusEnabled
+      ? await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
+      : undefined
     const diff = parseGitShortStat(shortStat)
 
     // Count pending files from porcelain (untracked, staged, modified).
@@ -455,12 +738,18 @@ async function loadProjectEnvironmentUncached(
     return {
       ...environmentWorkspaceInfo,
       ...diff,
+      isGitRepository: true,
       branchName,
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
+      ...(changeRequest ? { changeRequest } : {}),
     }
   } catch (error) {
-    if (isNotGitRepositoryError(error)) {
-      return environmentWorkspaceInfo
+    const isGitRepository = await probeGitRepository(api, deviceId, path).catch(() => undefined)
+    if (isGitRepository === false) {
+      return {
+        ...environmentWorkspaceInfo,
+        isGitRepository: false,
+      }
     }
 
     return {

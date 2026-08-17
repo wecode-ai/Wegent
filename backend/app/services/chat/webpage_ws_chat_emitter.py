@@ -319,7 +319,11 @@ class WebPageSocketEmitter:
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
         tool_input: Optional[Dict[str, Any]] = None,
+        parent_tool_use_id: Optional[str] = None,
         render_payload: Optional[Dict[str, Any]] = None,
+        output: Optional[str] = None,
+        summary: Optional[str] = None,
+        children: Optional[list[Dict[str, Any]]] = None,
         status: Optional[str] = None,
     ) -> None:
         """
@@ -348,8 +352,16 @@ class WebPageSocketEmitter:
             payload["tool_output"] = tool_output
         if tool_input is not None:
             payload["tool_input"] = tool_input
+        if parent_tool_use_id is not None:
+            payload["parent_tool_use_id"] = parent_tool_use_id
         if render_payload is not None:
             payload["render_payload"] = render_payload
+        if output is not None:
+            payload["output"] = output
+        if summary is not None:
+            payload["summary"] = summary
+        if children is not None:
+            payload["children"] = children
         if status is not None:
             payload["status"] = status
 

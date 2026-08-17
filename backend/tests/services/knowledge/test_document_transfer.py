@@ -22,15 +22,23 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
+from app.models.knowledge import (
+    ContentOrigin,
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeFolder,
+)
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.knowledge import (
+    MAX_TRANSFER_RESOURCE_COUNT,
     DocumentSourceType,
     KnowledgeBaseCreate,
     KnowledgeDocumentCreate,
     KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
+    TransferDocumentsRequest,
     TransferDocumentsResponse,
 )
 from app.schemas.namespace import GroupRole
@@ -38,6 +46,35 @@ from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.knowledge_transfer import KnowledgeTransferService
 
 # Rewritten preserving original tests plus targeted review-coverage additions.
+
+
+@pytest.mark.unit
+def test_transfer_request_rejects_an_empty_selection() -> None:
+    with pytest.raises(ValueError, match="At least one document or folder"):
+        TransferDocumentsRequest(target_kb_id=1)
+
+
+@pytest.mark.unit
+def test_transfer_request_rejects_too_many_direct_selections() -> None:
+    with pytest.raises(ValueError, match="cannot exceed 200 items"):
+        TransferDocumentsRequest(
+            document_ids=list(range(1, MAX_TRANSFER_RESOURCE_COUNT + 1)),
+            folder_ids=[MAX_TRANSFER_RESOURCE_COUNT + 1],
+            target_kb_id=1,
+        )
+
+
+@pytest.mark.unit
+def test_transfer_rejects_an_oversized_expanded_workload() -> None:
+    document_ids = set(range(1, MAX_TRANSFER_RESOURCE_COUNT + 1))
+    folder_ids = {MAX_TRANSFER_RESOURCE_COUNT + 1}
+
+    with pytest.raises(CustomHTTPException) as exc_info:
+        KnowledgeTransferService.validate_transfer_resource_count(
+            document_ids, folder_ids
+        )
+
+    assert exc_info.value.error_code == "TRANSFER_SELECTION_LIMIT_EXCEEDED"
 
 
 def _create_user(test_db: Session, username: str, role: str = "user") -> User:
@@ -167,9 +204,8 @@ def test_validate_transfer_document_names_rejects_duplicates(test_db: Session) -
     with pytest.raises(StructuredValidationException) as exc_info:
         KnowledgeTransferService.validate_transfer_document_names(
             db=test_db,
-            all_doc_ids={source_doc.id},
+            source_documents=(source_doc,),
             target_kb_id=target_kb_id,
-            source_kb_id=source_kb_id,
         )
 
     assert exc_info.value.error_code == "DUPLICATE_DOCUMENT_NAMES"
@@ -409,12 +445,173 @@ def test_transfer_folders_with_documents(test_db: Session) -> None:
     target_parent = next(f for f in target_folders if f.name == "parent-folder")
     target_child = next(f for f in target_folders if f.name == "child-folder")
     assert target_child.parent_id == target_parent.id
+    assert target_parent.origin == ContentOrigin.USER.value
+    assert target_child.origin == ContentOrigin.USER.value
     transferred_docs = (
         test_db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.kind_id == target_kb_id)
         .all()
     )
     assert len(transferred_docs) == 3
+
+
+@pytest.mark.unit
+def test_transfer_document_preserves_a_reparented_folder_hierarchy(
+    test_db: Session,
+) -> None:
+    """A folder's ID order does not determine its current parent-first order."""
+    from app.services.knowledge.folder_service import KnowledgeFolderService
+
+    owner = _create_user(test_db, "owner-transfer-reparented-folders")
+    source_kb_id = _create_kb(test_db, owner.id, "source-reparented-folder-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-reparented-folder-kb")
+    child = _create_folder(test_db, source_kb_id, owner.id, "child")
+    parent = _create_folder(test_db, source_kb_id, owner.id, "parent")
+    root = _create_folder(test_db, source_kb_id, owner.id, "root")
+
+    KnowledgeFolderService.update_folder(
+        test_db,
+        parent.id,
+        owner.id,
+        KnowledgeFolderUpdate(parent_id=root.id),
+        knowledge_base_id=source_kb_id,
+    )
+    KnowledgeFolderService.update_folder(
+        test_db,
+        child.id,
+        owner.id,
+        KnowledgeFolderUpdate(parent_id=parent.id),
+        knowledge_base_id=source_kb_id,
+    )
+    document = _create_document(
+        test_db, source_kb_id, owner.id, "reparented-document.md", folder_id=child.id
+    )
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[document.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    target_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    target_by_name = {folder.name: folder for folder in target_folders}
+    assert result.transferred_folder_count == 3
+    assert target_by_name["parent"].parent_id == target_by_name["root"].id
+    assert target_by_name["child"].parent_id == target_by_name["parent"].id
+
+
+@pytest.mark.unit
+def test_collect_ancestor_ids_uses_one_cte_for_multiple_deep_paths(
+    test_db: Session,
+) -> None:
+    """Ancestor collection is one query even when selected folders are deep."""
+    from app.services.knowledge.folder_service import KnowledgeFolderService
+
+    owner = _create_user(test_db, "owner-ancestor-cte")
+    kb_id = _create_kb(test_db, owner.id, "ancestor-cte-kb")
+    root = _create_folder(test_db, kb_id, owner.id, "root")
+    left = _create_folder(test_db, kb_id, owner.id, "left", parent_id=root.id)
+    right = _create_folder(test_db, kb_id, owner.id, "right", parent_id=root.id)
+    left_leaf = _create_folder(test_db, kb_id, owner.id, "left-leaf", parent_id=left.id)
+    right_leaf = _create_folder(
+        test_db, kb_id, owner.id, "right-leaf", parent_id=right.id
+    )
+
+    with patch.object(test_db, "execute", wraps=test_db.execute) as mock_execute:
+        ancestor_ids = KnowledgeFolderService._collect_ancestor_ids(
+            test_db, {left_leaf.id, right_leaf.id}, kb_id
+        )
+
+    assert ancestor_ids == {
+        root.id,
+        left.id,
+        right.id,
+        left_leaf.id,
+        right_leaf.id,
+    }
+    assert mock_execute.call_count == 1
+
+
+@pytest.mark.unit
+def test_collect_ancestor_ids_preserves_a_missing_parent_id(test_db: Session) -> None:
+    """A dangling folder parent remains visible to transfer validation."""
+    from app.services.knowledge.folder_service import KnowledgeFolderService
+
+    owner = _create_user(test_db, "owner-dangling-ancestor")
+    kb_id = _create_kb(test_db, owner.id, "dangling-ancestor-kb")
+    missing_parent_id = 999_999
+    orphan = KnowledgeFolder(
+        kind_id=kb_id,
+        parent_id=missing_parent_id,
+        name="orphan",
+        origin=ContentOrigin.USER.value,
+    )
+    test_db.add(orphan)
+    test_db.flush()
+
+    ancestor_ids = KnowledgeFolderService._collect_ancestor_ids(
+        test_db, {orphan.id}, kb_id
+    )
+
+    assert ancestor_ids == {orphan.id, missing_parent_id}
+
+
+@pytest.mark.unit
+def test_transfer_rejects_generated_documents_and_folders(test_db: Session) -> None:
+    """A transfer may not detach content owned by a Code Wiki generation."""
+    owner = _create_user(test_db, "owner-generated-transfer")
+    source_kb_id = _create_kb(test_db, owner.id, "source-generated-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-generated-kb")
+    generated_folder = KnowledgeFolder(
+        kind_id=source_kb_id,
+        parent_id=0,
+        name="generated",
+        origin=ContentOrigin.GENERATED.value,
+    )
+    test_db.add(generated_folder)
+    test_db.flush()
+    generated_document = KnowledgeDocument(
+        kind_id=source_kb_id,
+        attachment_id=0,
+        name="generated.md",
+        file_extension="md",
+        file_size=10,
+        source_type="text",
+        user_id=owner.id,
+        folder_id=generated_folder.id,
+        origin=ContentOrigin.GENERATED.value,
+    )
+    test_db.add(generated_document)
+    test_db.commit()
+
+    with pytest.raises(CustomHTTPException) as document_error:
+        KnowledgeService.transfer_documents_to_kb(
+            db=test_db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            document_ids=[generated_document.id],
+            folder_ids=[],
+            user_id=owner.id,
+        )
+    assert document_error.value.error_code == "GENERATED_CONTENT_READ_ONLY"
+
+    with pytest.raises(CustomHTTPException) as folder_error:
+        KnowledgeService.transfer_documents_to_kb(
+            db=test_db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            document_ids=[],
+            folder_ids=[generated_folder.id],
+            user_id=owner.id,
+        )
+    assert folder_error.value.error_code == "GENERATED_CONTENT_READ_ONLY"
 
 
 @pytest.mark.unit
@@ -896,11 +1093,10 @@ def test_validate_transfer_namespace_rejects_org_to_group(test_db: Session) -> N
 
 
 @pytest.mark.unit
-def test_transfer_documents_mutate_uses_row_lock(test_db: Session) -> None:
-    """transfer_documents_mutate acquires row-level locks via with_for_update()."""
+def test_lock_transfer_documents_uses_row_lock(test_db: Session) -> None:
+    """The documents used for validation and mutation are locked once."""
     owner = _create_user(test_db, "owner-row-lock")
     source_kb_id = _create_kb(test_db, owner.id, "source-row-lock-kb")
-    target_kb_id = _create_kb(test_db, owner.id, "target-row-lock-kb")
     doc = _create_document(test_db, source_kb_id, owner.id, "lock-doc.md")
 
     # Patch the query chain to verify with_for_update is called
@@ -913,18 +1109,15 @@ def test_transfer_documents_mutate_uses_row_lock(test_db: Session) -> None:
         mock_query = test_db.query(KnowledgeDocument)
         mock_for_update.return_value = mock_query
 
-        docs, count = KnowledgeTransferService.transfer_documents_mutate(
+        docs = KnowledgeTransferService.lock_transfer_documents(
             db=test_db,
-            all_doc_ids={doc.id},
-            old_to_new_folder={},
-            target_kb_id=target_kb_id,
+            document_ids=frozenset({doc.id}),
             source_kb_id=source_kb_id,
         )
 
         mock_for_update.assert_called_once()
 
-    assert count == 1
-    assert docs[0].kind_id == target_kb_id
+    assert docs[0].id == doc.id
 
 
 @pytest.mark.unit
@@ -941,9 +1134,8 @@ def test_validate_transfer_document_names_allows_no_duplicates(
     # Should not raise any exception
     KnowledgeTransferService.validate_transfer_document_names(
         db=test_db,
-        all_doc_ids={source_doc.id},
+        source_documents=(source_doc,),
         target_kb_id=target_kb_id,
-        source_kb_id=source_kb_id,
     )
 
 
@@ -961,9 +1153,8 @@ def test_validate_transfer_document_names_multiple_duplicates(test_db: Session) 
     with pytest.raises(StructuredValidationException) as exc_info:
         KnowledgeTransferService.validate_transfer_document_names(
             db=test_db,
-            all_doc_ids={doc_a.id, doc_b.id},
+            source_documents=(doc_a, doc_b),
             target_kb_id=target_kb_id,
-            source_kb_id=source_kb_id,
         )
 
     assert exc_info.value.error_code == "DUPLICATE_DOCUMENT_NAMES"
@@ -980,7 +1171,6 @@ def test_validate_transfer_document_names_empty_doc_ids(test_db: Session) -> Non
     # Should not raise any exception
     KnowledgeTransferService.validate_transfer_document_names(
         db=test_db,
-        all_doc_ids=set(),
+        source_documents=(),
         target_kb_id=target_kb_id,
-        source_kb_id=source_kb_id,
     )

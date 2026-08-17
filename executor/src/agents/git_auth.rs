@@ -331,6 +331,7 @@ async fn authenticate_github(git_domain: &str, credentials: &GitCredentials) -> 
         ],
     );
     let mut command = Command::new("gh");
+    crate::process::hide_windows_console(&mut command);
     command
         .arg("auth")
         .arg("login")
@@ -451,7 +452,8 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
             ("git_domain", git_domain.to_owned()),
         ],
     );
-    Command::new("glab")
+    let mut command = Command::new("glab");
+    command
         .arg("auth")
         .arg("login")
         .arg("--hostname")
@@ -459,7 +461,9 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
         .arg("--token")
         .arg(git_token)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::process::hide_windows_console(&mut command);
+    command
         .output()
         .await
         .map(|output| {
@@ -494,7 +498,9 @@ async fn configure_repo_proxy(git_domain: &str) {
         return;
     };
     for (key, value) in proxy_values {
-        let _ = Command::new("git")
+        let mut command = Command::new("git");
+        crate::process::hide_windows_console(&mut command);
+        let _ = command
             .arg("config")
             .arg("--global")
             .arg(key)
@@ -534,7 +540,20 @@ fn decrypt_sensitive_data(token: &str) -> Option<String> {
     }
     let key = env::var("GIT_TOKEN_AES_KEY")
         .unwrap_or_else(|_| "12345678901234567890123456789012".to_owned());
-    let iv = env::var("GIT_TOKEN_AES_IV").unwrap_or_else(|_| "1234567890123456".to_owned());
+    let Ok(iv) = env::var("GIT_TOKEN_AES_IV") else {
+        log_executor_event(
+            "git token decryption configuration error",
+            &[("reason", "missing_GIT_TOKEN_AES_IV".to_owned())],
+        );
+        return None;
+    };
+    if iv.len() != 16 {
+        log_executor_event(
+            "git token decryption configuration error",
+            &[("reason", "invalid_GIT_TOKEN_AES_IV_length".to_owned())],
+        );
+        return None;
+    }
     let Ok(encrypted) = general_purpose::STANDARD.decode(token.as_bytes()) else {
         return Some(token.to_owned());
     };
@@ -631,7 +650,7 @@ fn home_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     const TEST_GIT_DOMAIN: &str = "github.com";
 
@@ -751,6 +770,16 @@ mod tests {
         let _ = fs::remove_dir_all(temp_home);
     }
 
+    #[test]
+    fn decrypt_git_token_fails_closed_without_aes_iv() {
+        let _env = EnvGuard::set_many_and_unset(
+            &[("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012")],
+            &["GIT_TOKEN_AES_IV"],
+        );
+
+        assert_eq!(decrypt_git_token("iOuoSwc/HrF6ZhttvtSNeQ=="), None);
+    }
+
     struct EnvGuard {
         previous: Vec<(&'static str, Option<String>)>,
         _guard: MutexGuard<'static, ()>,
@@ -762,15 +791,28 @@ mod tests {
         }
 
         fn set_many(values: &[(&'static str, &str)]) -> Self {
-            let guard = env_lock().lock().unwrap();
-            let previous = values
+            Self::set_many_and_unset(values, &[])
+        }
+
+        fn set_many_and_unset(
+            values: &[(&'static str, &str)],
+            unset_keys: &[&'static str],
+        ) -> Self {
+            let guard = crate::test_env::lock();
+            let set_previous = values.iter().map(|(key, value)| {
+                let previous = env::var(key).ok();
+                env::set_var(key, value);
+                (*key, previous)
+            });
+            let unset_previous = unset_keys
                 .iter()
-                .map(|(key, value)| {
+                .filter(|key| !values.iter().any(|(set_key, _)| set_key == *key))
+                .map(|key| {
                     let previous = env::var(key).ok();
-                    env::set_var(key, value);
+                    env::remove_var(key);
                     (*key, previous)
-                })
-                .collect();
+                });
+            let previous = set_previous.chain(unset_previous).collect();
             Self {
                 previous,
                 _guard: guard,
@@ -788,10 +830,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
     }
 }

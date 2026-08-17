@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Slider } from '@/components/ui/slider'
 import { Button } from '@/components/ui/button'
 import { ChevronDown, Plus, X } from 'lucide-react'
@@ -19,21 +20,28 @@ import {
   SimpleConfigRow,
 } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import type {
+  DirectAccessRequirement,
   KnowledgeResourceScope,
   RetrievalConfigDraft,
   SummaryModelRef,
 } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
-import { SummaryModelSelector } from './SummaryModelSelector'
+import { ModelRefSelector } from '@/components/model-select/ModelRefSelector'
 import { MultimodalConfigSection } from '@/features/knowledge/multimodal/components/MultimodalConfigSection'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
 interface KnowledgeBaseFormProps {
   typeSection?: ReactNode
+  /** False for a code wiki: left blank, the repository's own name is used. */
+  nameRequired?: boolean
+  /** Overrides the placeholder, to say what a blank name will be filled in with. */
+  namePlaceholder?: string
   name: string
   description: string
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
+  directAccessRequirement?: DirectAccessRequirement
+  onDirectAccessRequirementChange?: (value: DirectAccessRequirement) => void
   summaryEnabled: boolean
   onSummaryEnabledChange: (value: boolean) => void
   summaryModelRef: SummaryModelRef | null
@@ -58,6 +66,8 @@ interface KnowledgeBaseFormProps {
   onCallLimitsChange: (limits: { maxCalls: number; exemptCalls: number }) => void
   advancedOpen: boolean
   onAdvancedOpenChange: (open: boolean) => void
+  /** Extra rows for this kind of knowledge base, shown inside advanced settings. */
+  advancedExtras?: React.ReactNode
   retrievalModeSection?: ReactNode
   showRetrievalSection: boolean
   retrievalConfig: RetrievalConfigDraft
@@ -132,10 +142,14 @@ function FormSection({
 
 export function KnowledgeBaseForm({
   typeSection,
+  nameRequired = true,
+  namePlaceholder,
   name,
   description,
   onNameChange,
   onDescriptionChange,
+  directAccessRequirement,
+  onDirectAccessRequirementChange,
   summaryEnabled,
   onSummaryEnabledChange,
   summaryModelRef,
@@ -156,6 +170,7 @@ export function KnowledgeBaseForm({
   onCallLimitsChange,
   advancedOpen,
   onAdvancedOpenChange,
+  advancedExtras,
   retrievalModeSection,
   showRetrievalSection,
   retrievalConfig,
@@ -208,6 +223,10 @@ export function KnowledgeBaseForm({
 
   const advancedContent = (
     <SimpleConfigGroup>
+      {/* Rendered first so a code wiki's own settings are not buried under the call
+          limits every knowledge base has. Passed in rather than branched on here:
+          this form knows nothing about repositories and should not start to. */}
+      {advancedExtras}
       <SimpleConfigRow
         label={t('knowledge:document.callLimits.title')}
         description={t('knowledge:document.callLimits.description')}
@@ -299,7 +318,8 @@ export function KnowledgeBaseForm({
           <SimpleConfigRow
             label={
               <>
-                {t('knowledge:document.knowledgeBase.name')} <span className="text-red-400">*</span>
+                {t('knowledge:document.knowledgeBase.name')}
+                {nameRequired && <span className="text-red-400"> *</span>}
               </>
             }
           >
@@ -307,7 +327,7 @@ export function KnowledgeBaseForm({
               id="knowledge-name"
               value={name}
               onChange={e => onNameChange(e.target.value)}
-              placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
+              placeholder={namePlaceholder ?? t('knowledge:document.knowledgeBase.namePlaceholder')}
               maxLength={100}
               data-testid="kb-name-input"
               className="bg-base"
@@ -349,12 +369,15 @@ export function KnowledgeBaseForm({
 
           {summaryEnabled && (
             <SimpleConfigRow label={t('knowledge:document.summary.selectModel')}>
-              <SummaryModelSelector
+              <ModelRefSelector
                 value={summaryModelRef}
                 onChange={onSummaryModelChange}
                 error={summaryModelError}
+                placeholder={t('knowledge:document.summary.selectModel')}
                 knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                 bindModel={bindModel}
+                preferenceScope="summary"
+                dataTestId="summary-model-select"
               />
             </SimpleConfigRow>
           )}
@@ -414,6 +437,63 @@ export function KnowledgeBaseForm({
                   </p>
                 )}
               </div>
+            </SimpleConfigRow>
+          </SimpleConfigGroup>
+        </FormSection>
+      )}
+
+      {directAccessRequirement && onDirectAccessRequirementChange && (
+        <FormSection
+          title={t('knowledge:document.formSections.access')}
+          sectionId="knowledge-access"
+        >
+          <SimpleConfigGroup>
+            <SimpleConfigRow
+              label={t('knowledge:document.knowledgeBase.directAccessRange')}
+              description={t('knowledge:document.knowledgeBase.directAccessRangeDescription')}
+              align="start"
+            >
+              <RadioGroup
+                value={directAccessRequirement}
+                onValueChange={value =>
+                  onDirectAccessRequirementChange(value as DirectAccessRequirement)
+                }
+                className="space-y-2"
+                data-testid="knowledge-base-direct-access-requirement"
+              >
+                <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
+                  <RadioGroupItem
+                    value="read"
+                    id="knowledge-direct-access-read"
+                    data-testid="knowledge-base-direct-access-read"
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="knowledge-direct-access-read" className="flex-1 cursor-pointer">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {t('knowledge:document.knowledgeBase.directAccessAllMembers')}
+                    </span>
+                    <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
+                      {t('knowledge:document.knowledgeBase.directAccessAllMembersDescription')}
+                    </span>
+                  </Label>
+                </div>
+                <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
+                  <RadioGroupItem
+                    value="edit"
+                    id="knowledge-direct-access-edit"
+                    data-testid="knowledge-base-direct-access-edit"
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="knowledge-direct-access-edit" className="flex-1 cursor-pointer">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {t('knowledge:document.knowledgeBase.directAccessEditorsOnly')}
+                    </span>
+                    <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
+                      {t('knowledge:document.knowledgeBase.directAccessEditorsOnlyDescription')}
+                    </span>
+                  </Label>
+                </div>
+              </RadioGroup>
             </SimpleConfigRow>
           </SimpleConfigGroup>
         </FormSection>

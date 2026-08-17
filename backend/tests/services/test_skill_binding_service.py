@@ -34,6 +34,17 @@ def _create_skill(test_db, *, user_id: int, name: str = "auto-skill") -> Kind:
     return skill
 
 
+def test_group_binding_names_do_not_collide_for_long_namespace():
+    namespace = "a" * 100
+
+    first_name = skill_binding_service.build_group_name(namespace, 101)
+    second_name = skill_binding_service.build_group_name(namespace, 102)
+
+    assert first_name == "group-skill-101"
+    assert second_name == "group-skill-102"
+    assert first_name != second_name
+
+
 def test_user_default_binding_response_includes_exceptions(test_db, test_user: User):
     skill = _create_skill(test_db, user_id=test_user.id)
     binding = skill_binding_service.add_user_default_skill(
@@ -94,6 +105,44 @@ def test_user_default_binding_can_force_preload_runtime_ref(test_db, test_user: 
             "namespace": "default",
             "is_public": False,
             "force_preload": True,
+        }
+    ]
+
+
+def test_marketplace_skill_runtime_ref_is_not_system_public(
+    test_db, test_user: User, test_admin_user: User
+):
+    skill = _create_skill(test_db, user_id=test_user.id, name="marketplace-skill")
+    skill.json = {
+        **skill.json,
+        "spec": {
+            **skill.json["spec"],
+            "capability": {
+                "visibility": "public",
+                "publishStatus": "published",
+            },
+        },
+    }
+    test_db.commit()
+    binding = skill_binding_service.add_user_default_skill(
+        test_db,
+        user_id=test_admin_user.id,
+        skill_id=skill.id,
+        created_by=test_admin_user.id,
+    )
+
+    refs = skill_binding_service.list_user_default_skill_refs(
+        test_db,
+        test_admin_user.id,
+    )
+
+    assert binding.json["spec"]["skillRef"]["isPublic"] is False
+    assert refs == [
+        {
+            "skill_id": skill.id,
+            "name": "marketplace-skill",
+            "namespace": "default",
+            "is_public": False,
         }
     ]
 

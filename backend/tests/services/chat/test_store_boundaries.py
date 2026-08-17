@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -98,19 +99,37 @@ def test_can_access_task_uses_access_store(monkeypatch):
 
 
 def test_active_streaming_db_fallback_uses_subtask_store(monkeypatch):
+    db = _NoModelCrudDb()
+    db.get_bind = lambda: SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
     store = SimpleNamespace(
         get_latest_running_assistant_by_task=lambda db, task_id: _subtask(
-            status=SubtaskStatus.RUNNING
+            status=SubtaskStatus.RUNNING,
+            created_at=datetime(2026, 7, 29, 10, 30),  # noqa: DTZ001
         )
     )
     monkeypatch.setattr(permissions, "subtask_store", store, raising=False)
 
     result = permissions._get_active_streaming_from_db.__wrapped__(
-        _NoModelCrudDb(),
+        db,
         100,
     )
 
     assert result["subtask_id"] == 10
+    assert datetime.fromisoformat(result["started_at"]).utcoffset() == timedelta(
+        hours=8
+    )
+
+
+def test_database_datetime_serialization_treats_sqlite_values_as_utc():
+    db = _NoModelCrudDb()
+    db.get_bind = lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+    result = permissions._serialize_database_datetime(
+        db,
+        datetime(2026, 7, 29, 2, 30),  # noqa: DTZ001
+    )
+
+    assert datetime.fromisoformat(result).utcoffset() == timezone.utc.utcoffset(None)
 
 
 def test_active_streaming_subtask_validation_rejects_terminal_subtask(monkeypatch):

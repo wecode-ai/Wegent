@@ -21,6 +21,7 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -29,7 +30,7 @@ import type {
 } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
-import type { ProjectMutationOptions } from './workbenchContextTypes'
+import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
@@ -38,6 +39,7 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
+import { track } from '@/telemetry/client'
 
 interface UseWorkbenchProjectActionsOptions {
   user: User
@@ -45,8 +47,14 @@ interface UseWorkbenchProjectActionsOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
-  refreshWorkLists: () => Promise<void>
-  rememberExecutionDevice: (deviceId: string) => void
+  refreshWorkLists: RefreshWorkLists
+  markRuntimeProjectRemoved: (
+    projectId: number,
+    workspace?: { deviceId: string; workspacePath: string }
+  ) => void
+  invalidateRemoteProjectSync: (workspacePath: string) => void
+  clearRemoteProjectSyncRemoval: (workspacePath: string) => void
+  enqueueRemoteProjectStateMutation: <T>(mutation: () => Promise<T>) => Promise<T>
 }
 
 export function useWorkbenchProjectActions({
@@ -56,15 +64,14 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
-  rememberExecutionDevice,
+  markRuntimeProjectRemoved,
+  invalidateRemoteProjectSync,
+  clearRemoteProjectSyncRemoval,
+  enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await services.projectApi.createProject(data)
-      const projectDeviceId = data.config?.execution?.deviceId ?? data.config?.device_id
-      if (projectDeviceId) {
-        rememberExecutionDevice(projectDeviceId)
-      }
       if (options.refreshWorkLists === false) {
         dispatch({ type: 'project_created', project })
       } else {
@@ -72,9 +79,10 @@ export function useWorkbenchProjectActions({
       }
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
+      track('project_created', { kind: 'standard' })
       return project
     },
-    [dispatch, refreshWorkLists, rememberExecutionDevice, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, user.id]
   )
 
   const createGitWorkspaceProject = useCallback(
@@ -87,19 +95,18 @@ export function useWorkbenchProjectActions({
         ...response.project,
         tasks: response.project.tasks ?? [],
       }
-      rememberExecutionDevice(data.device_id)
       await refreshWorkLists()
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
+      track('project_created', { kind: 'git' })
       return project
     },
-    [dispatch, refreshWorkLists, rememberExecutionDevice, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, user.id]
   )
 
   const prepareDeviceWorkspace = useCallback(
     async (data: DeviceWorkspacePrepareRequest, options: ProjectMutationOptions = {}) => {
       const response = await executorClient.runtime.prepareDeviceWorkspace(data)
-      rememberExecutionDevice(data.deviceId)
       if (options.refreshWorkLists === false) {
         dispatch({ type: 'device_workspace_prepared', mapping: response.mapping })
       } else {
@@ -107,7 +114,7 @@ export function useWorkbenchProjectActions({
       }
       return response
     },
-    [dispatch, executorClient, refreshWorkLists, rememberExecutionDevice]
+    [dispatch, executorClient, refreshWorkLists]
   )
 
   const deleteDeviceWorkspace = useCallback(
@@ -139,17 +146,40 @@ export function useWorkbenchProjectActions({
         const runtimeProject = state.runtimeWork?.projects.find(
           item => runtimeProjectUiId(item.project) === projectId
         )?.project
-        const response = await executorClient.runtime.renameRuntimeWorkspace({
-          deviceId: runtimeWorkspace.deviceId,
-          projectKey: runtimeProject?.key,
-          workspacePath: runtimeWorkspace.workspacePath,
-          runtime: 'codex',
-          name,
-        })
+        const renamePrimaryProject = () =>
+          executorClient.runtime.renameRuntimeWorkspace({
+            deviceId: runtimeWorkspace.deviceId,
+            projectKey: runtimeProject?.key,
+            workspacePath: runtimeWorkspace.workspacePath,
+            runtime: 'codex',
+            name,
+          })
+        const primaryTargetsRemoteProjectState =
+          Boolean(runtimeProject?.sidebarStateKey) &&
+          runtimeProject?.stateDeviceId === runtimeWorkspace.deviceId
+        const response = primaryTargetsRemoteProjectState
+          ? await enqueueRemoteProjectStateMutation(renamePrimaryProject)
+          : await renamePrimaryProject()
         if (!response.accepted) {
           const message = response.error || 'Failed to rename runtime workspace'
           dispatch({ type: 'error_set', error: message })
           throw new Error(message)
+        }
+        if (
+          runtimeProject?.sidebarStateKey &&
+          runtimeProject.stateDeviceId &&
+          (runtimeProject.stateDeviceId !== runtimeWorkspace.deviceId ||
+            runtimeProject.sidebarStateKey !== runtimeProject.key)
+        ) {
+          await enqueueRemoteProjectStateMutation(() =>
+            executorClient.runtime.renameRuntimeWorkspace({
+              deviceId: runtimeProject.stateDeviceId!,
+              projectKey: runtimeProject.sidebarStateKey,
+              workspacePath: runtimeWorkspace.workspacePath,
+              runtime: 'codex',
+              name,
+            })
+          )
         }
         await refreshWorkLists()
         return
@@ -157,7 +187,37 @@ export function useWorkbenchProjectActions({
       await services.projectApi.updateProject(projectId, { name })
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
+    [
+      dispatch,
+      enqueueRemoteProjectStateMutation,
+      executorClient,
+      refreshWorkLists,
+      services.projectApi,
+      state.runtimeWork,
+    ]
+  )
+
+  const updateLocalRuntimeProject = useCallback(
+    async (data: {
+      deviceId: string
+      projectKey: string
+      name: string
+      roots: string[]
+      defaultProjectSpace: RuntimeProjectSpaceRef | null
+    }) => {
+      const response = await executorClient.runtime.upsertLocalRuntimeProject({
+        ...data,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to update local project'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      response.roots.forEach(clearRemoteProjectSyncRemoval)
+      await refreshWorkLists()
+    },
+    [clearRemoteProjectSyncRemoval, dispatch, executorClient, refreshWorkLists]
   )
 
   const removeListedRuntimeProject = useCallback(
@@ -172,16 +232,39 @@ export function useWorkbenchProjectActions({
       const runtimeProject = state.runtimeWork?.projects.find(
         item => runtimeProjectUiId(item.project) === projectId
       )?.project
-      const response = await executorClient.runtime.removeRuntimeWorkspace({
-        deviceId: runtimeWorkspace.deviceId,
-        projectKey: runtimeProject?.key,
-        workspacePath: runtimeWorkspace.workspacePath,
-        runtime: 'codex',
-      })
+      const removePrimaryProject = () =>
+        executorClient.runtime.removeRuntimeWorkspace({
+          deviceId: runtimeWorkspace.deviceId,
+          projectKey: runtimeProject?.key,
+          workspacePath: runtimeWorkspace.workspacePath,
+          runtime: 'codex',
+        })
+      const primaryTargetsRemoteProjectState =
+        Boolean(runtimeProject?.sidebarStateKey) &&
+        runtimeProject?.stateDeviceId === runtimeWorkspace.deviceId
+      const response = primaryTargetsRemoteProjectState
+        ? await enqueueRemoteProjectStateMutation(removePrimaryProject)
+        : await removePrimaryProject()
       if (!response.accepted) {
         const message = response.error || 'Failed to remove runtime workspace'
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
+      }
+      invalidateRemoteProjectSync(runtimeWorkspace.workspacePath)
+      if (
+        runtimeProject?.sidebarStateKey &&
+        runtimeProject.stateDeviceId &&
+        (runtimeProject.stateDeviceId !== runtimeWorkspace.deviceId ||
+          runtimeProject.sidebarStateKey !== runtimeProject.key)
+      ) {
+        await enqueueRemoteProjectStateMutation(() =>
+          executorClient.runtime.removeRuntimeWorkspace({
+            deviceId: runtimeProject.stateDeviceId!,
+            projectKey: runtimeProject.sidebarStateKey,
+            workspacePath: runtimeWorkspace.workspacePath,
+            runtime: 'codex',
+          })
+        )
       }
 
       const standaloneDeviceId = state.standaloneDeviceId?.trim()
@@ -191,7 +274,12 @@ export function useWorkbenchProjectActions({
       const clearsStandaloneWorkspace =
         standaloneDeviceId === runtimeWorkspace.deviceId.trim() &&
         standaloneWorkspacePath === normalizeRuntimeWorkspacePath(runtimeWorkspace.workspacePath)
-      await refreshWorkLists()
+      markRuntimeProjectRemoved(projectId, {
+        deviceId: runtimeWorkspace.deviceId,
+        workspacePath: runtimeWorkspace.workspacePath,
+      })
+      await refreshWorkLists({ syncCloud: false })
+      dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
         dispatch({
           type: 'project_cleared',
@@ -200,11 +288,15 @@ export function useWorkbenchProjectActions({
           startFreshChat: true,
         })
       }
+      track('project_removed', { source: 'local' })
       return true
     },
     [
       dispatch,
+      enqueueRemoteProjectStateMutation,
       executorClient,
+      invalidateRemoteProjectSync,
+      markRuntimeProjectRemoved,
       refreshWorkLists,
       state.runtimeWork,
       state.standaloneDeviceId,
@@ -241,18 +333,26 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
       }
-      await refreshWorkLists()
+      invalidateRemoteProjectSync(standaloneWorkspacePath)
+      markRuntimeProjectRemoved(projectId, {
+        deviceId: standaloneDeviceId,
+        workspacePath: standaloneWorkspacePath,
+      })
+      await refreshWorkLists({ syncCloud: false })
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId,
         standaloneWorkspacePath: null,
         startFreshChat: true,
       })
+      track('project_removed', { source: 'local' })
       return true
     },
     [
       dispatch,
       executorClient,
+      invalidateRemoteProjectSync,
+      markRuntimeProjectRemoved,
       refreshWorkLists,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
@@ -273,9 +373,10 @@ export function useWorkbenchProjectActions({
         dispatch({ type: 'error_set', error: message })
         throw error
       }
-      await refreshWorkLists()
+      dispatch({ type: 'project_removed', projectId })
+      track('project_removed', { source: 'cloud' })
     },
-    [dispatch, refreshWorkLists, services.projectApi, state.projects]
+    [dispatch, services.projectApi, state.projects]
   )
 
   const removeProject = useCallback(
@@ -366,20 +467,62 @@ export function useWorkbenchProjectActions({
   )
 
   const commitEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
-      commitProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    async (
+      project: ProjectWithTasks | null,
+      message: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) => {
+      try {
+        const result = await commitProjectChanges(
+          executorClient.commands,
+          project,
+          message,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'commit' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
   const commitAndPushEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
-      commitAndPushProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    async (
+      project: ProjectWithTasks | null,
+      message: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) => {
+      try {
+        const result = await commitAndPushProjectChanges(
+          executorClient.commands,
+          project,
+          message,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'commit_push' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
   const pushEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
-      pushProjectChanges(executorClient.commands, project, workspaceTarget),
+    async (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
+      try {
+        const result = await pushProjectChanges(executorClient.commands, project, workspaceTarget)
+        track('feature_action_completed', { domain: 'git', action: 'push' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
@@ -390,21 +533,48 @@ export function useWorkbenchProjectActions({
   )
 
   const checkoutEnvironmentBranch = useCallback(
-    (
+    async (
       project: ProjectWithTasks | null,
       branchName: string,
       workspaceTarget?: WorkspaceTarget | null
-    ) => checkoutProjectBranch(executorClient.commands, project, branchName, workspaceTarget),
+    ) => {
+      try {
+        const result = await checkoutProjectBranch(
+          executorClient.commands,
+          project,
+          branchName,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'checkout' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
   const createEnvironmentBranch = useCallback(
-    (
+    async (
       project: ProjectWithTasks | null,
       branchName: string,
       workspaceTarget?: WorkspaceTarget | null
-    ) =>
-      createAndCheckoutProjectBranch(executorClient.commands, project, branchName, workspaceTarget),
+    ) => {
+      try {
+        const result = await createAndCheckoutProjectBranch(
+          executorClient.commands,
+          project,
+          branchName,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'branch_create' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
@@ -416,6 +586,7 @@ export function useWorkbenchProjectActions({
     listGitRepositories,
     listGitBranches,
     updateProjectName,
+    updateLocalRuntimeProject,
     removeProject,
     reorderRuntimeProjects,
     setRuntimeProjectPinned,

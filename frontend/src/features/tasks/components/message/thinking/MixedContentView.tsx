@@ -4,14 +4,21 @@
 
 'use client'
 
-import { memo, useMemo } from 'react'
-import type { ThinkingStep, MessageBlock, ToolPair } from './types'
+import { memo, useEffect, useMemo, useState } from 'react'
+import { nestMessageBlocks } from '@wegent/chat-core'
+import type {
+  ThinkingStep,
+  MessageBlock,
+  SubagentBlock as SubagentBlockType,
+  ToolPair,
+} from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
+import { SubagentBlock } from './components/SubagentBlock'
+import { SubagentGroupBlock } from './components/SubagentGroupBlock'
 import { GuidanceBlock } from './components/GuidanceBlock'
 import ReasoningDisplay from './ReasoningDisplay'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { normalizeToolName, normalizeStepDetails } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
@@ -25,6 +32,8 @@ import {
   SubscriptionPreviewCard,
   type SubscriptionPreviewBlock,
 } from '../../subscription/SubscriptionPreviewCard'
+import { blockToToolPair } from './utils/blockToToolPair'
+import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -102,7 +111,7 @@ const getRenderableInteractiveFormPayload = (
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
   content: string
-  taskStatus?: string // For future use (e.g., showing pending states)
+  taskStatus?: string
   theme: 'light' | 'dark'
   blocks?: MessageBlock[] // NEW: Block-based rendering support
   annotations?: GeminiAnnotation[]
@@ -122,6 +131,66 @@ interface MixedContentViewProps {
   ) => void
   /** Optional override for the running processing indicator text */
   processingMessage?: string
+}
+
+const MEDIA_COMPLETION_MESSAGES = new Set([
+  'Image generation completed',
+  'Video generation completed',
+])
+
+function isMediaCompletionMessage(content: string): boolean {
+  return MEDIA_COMPLETION_MESSAGES.has(content.trim())
+}
+
+const IMAGE_GENERATION_PROGRESS_DURATION_MS = 120_000
+
+function ImageGenerationPlaceholder({
+  imageSize,
+  startedAt,
+}: {
+  imageSize?: string
+  startedAt?: number
+}) {
+  const { t } = useTranslation('chat')
+  const [progress, setProgress] = useState(0)
+  const layout = resolveGeneratedImageDisplayLayout(imageSize)
+
+  useEffect(() => {
+    const progressStartedAt = startedAt && startedAt > 0 ? startedAt : Date.now()
+    const updateProgress = () => {
+      const elapsed = Math.max(0, Date.now() - progressStartedAt)
+      setProgress(Math.min(99, Math.floor((elapsed / IMAGE_GENERATION_PROGRESS_DURATION_MS) * 99)))
+    }
+
+    updateProgress()
+    const timer = window.setInterval(updateProgress, 500)
+    return () => window.clearInterval(timer)
+  }, [startedAt])
+
+  return (
+    <div
+      className="image-generation-placeholder relative overflow-hidden rounded-2xl border border-primary/15 shadow-sm"
+      data-testid="image-generation-placeholder"
+      role="status"
+      aria-label={`${t('image.generating')} ${progress}%`}
+      style={layout}
+    >
+      <div className="image-generation-placeholder__blob-1 absolute" />
+      <div className="image-generation-placeholder__blob-2 absolute" />
+
+      <div className="image-generation-placeholder__stage" aria-hidden="true">
+        <div className="image-generation-placeholder__sheet image-generation-placeholder__sheet--back" />
+        <div className="image-generation-placeholder__sheet image-generation-placeholder__sheet--front" />
+        <div className="image-generation-placeholder__shine" />
+        <div className="image-generation-placeholder__particle image-generation-placeholder__particle--one" />
+        <div className="image-generation-placeholder__particle image-generation-placeholder__particle--two" />
+      </div>
+
+      <div className="absolute right-3 top-3 z-10 text-xs font-medium tabular-nums text-black">
+        {progress}%
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -147,6 +216,7 @@ const MixedContentView = memo(function MixedContentView({
   processingMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
+  const isTerminalFailure = ['FAILED', 'CANCELLED'].includes(taskStatus?.toUpperCase() || '')
   // Extract tools from thinking (legacy mode)
   const { toolGroups } = useToolExtraction(thinking)
 
@@ -165,7 +235,16 @@ const MixedContentView = memo(function MixedContentView({
   const mixedItems = useMemo(() => {
     // NEW: Block-based rendering (preferred)
     if (blocks && blocks.length > 0) {
-      const mapped = blocks
+      const nestedBlocks = nestMessageBlocks(blocks)
+      const hasCompletedMediaResult = nestedBlocks.some(
+        block =>
+          (block.type === 'image' &&
+            !block.is_placeholder &&
+            Array.isArray(block.image_urls) &&
+            block.image_urls.length > 0) ||
+          (block.type === 'video' && !block.is_placeholder && Boolean(block.video_url))
+      )
+      const mapped = nestedBlocks
         .map(block => {
           if (block.type === 'text') {
             // CRITICAL FIX: When page refreshes during streaming, block.content may be empty
@@ -205,6 +284,7 @@ const MixedContentView = memo(function MixedContentView({
               isPlaceholder: block.is_placeholder ?? false,
               videoUrl: block.video_url || '',
               thumbnail: block.video_thumbnail,
+              coverUrl: block.cover_url,
               duration: block.video_duration,
               attachmentId: block.video_attachment_id,
               progress: block.video_progress ?? 0,
@@ -220,6 +300,8 @@ const MixedContentView = memo(function MixedContentView({
               imageUrls: block.image_urls || [],
               imageAttachmentIds: block.image_attachment_ids || [],
               imageCount: block.image_count ?? 0,
+              imageSize: block.image_size,
+              startedAt: block.timestamp,
               status: block.status,
               message: block.content, // Progress message
             }
@@ -237,7 +319,17 @@ const MixedContentView = memo(function MixedContentView({
               data: block,
               blockId: block.id,
             }
+          } else if (block.type === 'subagent') {
+            return {
+              type: 'subagent' as const,
+              data: block,
+              blockId: block.id,
+            }
           } else if (block.type === 'tool') {
+            if (block.parent_tool_use_id) {
+              return null
+            }
+
             const formPayload = getRenderableInteractiveFormPayload(block.render_payload)
 
             // Only render an interactive form from the UI-only render payload.
@@ -321,57 +413,9 @@ const MixedContentView = memo(function MixedContentView({
                 render: () => customRenderer.render({ block, isLastBlock: false }),
               }
             }
-            // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
-            const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
-            const rawToolUseStep = {
-              title: `Using ${normalizedToolName}`,
-              next_action: 'continue',
-              tool_use_id: block.tool_use_id,
-              details: {
-                type: 'tool_use',
-                tool_name: normalizedToolName,
-                status: 'started',
-                input: block.tool_input,
-              },
-            }
-            const rawToolResultStep =
-              block.tool_output != null || block.status === 'error'
-                ? {
-                    title: `Result from ${normalizedToolName}`,
-                    next_action: 'continue',
-                    tool_use_id: block.tool_use_id,
-                    details: {
-                      type: 'tool_result',
-                      tool_name: normalizedToolName,
-                      status: block.status === 'error' ? 'failed' : 'completed',
-                      is_error: block.status === 'error',
-                      content: block.tool_output
-                        ? typeof block.tool_output === 'string'
-                          ? block.tool_output
-                          : JSON.stringify(block.tool_output)
-                        : undefined,
-                      output: block.tool_output,
-                    },
-                  }
-                : undefined
-            const toolPair = {
-              toolUseId: block.tool_use_id || block.id,
-              toolName: normalizedToolName,
-              displayName: block.display_name, // Pass display_name from block
-              status:
-                (block.status as
-                  | 'generating_arguments'
-                  | 'pending'
-                  | 'streaming'
-                  | 'invoking'
-                  | 'done'
-                  | 'error') || 'done',
-              toolUse: normalizeStepDetails(rawToolUseStep),
-              toolResult: rawToolResultStep ? normalizeStepDetails(rawToolResultStep) : undefined,
-            }
             return {
               type: 'tool' as const,
-              tool: toolPair,
+              tool: blockToToolPair(block),
               blockId: block.id,
             }
           }
@@ -384,7 +428,7 @@ const MixedContentView = memo(function MixedContentView({
       // 1. chat:block_created creates a tool block
       // 2. chat:chunk sends text content (accumulated in message.content)
       // 3. Without this fix, only tool blocks are rendered, text content is lost
-      const hasTextBlock = blocks.some(b => b.type === 'text')
+      const hasTextBlock = nestedBlocks.some(b => b.type === 'text')
       if (!hasTextBlock && content && content.trim()) {
         // Handle ${$$}$ separator - only show the result part (after separator)
         // This separator is used to split prompt and result in some message formats
@@ -404,7 +448,13 @@ const MixedContentView = memo(function MixedContentView({
         }
       }
 
-      const dedupedMapped = mapped.filter((item, index, items) => {
+      const visibleMapped = hasCompletedMediaResult
+        ? mapped.filter(
+            item => !item || item.type !== 'content' || !isMediaCompletionMessage(item.content)
+          )
+        : mapped
+
+      const dedupedMapped = visibleMapped.filter((item, index, items) => {
         if (!item || item.type !== 'interactive_form_question') return true
 
         const toolUseId = item.data.tool_use_id || item.blockId
@@ -507,7 +557,13 @@ const MixedContentView = memo(function MixedContentView({
   const mergedItems = useMemo(() => {
     type ToolItem = { type: 'tool'; tool: ToolPair; blockId: string }
     type MergedToolItem = ToolItem & { count: number; mergedTools: ToolPair[] }
-    type ResultItem = (typeof mixedItems)[number] & { count?: number; mergedTools?: ToolPair[] }
+    type MixedItem = NonNullable<(typeof mixedItems)[number]>
+    type SubagentGroupItem = {
+      type: 'subagent_group'
+      blocks: SubagentBlockType[]
+      blockId: string
+    }
+    type ResultItem = (MixedItem & { count?: number; mergedTools?: ToolPair[] }) | SubagentGroupItem
 
     const result: ResultItem[] = []
 
@@ -530,6 +586,26 @@ const MixedContentView = memo(function MixedContentView({
           // New tool or different tool name
           result.push({ ...item, count: 1, mergedTools: [item.tool] })
         }
+      } else if (item.type === 'subagent') {
+        const subagents = [item]
+        let nextIndex = i + 1
+        while (nextIndex < mixedItems.length) {
+          const nextItem = mixedItems[nextIndex]
+          if (!nextItem || nextItem.type !== 'subagent') break
+          subagents.push(nextItem)
+          nextIndex += 1
+        }
+
+        if (subagents.length > 1) {
+          result.push({
+            type: 'subagent_group',
+            blocks: subagents.map(subagent => subagent.data),
+            blockId: `subagent-group-${subagents[0].blockId}`,
+          })
+        } else {
+          result.push(item)
+        }
+        i = nextIndex - 1
       } else {
         // Non-tool items are added as-is
         result.push(item)
@@ -563,21 +639,26 @@ const MixedContentView = memo(function MixedContentView({
             </div>
           )
         } else if (item.type === 'video') {
+          if (
+            item.status === 'error' ||
+            (item.isPlaceholder && isTerminalFailure) ||
+            (!item.isPlaceholder && !item.videoUrl)
+          ) {
+            return null
+          }
+
           // Render video block using VideoPlayer component
           return (
             <div key={item.blockId} className="space-y-2">
               <VideoPlayer
                 videoUrl={item.videoUrl}
                 thumbnail={item.thumbnail ?? undefined}
+                coverUrl={item.coverUrl ?? undefined}
                 duration={item.duration ?? undefined}
                 attachmentId={item.attachmentId ?? undefined}
                 isPlaceholder={item.isPlaceholder}
                 progress={item.progress}
               />
-              {/* Show progress message if available */}
-              {item.isPlaceholder && item.message && (
-                <div className="text-xs text-text-muted">{item.message}</div>
-              )}
             </div>
           )
         } else if (item.type === 'thinking') {
@@ -592,24 +673,16 @@ const MixedContentView = memo(function MixedContentView({
             />
           )
         } else if (item.type === 'image') {
+          if (item.isPlaceholder && (isTerminalFailure || item.status === 'error')) {
+            return null
+          }
+
           // Render image block using ImageGallery component
           return (
             <div key={item.blockId} className="space-y-2">
               {item.isPlaceholder ? (
                 // Show loading state for placeholder images
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-surface border border-border">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                    <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-text-primary">
-                      {t('image.generating') || 'Generating images...'}
-                    </div>
-                    {item.message && (
-                      <div className="text-xs text-text-muted mt-1">{item.message}</div>
-                    )}
-                  </div>
-                </div>
+                <ImageGenerationPlaceholder imageSize={item.imageSize} startedAt={item.startedAt} />
               ) : item.imageUrls && item.imageUrls.length > 0 ? (
                 // Show generated images
                 <ImageGallery
@@ -617,6 +690,7 @@ const MixedContentView = memo(function MixedContentView({
                     url,
                     attachmentId: item.imageAttachmentIds?.[i],
                   }))}
+                  imageSize={item.imageSize}
                   onUseAsReference={onUseAsReference}
                 />
               ) : null}
@@ -648,6 +722,10 @@ const MixedContentView = memo(function MixedContentView({
           )
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />
+        } else if (item.type === 'subagent') {
+          return <SubagentBlock key={item.blockId} block={item.data} theme={theme} />
+        } else if (item.type === 'subagent_group') {
+          return <SubagentGroupBlock key={item.blockId} blocks={item.blocks} theme={theme} />
         } else if (item.type === 'tool') {
           const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
           const count = 'count' in item ? item.count : 1

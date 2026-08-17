@@ -61,6 +61,8 @@ export interface UnifiedRetriever {
   description?: string
   created_at?: string | null
   updated_at?: string | null
+  isReference?: boolean
+  listingId?: number | null
 }
 
 // Test Connection Types

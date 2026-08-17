@@ -1,14 +1,33 @@
 import type { RefObject } from 'react'
+import type { CloudProject } from '@/api/deliveries'
 import type { LocalDeviceApp, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
+import type { ComposerEditorSnapshot } from './ComposerProseMirrorEditor'
 
 export interface ComposerSubmitOptions {
   guideWhenBusy?: boolean
+  interruptWhenBusy?: boolean
+}
+
+export interface ComposerExternalMentionCandidate {
+  id: string
+  type: 'agent' | 'user'
+  title: string
+  metaLabel: string
+  searchAliases?: string[]
+  testId?: string
 }
 
 export interface ComposerTextareaProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionStart?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   canSend: boolean
   disabled?: boolean
@@ -18,10 +37,19 @@ export interface ComposerTextareaProps {
   textareaRef: RefObject<HTMLElement | null>
   className: string
   skillMenuClassName?: string
+  disableAutocomplete?: boolean
+  onKeyDown?: (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => boolean | void
   onPasteFiles?: (files: File[]) => void
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
+  onSelectCloudProject?: (project: CloudProject) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]

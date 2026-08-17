@@ -16,10 +16,11 @@ Key changes from the original trigger_ai_response:
 - Supports custom ResultEmitter for different output modes (WebSocket, SSE, Callback)
 """
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
@@ -49,7 +50,9 @@ if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
+
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+KNOWLEDGE_ARTIFACT_SOURCE = "knowledge_artifact"
 CODEX_RUNTIME = "codex"
 RUNTIME_MODEL_TYPE = "runtime"
 EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS = {"ClaudeCode", "Agno", "CodeX", "Codex"}
@@ -66,15 +69,57 @@ SERVICE_TIER_ALIASES = {
 }
 
 
+def _apply_image_generation_params(
+    model_config: Dict[str, Any], generate_params: Any
+) -> None:
+    """Apply request-scoped image options to the execution model config."""
+    selected_size = getattr(generate_params, "size", None)
+    if not selected_size:
+        return
+    image_config = dict(model_config.get("imageConfig") or {})
+    image_config["size"] = selected_size
+    model_config["imageConfig"] = image_config
+
+
+def _generation_params_for_log(generate_params: Any) -> Dict[str, Any]:
+    """Return generation parameters in a loggable form."""
+    if hasattr(generate_params, "model_dump"):
+        return generate_params.model_dump(exclude_none=True)
+    if isinstance(generate_params, dict):
+        return dict(generate_params)
+    return {
+        key: value
+        for key in (
+            "resolution",
+            "ratio",
+            "duration",
+            "generation_mode_id",
+            "size",
+        )
+        if (value := getattr(generate_params, key, None)) is not None
+    }
+
+
+def _generation_config_for_log(config: Any) -> Dict[str, Any]:
+    """Exclude verbose capability metadata from generation config logs."""
+    if not isinstance(config, dict):
+        return {}
+    return {key: value for key, value in config.items() if key != "capabilities"}
+
+
 def _request_shell_type(request: "ExecutionRequest") -> str:
     """Extract the primary shell type from an execution request."""
     if request.bot and isinstance(request.bot[0], dict):
-        return str(request.bot[0].get("shell_type") or "")
-    return ""
+        return str(request.bot[0].get("shell_type") or "Chat")
+    return "Chat"
 
 
 def _should_inline_attachment_content(request: "ExecutionRequest") -> bool:
     """Return whether parsed attachment content should be injected into prompt."""
+    if str(request.model_config.get("modelType") or "").lower() == "video":
+        # VideoAgent resolves the original uploaded media from the user subtask.
+        # Inlining the same images into the prompt makes them count twice.
+        return False
     return _request_shell_type(request) not in EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS
 
 
@@ -119,6 +164,56 @@ def _service_tier_from_model_options(payload: Any) -> Optional[str]:
         return None
 
     return SERVICE_TIER_ALIASES.get(str(speed).strip().lower())
+
+
+def _model_options_from_payload(payload: Any) -> Optional[Dict[str, Any]]:
+    """Return model_options dict from a chat send payload, if present."""
+    if payload is None:
+        return None
+    model_options = getattr(payload, "model_options", None)
+    if isinstance(model_options, dict):
+        return model_options
+    return None
+
+
+def _model_options_from_task(task: TaskResource) -> Optional[Dict[str, Any]]:
+    """Return model_options dict persisted in task metadata labels."""
+    task_json = task.json if isinstance(task.json, dict) else {}
+    metadata = task_json.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return None
+    labels = metadata.get("labels") or {}
+    if not isinstance(labels, dict):
+        return None
+    model_options_raw = labels.get("modelOptions")
+    if not model_options_raw:
+        return None
+    if isinstance(model_options_raw, dict):
+        return model_options_raw
+    try:
+        return json.loads(model_options_raw)
+    except Exception:
+        return None
+
+
+def _catalog_model_id_from_model_options(
+    model_options: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Extract catalog model id override from UI model options."""
+    if not model_options:
+        return None
+    catalog_id = (
+        model_options.get("weworkCloudModelCodexCatalogModelId")
+        or model_options.get("weworkCloudModelCatalogModelId")
+        or model_options.get("codex_catalog_model_id")
+        or model_options.get("codexCatalogModelId")
+    )
+    result = (
+        catalog_id.strip()
+        if isinstance(catalog_id, str) and catalog_id.strip()
+        else None
+    )
+    return result
 
 
 def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
@@ -170,6 +265,7 @@ def _build_codex_runtime_model_config(
     provider_name = options.get("codexProviderName") or options.get(
         "codex_provider_name"
     )
+    catalog_model_id = _catalog_model_id_from_model_options(options)
 
     # Official Codex runtime model: keep the existing minimal config.
     if model_name == CODEX_RUNTIME_MODEL_NAME:
@@ -183,6 +279,8 @@ def _build_codex_runtime_model_config(
             config["model_provider"] = str(provider_id)
         if provider_name:
             config["provider_name"] = str(provider_name)
+        if catalog_model_id:
+            config["codex_catalog_model_id"] = catalog_model_id
         return config
 
     resolved_config: Optional[Dict[str, Any]] = None
@@ -218,6 +316,43 @@ def _build_codex_runtime_model_config(
                     resolved_config["temperature"] = full_config["temperature"]
                 if full_config.get("think_config"):
                     resolved_config["think_config"] = dict(full_config["think_config"])
+                # Upstream wire format mirrors the App's
+                # getCloudModelUpstreamApiFormat inference: claude-family
+                # models go through the Anthropic Messages protocol instead of
+                # OpenAI Responses, otherwise the gateway rejects the request.
+                upstream_format = (
+                    full_config.get("upstream_api_format")
+                    or full_config.get("upstreamApiFormat")
+                    or full_config.get("api_format")
+                    or full_config.get("apiFormat")
+                )
+                if not upstream_format:
+                    model_type = str(full_config.get("model") or "").lower()
+                    protocol = str(full_config.get("protocol") or "").lower()
+                    if model_type in {"claude", "anthropic"} or protocol in {
+                        "claude",
+                        "anthropic-messages",
+                    }:
+                        upstream_format = "anthropic-messages"
+                    elif model_type == "openai" or protocol in {
+                        "openai",
+                        "chat/completions",
+                    }:
+                        upstream_format = "openai-chat-completions"
+                if upstream_format:
+                    upstream_format = _canonical_codex_upstream_api_format(
+                        str(upstream_format)
+                    )
+                    resolved_config["upstream_api_format"] = upstream_format
+                    if upstream_format == "anthropic-messages":
+                        # The executor appends /responses by default, which the
+                        # Anthropic Messages protocol does not accept. Pass the
+                        # explicit endpoint so the proxy uses the right path.
+                        base_url = str(resolved_config.get("base_url") or "").rstrip(
+                            "/"
+                        )
+                        if base_url:
+                            resolved_config["responses_url"] = f"{base_url}/v1/messages"
         except Exception:
             pass
 
@@ -233,7 +368,161 @@ def _build_codex_runtime_model_config(
         resolved_config["model_provider"] = str(provider_id)
     if provider_name:
         resolved_config["provider_name"] = str(provider_name)
+    if catalog_model_id:
+        resolved_config["codex_catalog_model_id"] = catalog_model_id
     return resolved_config
+
+
+def _canonical_codex_upstream_api_format(api_format: str) -> str:
+    """Map provider API endpoint names to the executor's protocol names."""
+
+    normalized = api_format.strip().lower()
+    return {
+        "responses": "openai-responses",
+        "openai-responses": "openai-responses",
+        "chat/completions": "openai-chat-completions",
+        "openai-chat-completions": "openai-chat-completions",
+        "messages": "anthropic-messages",
+        "anthropic-messages": "anthropic-messages",
+    }.get(normalized, normalized)
+
+
+def _build_cloud_gateway_model_config(
+    db: "Session",
+    *,
+    model_name: str,
+    creator: Any,
+    upstream_api_format: Optional[str] = None,
+    model_type: Optional[str] = None,
+    namespace: Optional[str] = None,
+    resource_user_id: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build the backend LLM gateway config for an authorized cloud model.
+
+    Mirrors the App's cloud-model send: the executor forwards to the backend
+    `llm-responses-proxy` with the user's token and model identity headers; the
+    backend resolves the Model CRD and attaches real provider credentials, so
+    executor devices never see the raw API key and requests share the gateway's
+    quota management instead of being rate-limited per device.
+
+    Exact identities route public, group, and user cloud models through the
+    gateway. Legacy name-only callers keep user-owned models on their direct
+    config path.
+    """
+
+    from app.core.config import settings
+    from app.core.security import create_access_token
+
+    exact_identity = any(
+        value is not None for value in (model_type, namespace, resource_user_id)
+    )
+    if exact_identity:
+        if model_type is None or namespace is None or resource_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cloud model identity is incomplete",
+            )
+        from app.services.llm_proxy_service import _validate_model_access
+
+        _validate_model_access(
+            db,
+            creator,
+            model_type,
+            namespace,
+            resource_user_id,
+        )
+        kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == resource_user_id,
+                Kind.kind == "Model",
+                Kind.namespace == namespace,
+                Kind.name == model_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if kind is None or not kind.json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cloud model not found",
+            )
+    else:
+        from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+        kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
+        if kind is None or not kind.json:
+            return None
+        namespace = str(kind.namespace or "default")
+        if kind.user_id == 0:
+            model_type = "public"
+            resource_user_id = 0
+        elif namespace != "default":
+            model_type = "group"
+            resource_user_id = int(kind.user_id or 0)
+        else:
+            # Legacy callers keep user-owned models on their direct config path.
+            return None
+    backend_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
+    if not backend_base:
+        return None
+    token = create_access_token(
+        {"sub": creator.user_name, "user_id": creator.id},
+        expires_delta=30,
+    )
+    return {
+        "model": "openai",
+        "model_id": model_name,
+        "api_format": "responses",
+        "protocol": "openai-responses",
+        "upstream_api_format": upstream_api_format or "openai-responses",
+        "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
+        "api_key": token,
+        "default_headers": {
+            "X-Wegent-Model-Type": model_type,
+            "X-Wegent-Model-Namespace": namespace,
+            "X-Wegent-Model-User-Id": str(resource_user_id),
+            "X-Wegent-Upstream-Header-wecode-executor": "codex",
+            "X-Wegent-Upstream-Header-wecode-source": "wegent-agent",
+        },
+        "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
+    }
+
+
+def build_wework_runtime_model_config(
+    db: "Session",
+    *,
+    model_name: str,
+    creator: User,
+    model_options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Resolve a Wework model exactly as an App-started Codex run does."""
+    resolved = _build_codex_runtime_model_config(
+        model_name,
+        model_options or {},
+        db=db,
+        user_id=creator.id,
+    )
+    gateway_config = _build_cloud_gateway_model_config(
+        db,
+        model_name=model_name,
+        creator=creator,
+        upstream_api_format=resolved.get("upstream_api_format"),
+    )
+    if gateway_config is None:
+        return resolved
+    upstream_model_id = str(resolved.get("model_id") or "").lower()
+    inferred_catalog_model_id = (
+        "wework-kimi-k2-7" if "kimi-k2.7" in upstream_model_id else None
+    )
+    gateway_config.setdefault(
+        "codex_catalog_model_id",
+        resolved.get("codex_catalog_model_id")
+        or inferred_catalog_model_id
+        or "wework-gpt-5.6-sol",
+    )
+    gateway_config["codex_responses_compat_proxy"] = True
+    return gateway_config
 
 
 def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
@@ -449,6 +738,8 @@ async def build_execution_request(
     knowledge_base_names: Optional[List[Dict[str, str]]] = None,
     knowledge_base_refs: Optional[List[Dict[str, Any]]] = None,
     reasoning_config: Optional[Dict[str, Any]] = None,
+    include_wework_space_mcp: bool = False,
+    web_runtime_guidance: Optional[bool] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -474,6 +765,7 @@ async def build_execution_request(
         knowledge_base_names: Optional legacy list of KB names in {'namespace': str, 'name': str} format
         knowledge_base_refs: Optional normalized KB refs with optional folder/document scope
         reasoning_config: Optional reasoning config dict with 'effort' and 'summary' keys
+        include_wework_space_mcp: Whether to expose the Wework board MCP
 
     Returns:
         ExecutionRequest ready for dispatch
@@ -502,10 +794,11 @@ async def build_execution_request(
             additional_skills = getattr(payload, "additional_skills", None)
             if additional_skills:
                 preload_skills = list(preload_skills or []) + list(additional_skills)
-        web_runtime_guidance = (
-            payload is not None
-            and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
-        )
+        if web_runtime_guidance is None:
+            web_runtime_guidance = (
+                payload is not None
+                and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
+            )
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
@@ -530,41 +823,54 @@ async def build_execution_request(
                 force_override,
                 override_model_type,
             )
-            if (
-                force_override
-                and override_model_name
-                and (override_model_type == RUNTIME_MODEL_TYPE)
-            ):
-                runtime_model_config = _build_codex_runtime_model_config(
-                    override_model_name,
-                    db=db,
-                    user_id=user.id,
-                )
-                logger.info(
-                    "[build_execution_request] Using runtime model config: "
-                    "selectedModel=%s, executorModel=%s",
-                    override_model_name,
-                    runtime_model_config.get("model_id"),
-                )
-                override_model_name = None
-                force_override = False
-            elif (
-                force_override
-                and override_model_name
-                and _should_ignore_unavailable_task_model_override(payload)
-                and not _task_model_override_available(
-                    db,
-                    model_name=override_model_name,
-                    user_id=user.id,
-                )
-            ):
-                logger.info(
-                    "[build_execution_request] Ignoring unavailable task model "
-                    "override for payload fallback: modelId=%s",
-                    override_model_name,
-                )
-                override_model_name = None
-                force_override = False
+
+        # Extract model options from payload or task labels (retry path may not have payload)
+        model_options = _model_options_from_payload(
+            payload
+        ) or _model_options_from_task(task)
+        catalog_model_id = _catalog_model_id_from_model_options(model_options)
+        if catalog_model_id:
+            logger.info(
+                "[build_execution_request] Extracted catalog model id override: %s",
+                catalog_model_id,
+            )
+
+        if (
+            force_override
+            and override_model_name
+            and (override_model_type == RUNTIME_MODEL_TYPE)
+        ):
+            runtime_model_config = _build_codex_runtime_model_config(
+                override_model_name,
+                model_options=model_options,
+                db=db,
+                user_id=user.id,
+            )
+            logger.info(
+                "[build_execution_request] Using runtime model config: "
+                "selectedModel=%s, executorModel=%s",
+                override_model_name,
+                runtime_model_config.get("model_id"),
+            )
+            override_model_name = None
+            force_override = False
+        elif (
+            force_override
+            and override_model_name
+            and _should_ignore_unavailable_task_model_override(payload)
+            and not _task_model_override_available(
+                db,
+                model_name=override_model_name,
+                user_id=user.id,
+            )
+        ):
+            logger.info(
+                "[build_execution_request] Ignoring unavailable task model "
+                "override for payload fallback: modelId=%s",
+                override_model_name,
+            )
+            override_model_name = None
+            force_override = False
 
         request = builder.build(
             subtask=assistant_subtask,
@@ -584,6 +890,7 @@ async def build_execution_request(
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
             runtime_model_config=runtime_model_config,
+            include_wework_space_mcp=include_wework_space_mcp,
         )
         request.device_id = device_id or request.device_id
         # Task spec is the runtime source of truth. Message-level external
@@ -625,6 +932,18 @@ async def build_execution_request(
 
         _apply_user_runtime_config(db, request, user)
 
+        # Apply UI-selected or Model CRD catalog model id override for Codex-compatible models.
+        effective_catalog_model_id = catalog_model_id or request.model_config.get(
+            "codex_catalog_model_id"
+        )
+        if effective_catalog_model_id and _is_codex_model_config(request.model_config):
+            request.model_config["codex_catalog_model_id"] = effective_catalog_model_id
+            request.model_config["codex_responses_compat_proxy"] = True
+            logger.info(
+                "[build_execution_request] Applied catalog model id override: %s",
+                effective_catalog_model_id,
+            )
+
         # Store reasoning_config in ExecutionRequest for downstream access
         request.reasoning_config = (
             selected_reasoning_config or request.model_config.get("reasoning")
@@ -640,8 +959,7 @@ async def build_execution_request(
                 elif isinstance(interactive_form_answer, dict):
                     request.interactive_form_answer = dict(interactive_form_answer)
 
-        # Merge user-selected generate_params into videoConfig for video models
-        # Validates params against model capabilities to reject invalid values
+        # Merge user-selected generation parameters into the selected model config.
         if payload is not None:
             generate_params = getattr(payload, "generate_params", None)
             if generate_params and request.model_config.get("modelType") == "video":
@@ -650,7 +968,8 @@ async def build_execution_request(
 
                 if generate_params.resolution:
                     allowed_resolutions = [
-                        r.get("label") for r in (capabilities.get("resolutions") or [])
+                        r.get("value") or r.get("label")
+                        for r in (capabilities.get("resolutions") or [])
                     ]
                     if (
                         allowed_resolutions
@@ -687,6 +1006,31 @@ async def build_execution_request(
                     video_config["duration"] = generate_params.duration
 
                 request.model_config["videoConfig"] = video_config
+                if generate_params.generation_mode_id:
+                    modes = capabilities.get("generation_modes") or []
+                    allowed_mode_ids = [mode.get("id") for mode in modes]
+                    if (
+                        allowed_mode_ids
+                        and generate_params.generation_mode_id not in allowed_mode_ids
+                    ):
+                        raise ValueError(
+                            "Unsupported video generation mode "
+                            f"'{generate_params.generation_mode_id}'"
+                        )
+                    request.model_config["generation_mode_id"] = (
+                        generate_params.generation_mode_id
+                    )
+            elif generate_params and request.model_config.get("modelType") == "image":
+                _apply_image_generation_params(request.model_config, generate_params)
+            if generate_params:
+                logger.info(
+                    "[build_execution_request] Generation params applied: "
+                    "model_type=%s, selected=%s, image_config=%s, video_config=%s",
+                    request.model_config.get("modelType"),
+                    _generation_params_for_log(generate_params),
+                    _generation_config_for_log(request.model_config.get("imageConfig")),
+                    _generation_config_for_log(request.model_config.get("videoConfig")),
+                )
 
         # Always propagate user_subtask_id for downstream persistence (e.g., KB tool results).
         # Note: This is different from request.subtask_id which is the assistant subtask.
@@ -736,29 +1080,43 @@ async def build_execution_request(
             user_subtask_id if user_subtask_id else processed_subtask_id
         )
         if context_subtask_id:
+            preload_selected_kb_skill = (
+                task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
+            )
             request = await _process_contexts(
                 db,
                 request,
                 context_subtask_id,
                 user.id,
+                preload_selected_kb_skill=preload_selected_kb_skill,
             )
-            if (
-                device_id
-                and request.knowledge_base_ids
-                and request.is_user_selected_kb
-                and SELECTED_KB_PRELOAD_SKILL not in (request.skill_names or [])
-            ):
-                from app.schemas.kind import Team as TeamCRD
 
-                team_crd = TeamCRD.model_validate(team.json)
-                bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
-                if bot:
-                    request = builder.resolve_request_preload_skills(
-                        request=request,
-                        bot=bot,
-                        team=team,
-                        user=user,
-                    )
+        from app.services.chat.selected_knowledge import (
+            activate_provider_native_knowledge,
+            apply_selected_knowledge_context,
+        )
+
+        provider_skills = []
+        if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE:
+            provider_skills = apply_selected_knowledge_context(db, request, task)
+        unresolved_provider_skills = [
+            skill_name
+            for skill_name in provider_skills
+            if skill_name not in (request.skill_names or [])
+        ]
+        if unresolved_provider_skills:
+            from app.schemas.kind import Team as TeamCRD
+
+            team_crd = TeamCRD.model_validate(team.json)
+            bot = builder._get_bot_for_subtask(assistant_subtask, team, team_crd)
+            if bot:
+                request = builder.resolve_request_preload_skills(
+                    request=request,
+                    bot=bot,
+                    team=team,
+                    user=user,
+                )
+        activate_provider_native_knowledge(request, provider_skills)
 
         return request
 
@@ -771,6 +1129,8 @@ async def _process_contexts(
     request: "ExecutionRequest",
     user_subtask_id: int,
     user_id: int,
+    *,
+    preload_selected_kb_skill: bool = True,
 ) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
@@ -779,6 +1139,9 @@ async def _process_contexts(
         request: ExecutionRequest to enhance
         user_subtask_id: User subtask ID for context retrieval
         user_id: User ID for context retrieval
+        preload_selected_kb_skill: Whether a selected knowledge base should preload
+            the knowledge-management skill (default: True)
+
     Returns:
         Enhanced ExecutionRequest with context information
     """
@@ -789,6 +1152,7 @@ async def _process_contexts(
     inline_attachment_content = _should_inline_attachment_content(request)
 
     # Process contexts (attachments, knowledge bases, etc.)
+    base_system_prompt = request.system_prompt
     ctx = await prepare_contexts_for_chat(
         db=db,
         user_subtask_id=user_subtask_id,
@@ -806,9 +1170,24 @@ async def _process_contexts(
     # computed inside _prepare_kb_tools_from_contexts and surfaced here - no extra
     # DB queries needed.
     request.prompt = ctx.final_message
-    request.system_prompt = ctx.kb.enhanced_system_prompt
+    from app.services.chat.selected_knowledge import (
+        SUPPORTED_PROVIDER_NATIVE_SHELLS,
+    )
+
+    prepare_provider_native_knowledge = bool(
+        ctx.kb.knowledge_base_ids
+        and preload_selected_kb_skill
+        and _request_shell_type(request) in SUPPORTED_PROVIDER_NATIVE_SHELLS
+    )
+    request.system_prompt = (
+        base_system_prompt
+        if prepare_provider_native_knowledge
+        else ctx.kb.enhanced_system_prompt
+    )
     request.table_contexts = ctx.table_contexts
-    request.kb_meta_prompt = ctx.kb.kb_meta_prompt
+    request.kb_meta_prompt = (
+        "" if prepare_provider_native_knowledge else ctx.kb.kb_meta_prompt
+    )
     request.attachments = [
         _build_executor_attachment_payload(context)
         for context in context_service.get_attachments_by_subtask(db, user_subtask_id)
@@ -821,13 +1200,15 @@ async def _process_contexts(
         [attachment.get("id") for attachment in request.attachments],
     )
     if ctx.kb.knowledge_base_ids:
+        request.provider_native_knowledge = False
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
         request.knowledge_base_scopes = ctx.kb.knowledge_base_scopes
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
-        _ensure_selected_kb_skill_priority(request)
+        if prepare_provider_native_knowledge:
+            _ensure_selected_kb_skill_priority(request)
 
     logger.info(
         "[ai_trigger_unified] Context processing completed: "

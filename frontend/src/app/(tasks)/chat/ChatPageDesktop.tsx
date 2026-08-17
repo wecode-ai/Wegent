@@ -39,6 +39,7 @@ import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 import { calculateOpenLinks } from '@/utils/openLinks'
+import { resolveChatPageTaskType } from '@/utils/taskRouting'
 import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
 import type { UnifiedMessage } from '@wegent/chat-core'
 
@@ -91,7 +92,8 @@ export function ChatPageDesktop() {
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
-  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+  const persistedTaskDeviceId =
+    selectedTaskDetail?.task_type === 'task' ? selectedTaskDetail.device_id || null : null
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -116,35 +118,48 @@ export function ChatPageDesktop() {
   const _hasShareId = !!getSearchParam(searchParams, 'share_id')
   const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
   const isCodeAgentMode = getSearchParam(searchParams, 'agent') === 'code'
+  const requestedMode = getSearchParam(searchParams, 'mode')
   const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
   const hasOpenTask = !!taskId
+  const activeDeviceId = hasOpenTask ? persistedTaskDeviceId : selectedDeviceId
+  const selectedDevice = devices.find(d => d.device_id === activeDeviceId)
 
-  // Determine taskType based on device selection, URL agent filter, and selected task.
+  // Existing tasks always retain their persisted execution mode. Device selection
+  // only determines the mode for a new task.
   // When Wework URL is configured, default chat shows both chat and code agents but
   // remains chat-first until a code-only agent is selected inside ChatArea.
-  const taskType: TaskType =
-    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+  const taskType: TaskType = resolveChatPageTaskType({
+    taskId,
+    selectedTask: selectedTaskDetail,
+    selectedDeviceId,
+    isCodeAgentMode,
+    requestedMode,
+  })
+  const isGenerationMode = taskType === 'video' || taskType === 'image'
+  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' = isGenerationMode
+    ? 'all'
+    : taskType === 'task'
       ? 'task'
-      : isCodeAgentMode || isCodeTaskOpen
-        ? 'code'
-        : 'chat'
-  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
-    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
-      ? 'task'
-      : isCodeAgentMode || isCodeTaskOpen
+      : taskType === 'code'
         ? 'code'
         : hasWeworkCodeUrl
           ? 'all'
           : 'chat'
   const showRepositorySelector =
-    !selectedDeviceId && selectedTaskDetail?.task_type !== 'task' && teamModeFilter !== 'chat'
+    !isGenerationMode && taskType !== 'task' && teamModeFilter !== 'chat'
+  const visibleTeams = useMemo(
+    () => (isGenerationMode ? teams.filter(team => team.bind_mode?.includes(taskType)) : teams),
+    [isGenerationMode, taskType, teams]
+  )
 
   // Compute disabled reason for device mode
   const disabledReason =
-    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+    taskType === 'task' &&
+    activeDeviceId &&
+    (!selectedDevice || selectedDevice.status === 'offline')
       ? t('devices:device_offline_cannot_send')
       : undefined
 
@@ -153,16 +168,13 @@ export function ChatPageDesktop() {
     if (selectedTaskDetail?.task_type === 'task' && taskId) {
       const params = new URLSearchParams()
       params.set('taskId', String(taskId))
-      if (selectedTaskDetail.device_id) {
-        params.set('deviceId', selectedTaskDetail.device_id)
-      }
       const projectIdParam = getSearchParam(searchParams, 'projectId')
       if (projectIdParam) {
         params.set('projectId', projectIdParam)
       }
       router.replace(`/devices/chat?${params.toString()}`)
     }
-  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router, searchParams])
+  }, [selectedTaskDetail?.task_type, taskId, router, searchParams])
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -347,6 +359,17 @@ export function ChatPageDesktop() {
     return await refreshTeams()
   }
 
+  const handleGenerateModeChange = useCallback(
+    (mode: 'video' | 'image') => {
+      if (taskId) return
+      const nextParams = new URLSearchParams(searchParams.toString())
+      nextParams.set('mode', mode)
+      nextParams.delete('agent')
+      router.replace(`/chat?${nextParams.toString()}`)
+    },
+    [router, searchParams, taskId]
+  )
+
   const handleToggleCollapsed = () => {
     setIsCollapsed(prev => {
       const newValue = !prev
@@ -361,7 +384,9 @@ export function ChatPageDesktop() {
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
     // Force a hard reload to ensure a fresh start when already on /chat
-    window.location.href = paths.chat.getHref()
+    window.location.href = isGenerationMode
+      ? `${paths.chat.getHref()}?mode=${taskType}`
+      : paths.chat.getHref()
   }
 
   // Handle expand for collapsed sidebar buttons
@@ -408,9 +433,10 @@ export function ChatPageDesktop() {
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
+          hideGroupChatOptions={isGenerationMode}
         >
           {/* Create Group Chat Button - only show when no task is open */}
-          {!hasOpenTask && (
+          {!hasOpenTask && !isGenerationMode && (
             <Button
               variant="outline"
               size="sm"
@@ -446,7 +472,7 @@ export function ChatPageDesktop() {
             }}
           >
             <ChatArea
-              teams={teams}
+              teams={visibleTeams}
               isTeamsLoading={isTeamsLoading}
               selectedTeamForNewTask={_selectedTeamForNewTask}
               showRepositorySelector={showRepositorySelector}
@@ -454,6 +480,7 @@ export function ChatPageDesktop() {
               teamModeFilter={teamModeFilter}
               onShareButtonRender={handleShareButtonRender}
               onRefreshTeams={handleRefreshTeams}
+              onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
               disabledReason={disabledReason}
               extension={{ teamEdit: teamEditExtension }}
             />

@@ -24,23 +24,47 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import type { CodexOfficialModelList } from '@/features/model-settings/codexOfficialModels'
 import { testLocalModelConnection } from '@/features/model-settings/localModelConnectionTest'
 import {
+  createDefaultLocalModelCatalogEntry,
+  normalizeLocalModelCatalogEntry,
+  type LocalModelCatalogEntry,
+} from '@/features/model-settings/localModelCatalog'
+import {
+  discoverProviderModels,
+  findLocalModelProviderProfile,
+  localModelSupportsImageInput,
+  LOCAL_MODEL_PROVIDER_PROFILES,
+  type DiscoveredLocalModel,
+  type LocalModelProviderProfile,
+  type LocalModelProviderProfileId,
+} from '@/features/model-settings/localModelProviders'
+import {
   buildLocalModelRequestUrl,
+  createLocalModelConfigId,
+  defaultLocalModelRequestPath,
+  defaultLocalModelToolProfile,
   deleteLocalModelConfig,
   DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  markLocalModelCatalogReady,
   normalizeLocalModelBaseUrl,
   normalizeLocalModelRequestPath,
   saveLocalModelConfig,
   splitLocalModelRequestUrl,
   type LocalModelConfig,
+  type LocalModelCatalogSnapshot,
+  type LocalModelApiFormat,
+  type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { track } from '@/telemetry/client'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
+import { CustomModelCapabilitiesForm } from './CustomModelCapabilitiesForm'
 
 interface CloudRuntimeSettingsConnection {
   isConnected: boolean
@@ -177,15 +201,26 @@ function LocalCodexModelRow({
 }
 
 interface LocalModelFormState {
+  providerProfileId: LocalModelProviderProfileId | ''
   displayName: string
   group: string
   modelId: string
+  additionalModels: Array<{
+    modelId: string
+    displayName: string
+    visionModelConfigId: string
+    enabled: boolean
+  }>
   baseUrl: string
+  apiFormat: LocalModelApiFormat
+  toolProfile: LocalModelToolProfile
   requestPath: string
   apiKey: string
   contextWindow: string
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
+  visionModelConfigId: string
+  catalogEntry: LocalModelCatalogEntry | null
   enabled: boolean
 }
 
@@ -193,10 +228,12 @@ type LocalModelTestResult =
   | {
       kind: 'success'
       message: string
+      targetKey: string
     }
   | {
       kind: 'error'
       message: string
+      targetKey: string
     }
 
 type PendingLocalModelFormAction =
@@ -206,15 +243,21 @@ type PendingLocalModelFormAction =
   | { kind: 'delete'; model: LocalModelConfig }
 
 const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
+  providerProfileId: '',
   displayName: '',
   group: '',
   modelId: '',
+  additionalModels: [],
   baseUrl: '',
+  apiFormat: 'openai-responses',
+  toolProfile: 'custom',
   requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
   contextWindow: '',
   webSearchMode: 'disabled',
   imageGenerationEnabled: false,
+  visionModelConfigId: '',
+  catalogEntry: null,
   enabled: true,
 }
 
@@ -243,17 +286,21 @@ const LOCAL_MODEL_WEB_SEARCH_OPTIONS: Array<{
   },
 ]
 
-const LOCAL_MODEL_IMAGE_GENERATION_OPTIONS: Array<{
-  value: 'disabled' | 'enabled'
+const LOCAL_MODEL_API_FORMAT_OPTIONS: Array<{
+  value: LocalModelApiFormat
   labelKey: string
 }> = [
   {
-    value: 'disabled',
-    labelKey: 'workbench.local_model_codex_feature_disabled',
+    value: 'openai-responses',
+    labelKey: 'workbench.local_model_api_format_responses',
   },
   {
-    value: 'enabled',
-    labelKey: 'workbench.local_model_codex_feature_enabled',
+    value: 'openai-chat-completions',
+    labelKey: 'workbench.local_model_api_format_chat_completions',
+  },
+  {
+    value: 'anthropic-messages',
+    labelKey: 'workbench.local_model_api_format_anthropic_messages',
   },
 ]
 
@@ -278,10 +325,14 @@ function localModelImageGenerationLabel(
   )
 }
 
-function localModelResponsesUrl(baseUrl: string, requestPath: string): string | null {
+function localModelRequestUrl(
+  baseUrl: string,
+  requestPath: string,
+  apiFormat: LocalModelApiFormat
+): string | null {
   if (!baseUrl.trim()) return null
   try {
-    return buildLocalModelRequestUrl(baseUrl, requestPath)
+    return buildLocalModelRequestUrl(baseUrl, requestPath, apiFormat)
   } catch {
     return null
   }
@@ -294,28 +345,50 @@ function isLocalModelFormDirty(
   if (!editingModel) {
     return (
       form.displayName.trim() !== '' ||
+      form.providerProfileId !== '' ||
       form.group.trim() !== '' ||
       form.modelId.trim() !== '' ||
+      form.additionalModels.length > 0 ||
       form.baseUrl.trim() !== '' ||
+      form.apiFormat !== 'openai-responses' ||
       form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
       form.apiKey.trim() !== '' ||
       form.contextWindow.trim() !== '' ||
       form.webSearchMode !== 'disabled' ||
       form.imageGenerationEnabled ||
+      form.visionModelConfigId !== '' ||
+      form.catalogEntry !== null ||
       !form.enabled
     )
   }
 
+  const editingCatalogEntry =
+    (editingModel.providerProfileId ?? 'custom') === 'custom'
+      ? (editingModel.catalogEntry ??
+        createDefaultLocalModelCatalogEntry({
+          id: editingModel.id,
+          displayName: editingModel.displayName,
+          toolProfile: editingModel.toolProfile,
+          contextWindow: editingModel.contextWindow,
+        }))
+      : null
+
   return (
     form.displayName !== editingModel.displayName ||
+    form.providerProfileId !== (editingModel.providerProfileId ?? 'custom') ||
     form.group !== (editingModel.group ?? '') ||
     form.modelId !== editingModel.modelId ||
+    form.additionalModels.length > 0 ||
     form.baseUrl !== editingModel.baseUrl ||
+    form.apiFormat !== editingModel.apiFormat ||
+    form.toolProfile !== editingModel.toolProfile ||
     form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
     form.contextWindow !== (editingModel.contextWindow?.toString() ?? '') ||
     form.webSearchMode !== (editingModel.webSearchMode ?? 'disabled') ||
     form.imageGenerationEnabled !== (editingModel.imageGenerationEnabled === true) ||
+    form.visionModelConfigId !== (editingModel.visionModelConfigId ?? '') ||
+    JSON.stringify(form.catalogEntry) !== JSON.stringify(editingCatalogEntry) ||
     form.enabled !== editingModel.enabled
   )
 }
@@ -379,6 +452,62 @@ function LocalModelDiscardChangesDialog({
             className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
           >
             {t('workbench.local_model_discard_changes_confirm', '放弃修改')}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+function LocalModelCatalogRestartDialog({
+  restarting,
+  onLater,
+  onRestart,
+}: {
+  restarting: boolean
+  onLater: () => void
+  onRestart: () => void
+}) {
+  const { t } = useTranslation('common')
+
+  return createPortal(
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="local-model-catalog-restart-title"
+        data-testid="local-model-catalog-restart-dialog"
+        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+      >
+        <h2
+          id="local-model-catalog-restart-title"
+          className="text-sm font-semibold text-text-primary"
+        >
+          {t('workbench.local_model_catalog_restart_title')}
+        </h2>
+        <p className="mt-2 text-xs leading-5 text-text-secondary">
+          {t('workbench.local_model_catalog_restart_description')}
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid="local-model-catalog-restart-later-button"
+            onClick={onLater}
+            disabled={restarting}
+            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+          >
+            {t('workbench.local_model_catalog_restart_later')}
+          </button>
+          <button
+            type="button"
+            data-testid="local-model-catalog-restart-now-button"
+            onClick={onRestart}
+            disabled={restarting}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
+          >
+            {restarting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {t('workbench.local_model_catalog_restart_now')}
           </button>
         </div>
       </div>
@@ -577,10 +706,18 @@ function LocalModelSettingsSection({
   const [formVisible, setFormVisible] = useState(false)
   const [form, setForm] = useState<LocalModelFormState>(EMPTY_LOCAL_MODEL_FORM)
   const [error, setError] = useState<string | null>(null)
-  const [testingModel, setTestingModel] = useState(false)
+  const [testingModelKey, setTestingModelKey] = useState<string | null>(null)
+  const [loadingProviderModels, setLoadingProviderModels] = useState(false)
+  const [providerModels, setProviderModels] = useState<DiscoveredLocalModel[]>([])
+  const [providerModelsError, setProviderModelsError] = useState<string | null>(null)
+  const [advancedSettingsVisible, setAdvancedSettingsVisible] = useState(false)
   const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
   const [pendingDiscardAction, setPendingDiscardAction] =
     useState<PendingLocalModelFormAction | null>(null)
+  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState<
+    LocalModelCatalogSnapshot[] | null
+  >(null)
+  const [restartingCatalog, setRestartingCatalog] = useState(false)
 
   const refreshModels = useCallback(() => {
     setModels(listLocalModelConfigs())
@@ -596,13 +733,33 @@ function LocalModelSettingsSection({
     [editingId, models]
   )
   const testRequestUrl = useMemo(
-    () => localModelResponsesUrl(form.baseUrl, form.requestPath),
-    [form.baseUrl, form.requestPath]
+    () => localModelRequestUrl(form.baseUrl, form.requestPath, form.apiFormat),
+    [form.apiFormat, form.baseUrl, form.requestPath]
   )
   const formDirty = useMemo(
     () => formVisible && isLocalModelFormDirty(form, editingModel),
     [editingModel, form, formVisible]
   )
+  const visionModelOptions = useMemo(
+    () =>
+      models.filter(
+        model => model.enabled && model.id !== editingId && localModelSupportsImageInput(model)
+      ),
+    [editingId, models]
+  )
+  const configuredProviderModelIds = useMemo(
+    () =>
+      new Set(
+        models
+          .filter(
+            model => model.id !== editingId && model.providerProfileId === form.providerProfileId
+          )
+          .map(model => model.modelId)
+      ),
+    [editingId, form.providerProfileId, models]
+  )
+  const providerDisplayName = (profile: LocalModelProviderProfile) =>
+    profile.displayNameKey ? t(profile.displayNameKey, profile.displayName) : profile.displayName
 
   const resetForm = () => {
     setEditingId(null)
@@ -610,6 +767,9 @@ function LocalModelSettingsSection({
     setForm(EMPTY_LOCAL_MODEL_FORM)
     setError(null)
     setTestResult(null)
+    setProviderModels([])
+    setProviderModelsError(null)
+    setAdvancedSettingsVisible(false)
   }
 
   const performStartCreating = () => {
@@ -618,25 +778,55 @@ function LocalModelSettingsSection({
     setForm(EMPTY_LOCAL_MODEL_FORM)
     setError(null)
     setTestResult(null)
+    setProviderModels([])
+    setProviderModelsError(null)
+    setAdvancedSettingsVisible(false)
   }
 
   const performStartEditing = (model: LocalModelConfig) => {
+    const catalogEntry =
+      (model.providerProfileId ?? 'custom') === 'custom'
+        ? (model.catalogEntry ??
+          createDefaultLocalModelCatalogEntry({
+            id: model.id,
+            displayName: model.displayName,
+            toolProfile: model.toolProfile,
+            contextWindow: model.contextWindow,
+          }))
+        : null
     setEditingId(model.id)
     setFormVisible(true)
     setForm({
+      providerProfileId: (model.providerProfileId as LocalModelProviderProfileId) ?? 'custom',
       displayName: model.displayName,
       group: model.group ?? '',
       modelId: model.modelId,
+      additionalModels: [],
       baseUrl: model.baseUrl,
+      apiFormat: model.apiFormat,
+      toolProfile: model.toolProfile,
       requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
-      contextWindow: model.contextWindow?.toString() ?? '',
+      contextWindow:
+        model.contextWindow?.toString() ??
+        (typeof catalogEntry?.context_window === 'number'
+          ? catalogEntry.context_window.toString()
+          : ''),
       webSearchMode: model.webSearchMode ?? 'disabled',
       imageGenerationEnabled: model.imageGenerationEnabled === true,
+      visionModelConfigId: model.visionModelConfigId ?? '',
+      catalogEntry,
       enabled: model.enabled,
     })
     setError(null)
     setTestResult(null)
+    setProviderModels(
+      model.providerProfileId && model.modelId
+        ? [{ id: model.modelId, displayName: model.modelId }]
+        : []
+    )
+    setProviderModelsError(null)
+    setAdvancedSettingsVisible(false)
   }
 
   const runDiscardableAction = (action: PendingLocalModelFormAction) => {
@@ -680,13 +870,122 @@ function LocalModelSettingsSection({
     setTestResult(null)
   }
 
+  const selectProviderProfile = (providerProfileId: LocalModelProviderProfileId) => {
+    const profile = findLocalModelProviderProfile(providerProfileId)
+    const catalogEntry =
+      providerProfileId === 'custom'
+        ? createDefaultLocalModelCatalogEntry({
+            id: 'new-model',
+            displayName: '',
+            toolProfile: profile.toolProfile,
+          })
+        : null
+    setProviderModels([])
+    setProviderModelsError(null)
+    setAdvancedSettingsVisible(false)
+    updateForm({
+      providerProfileId,
+      displayName: '',
+      group: profile.group ?? '',
+      modelId: '',
+      additionalModels: [],
+      baseUrl: profile.baseUrl,
+      apiFormat: profile.apiFormat,
+      toolProfile: profile.toolProfile,
+      requestPath: profile.requestPath,
+      contextWindow:
+        profile.contextWindow?.toString() ??
+        (typeof catalogEntry?.context_window === 'number'
+          ? catalogEntry.context_window.toString()
+          : ''),
+      webSearchMode: profile.webSearchMode,
+      imageGenerationEnabled: profile.imageGenerationEnabled,
+      visionModelConfigId: '',
+      catalogEntry,
+    })
+  }
+
+  const loadProviderModels = async ({ appendModel = false } = {}) => {
+    const profile = findLocalModelProviderProfile(form.providerProfileId)
+    const apiKey = form.apiKey.trim() || editingModel?.apiKey || ''
+    setLoadingProviderModels(true)
+    setProviderModelsError(null)
+    setTestResult(null)
+    try {
+      const discovered = await discoverProviderModels(profile, apiKey)
+      setProviderModels(discovered)
+      const selected = discovered.some(model => model.id === form.modelId)
+        ? form.modelId
+        : discovered.length === 1
+          ? discovered[0].id
+          : ''
+      const selectedModelIds = new Set([
+        selected,
+        ...form.additionalModels.map(model => model.modelId),
+      ])
+      const canAppendModel = discovered.some(
+        model => !configuredProviderModelIds.has(model.id) && !selectedModelIds.has(model.id)
+      )
+      updateForm({
+        modelId: selected,
+        additionalModels:
+          appendModel && canAppendModel
+            ? [
+                ...form.additionalModels,
+                {
+                  modelId: '',
+                  displayName: '',
+                  visionModelConfigId: '',
+                  enabled: true,
+                },
+              ]
+            : form.additionalModels,
+        ...(selected && !form.displayName ? { displayName: selected } : {}),
+      })
+      if (appendModel && !canAppendModel) {
+        setProviderModelsError(t('workbench.local_model_provider_no_more_models'))
+      }
+    } catch (loadError) {
+      setProviderModelsError(
+        getErrorMessage(loadError, t('workbench.local_model_provider_models_failed'))
+      )
+    } finally {
+      setLoadingProviderModels(false)
+    }
+  }
+
+  const appendProviderModel = async () => {
+    const selectedModelIds = new Set([
+      form.modelId,
+      ...form.additionalModels.map(model => model.modelId),
+    ])
+    const hasKnownAvailableModel = providerModels.some(
+      model => !configuredProviderModelIds.has(model.id) && !selectedModelIds.has(model.id)
+    )
+    if (!hasKnownAvailableModel) {
+      await loadProviderModels({ appendModel: true })
+      return
+    }
+    updateForm({
+      additionalModels: [
+        ...form.additionalModels,
+        {
+          modelId: '',
+          displayName: '',
+          visionModelConfigId: '',
+          enabled: true,
+        },
+      ],
+    })
+  }
+
   const normalizeBaseUrlInput = () => {
     if (!form.baseUrl.trim()) return
     try {
-      const splitUrl = splitLocalModelRequestUrl(form.baseUrl, form.requestPath)
+      const splitUrl = splitLocalModelRequestUrl(form.baseUrl, form.requestPath, form.apiFormat)
       updateForm({
         baseUrl: normalizeLocalModelBaseUrl(splitUrl.baseUrl),
-        requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath),
+        requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, form.apiFormat),
       })
     } catch {
       // Keep invalid input visible; submit/test will show the validation message.
@@ -695,36 +994,132 @@ function LocalModelSettingsSection({
 
   const handleBaseUrlPaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
     const text = event.clipboardData.getData('text')
-    const splitUrl = splitLocalModelRequestUrl(text, form.requestPath)
+    const splitUrl = splitLocalModelRequestUrl(text, form.requestPath, form.apiFormat)
     if (splitUrl.baseUrl === text) return
     event.preventDefault()
     updateForm(splitUrl)
   }
 
   const normalizeRequestPathInput = () => {
-    updateForm({ requestPath: normalizeLocalModelRequestPath(form.requestPath) })
+    updateForm({
+      requestPath: normalizeLocalModelRequestPath(form.requestPath, form.apiFormat),
+    })
   }
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
     try {
-      saveLocalModelConfig({
-        id: editingId,
-        displayName: form.displayName,
-        group: form.group,
-        modelId: form.modelId,
-        baseUrl: form.baseUrl,
-        requestPath: form.requestPath,
-        apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
-        contextWindow: form.contextWindow,
-        webSearchMode: form.webSearchMode,
-        imageGenerationEnabled: form.imageGenerationEnabled,
-        enabled: form.enabled,
+      const provider = findLocalModelProviderProfile(form.providerProfileId)
+      const managedModels = [
+        {
+          modelId: form.modelId,
+          displayName: form.displayName,
+          visionModelConfigId: form.visionModelConfigId,
+          enabled: form.enabled,
+        },
+        ...form.additionalModels,
+      ].filter(
+        (model, index, all) =>
+          model.modelId && all.findIndex(candidate => candidate.modelId === model.modelId) === index
+      )
+      const modelsToSave =
+        form.providerProfileId === 'custom'
+          ? [
+              {
+                modelId: form.modelId,
+                displayName: form.displayName,
+                visionModelConfigId: form.visionModelConfigId,
+                enabled: form.enabled,
+              },
+            ]
+          : managedModels
+      if (modelsToSave.length === 0) {
+        throw new Error(t('workbench.local_model_provider_model_required'))
+      }
+      const id = editingId ?? createLocalModelConfigId()
+      const catalogEntry =
+        form.providerProfileId === 'custom'
+          ? normalizeLocalModelCatalogEntry(form.catalogEntry, {
+              id,
+              displayName: form.displayName || form.modelId,
+              toolProfile: form.toolProfile,
+              contextWindow: form.contextWindow ? Number(form.contextWindow) : undefined,
+            })
+          : undefined
+      const executorStatus = catalogEntry ? await ensureLocalExecutorStarted() : null
+      modelsToSave.forEach((model, index) => {
+        const { modelId } = model
+        const providerModelDefaults = provider.modelDefaults?.[modelId]
+        saveLocalModelConfig({
+          id: index === 0 ? id : createLocalModelConfigId(),
+          providerProfileId: form.providerProfileId,
+          displayName: model.displayName,
+          group: form.group,
+          modelId,
+          toolProfile: form.toolProfile,
+          baseUrl: form.baseUrl,
+          apiFormat: form.apiFormat,
+          requestPath: form.requestPath,
+          apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
+          contextWindow: providerModelDefaults?.contextWindow ?? form.contextWindow,
+          webSearchMode: form.webSearchMode,
+          imageGenerationEnabled: form.imageGenerationEnabled,
+          visionModelConfigId: model.visionModelConfigId || null,
+          codexCatalogModelId:
+            providerModelDefaults?.codexCatalogModelId ??
+            (typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined),
+          catalogEntry,
+          catalogReady: !catalogEntry,
+          catalogPendingRuntimeInstanceId: catalogEntry
+            ? executorStatus?.runtimeInstanceId
+            : undefined,
+          enabled: model.enabled,
+        })
       })
+      if (catalogEntry) {
+        const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+        const writtenCatalogSnapshot = catalogModels.map(({ id: modelId, updatedAt }) => ({
+          id: modelId,
+          updatedAt,
+        }))
+        await requestLocalExecutor('runtime.codex.catalog.custom.write', {
+          models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
+        })
+        const restart = await requestLocalExecutor<{
+          restarted: boolean
+          requiresConfirmation: boolean
+        }>('runtime.codex.app_server.restart', { ifIdle: true })
+        if (restart.restarted) {
+          markLocalModelCatalogReady(writtenCatalogSnapshot)
+        } else if (restart.requiresConfirmation) {
+          setCatalogRestartConfirmation(writtenCatalogSnapshot)
+        }
+      }
+      track('feature_action_completed', { domain: 'model', action: 'configure' })
       resetForm()
     } catch (saveError) {
+      track('operation_failed', { operation: 'model_action' })
       setError(getErrorMessage(saveError, t('workbench.local_model_save_failed', '保存模型失败')))
+    }
+  }
+
+  const confirmCatalogRestart = async () => {
+    setRestartingCatalog(true)
+    setError(null)
+    try {
+      await requestLocalExecutor('runtime.codex.app_server.restart', { force: true })
+      markLocalModelCatalogReady(catalogRestartConfirmation ?? [])
+      setCatalogRestartConfirmation(null)
+    } catch (restartError) {
+      setError(
+        getErrorMessage(
+          restartError,
+          t('workbench.local_model_catalog_restart_failed', 'Codex 重启失败')
+        )
+      )
+    } finally {
+      setRestartingCatalog(false)
     }
   }
 
@@ -733,15 +1128,21 @@ function LocalModelSettingsSection({
     try {
       saveLocalModelConfig({
         id: editingModel.id,
+        providerProfileId: editingModel.providerProfileId,
         displayName: editingModel.displayName,
         group: editingModel.group,
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
+        apiFormat: editingModel.apiFormat,
+        toolProfile: editingModel.toolProfile,
         requestPath: editingModel.requestPath,
         apiKey: null,
         contextWindow: editingModel.contextWindow,
         webSearchMode: editingModel.webSearchMode,
         imageGenerationEnabled: editingModel.imageGenerationEnabled,
+        codexCatalogModelId: editingModel.codexCatalogModelId,
+        catalogEntry: editingModel.catalogEntry,
+        catalogReady: editingModel.catalogReady,
         enabled: editingModel.enabled,
       })
       performStartEditing({ ...editingModel, apiKey: undefined })
@@ -755,22 +1156,27 @@ function LocalModelSettingsSection({
     }
   }
 
-  const handleTestModel = async () => {
+  const handleTestModel = async (modelId: string, targetKey: string) => {
     setError(null)
     setTestResult(null)
-    setTestingModel(true)
+    setTestingModelKey(targetKey)
     try {
       await testLocalModelConnection({
         baseUrl: form.baseUrl,
+        apiFormat: form.apiFormat,
         requestPath: form.requestPath,
-        modelId: form.modelId,
+        modelId,
+        toolProfile: form.toolProfile,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
       })
       setTestResult({
         kind: 'success',
         message: t('workbench.local_model_test_success', '模型连接正常'),
+        targetKey,
       })
+      track('feature_action_completed', { domain: 'model', action: 'test' })
     } catch (testError) {
+      track('operation_failed', { operation: 'model_action' })
       const message = getErrorMessage(
         testError,
         t('workbench.local_model_test_failed', '模型测试失败')
@@ -781,9 +1187,10 @@ function LocalModelSettingsSection({
           defaultValue: '模型测试失败：{{message}}',
           message,
         }),
+        targetKey,
       })
     } finally {
-      setTestingModel(false)
+      setTestingModelKey(null)
     }
   }
 
@@ -792,7 +1199,9 @@ function LocalModelSettingsSection({
     try {
       deleteLocalModelConfig(model.id)
       if (editingId === model.id) resetForm()
+      track('feature_action_completed', { domain: 'model', action: 'delete' })
     } catch (deleteError) {
+      track('operation_failed', { operation: 'model_action' })
       setError(
         getErrorMessage(deleteError, t('workbench.local_model_delete_failed', '删除模型失败'))
       )
@@ -833,211 +1242,705 @@ function LocalModelSettingsSection({
             onSubmit={handleSubmit}
             className="grid gap-3 rounded-lg border border-border bg-background p-5"
           >
-            <div className="grid items-start gap-3 sm:grid-cols-2">
-              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_url_label', '模型 URL')}
-                <div
-                  className={`${LOCAL_MODEL_COMPOUND_INPUT_CLASS} grid grid-cols-[minmax(0,1fr)_7rem]`}
-                >
-                  <input
-                    data-testid="local-model-url-input"
-                    value={form.baseUrl}
-                    onChange={event => updateForm({ baseUrl: event.target.value })}
-                    onPaste={handleBaseUrlPaste}
-                    onBlur={normalizeBaseUrlInput}
-                    placeholder="https://api.example.com/v1"
-                    className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
-                  />
-                  <div className="grid min-w-0 grid-cols-[1px_minmax(0,1fr)]">
-                    <span className="my-1.5 w-px bg-border" />
-                    <input
-                      aria-label={t('workbench.local_model_request_path_label', '请求路径')}
-                      data-testid="local-model-request-path-input"
-                      value={form.requestPath}
-                      onChange={event => updateForm({ requestPath: event.target.value })}
-                      onBlur={normalizeRequestPathInput}
-                      placeholder={t(
-                        'workbench.local_model_request_path_placeholder',
-                        '/responses'
-                      )}
-                      className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
-                    />
+            <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              {t('workbench.local_model_provider_label')}
+              <select
+                data-testid="local-model-provider-select"
+                value={form.providerProfileId}
+                onChange={event =>
+                  selectProviderProfile(event.target.value as LocalModelProviderProfileId)
+                }
+                className={LOCAL_MODEL_FIELD_CLASS}
+              >
+                <option value="" disabled>
+                  {t('workbench.local_model_provider_placeholder')}
+                </option>
+                {LOCAL_MODEL_PROVIDER_PROFILES.map(profile => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.id === 'custom'
+                      ? t('workbench.local_model_provider_custom')
+                      : providerDisplayName(profile)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {form.providerProfileId && form.providerProfileId !== 'custom' ? (
+              <div className="grid gap-4 border-t border-border pt-4">
+                <div>
+                  <div className="text-sm font-medium text-text-primary">
+                    {providerDisplayName(findLocalModelProviderProfile(form.providerProfileId))}
                   </div>
+                  <p className="mt-1 text-xs leading-5 text-text-muted">
+                    {t('workbench.local_model_provider_managed_hint')}
+                  </p>
                 </div>
-                <span
-                  data-testid="local-model-request-url"
-                  className="break-all font-mono text-[11px] font-normal leading-5 text-text-muted"
-                >
-                  {testRequestUrl
-                    ? t('workbench.local_model_request_url', {
-                        defaultValue: '请求地址：{{url}}',
-                        url: testRequestUrl,
-                      })
-                    : t(
-                        'workbench.local_model_request_url_empty',
-                        '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_api_key_label', 'API Key')}
+                  <div className="flex gap-2">
+                    <input
+                      data-testid="local-model-api-key-input"
+                      value={form.apiKey}
+                      onChange={event => updateForm({ apiKey: event.target.value })}
+                      placeholder={
+                        editingModel?.apiKey
+                          ? t('workbench.local_model_api_key_replace_placeholder')
+                          : t('workbench.local_model_provider_api_key_required')
+                      }
+                      type="password"
+                      className={`${LOCAL_MODEL_FIELD_CLASS} min-w-0 flex-1`}
+                    />
+                    <button
+                      type="button"
+                      data-testid="local-model-load-provider-models-button"
+                      onClick={() => void loadProviderModels()}
+                      disabled={
+                        loadingProviderModels || (!form.apiKey.trim() && !editingModel?.apiKey)
+                      }
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {loadingProviderModels ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
                       )}
-                </span>
-              </label>
-              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_id_label', '模型 ID')}
-                <input
-                  data-testid="local-model-id-input"
-                  value={form.modelId}
-                  onChange={event => updateForm({ modelId: event.target.value })}
-                  placeholder="gpt-oss:20b"
-                  className={LOCAL_MODEL_FIELD_CLASS}
-                />
-              </label>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_display_name_label', '显示名')}
-                <input
-                  data-testid="local-model-display-name-input"
-                  value={form.displayName}
-                  onChange={event => updateForm({ displayName: event.target.value })}
-                  placeholder="Ollama GPT"
-                  className={LOCAL_MODEL_FIELD_CLASS}
-                />
-              </label>
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_group_label', '分组')}
-                <input
-                  data-testid="local-model-group-input"
-                  value={form.group}
-                  onChange={event => updateForm({ group: event.target.value })}
-                  placeholder={t('workbench.local_model_group_placeholder', '例如：本地推理')}
-                  className={LOCAL_MODEL_FIELD_CLASS}
-                />
-              </label>
-            </div>
-            <div className="grid items-start gap-3 sm:grid-cols-2">
-              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_api_key_label', 'API Key')}
-                <input
-                  data-testid="local-model-api-key-input"
-                  value={form.apiKey}
-                  onChange={event => updateForm({ apiKey: event.target.value })}
-                  placeholder={
-                    editingModel?.apiKey
-                      ? t('workbench.local_model_api_key_replace_placeholder', '留空则保留现有 Key')
-                      : t('workbench.local_model_api_key_placeholder', '可选')
-                  }
-                  type="password"
-                  className={LOCAL_MODEL_FIELD_CLASS}
-                />
-              </label>
-              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_context_window_label', 'Context window')}
-                <input
-                  data-testid="local-model-context-window-input"
-                  value={form.contextWindow}
-                  onChange={event => updateForm({ contextWindow: event.target.value })}
-                  placeholder={t('workbench.local_model_context_window_placeholder', 'Optional')}
-                  type="number"
-                  min={1}
-                  step={1}
-                  inputMode="numeric"
-                  className={LOCAL_MODEL_FIELD_CLASS}
-                />
-                <span className="text-[11px] font-normal leading-5 text-text-muted">
-                  {t(
-                    'workbench.local_model_context_window_hint',
-                    'Optional. Used to show remaining context and handle long conversations.'
-                  )}
-                </span>
-              </label>
-            </div>
-            <div className="grid gap-3 border-t border-border pt-3">
-              <div>
-                <div className="text-xs font-semibold text-text-primary">
-                  {t('workbench.local_model_codex_features_title')}
-                </div>
-                <div className="mt-1 text-[11px] leading-5 text-text-muted">
-                  {t('workbench.local_model_codex_features_hint')}
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+                      {t('workbench.local_model_load_models_action')}
+                    </button>
+                  </div>
+                </label>
+                {providerModelsError && (
+                  <div className="flex items-start gap-2 rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{providerModelsError}</span>
+                  </div>
+                )}
                 <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-                  {t('workbench.local_model_web_search_label')}
-                  <select
-                    data-testid="local-model-web-search-select"
-                    value={form.webSearchMode}
-                    onChange={event =>
+                  {t('workbench.local_model_group_label', '分组（可选）')}
+                  <input
+                    data-testid="local-model-group-input"
+                    value={form.group}
+                    onChange={event => updateForm({ group: event.target.value })}
+                    placeholder={t(
+                      'workbench.local_model_group_optional_placeholder',
+                      '留空则归入自定义模型'
+                    )}
+                    className={LOCAL_MODEL_FIELD_CLASS}
+                  />
+                </label>
+                <fieldset data-testid="local-model-provider-model-list" className="grid gap-3">
+                  <legend className="text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_provider_model_list_label')}
+                  </legend>
+                  {[
+                    {
+                      modelId: form.modelId,
+                      displayName: form.displayName,
+                      visionModelConfigId: form.visionModelConfigId,
+                      enabled: form.enabled,
+                    },
+                    ...form.additionalModels,
+                  ].map((modelDraft, index, modelDrafts) => {
+                    const updateModelDraft = (patch: Partial<(typeof modelDrafts)[number]>) => {
+                      if (index === 0) {
+                        updateForm(patch)
+                        return
+                      }
                       updateForm({
-                        webSearchMode: event.target.value as LocalModelWebSearchMode,
+                        additionalModels: form.additionalModels.map(
+                          (additionalModel, additionalIndex) =>
+                            additionalIndex === index - 1
+                              ? { ...additionalModel, ...patch }
+                              : additionalModel
+                        ),
                       })
                     }
-                    className={LOCAL_MODEL_FIELD_CLASS}
-                  >
-                    {LOCAL_MODEL_WEB_SEARCH_OPTIONS.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {t(option.labelKey)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
-                  {t('workbench.local_model_image_generation_label')}
-                  <select
-                    data-testid="local-model-image-generation-select"
-                    value={form.imageGenerationEnabled ? 'enabled' : 'disabled'}
-                    onChange={event =>
-                      updateForm({
-                        imageGenerationEnabled: event.target.value === 'enabled',
-                      })
-                    }
-                    className={LOCAL_MODEL_FIELD_CLASS}
-                  >
-                    {LOCAL_MODEL_IMAGE_GENERATION_OPTIONS.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {t(option.labelKey)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
-                <input
-                  data-testid="local-model-enabled-checkbox"
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={event => updateForm({ enabled: event.target.checked })}
-                  className="h-4 w-4 rounded border-border text-primary"
-                />
-                {t('workbench.local_model_enabled_label', '启用')}
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                {editingModel?.apiKey && (
+                    return (
+                      <div
+                        key={index}
+                        data-testid={`local-model-provider-model-row-${index}`}
+                        className="grid gap-3 rounded-md border border-border bg-surface p-3"
+                      >
+                        <div className="flex items-start gap-2">
+                          <label className="grid min-w-0 flex-1 gap-1.5 text-xs font-medium text-text-secondary">
+                            {t('workbench.local_model_provider_model_label')}
+                            <select
+                              data-testid={
+                                index === 0
+                                  ? 'local-model-provider-model-select'
+                                  : `local-model-provider-model-select-${index}`
+                              }
+                              value={modelDraft.modelId}
+                              onChange={event => {
+                                const modelId = event.target.value
+                                const modelDefaults = findLocalModelProviderProfile(
+                                  form.providerProfileId
+                                ).modelDefaults?.[modelId]
+                                const displayName =
+                                  !modelDraft.displayName ||
+                                  modelDraft.displayName === modelDraft.modelId
+                                    ? modelId
+                                    : modelDraft.displayName
+                                if (index === 0) {
+                                  updateForm({
+                                    modelId,
+                                    displayName,
+                                    ...(modelDefaults?.contextWindow
+                                      ? {
+                                          contextWindow: modelDefaults.contextWindow.toString(),
+                                        }
+                                      : {}),
+                                  })
+                                  return
+                                }
+                                updateModelDraft({
+                                  modelId,
+                                  displayName,
+                                })
+                              }}
+                              className={LOCAL_MODEL_FIELD_CLASS}
+                            >
+                              <option value="">
+                                {t('workbench.local_model_provider_model_placeholder')}
+                              </option>
+                              {providerModels.map(model => {
+                                const selectedInAnotherRow = modelDrafts.some(
+                                  (selectedModel, selectedIndex) =>
+                                    selectedIndex !== index && selectedModel.modelId === model.id
+                                )
+                                const configured = configuredProviderModelIds.has(model.id)
+                                return (
+                                  <option
+                                    key={model.id}
+                                    value={model.id}
+                                    disabled={configured || selectedInAnotherRow}
+                                  >
+                                    {model.displayName}
+                                    {configured
+                                      ? ` · ${t('workbench.local_model_provider_model_configured')}`
+                                      : ''}
+                                  </option>
+                                )
+                              })}
+                            </select>
+                          </label>
+                          {index > 0 && (
+                            <button
+                              type="button"
+                              data-testid={`local-model-provider-model-remove-${index}`}
+                              onClick={() =>
+                                updateForm({
+                                  additionalModels: form.additionalModels.filter(
+                                    (_, additionalIndex) => additionalIndex !== index - 1
+                                  ),
+                                })
+                              }
+                              className="mt-6 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
+                              aria-label={t('workbench.local_model_provider_remove_model_action')}
+                              title={t('workbench.local_model_provider_remove_model_action')}
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                        <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                          {t('workbench.local_model_display_name_optional_label')}
+                          <input
+                            data-testid={
+                              index === 0
+                                ? 'local-model-display-name-input'
+                                : `local-model-display-name-input-${index}`
+                            }
+                            value={modelDraft.displayName}
+                            onChange={event =>
+                              updateModelDraft({ displayName: event.target.value })
+                            }
+                            placeholder={
+                              modelDraft.modelId ||
+                              t('workbench.local_model_display_name_placeholder')
+                            }
+                            className={LOCAL_MODEL_FIELD_CLASS}
+                          />
+                        </label>
+                        <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                          <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                            {t('workbench.local_model_vision_proxy_label')}
+                            <select
+                              data-testid={
+                                index === 0
+                                  ? 'local-model-vision-proxy-select'
+                                  : `local-model-vision-proxy-select-${index}`
+                              }
+                              value={modelDraft.visionModelConfigId}
+                              onChange={event =>
+                                updateModelDraft({
+                                  visionModelConfigId: event.target.value,
+                                })
+                              }
+                              className={LOCAL_MODEL_FIELD_CLASS}
+                            >
+                              <option value="">
+                                {t('workbench.local_model_vision_proxy_disabled')}
+                              </option>
+                              {visionModelOptions.map(model => (
+                                <option key={model.id} value={model.id}>
+                                  {model.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="flex items-center gap-3">
+                            <label className="inline-flex h-9 items-center gap-2 text-sm text-text-secondary">
+                              <input
+                                data-testid={
+                                  index === 0
+                                    ? 'local-model-enabled-checkbox'
+                                    : `local-model-enabled-checkbox-${index}`
+                                }
+                                type="checkbox"
+                                checked={modelDraft.enabled}
+                                onChange={event =>
+                                  updateModelDraft({ enabled: event.target.checked })
+                                }
+                                className="h-4 w-4 rounded border-border text-primary"
+                              />
+                              {t('workbench.local_model_enabled_label', '启用')}
+                            </label>
+                            <button
+                              type="button"
+                              data-testid={
+                                index === 0
+                                  ? 'local-model-test-button'
+                                  : `local-model-test-button-${index}`
+                              }
+                              onClick={() =>
+                                void handleTestModel(modelDraft.modelId, `managed-${index}`)
+                              }
+                              disabled={
+                                !modelDraft.modelId || testingModelKey === `managed-${index}`
+                              }
+                              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {testingModelKey === `managed-${index}` ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                              )}
+                              {testingModelKey === `managed-${index}`
+                                ? t('workbench.local_model_testing_action', '测试中')
+                                : t('workbench.local_model_test_action', '测试')}
+                            </button>
+                          </div>
+                        </div>
+                        {testResult?.targetKey === `managed-${index}` && (
+                          <div
+                            data-testid={
+                              index === 0
+                                ? 'local-model-test-result'
+                                : `local-model-test-result-${index}`
+                            }
+                            className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                              testResult.kind === 'success'
+                                ? 'border-primary/20 bg-primary/10 text-primary'
+                                : 'border-red-500/20 bg-red-500/10 text-red-500'
+                            }`}
+                          >
+                            {testResult.kind === 'success' ? (
+                              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                            ) : (
+                              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                            )}
+                            <span>{testResult.message}</span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                   <button
                     type="button"
-                    data-testid="local-model-clear-api-key-button"
-                    onClick={clearEditingApiKey}
+                    data-testid="local-model-provider-model-add-button"
+                    onClick={() => void appendProviderModel()}
+                    disabled={
+                      loadingProviderModels ||
+                      (!form.apiKey.trim() && !editingModel?.apiKey) ||
+                      !form.modelId ||
+                      form.additionalModels.some(model => !model.modelId)
+                    }
+                    className="inline-flex h-8 w-fit items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loadingProviderModels ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5" />
+                    )}
+                    {loadingProviderModels
+                      ? t('workbench.local_model_loading_models_action')
+                      : t('workbench.local_model_provider_add_model_action')}
+                  </button>
+                </fieldset>
+                <button
+                  type="button"
+                  data-testid="local-model-provider-advanced-toggle"
+                  aria-expanded={advancedSettingsVisible}
+                  onClick={() => setAdvancedSettingsVisible(value => !value)}
+                  className="flex h-8 items-center gap-1 text-left text-sm text-text-secondary hover:text-text-primary"
+                >
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform ${advancedSettingsVisible ? 'rotate-180' : ''}`}
+                  />
+                  {t('workbench.local_model_provider_technical_details')}
+                </button>
+                {advancedSettingsVisible && (
+                  <div className="grid gap-1 rounded-md bg-surface px-3 py-2 font-mono text-xs text-text-secondary">
+                    <span>
+                      {form.baseUrl}
+                      {form.requestPath}
+                    </span>
+                    <span>
+                      {form.apiFormat} · {form.toolProfile}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : form.providerProfileId === 'custom' ? (
+              <>
+                <div className="grid items-start gap-3 sm:grid-cols-2">
+                  <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_api_format_label', 'API 格式')}
+                    <select
+                      data-testid="local-model-api-format-select"
+                      value={form.apiFormat}
+                      onChange={event => {
+                        const apiFormat = event.target.value as LocalModelApiFormat
+                        const previousDefault = defaultLocalModelRequestPath(form.apiFormat)
+                        const toolProfile = defaultLocalModelToolProfile(apiFormat)
+                        updateForm({
+                          apiFormat,
+                          toolProfile,
+                          ...(form.catalogEntry
+                            ? {
+                                catalogEntry: {
+                                  ...form.catalogEntry,
+                                  shell_type: 'shell_command',
+                                  apply_patch_tool_type:
+                                    toolProfile === 'shell' ? null : 'freeform',
+                                },
+                              }
+                            : {}),
+                          ...(form.requestPath === previousDefault
+                            ? { requestPath: defaultLocalModelRequestPath(apiFormat) }
+                            : {}),
+                        })
+                      }}
+                      className={LOCAL_MODEL_FIELD_CLASS}
+                    >
+                      {LOCAL_MODEL_API_FORMAT_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>
+                          {t(option.labelKey)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-xs font-normal leading-5 text-text-muted">
+                      {t(
+                        'workbench.local_model_api_format_hint',
+                        'Chat Completions 会在本机转换为 Codex 所需的 Responses 格式。'
+                      )}
+                    </span>
+                  </label>
+                  <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_tool_profile_label', '工具模式')}
+                    <select
+                      data-testid="local-model-tool-profile-select"
+                      value={form.toolProfile}
+                      onChange={event => {
+                        const toolProfile = event.target.value as LocalModelToolProfile
+                        updateForm({
+                          toolProfile,
+                          ...(form.catalogEntry
+                            ? {
+                                catalogEntry: {
+                                  ...form.catalogEntry,
+                                  shell_type: 'shell_command',
+                                  apply_patch_tool_type:
+                                    toolProfile === 'shell' ? null : 'freeform',
+                                },
+                              }
+                            : {}),
+                        })
+                      }}
+                      className={LOCAL_MODEL_FIELD_CLASS}
+                    >
+                      <option value="custom" disabled={form.apiFormat !== 'openai-responses'}>
+                        {t('workbench.local_model_tool_profile_custom', '原生 Custom tools')}
+                      </option>
+                      <option value="function" disabled={form.apiFormat === 'openai-responses'}>
+                        {t('workbench.local_model_tool_profile_function', 'Function tools 转换')}
+                      </option>
+                      <option value="shell">
+                        {t('workbench.local_model_tool_profile_shell', '仅 Shell 编辑')}
+                      </option>
+                    </select>
+                    <span className="text-xs font-normal leading-5 text-text-muted">
+                      {t(
+                        'workbench.local_model_tool_profile_hint',
+                        '决定 Codex 是否发布 freeform apply_patch，以及是否通过普通函数转换。'
+                      )}
+                    </span>
+                  </label>
+                  <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_id_label', '模型 ID')}
+                    <input
+                      data-testid="local-model-id-input"
+                      value={form.modelId}
+                      onChange={event => updateForm({ modelId: event.target.value })}
+                      placeholder="gpt-oss:20b"
+                      className={LOCAL_MODEL_FIELD_CLASS}
+                    />
+                  </label>
+                </div>
+                <div className="grid items-start gap-3">
+                  <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_url_label', '模型 URL')}
+                    <div
+                      className={`${LOCAL_MODEL_COMPOUND_INPUT_CLASS} grid grid-cols-[minmax(0,1fr)_7rem]`}
+                    >
+                      <input
+                        data-testid="local-model-url-input"
+                        value={form.baseUrl}
+                        onChange={event => updateForm({ baseUrl: event.target.value })}
+                        onPaste={handleBaseUrlPaste}
+                        onBlur={normalizeBaseUrlInput}
+                        placeholder="https://api.example.com/v1"
+                        className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
+                      />
+                      <div className="grid min-w-0 grid-cols-[1px_minmax(0,1fr)]">
+                        <span className="my-1.5 w-px bg-border" />
+                        <input
+                          aria-label={t('workbench.local_model_request_path_label', '请求路径')}
+                          data-testid="local-model-request-path-input"
+                          value={form.requestPath}
+                          onChange={event => updateForm({ requestPath: event.target.value })}
+                          onBlur={normalizeRequestPathInput}
+                          placeholder={t(
+                            'workbench.local_model_request_path_placeholder',
+                            defaultLocalModelRequestPath(form.apiFormat)
+                          )}
+                          className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
+                        />
+                      </div>
+                    </div>
+                    <span
+                      data-testid="local-model-request-url"
+                      className="break-all font-mono text-xs font-normal leading-5 text-text-muted"
+                    >
+                      {testRequestUrl
+                        ? t('workbench.local_model_request_url', {
+                            defaultValue: '请求地址：{{url}}',
+                            url: testRequestUrl,
+                          })
+                        : t(
+                            'workbench.local_model_request_url_empty',
+                            '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
+                          )}
+                    </span>
+                  </label>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_display_name_label', '显示名')}
+                    <input
+                      data-testid="local-model-display-name-input"
+                      value={form.displayName}
+                      onChange={event => updateForm({ displayName: event.target.value })}
+                      placeholder="Ollama GPT"
+                      className={LOCAL_MODEL_FIELD_CLASS}
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_group_label', '分组')}
+                    <input
+                      data-testid="local-model-group-input"
+                      value={form.group}
+                      onChange={event => updateForm({ group: event.target.value })}
+                      placeholder={t('workbench.local_model_group_placeholder', '例如：本地推理')}
+                      className={LOCAL_MODEL_FIELD_CLASS}
+                    />
+                  </label>
+                </div>
+                <div className="grid items-start gap-3">
+                  <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                    {t('workbench.local_model_api_key_label', 'API Key')}
+                    <input
+                      data-testid="local-model-api-key-input"
+                      value={form.apiKey}
+                      onChange={event => updateForm({ apiKey: event.target.value })}
+                      placeholder={
+                        editingModel?.apiKey
+                          ? t(
+                              'workbench.local_model_api_key_replace_placeholder',
+                              '留空则保留现有 Key'
+                            )
+                          : t('workbench.local_model_api_key_placeholder', '可选')
+                      }
+                      type="password"
+                      className={LOCAL_MODEL_FIELD_CLASS}
+                    />
+                  </label>
+                </div>
+                <div className="grid gap-3 border-t border-border pt-3">
+                  <div>
+                    <div className="text-xs font-semibold text-text-primary">
+                      {t('workbench.local_model_codex_features_title')}
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-text-muted">
+                      {t('workbench.local_model_codex_features_hint')}
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                      {t('workbench.local_model_web_search_label')}
+                      <select
+                        data-testid="local-model-web-search-select"
+                        value={form.webSearchMode}
+                        onChange={event =>
+                          updateForm({
+                            webSearchMode: event.target.value as LocalModelWebSearchMode,
+                          })
+                        }
+                        className={LOCAL_MODEL_FIELD_CLASS}
+                      >
+                        {LOCAL_MODEL_WEB_SEARCH_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {t(option.labelKey)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <fieldset className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                      <legend className="mb-1.5">
+                        {t('workbench.local_model_image_generation_label')}
+                      </legend>
+                      <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-normal text-text-secondary">
+                        <input
+                          type="checkbox"
+                          data-testid="local-model-image-generation-checkbox"
+                          checked={form.imageGenerationEnabled}
+                          onChange={event =>
+                            updateForm({ imageGenerationEnabled: event.target.checked })
+                          }
+                          className="h-4 w-4 rounded border-border text-primary"
+                        />
+                        {t('workbench.local_model_codex_feature_enabled')}
+                      </label>
+                    </fieldset>
+                    <label className="grid gap-1.5 text-xs font-medium text-text-secondary sm:col-span-2">
+                      {t('workbench.local_model_vision_proxy_label')}
+                      <select
+                        data-testid="local-model-vision-proxy-select"
+                        value={form.visionModelConfigId}
+                        onChange={event => updateForm({ visionModelConfigId: event.target.value })}
+                        className={LOCAL_MODEL_FIELD_CLASS}
+                      >
+                        <option value="">{t('workbench.local_model_vision_proxy_disabled')}</option>
+                        {visionModelOptions.map(model => (
+                          <option key={model.id} value={model.id}>
+                            {model.displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="font-normal leading-5 text-text-muted">
+                        {t('workbench.local_model_vision_proxy_hint')}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+                {form.catalogEntry && (
+                  <CustomModelCapabilitiesForm
+                    entry={form.catalogEntry}
+                    contextWindow={form.contextWindow}
+                    onContextWindowChange={value => {
+                      const parsed = Number(value)
+                      updateForm({
+                        contextWindow: value,
+                        catalogEntry: {
+                          ...form.catalogEntry!,
+                          context_window: Number.isFinite(parsed) && parsed > 0 ? parsed : null,
+                          max_context_window: Number.isFinite(parsed) && parsed > 0 ? parsed : null,
+                        },
+                      })
+                    }}
+                    onChange={catalogEntry => updateForm({ catalogEntry })}
+                  />
+                )}
+              </>
+            ) : null}
+            {form.providerProfileId ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {form.providerProfileId === 'custom' ? (
+                  <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
+                    <input
+                      data-testid="local-model-enabled-checkbox"
+                      type="checkbox"
+                      checked={form.enabled}
+                      onChange={event => updateForm({ enabled: event.target.checked })}
+                      className="h-4 w-4 rounded border-border text-primary"
+                    />
+                    {t('workbench.local_model_enabled_label', '启用')}
+                  </label>
+                ) : (
+                  <span />
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {editingModel?.apiKey && (
+                    <button
+                      type="button"
+                      data-testid="local-model-clear-api-key-button"
+                      onClick={clearEditingApiKey}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      {t('workbench.local_model_clear_api_key_action', '清除 Key')}
+                    </button>
+                  )}
+                  {form.providerProfileId === 'custom' && (
+                    <button
+                      type="button"
+                      data-testid="local-model-test-button"
+                      onClick={() => void handleTestModel(form.modelId, 'custom')}
+                      disabled={testingModelKey === 'custom'}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {testingModelKey === 'custom' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      )}
+                      {testingModelKey === 'custom'
+                        ? t('workbench.local_model_testing_action', '测试中')
+                        : t('workbench.local_model_test_action', '测试')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    data-testid="local-model-cancel-edit-button"
+                    onClick={() => runDiscardableAction({ kind: 'reset' })}
                     className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                   >
                     <X className="h-3.5 w-3.5" />
-                    {t('workbench.local_model_clear_api_key_action', '清除 Key')}
+                    {t('common.cancel', '取消')}
                   </button>
-                )}
-                <button
-                  type="button"
-                  data-testid="local-model-test-button"
-                  onClick={() => void handleTestModel()}
-                  disabled={testingModel}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {testingModel ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                  )}
-                  {testingModel
-                    ? t('workbench.local_model_testing_action', '测试中')
-                    : t('workbench.local_model_test_action', '测试')}
-                </button>
+                  <button
+                    type="submit"
+                    data-testid="local-model-save-button"
+                    className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
+                  >
+                    {editingId
+                      ? t('workbench.local_model_update_action', '保存')
+                      : t('workbench.local_model_save_action', '保存模型')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-end">
                 <button
                   type="button"
                   data-testid="local-model-cancel-edit-button"
@@ -1047,18 +1950,9 @@ function LocalModelSettingsSection({
                   <X className="h-3.5 w-3.5" />
                   {t('common.cancel', '取消')}
                 </button>
-                <button
-                  type="submit"
-                  data-testid="local-model-save-button"
-                  className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
-                >
-                  {editingId
-                    ? t('workbench.local_model_update_action', '保存')
-                    : t('workbench.local_model_save_action', '保存模型')}
-                </button>
               </div>
-            </div>
-            {testResult && (
+            )}
+            {testResult?.targetKey === 'custom' && (
               <div
                 data-testid="local-model-test-result"
                 className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${
@@ -1112,6 +2006,11 @@ function LocalModelSettingsSection({
                   {model.apiKey && (
                     <span className="rounded-full bg-background px-2 py-0.5 text-xs text-text-muted">
                       {t('workbench.local_model_api_key_saved', '已保存 Key')}
+                    </span>
+                  )}
+                  {!model.catalogReady && (
+                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
+                      {t('workbench.local_model_catalog_pending_restart')}
                     </span>
                   )}
                   {model.group && (
@@ -1184,6 +2083,13 @@ function LocalModelSettingsSection({
         <LocalModelDiscardChangesDialog
           onCancel={cancelDiscardChanges}
           onConfirm={confirmDiscardChanges}
+        />
+      )}
+      {catalogRestartConfirmation && (
+        <LocalModelCatalogRestartDialog
+          restarting={restartingCatalog}
+          onLater={() => setCatalogRestartConfirmation(null)}
+          onRestart={() => void confirmCatalogRestart()}
         />
       )}
     </section>
@@ -1778,7 +2684,6 @@ export function ModelSettingsPage({
           onOpenCloudSettings={onOpenCloudSettings}
         />
       </div>
-
       <div className="mt-8">
         <CodexAuthSettingsSection isConnected>
           {loading ? (
@@ -1826,7 +2731,7 @@ export function ModelSettingsPage({
                         className={[
                           'inline-flex h-6 items-center justify-center gap-1 rounded-full px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50',
                           config?.use_user_config
-                            ? 'bg-primary text-white'
+                            ? 'bg-primary text-primary-contrast'
                             : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary',
                         ].join(' ')}
                       >

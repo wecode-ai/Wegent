@@ -1,6 +1,7 @@
 import { hexToRgbTriplet } from './color'
 import { darkPalette, lightPalette } from './presets'
 import type { AppearanceConfig, ResolvedAppearanceMode, ThemePalette } from './types'
+import { resolveUiTypographyVariables } from './typography'
 
 const PALETTE_VARIABLES: Record<keyof ThemePalette, string> = {
   bgBase: '--color-bg-base',
@@ -36,7 +37,7 @@ export function resolveAppearanceMode(mode: AppearanceConfig['mode']): ResolvedA
 
 export function applyAppearance(
   appearance: AppearanceConfig,
-  resolvedMode = resolveAppearanceMode(appearance.mode),
+  resolvedMode = resolveAppearanceMode(appearance.mode)
 ) {
   if (typeof document === 'undefined') return
 
@@ -63,5 +64,16 @@ export function applyAppearance(
 
   root.style.setProperty('--font-ui', appearance.uiFont)
   root.style.setProperty('--font-code', appearance.codeFont)
+  root.style.setProperty('--font-size-ui', `${appearance.uiFontSize}px`)
+  root.style.setProperty('--font-size-code', `${appearance.codeFontSize}px`)
+  root.style.setProperty('--text-chat', `${appearance.uiFontSize}px`)
+  root.style.setProperty('--text-code', `${appearance.codeFontSize}px`)
+  root.style.setProperty('--text-code-sm', `${Math.max(8, appearance.codeFontSize - 1)}px`)
+  root.style.setProperty('--diffs-font-size', `${appearance.codeFontSize}px`)
+  Object.entries(resolveUiTypographyVariables(appearance.uiFontSize)).forEach(
+    ([variable, value]) => {
+      root.style.setProperty(variable, value)
+    }
+  )
   root.style.setProperty('--appearance-contrast', String(appearance.contrast))
 }

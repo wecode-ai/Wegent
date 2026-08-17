@@ -37,6 +37,14 @@ export interface ModelCapabilities {
   supportsVideo?: boolean
 }
 
+export interface VisionSidecarModelRef {
+  modelName: string
+  modelType: ModelTypeEnum
+  namespace: string
+  resourceUserId: number
+  apiFormat: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages'
+}
+
 export interface AspectRatioOption {
   label: string
   value: string
@@ -46,33 +54,100 @@ export interface ResolutionOption {
   width?: number
   height?: number
   label: string
+  value?: string
+  tooltip?: string
+}
+
+export interface VideoGenerationMode {
+  id: string
+  label: string
+  max_images?: number
+  max_videos?: number
+  max_audios?: number
+  max_total?: number
+  max_images_first_last?: number
+  image_required?: boolean
+  first_frame_required?: boolean
+  audio_allowed?: boolean
+  video_allowed?: boolean
 }
 
 export interface VideoCapabilities {
   aspect_ratios?: AspectRatioOption[]
   resolutions?: ResolutionOption[]
   durations_sec?: number[]
+  supports_image_input?: boolean
+  supports_video_input?: boolean
+  supports_audio_input?: boolean
+  generate_audio?: boolean
+  max_reference_materials?: number
+  max_reference_images?: number
+  max_reference_images_with_video?: number
+  max_reference_videos?: number
+  max_reference_audios?: number
+  image_input_required?: boolean
+  reference_material_required?: boolean
+  image_formats?: string[]
+  image_max_size_mb?: number
+  image_min_dimension?: number
+  image_max_dimension?: number
+  image_min_aspect_ratio?: number
+  image_max_aspect_ratio?: number
+  video_formats?: string[]
+  video_max_size_mb?: number
+  video_min_duration_sec?: number
+  video_max_duration_sec?: number
+  video_min_dimension?: number
+  video_max_dimension?: number
+  video_min_pixels?: number
+  video_max_pixels?: number
+  video_min_aspect_ratio?: number
+  video_max_aspect_ratio?: number
+  video_min_fps?: number
+  video_max_fps?: number
+  audio_formats?: string[]
+  audio_max_size_mb?: number
+  audio_min_duration_sec?: number
+  audio_max_duration_sec?: number
+  generation_modes?: VideoGenerationMode[]
 }
 
 export interface VideoGenerationConfig {
-  resolution?: '480p' | '720p' | '1080p'
-  ratio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
+  resolution?: string
+  ratio?: string
   duration?: number // 4-12 seconds
   generate_audio?: boolean // Only Seedance 1.5 pro
   draft?: boolean // Draft mode
   seed?: number // Random seed
   camera_fixed?: boolean // Fixed camera
   watermark?: boolean // Whether to include watermark
+  max_reference_images?: number // Legacy image-only reference limit
   capabilities?: VideoCapabilities // Model-declared capabilities
+}
+
+export interface ImageCapabilities {
+  supports_image_input?: boolean
+  max_reference_images?: number
+  image_formats?: string[]
+  image_max_size_mb?: number
+  image_min_dimension?: number
+  image_max_dimension?: number
+  image_min_aspect_ratio?: number
+  image_max_aspect_ratio?: number
 }
 
 // Image generation specific configuration
 export interface ImageGenerationConfig {
   size?: string // '2K', '3K', '2048x2048', etc.
+  capabilities?: ImageCapabilities
   sequential_image_generation?: 'auto' | 'disabled'
   max_images?: number
   response_format?: 'url' | 'b64_json'
-  output_format?: 'jpeg' | 'png'
+  output_format?: 'jpeg' | 'png' | 'webp'
+  output_compression?: number
+  quality?: 'low' | 'medium' | 'high' | 'auto'
+  background?: 'opaque' | 'transparent' | 'auto'
+  moderation?: 'auto' | 'low'
   watermark?: boolean
   optimize_prompt_mode?: 'standard' | 'fast'
   max_reference_images?: number // Maximum number of reference images that can be uploaded
@@ -98,12 +173,15 @@ export interface ModelCRD {
         thinking_config?: Record<string, unknown> // Provider-native thinking/reasoning config
         thinkingConfig?: Record<string, unknown> // Legacy camelCase alias
       }
+      context_window?: number // Maximum context window size in tokens
+      max_output_tokens?: number // Maximum output tokens the model can generate per response
+      visionSidecarModel?: VisionSidecarModelRef
     }
     protocol?: string
+    apiFormat?: string
     isCustomConfig?: boolean
-    // Context window and output token limits for LLM models
-    contextWindow?: number // Maximum context window size in tokens
-    maxOutputTokens?: number // Maximum output tokens the model can generate per response
+    isWeworkAvailable?: boolean
+    costIndex?: string // Relative usage cost compared with the baseline model
     // New fields for multi-type model support
     modelType?: ModelCategoryType
     modelGroup?: string
@@ -168,15 +246,26 @@ export interface UnifiedModel {
   displayName?: string | null
   provider?: string | null // 'openai' | 'claude'
   modelId?: string | null
+  runtime?: {
+    family?: string | null
+    provider?: string | null
+  } | null
   namespace?: string // Resource namespace (group name or 'default')
+  resourceUserId?: number
   config?: Record<string, unknown>
   isActive?: boolean
   modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
   isAdvanced?: boolean
   modelGroup?: string | null
   modelSubGroup?: string | null
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
+  costIndex?: string | null
+  modelCapabilities?: ModelCapabilities | null
   created_at?: string | null
   updated_at?: string | null
+  isReference?: boolean
+  listingId?: number | null
 }
 
 export interface UnifiedModelListResponse {
@@ -200,6 +289,7 @@ export interface TestConnectionRequest {
     | 'gemini'
     | 'gemini-deep-research'
     | 'openai-responses'
+    | 'gpt-image'
     | 'custom'
   model_id: string
   api_key: string

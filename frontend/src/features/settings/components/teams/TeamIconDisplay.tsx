@@ -4,7 +4,7 @@
 
 'use client'
 
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { getTeamIconComponent } from '../../constants/team-icons'
 
 type IconSize = 'xs' | 'sm' | 'md' | 'lg'
@@ -27,8 +27,31 @@ const SIZE_MAP: Record<IconSize, string> = {
  * Falls back to default icon (FaUsers) if iconId is not found
  */
 export function TeamIconDisplay({ iconId, size = 'md', className = '' }: TeamIconDisplayProps) {
-  const IconComponent = getTeamIconComponent(iconId)
+  const [imageFailed, setImageFailed] = useState(false)
   const sizeClass = SIZE_MAP[size]
+  const imageUrl =
+    iconId?.startsWith('/') || iconId?.startsWith('https://') || iconId?.startsWith('http://')
+      ? iconId
+      : null
+
+  useEffect(() => {
+    setImageFailed(false)
+  }, [imageUrl])
+
+  if (imageUrl && !imageFailed) {
+    return (
+      // Custom team icons are uploaded by their owner or an administrator.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={imageUrl}
+        alt=""
+        className={`${sizeClass} rounded-full object-cover ${className}`.trim()}
+        onError={() => setImageFailed(true)}
+      />
+    )
+  }
+
+  const IconComponent = getTeamIconComponent(imageFailed ? null : iconId)
 
   return <IconComponent className={`${sizeClass} ${className}`.trim()} />
 }

@@ -23,6 +23,35 @@ class KnowledgeBaseToolAccessMode:
     RESTRICTED_SEARCH_ONLY = "restricted_search_only"
 
 
+class KnowledgeScopeType:
+    """Canonical selection scope types shared by all knowledge providers."""
+
+    KNOWLEDGE_BASE = "knowledge_base"
+    FOLDER = "folder"
+    DOCUMENT = "document"
+
+
+@dataclass(frozen=True)
+class SelectedKnowledgeResource:
+    """One selected folder or document inside a knowledge base."""
+
+    scope_type: str
+    resource_id: str | None = None
+    resource_name: str | None = None
+    resource_path: str | None = None
+    resource_url: str | None = None
+
+
+@dataclass(frozen=True)
+class SelectedKnowledgeRef:
+    """One provider knowledge base and its selected runtime resources."""
+
+    provider: str
+    knowledge_base_id: str
+    knowledge_base_name: str
+    resources: tuple[SelectedKnowledgeResource, ...] = field(default_factory=tuple)
+
+
 @dataclass(frozen=True)
 class KnowledgeBaseScope:
     """Per-knowledge-base access scope for knowledge tools."""

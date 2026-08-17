@@ -8,6 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.security import create_access_token, get_password_hash
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.subtask_context import SubtaskContext
+from app.models.user import User
 from app.schemas.knowledge import (
     BatchOperationResult,
     DocumentSourceType,
@@ -65,6 +69,118 @@ def _create_document(
             folder_id=folder_id,
         ),
     )
+
+
+def test_open_create_text_document_accepts_jwt_session(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_token: str,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "save-chat-answer-kb")
+    document = _create_document(
+        test_db,
+        kb_id,
+        test_user.id,
+        "Saved answer",
+    )
+    captured: dict = {}
+
+    def fake_create_document_with_content(**kwargs):
+        captured.update(kwargs)
+        return document
+
+    monkeypatch.setattr(
+        "app.api.endpoints.knowledge_open.knowledge_orchestrator.create_document_with_content",
+        fake_create_document_with_content,
+    )
+
+    response = test_client.post(
+        "/api/knowledge/documents",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={
+            "knowledge_base_id": kb_id,
+            "name": "Saved answer",
+            "source_type": "text",
+            "content": "# Saved answer",
+            "file_extension": "md",
+            "folder_id": 0,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["id"] == document.id
+    assert captured["user"].id == test_user.id
+    assert captured["knowledge_base_id"] == kb_id
+    assert captured["source_type"] == "text"
+    assert captured["content"] == "# Saved answer"
+    assert captured["file_extension"] == "md"
+    assert captured["folder_id"] == 0
+
+
+def test_open_create_text_document_rejects_reporter_before_attachment_upload(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    monkeypatch,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "reporter-read-only-kb")
+    reporter = User(
+        user_name="knowledge-reporter",
+        password_hash=get_password_hash("reporter-password"),
+        email="knowledge-reporter@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(reporter)
+    test_db.commit()
+    test_db.refresh(reporter)
+    test_db.add(
+        ResourceMember(
+            resource_type="KnowledgeBase",
+            resource_id=kb_id,
+            entity_type="user",
+            entity_id=str(reporter.id),
+            role=ResourceRole.Reporter.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=test_user.id,
+            reviewed_by_user_id=test_user.id,
+            share_link_id=0,
+            copied_resource_id=0,
+        )
+    )
+    test_db.commit()
+
+    upload_calls: list[dict] = []
+
+    def fail_if_attachment_is_uploaded(**kwargs):
+        upload_calls.append(kwargs)
+        raise AssertionError("Read-only requests must not upload attachments")
+
+    monkeypatch.setattr(
+        "app.services.context.context_service.upload_attachment",
+        fail_if_attachment_is_uploaded,
+    )
+    context_count_before = test_db.query(SubtaskContext).count()
+    reporter_token = create_access_token(data={"sub": reporter.user_name})
+
+    response = test_client.post(
+        "/api/knowledge/documents",
+        headers={"Authorization": f"Bearer {reporter_token}"},
+        json={
+            "knowledge_base_id": kb_id,
+            "name": "Forbidden answer",
+            "source_type": "text",
+            "content": "# Must not be persisted",
+            "file_extension": "md",
+            "folder_id": 0,
+        },
+    )
+
+    assert response.status_code == 403
+    assert test_db.query(SubtaskContext).count() == context_count_before
+    assert upload_calls == []
 
 
 def test_open_search_folder_ids_zero_resolves_root_documents_only(

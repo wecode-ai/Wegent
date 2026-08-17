@@ -61,6 +61,7 @@ describe('runtimeModelSelection', () => {
         weworkModelKind: 'codex-provider',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
         ui: { family: 'codex-provider', controls: ['speed'] },
       },
     }
@@ -115,6 +116,7 @@ describe('runtimeModelSelection', () => {
         weworkModelKind: 'codex-provider',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
         ui: { family: 'codex-provider', controls: ['speed'] },
       },
     }
@@ -130,26 +132,24 @@ describe('runtimeModelSelection', () => {
         collaborationMode: 'default',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
   })
 
   test('passes complete cloud model identity as hidden execution options', () => {
     const cloudModel: UnifiedModel = {
-      name: 'cloud:user:shared-model',
+      name: 'shared-model',
       type: 'user',
+      modelId: 'gpt-5.6-luna',
       namespace: 'default',
       resourceUserId: 42,
       provider: 'cloud',
+      contextWindow: 1_048_576,
+      maxOutputTokens: 96_000,
       config: {
         context_window: 128000,
-        weworkExecution: {
-          source: 'cloud',
-          modelName: 'shared-model',
-          modelType: 'user',
-          modelNamespace: 'default',
-          resourceUserId: 42,
-        },
+        max_output_tokens: 4096,
       },
     }
 
@@ -160,7 +160,257 @@ describe('runtimeModelSelection', () => {
         collaborationMode: 'default',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
+        weworkCloudModelContextWindow: '1048576',
+        weworkCloudModelMaxOutputTokens: '96000',
+      },
+    })
+  })
+
+  test('passes a configured cloud vision sidecar as a hidden execution option', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'primary-cloud-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {
+        visionSidecarModel: {
+          modelName: 'cloud-vision',
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: 42,
+          apiFormat: 'openai-responses',
+        },
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'primary-cloud-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudVisionSidecar:
+          '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
+      },
+    })
+  })
+
+  test('enables native Responses tools for supported GPT cloud models', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-gpt-model',
+      modelId: 'gpt-5.6-sol',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {},
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-gpt-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudModelNativeToolSearch: 'true',
+        weworkCloudModelNativeNamespaceTools: 'true',
+      },
+    })
+  })
+
+  test.each([
+    {
+      override: { native_tool_search: false },
+      disabledOption: 'weworkCloudModelNativeToolSearch',
+      inferredOption: 'weworkCloudModelNativeNamespaceTools',
+    },
+    {
+      override: { nativeNamespaceTools: false },
+      disabledOption: 'weworkCloudModelNativeNamespaceTools',
+      inferredOption: 'weworkCloudModelNativeToolSearch',
+    },
+  ])(
+    'honors an explicit false override for $disabledOption independently',
+    ({ override, disabledOption, inferredOption }) => {
+      const cloudModel: UnifiedModel = {
+        name: 'gpt-5.6-sol',
+        type: 'user',
+        namespace: 'default',
+        resourceUserId: 42,
+        provider: 'openai',
+        runtime: { family: 'openai.openai-responses' },
+        config: override,
+      }
+
+      const modelOptions = selectedModelExecutionFields(cloudModel, {}).modelOptions
+
+      expect(modelOptions).not.toHaveProperty(disabledOption)
+      expect(modelOptions).toHaveProperty(inferredOption, 'true')
+    }
+  )
+
+  test('does not pass catalog model id as hidden execution option', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-model',
+      type: 'user',
+      modelId: 'gpt-5.6-luna',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        context_window: 128000,
+      },
+    }
+
+    expect(
+      selectedModelExecutionFields(cloudModel, {
+        catalogModelId: 'wework-gpt-5.6-sol',
+      })
+    ).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        catalogModelId: 'wework-gpt-5.6-sol',
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '128000',
+      },
+    })
+  })
+
+  test('passes upstream api format for OpenAI Chat Completions cloud model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+  })
+
+  test('selects the Kimi K3 Codex catalog for a cloud chat-completions model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshot-kimi-k3',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
+      },
+    })
+  })
+
+  test.each(['codex_catalog_model_id', 'codexCatalogModelId'] as const)(
+    'preserves the explicit Codex catalog from %s for a Kimi K3 model',
+    catalogConfigKey => {
+      const cloudModel: UnifiedModel = {
+        name: 'commercial-kimi',
+        type: 'user',
+        namespace: 'default',
+        resourceUserId: 42,
+        provider: 'cloud',
+        config: {
+          protocol: 'openai',
+          apiFormat: 'chat/completions',
+          model_id: 'moonshot-kimi-k3',
+          [catalogConfigKey]: 'operator-selected-catalog',
+        },
+      }
+
+      expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+        expect.objectContaining({
+          weworkCloudModelCodexCatalogModelId: 'operator-selected-catalog',
+        })
+      )
+    }
+  )
+
+  test('does not select the Kimi K3 catalog for other Moonshot models', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshotai/kimi-k2.5',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+  })
+
+  test('passes upstream api format for Anthropic Messages cloud model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'shared-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'claude',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'anthropic-messages',
       },
     })
   })

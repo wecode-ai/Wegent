@@ -4,8 +4,9 @@
 
 'use client'
 
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { Play, Pause, Download, Maximize2 } from 'lucide-react'
+import { createAttachmentDownloadUrl, downloadAttachment } from '@/apis/attachments'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -14,6 +15,8 @@ export interface VideoPlayerProps {
   videoUrl: string
   /** Base64 encoded thumbnail image */
   thumbnail?: string
+  /** Remote poster image URL */
+  coverUrl?: string
   /** Video duration in seconds */
   duration?: number
   /** Attachment ID for download filename */
@@ -40,6 +43,7 @@ export interface VideoPlayerProps {
 export function VideoPlayer({
   videoUrl,
   thumbnail,
+  coverUrl,
   duration,
   attachmentId,
   className,
@@ -48,27 +52,111 @@ export function VideoPlayer({
 }: VideoPlayerProps) {
   const { t } = useTranslation('chat')
   const videoRef = useRef<HTMLVideoElement>(null)
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [showControls, setShowControls] = useState(false)
+  const [playbackFeedback, setPlaybackFeedback] = useState<'play' | 'pause' | null>(null)
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState(videoUrl)
+  const playbackRefreshCountRef = useRef(0)
+
+  const usesProtectedAttachmentUrl =
+    Boolean(attachmentId) &&
+    videoUrl.split(/[?#]/, 1)[0].endsWith(`/api/attachments/${attachmentId}/download`)
+
+  const refreshAttachmentPlaybackUrl = useCallback(async () => {
+    if (!attachmentId || !usesProtectedAttachmentUrl) {
+      setResolvedVideoUrl(videoUrl)
+      return
+    }
+
+    try {
+      setResolvedVideoUrl(await createAttachmentDownloadUrl(attachmentId))
+    } catch (error) {
+      console.error('Failed to create generated video playback URL:', error)
+      setResolvedVideoUrl('')
+    }
+  }, [attachmentId, usesProtectedAttachmentUrl, videoUrl])
+
+  useEffect(() => {
+    playbackRefreshCountRef.current = 0
+    void refreshAttachmentPlaybackUrl()
+  }, [refreshAttachmentPlaybackUrl])
+
+  const showPlaybackFeedback = useCallback((feedback: 'play' | 'pause') => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current)
+    }
+    setPlaybackFeedback(feedback)
+    feedbackTimerRef.current = setTimeout(() => {
+      setPlaybackFeedback(null)
+      feedbackTimerRef.current = null
+    }, 450)
+  }, [])
 
   const togglePlay = useCallback(() => {
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause()
+        showPlaybackFeedback('pause')
       } else {
         videoRef.current.play()
+        showPlaybackFeedback('play')
       }
       setIsPlaying(!isPlaying)
     }
-  }, [isPlaying])
+  }, [isPlaying, showPlaybackFeedback])
 
-  const handleDownload = useCallback(() => {
-    const link = document.createElement('a')
-    link.href = videoUrl
-    link.download = `video_${attachmentId || Date.now()}.mp4`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  const seekBy = useCallback(
+    (seconds: number) => {
+      const video = videoRef.current
+      if (!video) return
+
+      const maxTime =
+        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : duration
+      const nextTime = video.currentTime + seconds
+      video.currentTime = Math.max(0, maxTime ? Math.min(nextTime, maxTime) : nextTime)
+    },
+    [duration]
+  )
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        seekBy(-5)
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        seekBy(5)
+      }
+    },
+    [seekBy]
+  )
+
+  useEffect(
+    () => () => {
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current)
+      }
+    },
+    []
+  )
+
+  const handleDownload = useCallback(async () => {
+    try {
+      if (attachmentId) {
+        await downloadAttachment(attachmentId, `video_${attachmentId}.mp4`)
+        return
+      }
+
+      const link = document.createElement('a')
+      link.href = videoUrl
+      link.download = `video_${Date.now()}.mp4`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } catch (error) {
+      console.error('Failed to download generated video:', error)
+    }
   }, [videoUrl, attachmentId])
 
   const handleFullscreen = useCallback(() => {
@@ -95,46 +183,49 @@ export function VideoPlayer({
   }
 
   // Generate poster URL from base64 thumbnail
-  const posterUrl = thumbnail ? `data:image/jpeg;base64,${thumbnail}` : undefined
+  const posterUrl = thumbnail ? `data:image/jpeg;base64,${thumbnail}` : coverUrl
+  // Without a provider thumbnail, seek to the first decodable frame so the
+  // browser paints a preview instead of leaving the player black.
+  const playbackUrl =
+    !posterUrl && resolvedVideoUrl && !resolvedVideoUrl.includes('#')
+      ? `${resolvedVideoUrl}#t=0.001`
+      : resolvedVideoUrl
+
+  const handlePlaybackError = useCallback(() => {
+    if (!usesProtectedAttachmentUrl || playbackRefreshCountRef.current >= 1) {
+      return
+    }
+    playbackRefreshCountRef.current += 1
+    void refreshAttachmentPlaybackUrl()
+  }, [refreshAttachmentPlaybackUrl, usesProtectedAttachmentUrl])
 
   // Placeholder mode: show loading state with progress
   if (isPlaceholder) {
     return (
       <div
+        data-testid="video-generation-placeholder"
+        role="status"
+        aria-label={`${t('video.generating')} ${progress}%`}
         className={cn(
-          'relative rounded-lg overflow-hidden bg-gradient-to-br from-gray-800 to-gray-900 max-w-md',
+          'video-generation-placeholder relative w-full max-w-md overflow-hidden rounded-xl border border-primary/15 shadow-sm',
           className
         )}
+        style={{ aspectRatio: '16 / 9' }}
       >
-        {/* Placeholder video frame with aspect ratio */}
-        <div className="aspect-video w-full flex flex-col items-center justify-center p-6">
-          {/* Animated loading indicator */}
-          <div className="relative mb-4">
-            <div className="w-16 h-16 rounded-full border-4 border-gray-600 border-t-primary animate-spin" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Play className="h-6 w-6 text-gray-400" />
-            </div>
-          </div>
+        <div className="video-generation-placeholder__aurora" />
 
-          {/* Progress text */}
-          <div className="text-center">
-            <p className="text-white/90 text-sm font-medium mb-2">
-              {t('video.generating') || '视频生成中...'}
-            </p>
-            <p className="text-white/60 text-xs">
-              {progress > 0 ? `${progress}%` : t('video.preparing') || '准备中...'}
-            </p>
+        <div className="video-generation-placeholder__stage" aria-hidden="true">
+          <div className="video-generation-placeholder__frame video-generation-placeholder__frame--back" />
+          <div className="video-generation-placeholder__frame video-generation-placeholder__frame--front">
+            <Play className="video-generation-placeholder__play h-7 w-7" />
           </div>
+          <div className="video-generation-placeholder__scanhead" />
+          <div className="video-generation-placeholder__particle video-generation-placeholder__particle--one" />
+          <div className="video-generation-placeholder__particle video-generation-placeholder__particle--two" />
+        </div>
 
-          {/* Progress bar */}
-          <div className="w-full max-w-[200px] mt-4">
-            <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${Math.max(progress, 3)}%` }}
-              />
-            </div>
-          </div>
+        <div className="absolute right-3 top-3 z-10 text-xs font-medium tabular-nums text-primary">
+          {progress}%
         </div>
       </div>
     )
@@ -142,41 +233,76 @@ export function VideoPlayer({
 
   return (
     <div
-      className={cn('relative rounded-lg overflow-hidden bg-black max-w-md', className)}
+      data-testid="generated-video-player"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'relative max-w-md overflow-hidden rounded-lg bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+        className
+      )}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
       onTouchStart={() => setShowControls(true)}
     >
       <video
         ref={videoRef}
-        src={videoUrl}
+        src={playbackUrl}
         poster={posterUrl}
         className="w-full h-auto"
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => setIsPlaying(false)}
+        onError={handlePlaybackError}
         controls={false}
         playsInline
         preload="metadata"
       />
 
-      {/* Play button overlay - shown when not playing */}
-      {!isPlaying && (
+      {/* The whole video toggles playback; the center icon is transient feedback only. */}
+      <button
+        type="button"
+        data-testid="video-toggle-overlay"
+        onClick={togglePlay}
+        className="absolute inset-0 z-10 flex items-center justify-center bg-transparent"
+        aria-label={isPlaying ? t('common:actions.cancel') : t('common:actions.start')}
+      >
+        {playbackFeedback && (
+          <span
+            data-testid="video-playback-feedback"
+            className="video-player__feedback pointer-events-none text-white drop-shadow-lg"
+          >
+            {playbackFeedback === 'play' ? (
+              <Play className="h-10 w-10 fill-current" />
+            ) : (
+              <Pause className="h-10 w-10 fill-current" />
+            )}
+          </span>
+        )}
+      </button>
+
+      <div
+        className={cn(
+          'absolute right-2 top-2 z-20 overflow-hidden rounded-lg bg-black/55 shadow-sm backdrop-blur-md',
+          'transition-opacity duration-200',
+          showControls ? 'opacity-100' : 'opacity-100 sm:opacity-0'
+        )}
+      >
         <button
-          onClick={togglePlay}
-          className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-colors"
-          aria-label={t('common:actions.start')}
+          type="button"
+          onClick={handleDownload}
+          className="flex h-11 w-11 items-center justify-center transition-colors hover:bg-white/15 sm:h-8 sm:w-8"
+          title={t('video.download')}
+          aria-label={t('video.download')}
+          data-testid="generated-video-download"
         >
-          <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center shadow-lg">
-            <Play className="h-8 w-8 text-black ml-1" />
-          </div>
+          <Download className="h-4 w-4 text-white" />
         </button>
-      )}
+      </div>
 
       {/* Control bar - shown on hover or when not playing */}
       <div
         className={cn(
-          'absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent',
+          'absolute bottom-0 left-0 right-0 z-20 p-3 bg-gradient-to-t from-black/80 to-transparent',
           'flex items-center justify-between transition-opacity duration-200',
           showControls || !isPlaying ? 'opacity-100' : 'opacity-0'
         )}
@@ -199,15 +325,6 @@ export function VideoPlayer({
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Download button */}
-          <button
-            onClick={handleDownload}
-            className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full hover:bg-white/20 transition-colors"
-            title={t('video.download')}
-            aria-label={t('video.download')}
-          >
-            <Download className="h-5 w-5 text-white" />
-          </button>
           {/* Fullscreen button */}
           <button
             onClick={handleFullscreen}

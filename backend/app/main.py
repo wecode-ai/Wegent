@@ -20,7 +20,7 @@ import signal
 import sys
 import time
 import uuid
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 
 import redis
 import socketio
@@ -62,6 +62,10 @@ FORWARDED_LOG_HEADER_NAMES = (
     "forwarded",
 )
 MAX_LOGGED_HEADER_VALUE_LENGTH = 512
+HIGH_FREQUENCY_HTTP_PATHS = {
+    "/api/internal/callback",
+    "/api/internal/callback/batch",
+}
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
@@ -89,27 +93,20 @@ def _format_forwarded_headers_for_log(headers) -> str:
     return f" headers={{{', '.join(forwarded_headers)}}}"
 
 
-def _get_mcp_lifespan_servers():
-    from app.mcp_server.server import (
-        interactive_form_question_mcp_server,
-        knowledge_mcp_server,
-        prompt_optimization_mcp_server,
-        subscription_mcp_server,
-        system_mcp_server,
+def _request_context_fields(request_body: str) -> tuple[object, object, object]:
+    """Extract trace context only from JSON object request bodies."""
+
+    try:
+        body_json = json.loads(request_body)
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None
+    if not isinstance(body_json, dict):
+        return None, None, None
+    return (
+        body_json.get("task_id"),
+        body_json.get("subtask_id"),
+        body_json.get("user_id"),
     )
-
-    servers = [
-        ("System", system_mcp_server),
-        ("Knowledge", knowledge_mcp_server),
-        ("interactive_form_question", interactive_form_question_mcp_server),
-        ("Prompt optimization", prompt_optimization_mcp_server),
-        ("Subscription", subscription_mcp_server),
-    ]
-    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
-        from app.mcp_server.server import external_knowledge_mcp_server
-
-        servers.append(("External knowledge", external_knowledge_mcp_server))
-    return tuple(servers)
 
 
 def _load_system_initialization_state(logger: logging.Logger) -> None:
@@ -152,6 +149,11 @@ async def lifespan(app: FastAPI):
 
     # ==================== STARTUP ====================
     require_internal_service_token_configured()
+    from app.services.builtin_plugin_service import builtin_plugin_service
+
+    # Every Backend process validates any plugins marked as required.
+    # Optional plugins may be absent and are published only when staged.
+    builtin_plugin_service.validate_required_plugins()
 
     # Try to get Redis client for distributed locking
     redis_client = None
@@ -272,6 +274,25 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
+            # Step 3: Publish staged built-in plugins to the cloud marketplace.
+            logger.info("Starting built-in plugin marketplace synchronization...")
+            db = SessionLocal()
+            try:
+                published = builtin_plugin_service.sync_marketplace_plugins(db)
+                logger.info(
+                    "✓ Built-in plugin marketplace synchronization completed: count=%s",
+                    len(published),
+                )
+            except Exception as e:
+                logger.error(
+                    "✗ Failed to synchronize built-in plugins: %s",
+                    e,
+                    exc_info=True,
+                )
+                raise
+            finally:
+                db.close()
+
         except Exception as e:
             logger.error(f"✗ Startup initialization failed: {e}")
             # Re-raise the exception to terminate startup
@@ -284,6 +305,11 @@ async def lifespan(app: FastAPI):
 
     # Load system initialization state once per process after startup data exists.
     _load_system_initialization_state(logger)
+
+    from app.services.task_run_metric_hooks import task_run_metric_hooks
+
+    task_run_metric_hooks.register()
+    logger.info("✓ Task run metric transaction hooks registered")
 
     # Start background jobs
     logger.info("Starting background jobs...")
@@ -311,8 +337,15 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Socket.IO...")
     from app.core.socketio import get_sio
     from app.services.chat.webpage_ws_chat_emitter import init_ws_emitter
+    from app.services.loop_item_executions.wake import bind_socketio_loop
 
     sio = get_sio()
+    try:
+        import asyncio
+
+        bind_socketio_loop(asyncio.get_running_loop())
+    except RuntimeError:
+        pass
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
@@ -339,6 +372,23 @@ async def lifespan(app: FastAPI):
 
     event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
     logger.info("✓ IM channel task completion handler registered")
+
+    # Register the durable Wework board-automation projection handler.
+    from app.services.project_automation_completion import (
+        register_project_automation_task_completion_handler,
+    )
+
+    register_project_automation_task_completion_handler(event_bus)
+    logger.info("✓ Project automation task completion handler registered")
+
+    # Register code wiki run completion handler. A version's outcome is normally
+    # reported by the agent itself; this covers the agent never getting to speak,
+    # where the version would otherwise stay RUNNING until the staleness sweep looks
+    # at it — which only happens when the next run starts.
+    from app.services.knowledge.code_wiki.task_completion import conclude_code_wiki_run
+
+    event_bus.subscribe(TaskCompletedEvent, conclude_code_wiki_run)
+    logger.info("✓ Code wiki run completion handler registered")
 
     # Register inbox auto-process handler
     from app.core.events import QueueMessageCreatedEvent
@@ -383,23 +433,45 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    logger.info("Recovering in-progress video jobs...")
+    try:
+        from app.services.execution.agents.video.recovery import (
+            recover_video_jobs,
+            recover_video_jobs_after_stale_delay,
+        )
+
+        recovered_count = await recover_video_jobs()
+        logger.info("✓ Recovered %d in-progress video job(s)", recovered_count)
+        app.state.video_recovery_task = asyncio.create_task(
+            recover_video_jobs_after_stale_delay()
+        )
+    except Exception as e:
+        logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
 
     # ==================== YIELD (app is running) ====================
-    # MCP servers need their session_manager.run() to be active during the app lifecycle
-    # This is required for the streamable HTTP transport to work properly
-    async with AsyncExitStack() as stack:
-        for server_name, mcp_server in _get_mcp_lifespan_servers():
-            await stack.enter_async_context(mcp_server.session_manager.run())
-            logger.info("✓ %s MCP server session manager started", server_name)
+    # Mounted ASGI applications do not receive parent lifespan events, so the
+    # backend lifespan explicitly owns every mounted MCP session manager.
+    from app.mcp_server.server import mcp_session_managers_lifespan
+
+    async with mcp_session_managers_lifespan():
         yield
 
         # ==================== SHUTDOWN ====================
         logger.info("=" * 60)
         logger.info("Graceful shutdown initiated...")
         logger.info("=" * 60)
+
+        video_recovery_task = getattr(app.state, "video_recovery_task", None)
+        if video_recovery_task and not video_recovery_task.done():
+            video_recovery_task.cancel()
+            try:
+                await video_recovery_task
+            except asyncio.CancelledError:
+                pass
 
         # Step 1: Initiate graceful shutdown (mark as shutting down)
         await shutdown_manager.initiate_shutdown()
@@ -442,7 +514,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
 
         # Step 4: Stop background jobs
-        stop_background_jobs(app)
+        await stop_background_jobs(app)
+        task_run_metric_hooks.unregister()
         logger.info("✓ Background jobs stopped")
 
         # Step 5: Stop scheduler backend
@@ -606,20 +679,11 @@ def create_app():
             if is_telemetry_enabled():
                 # Extract task_id and subtask_id from request body for tracing
                 if request_body:
-                    try:
-                        import json
-
-                        body_json = json.loads(request_body)
-                        task_id = body_json.get("task_id")
-                        subtask_id = body_json.get("subtask_id")
-                        if task_id is not None or subtask_id is not None:
-                            set_task_context(task_id=task_id, subtask_id=subtask_id)
-                        # Extract user_id from request body if available
-                        user_id = body_json.get("user_id")
-                        if user_id is not None:
-                            set_user_context(user_id=str(user_id))
-                    except (json.JSONDecodeError, TypeError):
-                        pass  # Not JSON or invalid format, skip task context extraction
+                    task_id, subtask_id, user_id = _request_context_fields(request_body)
+                    if task_id is not None or subtask_id is not None:
+                        set_task_context(task_id=task_id, subtask_id=subtask_id)
+                    if user_id is not None:
+                        set_user_context(user_id=str(user_id))
 
                 # Add request body to current span
                 if request_body:
@@ -632,7 +696,11 @@ def create_app():
             f"request : {request.method} {request.url.path} {request.query_params} "
             f"{request_id} {client_ip} [{username}]{forwarded_headers_log}"
         )
-        logger.info(request_log_message)
+        high_frequency_request = request.url.path in HIGH_FREQUENCY_HTTP_PATHS
+        if high_frequency_request:
+            logger.debug(request_log_message)
+        else:
+            logger.info(request_log_message)
 
         # Process request
         response = await call_next(request)
@@ -708,7 +776,10 @@ def create_app():
             f"{request_id} {client_ip} [{username}]{forwarded_headers_log} "
             f"{response.status_code} {process_time:.2f}ms"
         )
-        logger.info(response_log_message)
+        if high_frequency_request and response.status_code < 400:
+            logger.debug(response_log_message)
+        else:
+            logger.info(response_log_message)
 
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id

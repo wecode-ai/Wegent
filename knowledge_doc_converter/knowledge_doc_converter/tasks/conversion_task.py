@@ -28,6 +28,7 @@ from knowledge_doc_converter.core.metrics import (
 )
 from knowledge_doc_converter.services.callback_client import callback_client
 from knowledge_doc_converter.services.content_fetcher import content_fetcher
+from knowledge_doc_converter.services.error_mapper import map_conversion_failure
 from knowledge_doc_converter.services.lock_service import lock_service
 
 logger = logging.getLogger(__name__)
@@ -141,7 +142,12 @@ def convert_document_task(
                     path=callback_status_path,
                     document_id=document_id,
                     generation=index_generation,
-                    error_message="Lock retry exhausted",
+                    error_message="conversion_lock_timeout",
+                    error_code="conversion_lock_timeout",
+                    user_message=(
+                        "The document conversion task waited too long. " "Please retry."
+                    ),
+                    retryable=True,
                 )
             except Exception as callback_err:
                 logger.error(
@@ -282,6 +288,9 @@ def convert_document_task(
                     input_size=0,
                 )
                 try:
+                    failure = map_conversion_failure(
+                        "conversion_soft_timeout", provider="mineru"
+                    )
                     callback_client.notify_failed(
                         path=callback_status_path,
                         document_id=document_id,
@@ -290,6 +299,10 @@ def convert_document_task(
                             f"conversion_soft_timeout:"
                             f"{settings.CONVERSION_TASK_SOFT_TIME_LIMIT}s"
                         ),
+                        error_code=failure.code,
+                        user_message=failure.user_message,
+                        retryable=failure.retryable,
+                        provider=failure.provider,
                     )
                 except Exception as callback_err:
                     logger.error(
@@ -313,11 +326,20 @@ def convert_document_task(
             )
             # Notify backend of failure
             try:
+                diagnostic_error = f"{type(exc).__name__}:{exc}"
+                failure = map_conversion_failure(
+                    diagnostic_error,
+                    provider="mineru",
+                )
                 resp = callback_client.notify_failed(
                     path=callback_status_path,
                     document_id=document_id,
                     generation=index_generation,
-                    error_message=str(exc),
+                    error_message=diagnostic_error,
+                    error_code=failure.code,
+                    user_message=failure.user_message,
+                    retryable=failure.retryable,
+                    provider=failure.provider,
                 )
                 if not resp.get("document_exists"):
                     logger.info(

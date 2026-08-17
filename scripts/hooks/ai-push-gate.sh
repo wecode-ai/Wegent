@@ -7,11 +7,11 @@
 # - Runs all quality checks (lint, type, test, build)
 # - Generates a comprehensive report
 # - Blocks push if critical checks fail
-# - Documentation reminders require verification with AI_VERIFIED=1
+# - Shows documentation reminders before requiring AI_VERIFIED=1
 #
 # Usage:
-#   git push                    (runs all checks)
-#   AI_VERIFIED=1 git push      (confirm docs checked and no updates needed)
+#   git push                    (shows documentation work without running checks)
+#   AI_VERIFIED=1 git push      (runs checks after the AI updates documentation)
 #   AI_PUSH_FULL_TESTS=1 git push  (also run full Python and Rust test suites)
 # =============================================================================
 
@@ -286,6 +286,14 @@ else
 fi
 echo ""
 
+if [ "${AI_VERIFIED:-0}" != "1" ]; then
+    echo -e "${YELLOW}${BOLD}Ask the AI to review and complete documentation for these changes.${NC}"
+    echo -e "${YELLOW}After documentation is complete, run:${NC}"
+    echo -e "${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
+    echo ""
+    exit 1
+fi
+
 # -----------------------------------------------------------------------------
 # Run Quality Checks
 # -----------------------------------------------------------------------------
@@ -322,10 +330,17 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/eslint.log")
         fi
         
-        # TypeScript type check (output to temp file to reduce memory usage)
+        # Regenerate Next.js route types before TypeScript validation. Generated
+        # files can otherwise retain imports for routes removed by a branch switch.
         echo -e "   Running TypeScript check..."
-        pnpm --filter wecode-ai-assistant exec tsc --noEmit > "$TEMP_DIR/tsc.log" 2>&1
-        TSC_EXIT=$?
+        pnpm --filter wecode-ai-assistant exec next typegen > "$TEMP_DIR/tsc.log" 2>&1
+        TYPEGEN_EXIT=$?
+        if [ $TYPEGEN_EXIT -eq 0 ]; then
+            pnpm --filter wecode-ai-assistant exec tsc --noEmit >> "$TEMP_DIR/tsc.log" 2>&1
+            TSC_EXIT=$?
+        else
+            TSC_EXIT=$TYPEGEN_EXIT
+        fi
         if [ $TSC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
         else
@@ -529,8 +544,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_CHECKS+=("Backend Syntax")
             FAILED_LOGS+=("$TEMP_DIR/syntax.log")
         fi
-        cd ..
     fi
+    cd ..
     echo ""
 fi
 
@@ -807,58 +822,6 @@ if [ ${#WARNINGS[@]} -gt 0 ]; then
     for warning in "${WARNINGS[@]}"; do
         echo -e "      ${YELLOW}- $warning${NC}"
     done
-    echo ""
-fi
-
-# -----------------------------------------------------------------------------
-# Check AI_VERIFIED for documentation reminders
-# -----------------------------------------------------------------------------
-if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
-    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo -e "${RED}${BOLD}🚫 PUSH BLOCKED - Documentation Update Required${NC}"
-    echo ""
-    echo -e "${RED}${BOLD}⚠️  CRITICAL: THIS IS YOUR ONLY CHANCE TO UPDATE DOCUMENTATION${NC}"
-    echo ""
-    echo -e "${YELLOW}${BOLD}Your code changes require documentation updates.${NC}"
-    echo -e "${YELLOW}After this push, there will be NO further opportunity to update docs.${NC}"
-    echo -e "${YELLOW}The documentation must be complete and accurate IN THIS COMMIT.${NC}"
-    echo ""
-    echo -e "${BLUE}Documentation reminders:${NC}"
-    for reminder in "${DOC_REMINDERS[@]}"; do
-        echo -e "   ${YELLOW}• $reminder${NC}"
-    done
-    echo ""
-    echo -e "${BOLD}You MUST either:${NC}"
-    echo ""
-    echo -e "  ${GREEN}1. Update the relevant documentation NOW${NC}"
-    echo -e "     Add doc changes to this commit, then push again."
-    echo -e "     ${CYAN}This is the recommended approach.${NC}"
-    echo ""
-    echo -e "  ${YELLOW}2. ONLY if you have THOROUGHLY VERIFIED that your changes${NC}"
-    echo -e "     ${YELLOW}do NOT require ANY documentation updates:${NC}"
-    echo ""
-    echo -e "     ${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
-    echo -e "     ${CYAN}(This confirms you have checked all relevant docs and no updates are needed)${NC}"
-    echo ""
-    echo -e "${RED}${BOLD}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${RED}${BOLD}⚠️  WARNING: INCOMPLETE DOCUMENTATION IS NOT ACCEPTABLE${NC}"
-    echo -e "${RED}${BOLD}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${RED}   • Users depend on accurate documentation${NC}"
-    echo -e "${RED}   • Outdated docs cause confusion and support burden${NC}"
-    echo -e "${RED}   • You will NOT get another chance to update docs for this change${NC}"
-    echo -e "${RED}   • AI_VERIFIED=1 means you CONFIRM docs are already up-to-date${NC}"
-    echo ""
-    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
-    echo ""
-    exit 1
-fi
-
-# If AI_VERIFIED=1 or no doc reminders, proceed
-if [ "$AI_VERIFIED" = "1" ]; then
-    echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}✅ AI Verified - Proceeding with push${NC}"
-    echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}"
     echo ""
 fi
 

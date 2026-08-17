@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app.models.task import TaskResource
 from app.services.chat.external_knowledge_refs import (
+    normalize_external_knowledge_refs,
     remove_task_external_knowledge_ref,
     validate_external_knowledge_refs,
 )
@@ -19,6 +20,23 @@ from app.services.chat.preprocessing.contexts import (
     link_contexts_to_subtask,
 )
 from app.services.rag.sources import ExternalRefValidationError
+
+
+def test_invalid_external_ref_log_does_not_expose_resource_url(caplog) -> None:
+    secret_url = "https://example.test/document?token=secret"
+
+    result = normalize_external_knowledge_refs(
+        [
+            {
+                "provider": "dingtalk",
+                "mode": "invalid",
+                "resource_url": secret_url,
+            }
+        ]
+    )
+
+    assert result == []
+    assert secret_url not in caplog.text
 
 
 def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
@@ -71,6 +89,7 @@ def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
         "document_id": None,
         "parent_id": None,
         "target_name": None,
+        "resource_url": None,
     }
 
 
@@ -146,6 +165,7 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
             "document_id": "document:node-1",
             "parent_id": "folder:parent-1",
             "target_name": "api-reference.md",
+            "resource_url": "https://example.test/api-reference",
         },
     )
 
@@ -167,6 +187,7 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
                     "document_id": "document:node-1",
                     "parent_id": "folder:parent-1",
                     "target_name": "api-reference.md",
+                    "resource_url": "https://example.test/api-reference",
                 }
             ],
         ) as sync_refs,
@@ -185,6 +206,7 @@ def test_sync_external_contexts_preserves_document_scope() -> None:
             "document_id": "document:node-1",
             "parent_id": "folder:parent-1",
             "target_name": "api-reference.md",
+            "resource_url": "https://example.test/api-reference",
         }
     ]
     validate_refs.assert_called_once_with(
@@ -212,14 +234,34 @@ def test_validate_external_knowledge_refs_wraps_value_errors() -> None:
             raise AssertionError("Expected ExternalRefValidationError")
 
 
-def test_validate_external_knowledge_refs_wraps_pydantic_errors() -> None:
+def test_validate_external_knowledge_refs_requires_explicit_source_id() -> None:
     try:
         validate_external_knowledge_refs(
             [{"provider": "demo-source", "mode": "explicit"}],
             binding_level="conversation",
         )
     except ExternalRefValidationError as exc:
-        assert "id is required when mode is explicit" in str(exc)
+        assert "id" in str(exc)
+        assert "Field required" in str(exc)
+    else:
+        raise AssertionError("Expected ExternalRefValidationError")
+
+
+def test_validate_external_knowledge_refs_rejects_all_accessible_mode() -> None:
+    try:
+        validate_external_knowledge_refs(
+            [
+                {
+                    "provider": "demo-source",
+                    "mode": "all_accessible",
+                    "id": "kb-1",
+                }
+            ],
+            binding_level="conversation",
+        )
+    except ExternalRefValidationError as exc:
+        assert "mode" in str(exc)
+        assert "explicit" in str(exc)
     else:
         raise AssertionError("Expected ExternalRefValidationError")
 

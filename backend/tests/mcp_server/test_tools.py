@@ -178,6 +178,39 @@ class TestKnowledgeTool:
         )
         assert result["items"] == [{"id": 9}]
 
+    def test_list_documents_includes_descendants_by_default(self):
+        """Folder listings should include descendant folders by default."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1, subtask_id=2, user_id=3, user_name="alice"
+        )
+        mock_session = MagicMock()
+        user = SimpleNamespace(id=3)
+        response = SimpleNamespace(
+            total=0,
+            returned_count=0,
+            limit=50,
+            offset=0,
+            has_more=False,
+            items=[],
+        )
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.knowledge_orchestrator, "list_documents", return_value=response
+            ) as mock_list,
+        ):
+            module.list_documents(
+                token_info=token_info,
+                knowledge_base_id=7,
+                folder_id=5,
+            )
+
+        assert mock_list.call_args.kwargs["folder_id"] == 5
+        assert mock_list.call_args.kwargs["include_subfolders"] is True
+
     def test_list_documents_returns_error_for_invalid_folder_scope(self):
         """list_documents should expose invalid folder scope errors."""
         module = get_knowledge_module()
@@ -295,10 +328,15 @@ class TestKnowledgeTool:
             "kb_id": 77,
         }
         mock_result.model_dump.return_value = expected_payload
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ) as mock_get_read_user,
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
@@ -313,6 +351,11 @@ class TestKnowledgeTool:
             )
 
         assert result == expected_payload
+        mock_get_read_user.assert_called_once_with(
+            mock_session,
+            token_info,
+            77,
+        )
         mock_read.assert_called_once_with(
             db=mock_session,
             user=mock_user,
@@ -333,10 +376,15 @@ class TestKnowledgeTool:
         )
         mock_user = object()
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
@@ -364,10 +412,15 @@ class TestKnowledgeTool:
         )
         mock_user = object()
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",

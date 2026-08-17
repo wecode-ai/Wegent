@@ -1,30 +1,87 @@
-import { describe, expect, test } from 'vitest'
-import { getNextBufferedStreamingText } from './useBufferedStreamingText'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
 
-describe('getNextBufferedStreamingText', () => {
-  test('reveals a bounded prefix while preserving the current content', () => {
-    const target = `Hello ${'world '.repeat(30)}`
-    const next = getNextBufferedStreamingText('Hello ', target)
-
-    expect(target.startsWith(next)).toBe(true)
-    expect(next.length).toBeGreaterThan('Hello '.length)
-    expect(next).not.toBe(target)
+describe('useBufferedStreamingText', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
-  test('does not split Unicode code points', () => {
-    expect(getNextBufferedStreamingText('', '😀你好')).toBe('😀')
+  test('coalesces streaming updates into the next animation frame', () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'Hello' } }
+    )
+
+    rerender({ content: 'Hello world' })
+    rerender({ content: 'Hello world again' })
+    expect(result.current).toBe('Hello')
+
+    act(() => vi.advanceTimersToNextFrame())
+    expect(result.current).toBe('Hello world again')
   })
 
-  test('drains a small reserve on alternating frames', () => {
-    expect(getNextBufferedStreamingText('', '一二三四', false)).toBe('')
-    expect(getNextBufferedStreamingText('', '一二三四', true)).toBe('一')
+  test('flushes the latest content when an animation frame is unavailable', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'Partial response' } }
+    )
+
+    rerender({ content: 'Partial response with the appended text' })
+    expect(result.current).toBe('Partial response')
+
+    act(() => vi.advanceTimersByTime(100))
+    expect(result.current).toBe('Partial response with the appended text')
   })
 
-  test('immediately adopts non-append updates', () => {
-    expect(getNextBufferedStreamingText('old content', 'replacement')).toBe('replacement')
+  test('cancels a pending fallback timer for a completed replacement', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'Partial response', streaming: true } }
+    )
+
+    rerender({
+      content: 'Partial response with the appended text',
+      streaming: true,
+    })
+    rerender({ content: 'Authoritative completed response', streaming: false })
+
+    act(() => vi.advanceTimersByTime(100))
+    expect(result.current).toBe('Authoritative completed response')
   })
 
-  test('returns completed content unchanged', () => {
-    expect(getNextBufferedStreamingText('done', 'done')).toBe('done')
+  test('shows the authoritative completed snapshot immediately', () => {
+    const complete = `A${'b'.repeat(80)}`
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'A', streaming: true } }
+    )
+
+    rerender({ content: complete, streaming: false })
+    expect(result.current).toBe(complete)
+  })
+
+  test('replaces non-append content immediately', () => {
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'partial', streaming: true } }
+    )
+
+    rerender({ content: 'replacement', streaming: false })
+    expect(result.current).toBe('replacement')
   })
 })

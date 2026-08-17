@@ -3,14 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env, fs,
     future::Future,
-    io::{self, Write},
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::{Arc, Mutex as StdMutex, OnceLock},
+    sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
     time::Duration,
 };
 
@@ -21,45 +20,56 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
-    time::timeout,
+    time::{timeout, timeout_at, Instant},
 };
 
 use crate::{
-    agents::runtime_capabilities,
+    agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
-    image_preprocessor::prepare_image_bytes_for_model,
-    logging::{log_executor_event, task_fields, wework_debug_log},
+    image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
+    logging::{log_executor_event, task_fields},
     process_environment,
-    protocol::ExecutionRequest,
+    protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     runner::{AgentEngine, ExecutionOutcome},
-    runtime_work::codex_stream_debug_enabled,
     server::{
-        executor_loopback_base_url, register_codex_responses_proxy, CodexResponsesProxyUpstream,
+        codex_model_catalog, executor_loopback_base_url,
+        local_model_proxy::{self, LocalModelProxyUpstream, VisionSidecarUpstream},
     },
 };
 
+use super::codex_log_db::configure_codex_log_db_filter;
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
+const CODEX_MCP_INVENTORY_TIMEOUT_SECONDS: u64 = 10;
+const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
-const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
+const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
-const CODEX_HOME_ENV: &str = "CODEX_HOME";
-const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
+    "WEGENT_EXECUTOR_BINARY",
+    "WEGENT_EXECUTOR_HOME",
+    "WEGENT_EXECUTOR_LOG_DIR",
+    "WEGENT_EXECUTOR_PROJECTS_DIR",
+    "WEGENT_EXECUTOR_SOURCE_DIR",
+    "WEWORK_EXECUTOR_SIDECAR",
+];
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
+const WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
+const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
+const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
+    "features.tool_call_mcp_elicitation=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
-const CODEX_RAW_LOG_PREVIEW_CHARS: usize = 1200;
-const CODEX_RAW_LOG_LARGE_STRING_CHARS: usize = 2048;
-const CODEX_RAW_LOG_STRING_PREVIEW_CHARS: usize = 240;
+const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
+const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 The messages before this boundary are inherited reference context from the main thread.
@@ -71,9 +81,20 @@ Sub-agents are off-limits in this side conversation. Do not interact with any ex
 pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
-- Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
+- Build the workflow from the user's requested outcome. Run browser tools sequentially, complete every requested action, and never claim an action succeeded unless its matching tool succeeded.
+- Use `browser_open` for navigation and `browser_inspect` for structured page state. Inspect when targets or page understanding are needed, prefer numbered `index` targets, and reuse all known targets across adjacent actions. Inspect again only after an intentional page change, an unknown/stale target, or when the task needs a final-page summary.
+- An explicit click request requires `browser_click` or `browser_click_coordinates`; filling, pressing Enter, page auto-update, JavaScript submission, or a screenshot does not count as a click.
+- Use `browser_take_screenshot` only when the user explicitly requests a screenshot. Use `browser_evaluate` only for read-only diagnostics, never as a substitute for open/fill/click/press actions.
+- On a transient action error, inspect the existing page and retry that action once with a fresh target. Do not reopen a page that is still available.
+- Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
+- "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
+- Project-space MCP tools are discovered on demand. Use the available deferred-tool discovery function with the requested project-space capability before concluding that a tool is unavailable. It is normally named `tool_search`; compatibility providers may expose it as `search_deferred_tools`. Do not use MCP resource listing as a substitute for tool discovery.
+- Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
+- For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
+
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -82,6 +103,20 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/webp",
     "image/bmp",
 ];
+
+#[path = "codex/diagnostics.rs"]
+mod diagnostics;
+#[path = "codex/home.rs"]
+mod home;
+#[path = "codex/plugin_skills.rs"]
+mod plugin_skills;
+
+use diagnostics::{json_scalar_field, json_string_field};
+#[cfg(test)]
+use home::WEGENT_CODEX_HOME_ENV;
+pub(crate) use home::{executor_home, select_wework_codex_user_instructions, wework_codex_home};
+use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
+use plugin_skills::PluginSkillResolver;
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -170,9 +205,16 @@ struct ActiveCodexTurn {
 pub struct CodexAppServerTurn {
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub response_item_id: Option<String>,
+    pub goal_status: Option<String>,
+    pub goal_status_observed: bool,
 }
 
-pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
+#[path = "codex/interaction.rs"]
+mod interaction;
+
+pub use interaction::CodexRequestUserInputReceiver;
+use interaction::{interaction_value_key, InteractionAnswerRouter};
 
 #[derive(Debug, Clone)]
 pub struct CodexAppServerEngine {
@@ -237,8 +279,70 @@ impl CodexAppServerClient {
         .await
     }
 
+    pub async fn ensure_started(&self) -> Result<Option<Duration>, String> {
+        self.ensure_process_with_startup()
+            .await
+            .map(|(_, initialize_elapsed)| initialize_elapsed)
+    }
+
+    pub async fn configure_runtime_proxy(&self, proxy_url: Option<&str>) -> Result<bool, String> {
+        self.configure_runtime_proxy_with_active_turns(proxy_url, false)
+            .await
+    }
+
+    pub async fn configure_runtime_proxy_for_restart(
+        &self,
+        proxy_url: Option<&str>,
+    ) -> Result<bool, String> {
+        self.configure_runtime_proxy_with_active_turns(proxy_url, true)
+            .await
+    }
+
+    async fn configure_runtime_proxy_with_active_turns(
+        &self,
+        proxy_url: Option<&str>,
+        allow_active_turns: bool,
+    ) -> Result<bool, String> {
+        let runtime_proxy_env = proxy_environment(proxy_url);
+        let process = {
+            let mut state = self.state.lock().await;
+            if state.runtime_proxy_env == runtime_proxy_env {
+                return Ok(false);
+            }
+            if !allow_active_turns && !state.active_threads.is_empty() {
+                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+            }
+            state.runtime_proxy_env = runtime_proxy_env;
+            state.process.take()
+        };
+        if let Some(process) = process {
+            fail_all_pending(
+                &process.pending,
+                "codex app-server was restarted after its runtime proxy changed".to_owned(),
+            )
+            .await;
+            drop(process);
+        }
+        Ok(true)
+    }
+
     async fn request_existing(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
+        let response_rx = self.start_existing_request(method, params).await?;
+
+        with_rpc_timeout(method, timeout_seconds, async {
+            response_rx
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await
+    }
+
+    async fn start_existing_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
         let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
         let message = json!({
             "method": method,
@@ -249,13 +353,7 @@ impl CodexAppServerClient {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
-
-        with_rpc_timeout(method, timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
-        .await
+        Ok(response_rx)
     }
 
     pub async fn run_turn_with_cancel(
@@ -267,13 +365,63 @@ impl CodexAppServerClient {
     }
 
     pub async fn restart(&self) {
-        self.state.lock().await.process = None;
+        let process = self.state.lock().await.process.take();
+        let Some(process) = process else {
+            return;
+        };
+        fail_all_pending(
+            &process.pending,
+            "codex app-server was restarted".to_owned(),
+        )
+        .await;
+        drop(process);
+    }
+
+    pub async fn restart_if_no_pending_requests(&self) -> Result<(), usize> {
+        let process = {
+            let mut state = self.state.lock().await;
+            let Some(process) = state.process.as_ref() else {
+                return Ok(());
+            };
+            let pending_request_count = process.pending.lock().await.len();
+            if pending_request_count > 0 {
+                return Err(pending_request_count);
+            }
+            state.process.take()
+        };
+        if let Some(process) = process {
+            drop(process);
+        }
+        Ok(())
+    }
+
+    async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
+        let process = {
+            let mut state = self.state.lock().await;
+            if state.active_threads.get(thread_id) != Some(&1)
+                || state.active_threads.values().sum::<usize>() != 1
+            {
+                return false;
+            }
+            state.process.take()
+        };
+        let Some(process) = process else {
+            return false;
+        };
+        fail_all_pending(
+            &process.pending,
+            "codex app-server was restarted after a stalled turn".to_owned(),
+        )
+        .await;
+        drop(process);
+        true
     }
 
     pub async fn steer_turn(
         &self,
         thread_id: &str,
         expected_turn_id: &str,
+        client_user_message_id: Option<String>,
         input: Value,
         additional_context: Option<Value>,
     ) -> Result<String, String> {
@@ -284,6 +432,14 @@ impl CodexAppServerClient {
             Value::String(expected_turn_id.to_owned()),
         );
         params.insert("input".to_owned(), input);
+        if let Some(client_user_message_id) =
+            client_user_message_id.filter(|value| !value.trim().is_empty())
+        {
+            params.insert(
+                "clientUserMessageId".to_owned(),
+                Value::String(client_user_message_id),
+            );
+        }
         if let Some(additional_context) = additional_context.filter(Value::is_object) {
             params.insert("additionalContext".to_owned(), additional_context);
         }
@@ -342,15 +498,16 @@ impl CodexAppServerClient {
             state.process = None;
         }
         if state.process.is_none() {
+            let launch_config = CodexLaunchConfig {
+                env: state.runtime_proxy_env.clone(),
+                ..CodexLaunchConfig::default()
+            };
             if !start_if_missing {
                 return Err("codex app-server is not running".to_owned());
             }
-            let (process, next_id) = start_persistent_codex_app_server(
-                &self.binary,
-                state.next_id,
-                &CodexLaunchConfig::default(),
-            )
-            .await?;
+            let (process, next_id) =
+                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
+                    .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -367,7 +524,7 @@ impl CodexAppServerClient {
         Ok((request_id, handle, rx))
     }
 
-    async fn send_response(&self, request_id: u64, result: Value) -> Result<(), String> {
+    async fn send_response(&self, request_id: Value, result: Value) -> Result<(), String> {
         let handle = self.existing_process().await?;
         handle
             .write_message(json!({
@@ -411,31 +568,65 @@ impl CodexAppServerClient {
     }
 
     async fn mark_thread_active(&self, thread_id: &str) {
-        self.state
-            .lock()
-            .await
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let mut state = self.state.lock().await;
+        let generation = state.next_thread_generation;
+        state.next_thread_generation += 1;
+        state
+            .thread_generations
+            .insert(thread_id.to_owned(), generation);
+        *state
             .active_threads
-            .insert(thread_id.to_owned());
+            .entry(thread_id.to_owned())
+            .or_insert(0) += 1;
     }
 
-    async fn mark_thread_idle(&self, thread_id: &str) {
-        self.state.lock().await.active_threads.remove(thread_id);
-    }
-
-    async fn unsubscribe_thread(&self, thread_id: &str) {
-        let result: Result<(), String> = async {
-            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
-            let message = json!({
-                "method": "thread/unsubscribe",
-                "id": request_id,
-                "params": {"threadId": thread_id},
-            });
-            let write_result = handle.write_message(message).await;
-            handle.remove_pending(request_id).await;
-            drop(response_rx);
-            write_result
+    async fn mark_thread_idle(&self, thread_id: &str) -> Option<u64> {
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let mut state = self.state.lock().await;
+        let active_count = state.active_threads.get_mut(thread_id)?;
+        *active_count -= 1;
+        if *active_count > 0 {
+            return None;
         }
-        .await;
+        state.active_threads.remove(thread_id);
+        state.thread_generations.get(thread_id).copied()
+    }
+
+    async fn thread_lifecycle_gate(&self, thread_id: &str) -> Arc<Mutex<()>> {
+        let mut state = self.state.lock().await;
+        state
+            .thread_lifecycle_gates
+            .retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = state
+            .thread_lifecycle_gates
+            .get(thread_id)
+            .and_then(Weak::upgrade)
+        {
+            return gate;
+        }
+        let gate = Arc::new(Mutex::new(()));
+        state
+            .thread_lifecycle_gates
+            .insert(thread_id.to_owned(), Arc::downgrade(&gate));
+        gate
+    }
+
+    async fn clear_idle_thread_generation(&self, thread_id: &str, generation: u64) {
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let mut state = self.state.lock().await;
+        if !state.active_threads.contains_key(thread_id)
+            && state.thread_generations.get(thread_id) == Some(&generation)
+        {
+            state.thread_generations.remove(thread_id);
+        }
+    }
+
+    pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
+        let result = self.request_thread_unsubscribe(thread_id).await;
         if let Err(error) = result {
             log_executor_event(
                 "codex shared thread unsubscribe failed",
@@ -444,12 +635,76 @@ impl CodexAppServerClient {
         }
     }
 
+    async fn request_thread_unsubscribe(&self, thread_id: &str) -> Result<(), String> {
+        self.request_existing("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await
+            .map(|_| ())
+    }
+
+    async fn request_thread_unsubscribe_if_idle(
+        &self,
+        thread_id: &str,
+        generation: u64,
+    ) -> Result<bool, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let response_rx = {
+            let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+            let _lifecycle_guard = lifecycle_gate.lock().await;
+            {
+                let state = self.state.lock().await;
+                if state.active_threads.contains_key(thread_id)
+                    || state.thread_generations.get(thread_id) != Some(&generation)
+                {
+                    return Ok(false);
+                }
+            }
+
+            let response_rx = self
+                .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
+                .await?;
+            let mut state = self.state.lock().await;
+            if !state.active_threads.contains_key(thread_id)
+                && state.thread_generations.get(thread_id) == Some(&generation)
+            {
+                state.thread_generations.remove(thread_id);
+            }
+            response_rx
+        };
+
+        with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
+            response_rx
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await?;
+        Ok(true)
+    }
+
+    fn unsubscribe_thread_in_background(&self, thread_id: String, generation: u64) {
+        let client = self.clone();
+        tokio::spawn(async move {
+            let observation = CodexThreadUnsubscribeObservation::new(thread_id.clone());
+            let result = client
+                .request_thread_unsubscribe_if_idle(&thread_id, generation)
+                .await;
+            observation.finish(&result);
+        });
+    }
+
     async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
         let state = self.state.lock().await;
-        state.active_threads.len() == 1 && state.active_threads.contains(thread_id)
+        state.active_threads.len() == 1 && state.active_threads.contains_key(thread_id)
     }
 
     async fn ensure_process(&self) -> Result<CodexAppServerHandle, String> {
+        self.ensure_process_with_startup()
+            .await
+            .map(|(handle, _)| handle)
+    }
+
+    async fn ensure_process_with_startup(
+        &self,
+    ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
         let mut state = self.state.lock().await;
         if state
             .process
@@ -458,21 +713,28 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
+        let mut initialize_elapsed = None;
         if state.process.is_none() {
-            let (process, next_id) = start_persistent_codex_app_server(
-                &self.binary,
-                state.next_id,
-                &CodexLaunchConfig::default(),
-            )
-            .await?;
+            let launch_config = CodexLaunchConfig {
+                env: state.runtime_proxy_env.clone(),
+                ..CodexLaunchConfig::default()
+            };
+            let initialize_started_at = Instant::now();
+            let (process, next_id) =
+                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
+                    .await?;
+            initialize_elapsed = Some(initialize_started_at.elapsed());
             state.process = Some(process);
             state.next_id = next_id;
         }
-        Ok(state
-            .process
-            .as_ref()
-            .expect("persistent Codex app-server should be initialized")
-            .handle())
+        Ok((
+            state
+                .process
+                .as_ref()
+                .expect("persistent Codex app-server should be initialized")
+                .handle(),
+            initialize_elapsed,
+        ))
     }
 
     async fn ensure_process_for_launch_config(
@@ -487,10 +749,22 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
+        if !launch_config.env.is_empty() && state.runtime_proxy_env != launch_config.env {
+            if !state.active_threads.is_empty() {
+                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+            }
+            state.runtime_proxy_env = launch_config.env.clone();
+            state.process = None;
+        }
         if state.process.is_none() {
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, launch_config)
-                    .await?;
+            let mut process_launch_config = launch_config.clone();
+            process_launch_config.env = state.runtime_proxy_env.clone();
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &process_launch_config,
+            )
+            .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -499,6 +773,64 @@ impl CodexAppServerClient {
             .as_ref()
             .expect("persistent Codex app-server should be initialized")
             .handle())
+    }
+}
+
+struct CodexThreadUnsubscribeObservation {
+    thread_id: String,
+    started_at: Instant,
+    finished: bool,
+}
+
+impl CodexThreadUnsubscribeObservation {
+    fn new(thread_id: String) -> Self {
+        log_executor_event(
+            "codex shared thread unsubscribe background started",
+            &[("thread_id", thread_id.clone())],
+        );
+        Self {
+            thread_id,
+            started_at: Instant::now(),
+            finished: false,
+        }
+    }
+
+    fn finish(mut self, result: &Result<bool, String>) {
+        let mut fields = vec![
+            ("thread_id", self.thread_id.clone()),
+            (
+                "elapsed_ms",
+                self.started_at.elapsed().as_millis().to_string(),
+            ),
+        ];
+        let event = match result {
+            Ok(true) => "codex shared thread unsubscribe background completed",
+            Ok(false) => "codex shared thread unsubscribe background skipped stale cleanup",
+            Err(error) => {
+                fields.push(("error", error.clone()));
+                "codex shared thread unsubscribe background failed"
+            }
+        };
+        log_executor_event(event, &fields);
+        self.finished = true;
+    }
+}
+
+impl Drop for CodexThreadUnsubscribeObservation {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        log_executor_event(
+            "codex shared thread unsubscribe background cancelled",
+            &[
+                ("thread_id", self.thread_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+            ],
+        );
     }
 }
 
@@ -526,7 +858,11 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
     next_id: u64,
-    active_threads: HashSet<String>,
+    active_threads: HashMap<String, usize>,
+    thread_generations: HashMap<String, u64>,
+    next_thread_generation: u64,
+    thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
+    runtime_proxy_env: BTreeMap<String, String>,
 }
 
 impl Default for CodexAppServerSharedState {
@@ -534,7 +870,11 @@ impl Default for CodexAppServerSharedState {
         Self {
             process: None,
             next_id: 1,
-            active_threads: HashSet::new(),
+            active_threads: HashMap::new(),
+            thread_generations: HashMap::new(),
+            next_thread_generation: 1,
+            thread_lifecycle_gates: HashMap::new(),
+            runtime_proxy_env: BTreeMap::new(),
         }
     }
 }
@@ -622,16 +962,16 @@ async fn start_persistent_codex_app_server(
             rpc.request_ignoring_notifications("initialize", initialize_params()),
         )
         .await?;
+        configure_codex_log_db_filter(wework_codex_home()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,
             rpc.notify("initialized", json!({})),
         )
         .await?;
-        Ok((rpc.stdin, rpc.stdout, rpc.next_id))
+        Ok(rpc.into_parts())
     }
     .await;
-
     match result {
         Ok((stdin, stdout, next_id)) => {
             let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -666,8 +1006,59 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
-    launch_config.config_overrides.push("goals=true".to_owned());
     launch_config
+        .config_overrides
+        .extend(codex_router_provider_overrides());
+    launch_config.config_overrides.extend([
+        "goals=true".to_owned(),
+        "features.code_mode_host=true".to_owned(),
+    ]);
+    launch_config
+        .config_overrides
+        .extend(codex_runtime_default_config_overrides());
+    launch_config
+}
+
+fn codex_router_provider_overrides() -> Vec<String> {
+    let local_base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    let provider = codex_model_catalog::PROVIDER_ID;
+    let (auth_command, auth_args) = codex_router_auth_command();
+    vec![
+        format!("model_provider={provider}"),
+        format!("model_providers.{provider}.name=\"Wework model router\""),
+        format!("model_providers.{provider}.base_url=\"{local_base_url}/v1/codex-router\""),
+        format!("model_providers.{provider}.wire_api=\"responses\""),
+        format!(
+            "model_providers.{provider}.auth.command={}",
+            toml_value(auth_command)
+        ),
+        format!(
+            "model_providers.{provider}.auth.args={}",
+            serde_json::to_string(&auth_args).expect("router auth args must serialize")
+        ),
+    ]
+}
+
+#[cfg(unix)]
+fn codex_router_auth_command() -> (&'static str, Vec<String>) {
+    (
+        "/usr/bin/printf",
+        vec!["%s".to_owned(), local_model_proxy::API_KEY.to_owned()],
+    )
+}
+
+#[cfg(windows)]
+fn codex_router_auth_command() -> (&'static str, Vec<String>) {
+    (
+        "cmd.exe",
+        vec![
+            "/D".to_owned(),
+            "/S".to_owned(),
+            "/C".to_owned(),
+            format!("<nul set /p ={}", local_model_proxy::API_KEY),
+        ],
+    )
 }
 
 async fn read_persistent_codex_app_server_stdout(
@@ -728,8 +1119,60 @@ async fn read_persistent_codex_app_server_stdout(
             }
         }
 
+        log_codex_mcp_startup_status(&message);
+
         let _ = notifications.send(message);
     }
+}
+
+fn log_codex_mcp_startup_status(message: &Value) {
+    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
+        return;
+    }
+    let params = message.get("params").unwrap_or(message);
+    log_executor_event(
+        "codex MCP startup status",
+        &[
+            (
+                "thread_id",
+                params
+                    .get("threadId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "server_name",
+                params
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "status",
+                params
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error_present",
+                params
+                    .get("error")
+                    .is_some_and(|value| !value.is_null())
+                    .to_string(),
+            ),
+            (
+                "failure_reason_present",
+                params
+                    .get("failureReason")
+                    .is_some_and(|value| !value.is_null())
+                    .to_string(),
+            ),
+        ],
+    );
 }
 
 fn notify_shared_process_closed(notifications: &broadcast::Sender<Value>, message: &str) {
@@ -777,12 +1220,105 @@ pub async fn run_codex_app_server_turn(
     .await
 }
 
+enum CodexThreadStart {
+    Direct(String),
+    Request {
+        operation: &'static str,
+        params: Value,
+    },
+}
+
+struct CodexThreadPlan {
+    start: CodexThreadStart,
+    resume_requested: bool,
+    fork_requested: bool,
+}
+
+fn codex_thread_plan(
+    direct_thread_id: Option<&str>,
+    fork_thread_id: Option<&str>,
+    fork_thread_path: Option<&str>,
+    resume_thread_id: Option<&str>,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> CodexThreadPlan {
+    let direct_thread_id = direct_thread_id
+        .map(str::trim)
+        .filter(|thread_id| !thread_id.is_empty());
+    let start = if let Some(thread_id) = direct_thread_id {
+        CodexThreadStart::Direct(thread_id.to_owned())
+    } else if let Some(thread_id) = fork_thread_id {
+        CodexThreadStart::Request {
+            operation: "thread/fork",
+            params: thread_fork_params(thread_id, fork_thread_path, request, launch_config),
+        }
+    } else if let Some(thread_id) = resume_thread_id {
+        CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: thread_resume_params(thread_id, request, launch_config),
+        }
+    } else {
+        CodexThreadStart::Request {
+            operation: "thread/start",
+            params: thread_start_params(request, launch_config),
+        }
+    };
+    CodexThreadPlan {
+        start,
+        resume_requested: resume_thread_id.is_some(),
+        fork_requested: fork_thread_id.is_some(),
+    }
+}
+
+fn thread_id_from_response(
+    operation: &str,
+    response: &Value,
+    expected_model_provider: Option<&str>,
+) -> Result<String, String> {
+    validate_codex_model_provider(operation, response, expected_model_provider)?;
+    response
+        .get("thread")
+        .and_then(|thread| thread.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("codex app-server {operation} did not return thread.id"))
+}
+
+fn notify_thread_started(notifications: Option<&CodexNotificationSender>, thread_id: &str) {
+    if let Some(sender) = notifications {
+        let _ = sender.send(json!({
+            "method": "thread/started",
+            "params": {
+                "thread": {
+                    "id": thread_id
+                }
+            }
+        }));
+    }
+}
+
+fn normalized_thread_name(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|name| !name.is_empty())
+}
+
+fn codex_turn_fields(request: &ExecutionRequest, thread_id: &str) -> Vec<(&'static str, String)> {
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push(("thread_id", thread_id.to_owned()));
+    fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
+    if let Some(cwd) = request.cwd() {
+        fields.push(("cwd", cwd.to_owned()));
+    }
+    if let Some(model) = codex_request_model(request) {
+        fields.push(("model", model));
+    }
+    fields
+}
+
 async fn run_codex_app_server_turn_on_shared_client(
     client: &CodexAppServerClient,
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -791,13 +1327,14 @@ async fn run_codex_app_server_turn_on_shared_client(
         initial_thread_name,
         initial_thread_goal,
         notifications,
-        cancellation,
+        mut cancellation,
         request_user_input_answers,
         thread_started,
         active_turn_started,
         active_turn_finished,
     } = options;
-    let launch_config = build_codex_launch_config(&prepared.request);
+    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
+    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -808,75 +1345,58 @@ async fn run_codex_app_server_turn_on_shared_client(
     let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
+        let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
         let mut notification_rx = client
             .subscribe_notifications_for_launch_config(&launch_config)
             .await?;
         let mut state = CodexRunState::default();
-        let direct_thread_id = direct_thread_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|thread_id| !thread_id.is_empty())
-            .map(str::to_owned);
-        let resuming_thread = resume_thread_id.is_some();
-        let forking_thread = fork_thread_id.is_some();
-        let thread_id = if let Some(thread_id) = direct_thread_id {
-            state.set_root_thread_id(thread_id.clone());
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", "thread/direct".to_owned()));
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex shared thread request skipped", &thread_fields);
-            thread_id
-        } else {
-            let (thread_operation, thread_params) = if let Some(thread_id) = fork_thread_id {
-                (
-                    "thread/fork",
-                    thread_fork_params(
-                        &thread_id,
-                        fork_thread_path.as_deref(),
-                        request,
-                        &launch_config,
-                    ),
-                )
-            } else if let Some(thread_id) = resume_thread_id {
-                (
-                    "thread/resume",
-                    thread_resume_params(&thread_id, request, &launch_config),
-                )
-            } else {
-                ("thread/start", thread_start_params(request, &launch_config))
-            };
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", thread_operation.to_owned()));
-            log_executor_event("codex shared thread request started", &thread_fields);
-            let thread = client.request(thread_operation, thread_params).await?;
-            let thread_id = thread
-                .get("thread")
-                .and_then(|thread| thread.get("id"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    format!("codex app-server {thread_operation} did not return thread.id")
-                })?
-                .to_owned();
-            state.set_root_thread_id(thread_id.clone());
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex shared thread request finished", &thread_fields);
-            thread_id
+        let thread_plan = codex_thread_plan(
+            direct_thread_id.as_deref(),
+            fork_thread_id.as_deref(),
+            fork_thread_path.as_deref(),
+            resume_thread_id.as_deref(),
+            request,
+            &launch_config,
+        );
+        if !matches!(thread_plan.start, CodexThreadStart::Direct(_)) {
+            if let Some(thread_id) = resume_thread_id.as_deref() {
+                // An idle thread is unsubscribed after its previous turn. Resume establishes the
+                // next owner subscription and loads the latest materialized snapshot.
+                client.unsubscribe_thread(thread_id).await;
+            }
+        }
+        let thread_id = match thread_plan.start {
+            CodexThreadStart::Direct(thread_id) => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", "thread/direct".to_owned()));
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex shared thread request skipped", &thread_fields);
+                thread_id
+            }
+            CodexThreadStart::Request { operation, params } => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", operation.to_owned()));
+                thread_fields.extend(mcp_thread_config_fields(&params));
+                log_executor_event("codex shared thread request started", &thread_fields);
+                let response = client.request(operation, params).await?;
+                let thread_id = thread_id_from_response(
+                    operation,
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex shared thread request finished", &thread_fields);
+                thread_id
+            }
         };
+        state.set_root_thread_id(thread_id.clone());
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
         subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
-        if let Some(sender) = &notifications {
-            let _ = sender.send(json!({
-                "method": "thread/started",
-                "params": {
-                    "thread": {
-                        "id": thread_id.clone()
-                    }
-                }
-            }));
-        }
-        if forking_thread && request.ephemeral {
+        notify_thread_started(notifications.as_ref(), &thread_id);
+        if thread_plan.fork_requested && request.ephemeral {
             client
                 .request(
                     "thread/inject_items",
@@ -885,32 +1405,8 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .await?;
         }
 
-        let mut goal_run_active = false;
         if !request.ephemeral {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = client.request("thread/goal/set", goal_params).await?;
-                if goal_response_goal_is_active(&goal_response) {
-                    goal_run_active = true;
-                    state.set_goal_status("active");
-                }
-            } else if resuming_thread {
-                if let Ok(goal_response) = client
-                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                    .await
-                {
-                    if goal_response_goal_is_active(&goal_response) {
-                        goal_run_active = true;
-                        state.set_goal_status("active");
-                    }
-                }
-            }
-
-            if let Some(name) = initial_thread_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            if let Some(name) = normalized_thread_name(initial_thread_name.as_deref()) {
                 client
                     .request(
                         "thread/name/set",
@@ -920,50 +1416,98 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
 
-        let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
-        turn_fields.push(("thread_id", thread_id.clone()));
-        turn_fields.push(("input_items", turn_input.len().to_string()));
-        turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
-        if let Some(cwd) = request.cwd() {
-            turn_fields.push(("cwd", cwd.to_owned()));
+        if awaits_initial_goal_turn {
+            let goal = initial_thread_goal
+                .as_ref()
+                .expect("initial goal must exist when awaiting its turn");
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            let goal_response = client.request("thread/goal/set", goal_params).await?;
+            sync_goal_status_from_response(&mut state, &goal_response);
+        } else if !request.ephemeral && thread_plan.resume_requested {
+            if let Ok(goal_response) = client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                sync_goal_status_from_response(&mut state, &goal_response);
+            }
         }
-        if let Some(model) = model_id(request) {
-            turn_fields.push(("model", model));
-        }
-        log_executor_event("codex shared turn request started", &turn_fields);
+        let wait_for_goal_continuation = state.goal_is_active();
+
+        let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
-        let turn = match client
-            .request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
+        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
+        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let active_turn_id = if awaits_initial_goal_turn {
+            log_executor_event("codex shared goal turn awaiting", &turn_fields);
+            None
+        } else {
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
+            let turn_input = turn_input(&request.prompt);
+            turn_fields.push(("input_items", turn_input.len().to_string()));
+            log_executor_event("codex shared turn request started", &turn_fields);
+            let turn_start_response = match timeout_at(
+                startup_deadline,
+                client.request(
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                ),
             )
             .await
-        {
-            Ok(turn) => turn,
-            Err(error) => {
-                return Err(error);
-            }
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        &thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
+            };
+            turn_start_response_id(&turn_start_response)
         };
-        let active_turn_id = turn_start_response_turn_id(&turn);
-        if let (Some(turn_id), Some(callback)) =
-            (active_turn_id.as_deref(), active_turn_started.as_ref())
-        {
-            callback(thread_id.clone(), turn_id.to_owned());
+        if let Some(turn_id) = active_turn_id.as_ref() {
+            if let Some(callback) = active_turn_started.as_ref() {
+                callback(thread_id.clone(), turn_id.clone());
+            }
+            if !request.mcp_servers.is_empty() {
+                let inventory_client = client.clone();
+                let inventory_request = request.clone();
+                let inventory_thread_id = thread_id.clone();
+                tokio::spawn(async move {
+                    log_codex_mcp_inventory(
+                        &inventory_client,
+                        &inventory_request,
+                        &inventory_thread_id,
+                    )
+                    .await;
+                });
+            }
+            log_executor_event(
+                "codex shared active turn resolved",
+                &[
+                    ("thread_id", thread_id.clone()),
+                    ("turn_id", turn_id.clone()),
+                    ("source", "turn_start_response".to_owned()),
+                ],
+            );
         }
         let outcome_result = read_shared_turn_notifications(
             client,
             &mut notification_rx,
             &thread_id,
             &mut state,
+            startup_timeout_seconds,
+            startup_deadline,
             SharedTurnNotificationOptions {
                 active_turn_id,
                 notifications,
                 cancellation,
                 request_user_input_answers,
-                goal_run_active,
                 active_turn_started,
                 active_turn_finished,
+                wait_for_goal_continuation,
             },
         )
         .await;
@@ -974,13 +1518,30 @@ async fn run_codex_app_server_turn_on_shared_client(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex shared turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let response_item_id = state.response_item_id().map(str::to_owned);
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            response_item_id,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
     if let Some(thread_id) = subscribed_thread_id {
-        client.mark_thread_idle(&thread_id).await;
-        client.unsubscribe_thread(&thread_id).await;
+        if let Some(generation) = client.mark_thread_idle(&thread_id).await {
+            // Ephemeral threads cannot be resumed after app-server unloads them, so keep the
+            // owner subscription alive while the temporary chat may still send direct turns.
+            if result.is_ok() && !prepared.request.ephemeral {
+                client.unsubscribe_thread_in_background(thread_id, generation);
+            } else {
+                client
+                    .clear_idle_thread_generation(&thread_id, generation)
+                    .await;
+            }
+        }
     }
 
     if let Err(error) = &result {
@@ -993,12 +1554,160 @@ async fn run_codex_app_server_turn_on_shared_client(
     result
 }
 
+async fn log_codex_mcp_inventory(
+    client: &CodexAppServerClient,
+    request: &ExecutionRequest,
+    thread_id: &str,
+) {
+    let response = timeout(
+        Duration::from_secs(CODEX_MCP_INVENTORY_TIMEOUT_SECONDS),
+        client.request(
+            "mcpServerStatus/list",
+            json!({"threadId": thread_id, "detail": "full"}),
+        ),
+    )
+    .await;
+    match response {
+        Ok(Ok(response)) => {
+            let inventories = mcp_inventory_diagnostic_fields(&response);
+            if inventories.is_empty() {
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                fields.extend([
+                    ("thread_id", thread_id.to_owned()),
+                    ("server_count", "0".to_owned()),
+                ]);
+                log_executor_event("codex MCP inventory", &fields);
+                return;
+            }
+            for inventory in inventories {
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                fields.push(("thread_id", thread_id.to_owned()));
+                fields.extend(inventory);
+                log_executor_event("codex MCP inventory", &fields);
+            }
+        }
+        Ok(Err(error)) => {
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([("thread_id", thread_id.to_owned()), ("error", error)]);
+            log_executor_event("codex MCP inventory failed", &fields);
+        }
+        Err(_) => {
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([
+                ("thread_id", thread_id.to_owned()),
+                (
+                    "timeout_seconds",
+                    CODEX_MCP_INVENTORY_TIMEOUT_SECONDS.to_string(),
+                ),
+            ]);
+            log_executor_event("codex MCP inventory timed out", &fields);
+        }
+    }
+}
+
+fn mcp_inventory_diagnostic_fields(response: &Value) -> Vec<Vec<(&'static str, String)>> {
+    response
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|server| {
+            let tools = server
+                .get("tools")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let tool_names = tools
+                .iter()
+                .map(|(key, tool)| {
+                    tool.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(key)
+                        .to_owned()
+                })
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",");
+            vec![
+                (
+                    "server_name",
+                    server
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                ("tool_count", tools.len().to_string()),
+                ("tool_names", tool_names),
+                (
+                    "resource_count",
+                    server
+                        .get("resources")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                        .to_string(),
+                ),
+                (
+                    "resource_template_count",
+                    server
+                        .get("resourceTemplates")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                        .to_string(),
+                ),
+            ]
+        })
+        .collect()
+}
+
+fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
+    let space_routing_instructions = params
+        .get("developerInstructions")
+        .and_then(Value::as_str)
+        .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:"));
+    let Some(config) = params.get("config").and_then(Value::as_object) else {
+        return vec![
+            ("mcp_config_key_count", "0".to_owned()),
+            ("mcp_server_names", String::new()),
+            (
+                "space_routing_instructions",
+                space_routing_instructions.to_string(),
+            ),
+        ];
+    };
+    let mcp_keys = config
+        .keys()
+        .filter(|key| key.starts_with("mcp_servers."))
+        .collect::<Vec<_>>();
+    let server_names = mcp_keys
+        .iter()
+        .filter_map(|key| {
+            key.strip_prefix("mcp_servers.")?
+                .split('.')
+                .next()
+                .map(|name| name.trim_matches('"').to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(",");
+    vec![
+        ("mcp_config_key_count", mcp_keys.len().to_string()),
+        ("mcp_server_names", server_names),
+        (
+            "space_routing_instructions",
+            space_routing_instructions.to_string(),
+        ),
+    ]
+}
+
 pub async fn run_codex_app_server_turn_with_cancel(
     binary: &str,
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
         direct_thread_id,
         fork_thread_id,
@@ -1011,7 +1720,8 @@ pub async fn run_codex_app_server_turn_with_cancel(
         request_user_input_answers,
         ..
     } = options;
-    let launch_config = build_codex_launch_config(&prepared.request);
+    let prepared = prepare_codex_execution_request(request, cancellation.as_mut()).await?;
+    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -1051,6 +1761,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             rpc.request("initialize", initialize_params(), &mut state),
         )
         .await?;
+        configure_codex_log_db_filter(wework_codex_home()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,
@@ -1059,71 +1770,46 @@ pub async fn run_codex_app_server_turn_with_cancel(
         .await?;
 
         let request = &prepared.request;
-        let direct_thread_id = direct_thread_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|thread_id| !thread_id.is_empty())
-            .map(str::to_owned);
-        let forking_thread = fork_thread_id.is_some();
-        let thread_id = if let Some(thread_id) = direct_thread_id {
-            state.set_root_thread_id(thread_id.clone());
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", "thread/direct".to_owned()));
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex thread request skipped", &thread_fields);
-            thread_id
-        } else {
-            let (thread_operation, thread_params) = if let Some(thread_id) = fork_thread_id {
-                (
-                    "thread/fork",
-                    thread_fork_params(
-                        &thread_id,
-                        fork_thread_path.as_deref(),
-                        request,
-                        &launch_config,
-                    ),
+        let thread_plan = codex_thread_plan(
+            direct_thread_id.as_deref(),
+            fork_thread_id.as_deref(),
+            fork_thread_path.as_deref(),
+            resume_thread_id.as_deref(),
+            request,
+            &launch_config,
+        );
+        let thread_id = match thread_plan.start {
+            CodexThreadStart::Direct(thread_id) => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", "thread/direct".to_owned()));
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex thread request skipped", &thread_fields);
+                thread_id
+            }
+            CodexThreadStart::Request { operation, params } => {
+                let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+                thread_fields.push(("operation", operation.to_owned()));
+                log_executor_event("codex thread request started", &thread_fields);
+                let response = with_rpc_timeout(
+                    operation,
+                    timeout_seconds,
+                    rpc.request(operation, params, &mut state),
                 )
-            } else if let Some(thread_id) = resume_thread_id {
-                (
-                    "thread/resume",
-                    thread_resume_params(&thread_id, request, &launch_config),
-                )
-            } else {
-                ("thread/start", thread_start_params(request, &launch_config))
-            };
-            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
-            thread_fields.push(("operation", thread_operation.to_owned()));
-            log_executor_event("codex thread request started", &thread_fields);
-            let thread = with_rpc_timeout(
-                thread_operation,
-                timeout_seconds,
-                rpc.request(thread_operation, thread_params, &mut state),
-            )
-            .await?;
-            let thread_id = thread
-                .get("thread")
-                .and_then(|thread| thread.get("id"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    format!("codex app-server {thread_operation} did not return thread.id")
-                })?
-                .to_owned();
-            state.set_root_thread_id(thread_id.clone());
-            thread_fields.push(("thread_id", thread_id.clone()));
-            log_executor_event("codex thread request finished", &thread_fields);
-            thread_id
+                .await?;
+                let thread_id = thread_id_from_response(
+                    operation,
+                    &response,
+                    launch_config.model_provider.as_deref(),
+                )?;
+                thread_fields.push(("thread_id", thread_id.clone()));
+                log_executor_event("codex thread request finished", &thread_fields);
+                thread_id
+            }
         };
-        if let Some(sender) = &notifications {
-            let _ = sender.send(json!({
-                "method": "thread/started",
-                "params": {
-                    "thread": {
-                        "id": thread_id.clone()
-                    }
-                }
-            }));
-        }
-        if forking_thread && request.ephemeral {
+        state.set_root_thread_id(thread_id.clone());
+        bind_local_proxy_thread(&launch_config, &thread_id)?;
+        notify_thread_started(notifications.as_ref(), &thread_id);
+        if thread_plan.fork_requested && request.ephemeral {
             with_rpc_timeout(
                 "thread/inject_items",
                 timeout_seconds,
@@ -1138,18 +1824,15 @@ pub async fn run_codex_app_server_turn_with_cancel(
         if !request.ephemeral {
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                with_rpc_timeout(
+                let goal_response = with_rpc_timeout(
                     "thread/goal/set",
                     timeout_seconds,
                     rpc.request("thread/goal/set", goal_params, &mut state),
                 )
                 .await?;
+                sync_goal_status_from_response(&mut state, &goal_response);
             }
-            if let Some(name) = initial_thread_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            if let Some(name) = normalized_thread_name(initial_thread_name.as_deref()) {
                 with_rpc_timeout(
                     "thread/name/set",
                     timeout_seconds,
@@ -1164,17 +1847,10 @@ pub async fn run_codex_app_server_turn_with_cancel(
         }
 
         let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
-        turn_fields.push(("thread_id", thread_id.clone()));
+        let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
-        turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
-        if let Some(cwd) = request.cwd() {
-            turn_fields.push(("cwd", cwd.to_owned()));
-        }
-        if let Some(model) = model_id(request) {
-            turn_fields.push(("model", model));
-        }
         log_executor_event("codex turn request started", &turn_fields);
+        ensure_codex_turn_not_cancelled(&mut cancellation)?;
         let turn_request_id = with_rpc_timeout(
             "turn/start",
             timeout_seconds,
@@ -1209,7 +1885,15 @@ pub async fn run_codex_app_server_turn_with_cancel(
             turn_fields.push(("error_len", message.len().to_string()));
         }
         log_executor_event("codex turn request finished", &turn_fields);
-        Ok(CodexAppServerTurn { thread_id, outcome })
+        let response_item_id = state.response_item_id().map(str::to_owned);
+        let (goal_status_observed, goal_status) = state.goal_status_snapshot();
+        Ok(CodexAppServerTurn {
+            thread_id,
+            outcome,
+            response_item_id,
+            goal_status,
+            goal_status_observed,
+        })
     }
     .await;
 
@@ -1240,9 +1924,9 @@ struct SharedTurnNotificationOptions {
     notifications: Option<CodexNotificationSender>,
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    goal_run_active: bool,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
+    wait_for_goal_continuation: bool,
 }
 
 async fn read_shared_turn_notifications(
@@ -1250,36 +1934,79 @@ async fn read_shared_turn_notifications(
     notification_rx: &mut broadcast::Receiver<Value>,
     thread_id: &str,
     state: &mut CodexRunState,
+    startup_timeout_seconds: u64,
+    startup_deadline: Instant,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
     let mut last_outcome: Option<ExecutionOutcome> = None;
+    let mut waiting_for_initial_progress = true;
+    let request_user_input_answers = options
+        .request_user_input_answers
+        .take()
+        .map(InteractionAnswerRouter::new);
+    let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
+    let mut cancellation_requested = false;
     loop {
-        let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
-            tokio::select! {
-                _ = cancel_rx => {
-                    options.cancellation = None;
-                    if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
-                            log_executor_event(
-                                "codex shared turn interrupt failed",
-                                &[
-                                    ("thread_id", thread_id.to_owned()),
-                                    ("turn_id", turn_id.to_owned()),
-                                    ("error", error),
-                                ],
-                            );
-                        }
-                    }
-                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+        let receive_notification = async {
+            if let Some(cancel_rx) = options.cancellation.as_mut() {
+                tokio::select! {
+                    _ = cancel_rx => Ok(None),
+                    error = response_error_rx.recv() => Err(error.unwrap_or_else(|| "request_user_input response task closed".to_owned())),
+                    message = notification_rx.recv() => Ok(Some(message)),
                 }
-                message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
+            } else {
+                tokio::select! {
+                    error = response_error_rx.recv() => Err(error.unwrap_or_else(|| "request_user_input response task closed".to_owned())),
+                    message = notification_rx.recv() => Ok(Some(message)),
+                }
+            }
+        };
+        let received = if waiting_for_initial_progress {
+            match timeout_at(startup_deadline, receive_notification).await {
+                Ok(received) => received?,
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
             }
         } else {
-            shared_notification_result(notification_rx.recv().await, last_outcome.clone())?
+            receive_notification.await?
         };
+        let Some(received) = received else {
+            options.cancellation = None;
+            cancellation_requested = true;
+            let interrupt_turn_id = if waiting_for_initial_progress {
+                Some("")
+            } else {
+                options.active_turn_id.as_deref()
+            };
+            if let Some(turn_id) = interrupt_turn_id {
+                if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
+                    log_executor_event(
+                        "codex shared turn interrupt failed",
+                        &[
+                            ("thread_id", thread_id.to_owned()),
+                            ("turn_id", turn_id.to_owned()),
+                            ("error", error),
+                        ],
+                    );
+                }
+            }
+            continue;
+        };
+        let notification = shared_notification_result(received, last_outcome.clone())?;
         let message = match notification {
             SharedNotification::Message(message) => message,
-            SharedNotification::Completed(outcome) => return Ok(outcome),
+            SharedNotification::Completed(outcome) => {
+                if cancellation_requested {
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+                }
+                return Ok(outcome);
+            }
         };
         if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
             if let Some(outcome) = last_outcome {
@@ -1298,15 +2025,53 @@ async fn read_shared_turn_notifications(
         }
         log_codex_raw_turn_message(&message);
 
-        if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
-            if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
-                if let Some(callback) = options.active_turn_started.as_ref() {
-                    callback(thread_id.to_owned(), turn_id.clone());
-                }
+        let notification_turn_id = root_turn_notification_id(&message, state);
+        if let Some(turn_id) =
+            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
+        {
+            if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
+                log_executor_event(
+                    "codex shared active turn corrected",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("previous_turn_id", previous_turn_id.to_owned()),
+                        ("turn_id", turn_id.clone()),
+                        ("source", "turn_started_notification".to_owned()),
+                    ],
+                );
+            }
+            if let Some(callback) = options.active_turn_started.as_ref() {
+                callback(thread_id.to_owned(), turn_id.clone());
             }
             options.active_turn_id = Some(turn_id);
+        } else if let (Some(active_turn_id), Some(notification_turn_id)) = (
+            options.active_turn_id.as_deref(),
+            notification_turn_id.as_deref(),
+        ) {
+            if notification_turn_id != active_turn_id {
+                log_executor_event(
+                    "codex stale turn notification dropped",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("active_turn_id", active_turn_id.to_owned()),
+                        ("notification_turn_id", notification_turn_id.to_owned()),
+                        (
+                            "method",
+                            message
+                                .get("method")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<none>")
+                                .to_owned(),
+                        ),
+                    ],
+                );
+                continue;
+            }
         }
-
+        if waiting_for_initial_progress && codex_notification_has_initial_progress(&message, state)
+        {
+            waiting_for_initial_progress = false;
+        }
         if let Some(sender) = &options.notifications {
             let _ = sender.send(message.clone());
         }
@@ -1316,12 +2081,40 @@ async fn read_shared_turn_notifications(
             .and_then(Value::as_str)
             .is_some_and(|method| method == "item/tool/requestUserInput")
         {
-            answer_shared_request_user_input(
+            spawn_shared_request_user_input_response(
                 client,
                 &message,
-                &mut options.request_user_input_answers,
-            )
-            .await?;
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
+            continue;
+        }
+
+        if message
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(is_codex_approval_request_method)
+        {
+            spawn_shared_approval_response(
+                client,
+                &message,
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
+            continue;
+        }
+
+        if message
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(|method| method == "mcpServer/elicitation/request")
+        {
+            spawn_shared_mcp_server_elicitation_response(
+                client,
+                &message,
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
             continue;
         }
 
@@ -1330,16 +2123,80 @@ async fn read_shared_turn_notifications(
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
             }
-            if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
-                return Ok(outcome);
+            if cancellation_requested {
+                return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
             }
-            if !options.goal_run_active || !state.goal_is_active() {
+            if !should_wait_for_goal_continuation(
+                &outcome,
+                state,
+                options.wait_for_goal_continuation,
+            ) {
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
             state.reset_turn_output();
         }
     }
+}
+
+fn should_wait_for_goal_continuation(
+    outcome: &ExecutionOutcome,
+    state: &CodexRunState,
+    goal_was_active_at_turn_start: bool,
+) -> bool {
+    goal_was_active_at_turn_start
+        && matches!(outcome, ExecutionOutcome::Completed { .. })
+        && state.goal_is_active()
+}
+
+async fn recover_stalled_shared_turn(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    timeout_seconds: u64,
+) -> String {
+    let restarted = client.restart_stalled_turn_process(thread_id).await;
+    log_executor_event(
+        "codex shared turn startup stalled",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            ("timeout_seconds", timeout_seconds.to_string()),
+            ("app_server_restarted", restarted.to_string()),
+        ],
+    );
+    if restarted {
+        format!(
+            "codex app-server turn made no model or tool progress for {timeout_seconds}s; the shared app-server was restarted"
+        )
+    } else {
+        format!(
+            "codex app-server turn made no model or tool progress for {timeout_seconds}s; restart was skipped to preserve other active turns"
+        )
+    }
+}
+
+fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunState) -> bool {
+    let params = message_params(message);
+    if state.is_subagent_message(params) {
+        return false;
+    }
+    let Some(method) = message.get("method").and_then(Value::as_str) else {
+        return false;
+    };
+    if method == "turn/completed" {
+        return true;
+    }
+    if !method.starts_with("item/") {
+        return false;
+    }
+
+    let item = params.get("item").unwrap_or(params);
+    let item_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .replace('_', "")
+        .to_ascii_lowercase();
+    !matches!(item_type.as_str(), "user" | "usermessage")
 }
 
 enum SharedNotification {
@@ -1381,23 +2238,254 @@ async fn interrupt_shared_turn(
         .map(|_| ())
 }
 
-async fn answer_shared_request_user_input(
+fn spawn_shared_request_user_input_response(
     client: &CodexAppServerClient,
     message: &Value,
-    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
-    let request_id = response_id(message)
+    let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
     let Some(receiver) = request_user_input_answers else {
         return Err("request_user_input requires a runtime response channel".to_owned());
     };
-    let response = receiver
-        .recv()
-        .await
-        .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
-    client
-        .send_response(request_id, request_user_input_result(response))
-        .await
+    let correlation_key = interaction_value_key(&request_id)
+        .ok_or_else(|| "request_user_input message has invalid JSON-RPC id".to_owned())?;
+    let client = client.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let Some(response) = receiver.receive(correlation_key).await? else {
+                return Ok(());
+            };
+            client
+                .send_response(request_id, request_user_input_result(response))
+                .await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
+}
+
+fn is_codex_approval_request_method(method: &str) -> bool {
+    matches!(
+        method,
+        "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+    )
+}
+
+fn spawn_shared_approval_response(
+    client: &CodexAppServerClient,
+    message: &Value,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
+) -> Result<(), String> {
+    let request_id = json_rpc_request_id(message)
+        .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
+    let correlation_key = request_user_input_answers
+        .as_ref()
+        .map(|_| {
+            interaction_value_key(&request_id)
+                .ok_or_else(|| "approval request has invalid JSON-RPC id".to_owned())
+        })
+        .transpose()?;
+    let client = client.clone();
+    let message = message.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let response = if let (Some(receiver), Some(correlation_key)) =
+                (request_user_input_answers, correlation_key)
+            {
+                receiver
+                    .receive(correlation_key)
+                    .await?
+                    .unwrap_or_else(|| json!({}))
+            } else {
+                json!({})
+            };
+            let result = codex_approval_result(&message, &response)?;
+            client.send_response(request_id, result).await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
+}
+
+const CODEX_APPROVAL_QUESTION_ID: &str = "__codex_approval";
+
+fn codex_approval_result(message: &Value, response: &Value) -> Result<Value, String> {
+    let answer = response
+        .get("answers")
+        .and_then(|answers| answers.get(CODEX_APPROVAL_QUESTION_ID))
+        .and_then(|answer| answer.get("answers"))
+        .and_then(Value::as_array)
+        .and_then(|answers| answers.first())
+        .and_then(Value::as_str)
+        .unwrap_or("decline");
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "approval request is missing method".to_owned())?;
+    match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => Ok(json!({
+            "decision": codex_command_approval_decision(message, answer)
+        })),
+        "item/permissions/requestApproval" => {
+            if !matches!(
+                answer,
+                "allow_once" | "allow_turn_strict_review" | "allow_session"
+            ) {
+                return Ok(json!({
+                    "permissions": {},
+                    "scope": "turn",
+                    "strictAutoReview": false,
+                }));
+            }
+            let permissions = message_params(message)
+                .get("permissions")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            Ok(json!({
+                "permissions": permissions,
+                "scope": if answer == "allow_session" { "session" } else { "turn" },
+                "strictAutoReview": answer == "allow_turn_strict_review",
+            }))
+        }
+        _ => Err(format!("unsupported approval request method: {method}")),
+    }
+}
+
+fn codex_command_approval_decision(message: &Value, answer: &str) -> Value {
+    match answer {
+        "allow_once" => json!("accept"),
+        "allow_session" => json!("acceptForSession"),
+        _ if answer == "allow_execpolicy" || answer.starts_with("allow_execpolicy:") => {
+            codex_execpolicy_approval_decision(message, answer)
+        }
+        "cancel" => json!("cancel"),
+        _ if answer.starts_with("apply_network_policy:") => {
+            codex_network_policy_approval_decision(message, answer)
+        }
+        _ => json!("decline"),
+    }
+}
+
+fn codex_execpolicy_approval_decision(message: &Value, answer: &str) -> Value {
+    let params = message_params(message);
+    if let Some(available) = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array)
+    {
+        let Some(index) = answer
+            .strip_prefix("allow_execpolicy:")
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            return json!("decline");
+        };
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("acceptWithExecpolicyAmendment")
+                    .or_else(|| decision.get("accept_with_execpolicy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"acceptWithExecpolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedExecpolicyAmendment")
+        .or_else(|| params.get("proposed_execpolicy_amendment"))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "acceptWithExecpolicyAmendment": {
+                    "execpolicy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
+}
+
+fn codex_network_policy_approval_decision(message: &Value, answer: &str) -> Value {
+    let Some(index) = answer
+        .strip_prefix("apply_network_policy:")
+        .and_then(|index| index.parse::<usize>().ok())
+    else {
+        return json!("decline");
+    };
+    let params = message_params(message);
+    let available = params
+        .get("availableDecisions")
+        .or_else(|| params.get("available_decisions"))
+        .and_then(Value::as_array);
+    if let Some(available) = available {
+        return available
+            .get(index)
+            .and_then(|decision| {
+                decision
+                    .get("applyNetworkPolicyAmendment")
+                    .or_else(|| decision.get("apply_network_policy_amendment"))
+            })
+            .cloned()
+            .map(|decision| json!({"applyNetworkPolicyAmendment": decision}))
+            .unwrap_or_else(|| json!("decline"));
+    }
+    params
+        .get("proposedNetworkPolicyAmendments")
+        .or_else(|| params.get("proposed_network_policy_amendments"))
+        .and_then(Value::as_array)
+        .and_then(|amendments| amendments.get(index))
+        .cloned()
+        .map(|amendment| {
+            json!({
+                "applyNetworkPolicyAmendment": {
+                    "network_policy_amendment": amendment,
+                }
+            })
+        })
+        .unwrap_or_else(|| json!("decline"))
+}
+
+fn spawn_shared_mcp_server_elicitation_response(
+    client: &CodexAppServerClient,
+    message: &Value,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
+) -> Result<(), String> {
+    let request_id = json_rpc_request_id(message)
+        .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
+    let correlation_key = interaction_value_key(&request_id)
+        .ok_or_else(|| "mcpServer/elicitation/request has invalid JSON-RPC id".to_owned())?;
+    let client = client.clone();
+    let message = message.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let has_response_router = request_user_input_answers.is_some();
+            let response = match request_user_input_answers {
+                Some(receiver) => receiver.receive(correlation_key).await?,
+                None => None,
+            };
+            if response.is_none() && has_response_router {
+                return Ok(());
+            }
+            let result = mcp_server_elicitation_response(&message, response.as_ref())?;
+            client.send_response(request_id, result).await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
 }
 
 async fn notification_belongs_to_thread(
@@ -1415,7 +2503,19 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn turn_start_response_turn_id(response: &Value) -> Option<String> {
+fn started_active_turn_id(
+    active_turn_id: Option<&str>,
+    message: &Value,
+    state: &CodexRunState,
+) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+        return None;
+    }
+    root_turn_notification_id(message, state)
+        .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
+}
+
+fn turn_start_response_id(response: &Value) -> Option<String> {
     response
         .get("turn")
         .and_then(|turn| string_value(turn, "id"))
@@ -1423,10 +2523,7 @@ fn turn_start_response_turn_id(response: &Value) -> Option<String> {
         .or_else(|| string_value(response, "turn_id"))
 }
 
-fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
-        return None;
-    }
+fn root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
     let params = message_params(message);
     if state.is_subagent_message(params) {
         return None;
@@ -1438,12 +2535,15 @@ fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> O
         .or_else(|| string_value(params, "turn_id"))
 }
 
-fn goal_response_goal_is_active(response: &Value) -> bool {
-    response
+fn sync_goal_status_from_response(state: &mut CodexRunState, response: &Value) {
+    match response
         .get("goal")
         .and_then(|goal| goal.get("status"))
         .and_then(Value::as_str)
-        .is_some_and(|status| status.eq_ignore_ascii_case("active"))
+    {
+        Some(status) => state.set_goal_status(status),
+        None => state.clear_goal_status(),
+    }
 }
 
 fn string_value(value: &Value, key: &str) -> Option<String> {
@@ -1458,6 +2558,9 @@ fn spawn_codex_app_server(
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
     let mut command = Command::new(&resolved_binary);
+    for key in EXECUTOR_INTERNAL_ENV_KEYS {
+        command.env_remove(key);
+    }
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
@@ -1473,6 +2576,7 @@ fn spawn_codex_app_server(
         ),
     );
     configure_codex_app_server_process_group(&mut command);
+    configure_codex_windows_no_window(&mut command);
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -1482,160 +2586,33 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn wework_codex_home() -> PathBuf {
-    env::var_os(WEGENT_CODEX_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("codex"))
-}
-
-fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
-    fs::create_dir_all(codex_home).map_err(|error| {
-        format!(
-            "failed to create Codex home {}: {error}",
-            codex_home.display()
-        )
-    })?;
-    link_user_codex_auth(codex_home)?;
-    normalize_wework_codex_config(codex_home)
-}
-
-fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
-    use toml_edit::{value, DocumentMut};
-
-    let config_path = codex_home.join("config.toml");
-    let content = fs::read_to_string(&config_path).unwrap_or_default();
-    let mut document = content.parse::<DocumentMut>().map_err(|error| {
-        format!(
-            "failed to parse Codex config {}: {error}",
-            config_path.display()
-        )
-    })?;
-    let legacy_instructions = document
-        .get("instructions")
-        .and_then(|item| item.as_str())
-        .unwrap_or_default();
-    let developer_instructions = document
-        .get("developer_instructions")
-        .and_then(|item| item.as_str())
-        .unwrap_or_default();
-    let user_instructions = if legacy_instructions.trim().is_empty() {
-        strip_wework_browser_instructions(developer_instructions).to_owned()
-    } else {
-        legacy_instructions.trim().to_owned()
-    };
-
-    document.remove("instructions");
-    document["developer_instructions"] =
-        value(combined_codex_developer_instructions(&user_instructions));
-    if document
-        .get("personality")
-        .and_then(|item| item.as_str())
-        .is_none()
-    {
-        document["personality"] = value("pragmatic");
+fn codex_thread_developer_instructions(
+    user_instructions: &str,
+    task_instructions: &str,
+    include_space_instructions: bool,
+) -> String {
+    let mut instructions = vec![
+        user_instructions.trim(),
+        task_instructions.trim(),
+        WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
+    ];
+    if include_space_instructions {
+        instructions.push(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS);
     }
-
-    let next_content = document.to_string();
-    if next_content == content {
-        return Ok(());
-    }
-    let temporary_path = config_path.with_extension("toml.tmp");
-    fs::write(&temporary_path, next_content).map_err(|error| {
-        format!(
-            "failed to write Codex config {}: {error}",
-            temporary_path.display()
-        )
-    })?;
-    if let Ok(metadata) = fs::metadata(&config_path) {
-        fs::set_permissions(&temporary_path, metadata.permissions()).map_err(|error| {
-            format!(
-                "failed to preserve Codex config permissions {}: {error}",
-                temporary_path.display()
-            )
-        })?;
-    }
-    #[cfg(unix)]
-    if !config_path.exists() {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary_path, fs::Permissions::from_mode(0o600)).map_err(
-            |error| {
-                format!(
-                    "failed to secure Codex config permissions {}: {error}",
-                    temporary_path.display()
-                )
-            },
-        )?;
-    }
-    fs::rename(&temporary_path, &config_path).map_err(|error| {
-        format!(
-            "failed to replace Codex config {}: {error}",
-            config_path.display()
-        )
-    })
-}
-
-pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
-    let user_instructions = user_instructions.trim();
-    if user_instructions.is_empty() {
-        return WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS.to_owned();
-    }
-    format!("{user_instructions}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}")
+    instructions
+        .into_iter()
+        .filter(|instructions| !instructions.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
+    let instructions = instructions.trim();
     instructions
-        .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+        .find("Wework 内置浏览器 routing:")
+        .map(|index| &instructions[..index])
         .unwrap_or(instructions)
         .trim()
-}
-
-fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
-    let target = codex_home.join("auth.json");
-    if let Ok(metadata) = fs::symlink_metadata(&target) {
-        if metadata.file_type().is_symlink() && !target.exists() {
-            fs::remove_file(&target).map_err(|error| {
-                format!(
-                    "failed to remove stale Codex auth link {}: {error}",
-                    target.display()
-                )
-            })?;
-        } else {
-            return Ok(());
-        }
-    }
-    let Some(source) = user_codex_auth_path().filter(|path| path.is_file()) else {
-        return Ok(());
-    };
-
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&source, &target).map_err(|error| {
-            format!(
-                "failed to link Codex auth {} -> {}: {error}",
-                target.display(),
-                source.display()
-            )
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        fs::copy(&source, &target).map(|_| ()).map_err(|error| {
-            format!(
-                "failed to copy Codex auth {} -> {}: {error}",
-                source.display(),
-                target.display()
-            )
-        })
-    }
-}
-
-fn user_codex_auth_path() -> Option<PathBuf> {
-    env::var_os(CODEX_HOME_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|home| home.join("auth.json"))
-        .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
 }
 
 #[cfg(test)]
@@ -1693,6 +2670,14 @@ fn configure_codex_app_server_process_group(command: &mut Command) {
 #[cfg(not(unix))]
 fn configure_codex_app_server_process_group(_command: &mut Command) {}
 
+#[cfg(windows)]
+fn configure_codex_windows_no_window(command: &mut Command) {
+    crate::process::hide_windows_console(command);
+}
+
+#[cfg(not(windows))]
+fn configure_codex_windows_no_window(_command: &mut Command) {}
+
 async fn terminate_codex_app_server_child(child: &mut Child) {
     signal_codex_app_server_child(child);
     let _ = child.wait().await;
@@ -1736,716 +2721,23 @@ fn codex_rpc_timeout_seconds() -> u64 {
         .unwrap_or(DEFAULT_CODEX_RPC_TIMEOUT_SECONDS)
 }
 
-struct JsonRpcConnection {
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
+fn codex_turn_startup_timeout_seconds() -> u64 {
+    env::var("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS)
 }
 
-impl JsonRpcConnection {
-    fn new(stdin: ChildStdin, stdout: ChildStdout) -> Self {
-        Self::new_with_next_id(stdin, stdout, 1)
-    }
+#[path = "codex/json_rpc.rs"]
+mod json_rpc;
 
-    fn new_with_next_id(stdin: ChildStdin, stdout: ChildStdout, next_id: u64) -> Self {
-        Self {
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id,
-        }
-    }
+use json_rpc::JsonRpcConnection;
 
-    async fn request(
-        &mut self,
-        method: &str,
-        request_params: Value,
-        state: &mut CodexRunState,
-    ) -> Result<Value, String> {
-        let request_id = self.send_request(method, request_params).await?;
-        loop {
-            let message = self.read_message().await?;
-            if response_id(&message) == Some(request_id) {
-                return response_result(message);
-            }
-            if let Some(outcome) = state.handle_message(&message) {
-                return Err(format!(
-                    "codex app-server completed before {method} response: {outcome:?}"
-                ));
-            }
-        }
-    }
+#[path = "codex/run_state.rs"]
+mod run_state;
 
-    async fn request_ignoring_notifications(
-        &mut self,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, String> {
-        let request_id = self.send_request(method, params).await?;
-        loop {
-            let message = self.read_message().await?;
-            if response_id(&message) == Some(request_id) {
-                return response_result(message);
-            }
-            if message.get("method").and_then(Value::as_str) == Some("error") {
-                return Err(codex_error_message(message_params(&message)));
-            }
-        }
-    }
-
-    async fn send_request(&mut self, method: &str, params: Value) -> Result<u64, String> {
-        let request_id = self.next_id;
-        self.next_id += 1;
-        self.write_message(json!({
-            "method": method,
-            "id": request_id,
-            "params": params,
-        }))
-        .await?;
-        Ok(request_id)
-    }
-
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.write_message(json!({
-            "method": method,
-            "params": params,
-        }))
-        .await
-    }
-
-    async fn read_turn(
-        &mut self,
-        turn_request_id: u64,
-        state: &mut CodexRunState,
-        notifications: Option<CodexNotificationSender>,
-        mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    ) -> Result<ExecutionOutcome, String> {
-        let mut saw_turn_response = false;
-        loop {
-            let message = self.read_message().await?;
-            log_codex_raw_turn_message(&message);
-            if response_id(&message) == Some(turn_request_id) {
-                response_result(message)?;
-                saw_turn_response = true;
-                continue;
-            }
-            if let Some(sender) = &notifications {
-                let _ = sender.send(message.clone());
-            }
-            if message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "item/tool/requestUserInput")
-            {
-                self.answer_request_user_input(&message, &mut request_user_input_answers)
-                    .await?;
-                continue;
-            }
-            if let Some(outcome) = state.handle_message(&message) {
-                return Ok(outcome);
-            }
-            if !saw_turn_response {
-                continue;
-            }
-        }
-    }
-
-    async fn answer_request_user_input(
-        &mut self,
-        message: &Value,
-        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
-    ) -> Result<(), String> {
-        let request_id = response_id(message)
-            .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
-        let Some(receiver) = request_user_input_answers else {
-            return Err("request_user_input requires a runtime response channel".to_owned());
-        };
-        let response = receiver
-            .recv()
-            .await
-            .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
-        self.write_message(json!({
-            "id": request_id,
-            "result": request_user_input_result(response),
-        }))
-        .await
-    }
-
-    async fn write_message(&mut self, message: Value) -> Result<(), String> {
-        let mut line = serde_json::to_vec(&message)
-            .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
-        line.push(b'\n');
-        let preview = serde_json::to_string(&message).unwrap_or_default();
-        let preview = if preview.len() > 2048 {
-            format!("{}...", &preview[..2048])
-        } else {
-            preview
-        };
-        wework_debug_log(&format!(
-            "codex rpc send id={:?} method={:?} body={}",
-            message.get("id"),
-            message.get("method"),
-            preview
-        ));
-        self.stdin
-            .write_all(&line)
-            .await
-            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
-    }
-
-    async fn read_message(&mut self) -> Result<Value, String> {
-        let mut line = String::new();
-        let bytes_read = self
-            .stdout
-            .read_line(&mut line)
-            .await
-            .map_err(|error| format!("failed to read codex JSON-RPC message: {error}"))?;
-        if bytes_read == 0 {
-            return Err("codex app-server exited before completing the turn".to_owned());
-        }
-        let message: Value = serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
-        let preview = if line.len() > 2048 {
-            format!("{}...", &line[..2048])
-        } else {
-            line.clone()
-        };
-        wework_debug_log(&format!(
-            "codex rpc recv id={:?} method={:?} body={}",
-            message.get("id"),
-            message.get("method"),
-            preview.trim()
-        ));
-        Ok(message)
-    }
-}
-
-#[derive(Default)]
-struct CodexRunState {
-    final_text: String,
-    saw_delta: bool,
-    agent_message_phases: CodexAgentMessagePhaseTracker,
-    root_thread_id: Option<String>,
-    goal_status: Option<String>,
-}
-
-impl CodexRunState {
-    fn set_root_thread_id(&mut self, thread_id: impl Into<String>) {
-        self.root_thread_id = Some(thread_id.into());
-    }
-
-    fn set_goal_status(&mut self, status: impl Into<String>) {
-        self.goal_status = Some(status.into().to_ascii_lowercase());
-    }
-
-    fn goal_is_active(&self) -> bool {
-        self.goal_status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("active"))
-    }
-
-    fn reset_turn_output(&mut self) {
-        self.final_text.clear();
-        self.saw_delta = false;
-        self.agent_message_phases = CodexAgentMessagePhaseTracker::default();
-    }
-
-    fn handle_message(&mut self, message: &Value) -> Option<ExecutionOutcome> {
-        match message.get("method").and_then(Value::as_str) {
-            Some("thread/started") => {
-                if self.root_thread_id.is_none() {
-                    if let Some(thread_id) = stream_thread_id(message_params(message)) {
-                        self.root_thread_id = Some(thread_id);
-                    }
-                }
-                None
-            }
-            Some("turn/started") => {
-                if !self.is_subagent_message(message_params(message)) {
-                    self.reset_turn_output();
-                }
-                None
-            }
-            Some("thread/goal/updated") => {
-                if let Some(status) = message_params(message)
-                    .get("goal")
-                    .and_then(|goal| goal.get("status"))
-                    .and_then(Value::as_str)
-                {
-                    self.set_goal_status(status);
-                }
-                None
-            }
-            Some("thread/goal/cleared") => {
-                self.goal_status = None;
-                None
-            }
-            Some("item/started") => {
-                if self.is_subagent_message(message_params(message)) {
-                    return None;
-                }
-                self.agent_message_phases
-                    .observe_item(message_params(message));
-                None
-            }
-            Some("item/agentMessage/delta") => {
-                if self.is_subagent_message(message_params(message)) {
-                    return None;
-                }
-                self.append_delta(message_params(message));
-                None
-            }
-            Some("item/completed") => {
-                let params = message_params(message);
-                if self.is_subagent_message(params) {
-                    return None;
-                }
-                self.append_completed_message(params);
-                self.agent_message_phases.forget_item(params);
-                None
-            }
-            Some("turn/completed")
-                if !self.is_subagent_message(message_params(message))
-                    && is_root_codex_turn_event(message_params(message)) =>
-            {
-                Some(self.completed(message_params(message)))
-            }
-            Some("turn/completed") => None,
-            Some("error") => {
-                let params = message_params(message);
-                log_codex_run_state_error(params);
-                Some(ExecutionOutcome::Failed {
-                    message: codex_error_message(params),
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn is_subagent_message(&self, params: &Value) -> bool {
-        codex_agent_path(params)
-            .or_else(|| params.get("item").and_then(codex_agent_path))
-            .is_some_and(|agent_path| agent_path != "/root")
-            || self
-                .root_thread_id
-                .as_deref()
-                .is_some_and(|root_thread_id| {
-                    stream_thread_id(params).is_some_and(|thread_id| thread_id != root_thread_id)
-                })
-    }
-
-    fn append_delta(&mut self, params: &Value) {
-        let text = params.get("delta").and_then(Value::as_str).unwrap_or("");
-        let phase = self.agent_message_phases.phase_for_delta(params);
-        if codex_phase_is_process(phase.as_deref()) {
-            log_codex_run_state_text(
-                "delta",
-                "skip_process",
-                phase.as_deref(),
-                params,
-                params,
-                text,
-            );
-            return;
-        }
-        if let Some(delta) = params.get("delta").and_then(Value::as_str) {
-            log_codex_run_state_text(
-                "delta",
-                "append_final",
-                phase.as_deref(),
-                params,
-                params,
-                delta,
-            );
-            self.final_text.push_str(delta);
-            self.saw_delta = true;
-        }
-    }
-
-    fn append_completed_message(&mut self, params: &Value) {
-        let phase = self.agent_message_phases.phase_for_item(params);
-        if self.saw_delta {
-            log_codex_run_state_text(
-                "completed",
-                "skip_after_delta",
-                phase.as_deref(),
-                params,
-                params,
-                "",
-            );
-            return;
-        }
-        let item = params.get("item").unwrap_or(params);
-        let item_type = item
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .replace('_', "")
-            .to_ascii_lowercase();
-        if item_type == "plan" {
-            let text = extract_text(item).unwrap_or_default();
-            log_codex_run_state_text(
-                "completed",
-                "skip_plan",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
-            return;
-        }
-        if !matches!(item_type.as_str(), "agentmessage" | "message") {
-            log_codex_run_state_text("completed", "skip_non_message", None, params, item, "");
-            return;
-        }
-        if codex_phase_is_process(phase.as_deref()) {
-            let text = extract_text(item).unwrap_or_default();
-            log_codex_run_state_text(
-                "completed",
-                "skip_process",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
-            return;
-        }
-        if item
-            .get("role")
-            .and_then(Value::as_str)
-            .is_some_and(|role| role != "assistant")
-        {
-            log_codex_run_state_text(
-                "completed",
-                "skip_non_assistant",
-                phase.as_deref(),
-                params,
-                item,
-                "",
-            );
-            return;
-        }
-        if let Some(text) = extract_text(item) {
-            log_codex_run_state_text(
-                "completed",
-                "set_final",
-                phase.as_deref(),
-                params,
-                item,
-                &text,
-            );
-            self.final_text = text;
-            self.saw_delta = true;
-        }
-    }
-
-    fn completed(&self, params: &Value) -> ExecutionOutcome {
-        let status = params
-            .get("turn")
-            .and_then(|turn| turn.get("status"))
-            .or_else(|| params.get("status"))
-            .and_then(Value::as_str)
-            .unwrap_or("completed")
-            .to_ascii_lowercase();
-        match status.as_str() {
-            "completed" | "complete" | "succeeded" => ExecutionOutcome::Completed {
-                content: self.final_text.clone(),
-            },
-            "cancelled" | "canceled" | "interrupted" => {
-                ExecutionOutcome::Cancelled { message: status }
-            }
-            other => ExecutionOutcome::Failed {
-                message: format!("codex turn ended with status {other}"),
-            },
-        }
-    }
-}
-
-fn is_root_codex_turn_event(params: &Value) -> bool {
-    let turn = params.get("turn").unwrap_or(params);
-    codex_agent_path(turn)
-        .or_else(|| codex_agent_path(params))
-        .map_or(true, |agent_path| agent_path == "/root")
-}
-
-fn stream_thread_id(value: &Value) -> Option<String> {
-    value
-        .get("threadId")
-        .or_else(|| value.get("thread_id"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            value
-                .get("thread")
-                .and_then(|thread| thread.get("id"))
-                .and_then(Value::as_str)
-        })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-fn codex_agent_path(value: &Value) -> Option<String> {
-    value
-        .get("agent_path")
-        .or_else(|| value.get("agentPath"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-fn log_codex_run_state_text(
-    source: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    item: &Value,
-    text: &str,
-) {
-    if source == "delta" && !codex_stream_debug_enabled() {
-        return;
-    }
-
-    log_executor_event(
-        "codex run state text classification",
-        &[
-            ("source", source.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            ("item_id", json_string_field(params, "itemId")),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            ("item_type", json_string_field(item, "type")),
-            ("item_phase", json_string_field(item, "phase")),
-            ("item_channel", json_string_field(item, "channel")),
-            (
-                "payload_type",
-                nested_json_string_field(item, "payload", "type"),
-            ),
-            (
-                "payload_phase",
-                nested_json_string_field(item, "payload", "phase"),
-            ),
-            (
-                "payload_channel",
-                nested_json_string_field(item, "payload", "channel"),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(text, 160)),
-        ],
-    );
-}
-
-fn log_codex_run_state_error(params: &Value) {
-    let message = codex_error_message(params);
-    let params_json = serde_json::to_string(params)
-        .unwrap_or_else(|error| format!("failed to serialize codex error params: {error}"));
-    log_executor_event(
-        "codex run state error",
-        &[
-            ("message", message),
-            ("code", json_string_field(params, "code")),
-            ("params_len", params_json.len().to_string()),
-            ("params_preview", truncate_log_text(&params_json, 500)),
-        ],
-    );
-}
-
-fn log_codex_raw_turn_message(message: &Value) {
-    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
-    if matches!(
-        method,
-        "item/agentMessage/delta" | "item/reasoning/delta" | "item/reasoningSummary/delta"
-    ) && !codex_stream_debug_enabled()
-    {
-        return;
-    }
-
-    if !matches!(
-        method,
-        "item/agentMessage/delta"
-            | "item/reasoning/delta"
-            | "item/reasoningSummary/delta"
-            | "item/fileChange/patchUpdated"
-            | "turn/plan/updated"
-            | "item/started"
-            | "item/completed"
-            | "turn/completed"
-            | "error"
-    ) {
-        return;
-    }
-
-    let params = message_params(message);
-    let item = params.get("item").unwrap_or(params);
-    let raw_len = serialized_json_len(message)
-        .map(|length| length.to_string())
-        .unwrap_or_else(|error| format!("failed to measure codex raw message: {error}"));
-    let raw_preview = codex_raw_log_preview(message);
-    log_executor_event(
-        "codex raw turn message",
-        &[
-            ("method", method.to_owned()),
-            ("message_id", json_string_field(message, "id")),
-            ("params_keys", json_object_keys(params)),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            ("params_item_id", json_string_field(params, "item_id")),
-            ("params_message_id", json_string_field(params, "message_id")),
-            (
-                "params_output_index",
-                json_scalar_field(params, "output_index"),
-            ),
-            (
-                "params_content_index",
-                json_scalar_field(params, "content_index"),
-            ),
-            ("item_keys", json_object_keys(item)),
-            ("item_type", json_string_field(item, "type")),
-            ("item_id", json_string_field(item, "id")),
-            ("item_phase", json_string_field(item, "phase")),
-            ("item_channel", json_string_field(item, "channel")),
-            (
-                "item_turn_id",
-                nested_json_string_field(
-                    item,
-                    "internal_chat_message_metadata_passthrough",
-                    "turn_id",
-                ),
-            ),
-            ("raw_len", raw_len),
-            ("raw_preview", raw_preview),
-        ],
-    );
-}
-
-struct ByteCounter {
-    length: usize,
-}
-
-impl Write for ByteCounter {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        self.length += buffer.len();
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn serialized_json_len(value: &Value) -> serde_json::Result<usize> {
-    let mut counter = ByteCounter { length: 0 };
-    serde_json::to_writer(&mut counter, value)?;
-    Ok(counter.length)
-}
-
-fn codex_raw_log_preview(value: &Value) -> String {
-    let sanitized = sanitize_codex_raw_log_value(value, None);
-    let preview = serde_json::to_string(&sanitized)
-        .unwrap_or_else(|error| format!("failed to serialize codex raw message preview: {error}"));
-    truncate_log_text(&preview, CODEX_RAW_LOG_PREVIEW_CHARS)
-}
-
-fn sanitize_codex_raw_log_value(value: &Value, key: Option<&str>) -> Value {
-    match value {
-        Value::Object(object) => Value::Object(
-            object
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        sanitize_codex_raw_log_value(value, Some(key.as_str())),
-                    )
-                })
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| sanitize_codex_raw_log_value(item, None))
-                .collect(),
-        ),
-        Value::String(text) if should_summarize_codex_raw_log_string(key, text) => {
-            Value::String(format!(
-                "[{} chars omitted; preview: {}]",
-                text.chars().count(),
-                truncate_log_text(text, CODEX_RAW_LOG_STRING_PREVIEW_CHARS)
-            ))
-        }
-        _ => value.clone(),
-    }
-}
-
-fn should_summarize_codex_raw_log_string(key: Option<&str>, text: &str) -> bool {
-    matches!(
-        key,
-        Some("aggregatedOutput")
-            | Some("toolOutput")
-            | Some("tool_output")
-            | Some("toolOutputDelta")
-            | Some("tool_output_delta")
-            | Some("output")
-            | Some("stdout")
-            | Some("stderr")
-    ) || text.len() > CODEX_RAW_LOG_LARGE_STRING_CHARS
-}
-
-fn json_string_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn json_scalar_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| value.to_string())
-        })
-        .unwrap_or_default()
-}
-
-fn json_object_keys(value: &Value) -> String {
-    value
-        .as_object()
-        .map(|object| object.keys().cloned().collect::<Vec<_>>().join(","))
-        .unwrap_or_default()
-}
-
-fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
-    value
-        .get(object_key)
-        .and_then(|object| object.get(key))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn truncate_log_text(text: &str, max_chars: usize) -> String {
-    let mut result = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index >= max_chars {
-            result.push('…');
-            return result;
-        }
-        result.push(ch);
-    }
-    result
-}
+use run_state::{log_codex_raw_turn_message, stream_thread_id, CodexRunState};
 
 fn initialize_params() -> Value {
     json!({
@@ -2466,8 +2758,35 @@ struct CodexLaunchConfig {
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
     env: BTreeMap<String, String>,
+    user_developer_instructions: String,
     effort: Option<String>,
     summary: Option<String>,
+    local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
+}
+
+#[derive(Debug)]
+struct LocalProxyRegistration(String);
+
+impl LocalProxyRegistration {
+    fn bind_thread(&self, thread_id: &str) -> Result<(), String> {
+        local_model_proxy::bind_thread(&self.0, thread_id)
+    }
+}
+
+impl Drop for LocalProxyRegistration {
+    fn drop(&mut self) {
+        local_model_proxy::unregister(&self.0);
+    }
+}
+
+fn bind_local_proxy_thread(
+    launch_config: &CodexLaunchConfig,
+    thread_id: &str,
+) -> Result<(), String> {
+    if let Some(registration) = launch_config.local_proxy_registration.as_deref() {
+        registration.bind_thread(thread_id)?;
+    }
+    Ok(())
 }
 
 struct PreparedCodexExecutionRequest {
@@ -2478,15 +2797,17 @@ struct PreparedCodexExecutionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexLocalImage {
     path: String,
+    source_path: String,
 }
 
-fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
-    let model = model_id(request);
+fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
+    let model = codex_request_model(request);
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
     let mut launch_config = CodexLaunchConfig {
         thread_config,
+        user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
         env: runtime_proxy_env(&request.model_config),
@@ -2497,7 +2818,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .push(shell_path_config_override());
     launch_config
         .config_overrides
-        .extend(codex_streaming_patch_config_overrides());
+        .extend(task_identity_config_overrides(request));
+    launch_config
+        .config_overrides
+        .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
@@ -2511,53 +2835,40 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let use_user_config = use_user_runtime_config(&request.model_config);
     let project_id = project_id(request);
     if use_user_config {
-        launch_config.model_provider = explicit_model_provider(&request.model_config);
-        if let Some(model_provider) = &launch_config.model_provider {
+        let inference_provider = inference_model_provider(&request.model_config);
+        if let Some(upstream) = configured_codex_provider(
+            &inference_provider,
+            runtime_proxy_url(&request.model_config),
+        ) {
+            configure_codex_router(
+                &mut launch_config,
+                &request.task_id,
+                upstream,
+                model.clone(),
+                request_model_switched(request),
+                vision_sidecar_upstream(&request.model_config)?,
+            );
+        } else {
+            launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
-                model_provider,
+                &inference_provider,
                 request.model_config.get("default_headers"),
                 project_id.as_deref(),
             ));
         }
-    } else if let (Some(base_url), Some(api_key)) = (
-        non_empty_config(&request.model_config, "base_url"),
-        api_key(&request.model_config),
-    ) {
-        let model_provider = model_provider(&request.model_config);
-        let (provider_base_url, provider_api_key) =
-            resolve_codex_provider_config(&request.model_config, &base_url, &api_key);
-        launch_config.model_provider = Some(model_provider.clone());
-        launch_config.config_overrides.extend([
-            "forced_login_method=api".to_owned(),
-            format!("model_provider={model_provider}"),
-            format!(
-                "model_providers.{model_provider}.name={}",
-                toml_value(
-                    &non_empty_config(&request.model_config, "provider_name")
-                        .or_else(|| non_empty_config(&request.model_config, "display_name"))
-                        .unwrap_or_else(|| DEFAULT_PROVIDER_NAME.to_owned())
-                )
-            ),
-            format!(
-                "model_providers.{model_provider}.base_url={}",
-                toml_value(&provider_base_url)
-            ),
-            format!(
-                "model_providers.{model_provider}.wire_api={}",
-                toml_value(&wire_api(&request.model_config))
-            ),
-            format!(
-                "model_providers.{model_provider}.experimental_bearer_token={}",
-                toml_value(&provider_api_key)
-            ),
-        ]);
-        launch_config.config_overrides.extend(header_overrides(
-            &model_provider,
-            request.model_config.get("default_headers"),
-            project_id.as_deref(),
-        ));
+    } else if let Some(upstream) =
+        local_model_proxy::upstream_from_model_config(&request.model_config)
+    {
+        configure_codex_router(
+            &mut launch_config,
+            &request.task_id,
+            upstream,
+            model.clone(),
+            request_model_switched(request),
+            vision_sidecar_upstream(&request.model_config)?,
+        );
     } else {
-        launch_config.model_provider = explicit_model_provider(&request.model_config);
+        launch_config.model_provider = Some(inference_model_provider(&request.model_config));
     }
 
     launch_config
@@ -2570,27 +2881,120 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
-    let base_url = non_empty_config(&request.model_config, "base_url");
-    let api_key_present = api_key(&request.model_config).is_some();
-    let use_user_config = use_user_runtime_config(&request.model_config);
-    let provider_id = explicit_model_provider(&request.model_config)
-        .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned());
-    wework_debug_log(&format!(
-        "build_codex_launch_config model_id={:?} base_url={:?} api_key_present={} \
-         use_user_config={} model_provider={} config_overrides={} model_config_keys={:?}",
-        model_id(request),
-        base_url,
-        api_key_present,
-        use_user_config,
-        provider_id,
-        launch_config.config_overrides.len(),
-        request
-            .model_config
-            .as_object()
-            .map(|object| object.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default()
-    ));
-    launch_config
+    Ok(launch_config)
+}
+
+fn build_codex_launch_config_for_prepared_request(
+    prepared: &PreparedCodexExecutionRequest,
+) -> Result<CodexLaunchConfig, String> {
+    cleanup_generated_files_on_error(
+        &prepared.generated_files,
+        build_codex_launch_config(&prepared.request),
+    )
+}
+
+fn cleanup_generated_files_on_error<T>(
+    generated_files: &[PathBuf],
+    result: Result<T, String>,
+) -> Result<T, String> {
+    if result.is_err() {
+        cleanup_generated_files(generated_files);
+    }
+    result
+}
+
+fn configure_codex_router(
+    launch_config: &mut CodexLaunchConfig,
+    task_id: &str,
+    mut upstream: LocalModelProxyUpstream,
+    routing_model_id: Option<String>,
+    model_switched: bool,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) {
+    upstream.routing_model_id = routing_model_id;
+    let local_token =
+        local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
+    if model_switched {
+        local_model_proxy::mark_model_switch(&local_token);
+    }
+    let local_base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    let provider = codex_model_catalog::PROVIDER_ID;
+    launch_config.local_proxy_registration =
+        Some(Arc::new(LocalProxyRegistration(local_token.clone())));
+    launch_config.model_provider = Some(provider.to_owned());
+    launch_config.config_overrides.extend([
+        "forced_login_method=api".to_owned(),
+        format!("model_provider={provider}"),
+        format!("model_providers.{provider}.name=\"Wework model router\""),
+        format!(
+            "model_providers.{provider}.base_url={}",
+            toml_value(&format!("{local_base_url}/v1/codex-router/{local_token}"))
+        ),
+        format!("model_providers.{provider}.wire_api=\"responses\""),
+    ]);
+}
+
+fn request_model_switched(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("wework_model_switched")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarUpstream>, String> {
+    let Some(sidecar) = model_config
+        .get("vision_sidecar")
+        .or_else(|| model_config.get("visionSidecar"))
+    else {
+        return Ok(None);
+    };
+    if bool_value(sidecar.get("enabled")) == Some(false) {
+        return Ok(None);
+    }
+    let request_url = non_empty_config(sidecar, "request_url")
+        .or_else(|| non_empty_config(sidecar, "requestUrl"))
+        .ok_or_else(|| "Vision sidecar request URL is required".to_owned())?;
+    let model_id = non_empty_config(sidecar, "model_id")
+        .or_else(|| non_empty_config(sidecar, "modelId"))
+        .ok_or_else(|| "Vision sidecar model ID is required".to_owned())?;
+    let api_key = api_key(sidecar).unwrap_or_else(|| "dummy".to_owned());
+    let api_format = non_empty_config(sidecar, "api_format")
+        .or_else(|| non_empty_config(sidecar, "apiFormat"))
+        .unwrap_or_else(|| "openai-responses".to_owned());
+    if !matches!(
+        api_format.as_str(),
+        "openai-responses" | "openai-chat-completions" | "anthropic-messages"
+    ) {
+        return Err(format!(
+            "Unsupported vision sidecar API format: {api_format}"
+        ));
+    }
+    let max_descriptions_per_turn = sidecar
+        .get("max_descriptions_per_turn")
+        .or_else(|| sidecar.get("maxDescriptionsPerTurn"))
+        .and_then(value_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS);
+    let timeout_ms = sidecar
+        .get("timeout_ms")
+        .or_else(|| sidecar.get("timeoutMs"))
+        .and_then(value_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_VISION_SIDECAR_TIMEOUT_MS);
+    Ok(Some(VisionSidecarUpstream {
+        request_url,
+        api_format,
+        api_key,
+        default_headers: parse_header_map(sidecar.get("default_headers")),
+        proxy_url: runtime_proxy_url(sidecar)
+            .or_else(|| runtime_proxy_url(model_config))
+            .map(str::to_owned),
+        model_id,
+        max_descriptions_per_turn,
+        timeout: Duration::from_millis(timeout_ms),
+    }))
 }
 
 fn shell_path_config_override() -> String {
@@ -2600,14 +3004,52 @@ fn shell_path_config_override() -> String {
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
 }
 
+#[cfg(test)]
+fn explicit_codex_upstream(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> LocalModelProxyUpstream {
+    let mut config = model_config.clone();
+    let object = config
+        .as_object_mut()
+        .expect("test model config should be an object");
+    object.insert("base_url".to_owned(), Value::String(base_url.to_owned()));
+    object.insert("api_key".to_owned(), Value::String(api_key.to_owned()));
+    local_model_proxy::upstream_from_model_config(&config)
+        .expect("explicit model config should produce an upstream")
+}
+
+fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    task_identity_env(request)
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "shell_environment_policy.set.{}={}",
+                toml_key_segment(&key),
+                toml_value(&value)
+            )
+        })
+        .collect()
+}
+
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
     vec![
         CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_APPLY_PATCH_FREEFORM_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
 }
 
+fn codex_runtime_default_config_overrides() -> Vec<String> {
+    let mut overrides = codex_streaming_patch_config_overrides();
+    overrides.push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+    overrides
+}
+
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
+    const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: i64 = 262_144;
+
     let mut overrides = Vec::new();
     if let Some(web_search) = codex_web_search_mode(model_config) {
         overrides.push(format!("web_search={}", toml_value(&web_search)));
@@ -2615,10 +3057,27 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     if let Some(image_generation) = codex_image_generation_enabled(model_config) {
         overrides.push(format!("features.image_generation={image_generation}"));
     }
-    if let Some(context_window) = codex_model_context_window(model_config) {
-        overrides.push(format!("model_context_window={context_window}"));
-    }
+    let context_window =
+        codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
+    overrides.push(format!("model_context_window={context_window}"));
     overrides
+}
+
+fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
+    let compat_proxy = bool_value(
+        request
+            .model_config
+            .get("codex_responses_compat_proxy")
+            .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
+    )
+    .unwrap_or(false);
+    let catalog_model_id = non_empty_config(&request.model_config, "codex_catalog_model_id")
+        .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"));
+    if compat_proxy {
+        catalog_model_id.clone().or_else(|| model_id(request))
+    } else {
+        model_id(request)
+    }
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -2649,34 +3108,89 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn resolve_codex_provider_config(
-    model_config: &Value,
-    base_url: &str,
-    api_key: &str,
-) -> (String, String) {
-    let normalized_base_url = base_url.trim_end_matches('/').to_owned();
-    let wire_api = wire_api(model_config);
-    let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
-        .unwrap_or(false)
-        || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
-    if wire_api != "responses" || !use_compat_proxy {
-        return (normalized_base_url, api_key.to_owned());
-    }
+fn configured_codex_provider(
+    provider: &str,
+    proxy_url: Option<&str>,
+) -> Option<LocalModelProxyUpstream> {
+    use toml_edit::DocumentMut;
 
-    let local_token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
-        base_url: normalized_base_url,
-        responses_url: non_empty_config(model_config, "responses_url")
-            .or_else(|| non_empty_config(model_config, "responsesUrl")),
-        api_key: api_key.to_owned(),
-        default_headers: parse_header_map(model_config.get("default_headers")),
-        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
-    });
-    let local_base_url = executor_loopback_base_url()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    (
-        format!("{local_base_url}/v1/codex-responses-proxy"),
-        local_token,
-    )
+    let document = fs::read_to_string(wework_codex_home().join("config.toml"))
+        .ok()?
+        .parse::<DocumentMut>()
+        .ok()?;
+    let provider_config = document
+        .get("model_providers")?
+        .get(provider)?
+        .as_table_like()?;
+    let base_url = provider_config.get("base_url")?.as_str()?.trim();
+    if base_url.is_empty() {
+        return None;
+    }
+    let api_key = provider_config
+        .get("experimental_bearer_token")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .or_else(|| {
+            provider_config
+                .get("env_key")
+                .and_then(|value| value.as_str())
+                .and_then(|key| env::var(key).ok())
+        })?;
+    let default_headers = provider_config
+        .get("http_headers")
+        .and_then(|value| value.as_table_like())
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(key, value)| Some((key.to_owned(), value.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let api_format = provider_config
+        .get("upstream_api_format")
+        .or_else(|| provider_config.get("upstreamApiFormat"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai-responses")
+        .to_owned();
+    let convert_custom_tools = api_format != "openai-responses"
+        || provider_config
+            .get("tool_profile")
+            .or_else(|| provider_config.get("toolProfile"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|profile| profile.eq_ignore_ascii_case("function"));
+    let native_tool_search = provider_config
+        .get("native_tool_search")
+        .or_else(|| provider_config.get("nativeToolSearch"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let native_namespace_tools = provider_config
+        .get("native_namespace_tools")
+        .or_else(|| provider_config.get("nativeNamespaceTools"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let request_path = match api_format.as_str() {
+        "openai-chat-completions" => "/chat/completions",
+        "anthropic-messages" => "/messages",
+        _ => "/responses",
+    };
+    let base_url = base_url.trim_end_matches('/').to_owned();
+
+    Some(LocalModelProxyUpstream {
+        request_url: Some(format!("{base_url}{request_path}")),
+        base_url,
+        api_format,
+        convert_custom_tools,
+        native_tool_search,
+        native_namespace_tools,
+        api_key,
+        default_headers,
+        proxy_url: proxy_url.map(str::to_owned),
+        model_id: None,
+        routing_model_id: None,
+        max_output_tokens: None,
+    })
 }
 
 fn executor_server_port() -> u16 {
@@ -2730,11 +3244,18 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
         return BTreeMap::new();
     };
 
-    let no_proxy = env::var("NO_PROXY")
+    proxy_environment(Some(proxy_url))
+}
+
+fn proxy_environment(proxy_url: Option<&str>) -> BTreeMap<String, String> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return BTreeMap::new();
+    };
+    let configured_no_proxy = env::var("NO_PROXY")
         .ok()
         .or_else(|| env::var("no_proxy").ok())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_NO_PROXY.to_owned());
+        .filter(|value| !value.trim().is_empty());
+    let no_proxy = merge_required_no_proxy(configured_no_proxy.as_deref());
     [
         ("ALL_PROXY", proxy_url),
         ("HTTP_PROXY", proxy_url),
@@ -2748,6 +3269,27 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn merge_required_no_proxy(configured: Option<&str>) -> String {
+    let mut entries = configured
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+    for required in DEFAULT_NO_PROXY.split(',') {
+        if !entries
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(required))
+        {
+            entries.push(required.to_owned());
+        }
+    }
+
+    entries.join(",")
 }
 
 fn runtime_proxy_url(model_config: &Value) -> Option<&str> {
@@ -2779,8 +3321,28 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
     }
 }
 
-fn model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned())
+fn inference_model_provider(model_config: &Value) -> String {
+    explicit_model_provider(model_config).unwrap_or_else(configured_inference_model_provider)
+}
+
+pub(crate) fn configured_inference_model_provider() -> String {
+    configured_inference_model_provider_from_path(&wework_codex_home().join("config.toml"))
+}
+
+fn configured_inference_model_provider_from_path(config_path: &Path) -> String {
+    use toml_edit::DocumentMut;
+
+    fs::read_to_string(config_path)
+        .ok()
+        .and_then(|content| content.parse::<DocumentMut>().ok())
+        .and_then(|document| {
+            document
+                .get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(sanitize_provider_id)
+        })
+        .filter(|provider| !is_internal_codex_provider(provider))
+        .unwrap_or_else(|| "openai".to_owned())
 }
 
 fn explicit_model_provider(model_config: &Value) -> Option<String> {
@@ -2788,6 +3350,11 @@ fn explicit_model_provider(model_config: &Value) -> Option<String> {
         .or_else(|| non_empty_config(model_config, "model_provider"))
         .or_else(|| non_empty_config(model_config, "provider"))
         .map(|value| sanitize_provider_id(&value))
+        .filter(|provider| !is_internal_codex_provider(provider))
+}
+
+fn is_internal_codex_provider(provider: &str) -> bool {
+    provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
 }
 
 fn sanitize_provider_id(value: &str) -> String {
@@ -2808,21 +3375,6 @@ fn sanitize_provider_id(value: &str) -> String {
     } else {
         sanitized
     }
-}
-
-fn wire_api(model_config: &Value) -> String {
-    let api_format = non_empty_config(model_config, "api_format")
-        .or_else(|| non_empty_config(model_config, "apiFormat"))
-        .map(|value| value.to_ascii_lowercase());
-    let protocol =
-        non_empty_config(model_config, "protocol").map(|value| value.to_ascii_lowercase());
-    if api_format.as_deref() == Some("responses") || protocol.as_deref() == Some("openai-responses")
-    {
-        return "responses".to_owned();
-    }
-    non_empty_config(model_config, "wire_api")
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_else(|| "responses".to_owned())
 }
 
 fn api_key(request: &Value) -> Option<String> {
@@ -3097,6 +3649,15 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             toml_key_path(&[
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("approve")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
                 "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
             ]),
@@ -3115,6 +3676,20 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             ]),
             toml_value(&label)
         ));
+    }
+    if let Ok(token) = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV) {
+        if !token.trim().is_empty() {
+            overrides.push(format!(
+                "{}={}",
+                toml_key_path(&[
+                    "mcp_servers",
+                    WEWORK_BROWSER_MCP_SERVER_NAME,
+                    "env",
+                    "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"
+                ]),
+                toml_value(token.trim())
+            ));
+        }
     }
 
     overrides
@@ -3210,13 +3785,25 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
     overrides
 }
 
-fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCodexExecutionRequest {
+async fn prepare_codex_execution_request(
+    request: ExecutionRequest,
+    cancellation: Option<&mut oneshot::Receiver<()>>,
+) -> Result<PreparedCodexExecutionRequest, String> {
+    let mut request = if let Some(cancellation) = cancellation {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            request = super::runtime_capabilities::prepare_runtime_attachments(request) => request,
+        }
+    } else {
+        super::runtime_capabilities::prepare_runtime_attachments(request).await
+    };
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
-        return PreparedCodexExecutionRequest {
+        return Ok(PreparedCodexExecutionRequest {
             request,
             generated_files: Vec::new(),
-        };
+        });
     }
     log_executor_event(
         "codex attachment payload received",
@@ -3251,6 +3838,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
+    let resize_images = !is_official_codex_model(&request.model_config);
     for attachment in attachments {
         if let Some(local_path) = attachment
             .local_path
@@ -3258,7 +3846,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            let mut success_attachment = attachment.clone();
+            let success_attachment = attachment.clone();
             if is_image_attachment(&success_attachment) {
                 let prepared_path = prepare_local_image_path(
                     local_path,
@@ -3266,12 +3854,13 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
                         .mime_type
                         .as_deref()
                         .unwrap_or("image/png"),
+                    resize_images,
                     &mut generated_files,
                 )
                 .unwrap_or_else(|| local_path.to_owned());
-                success_attachment.local_path = Some(prepared_path.clone());
                 local_images.push(Some(CodexLocalImage {
                     path: prepared_path,
+                    source_path: local_path.to_owned(),
                 }));
             }
             success.push(success_attachment);
@@ -3297,15 +3886,35 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
         );
     }
     request.prompt = prompt_with_codex_local_images(&request.prompt, &local_images);
+    let binary_attachment_context =
+        AttachmentPromptProcessor::build_binary_attachment_context(&success);
+    if !binary_attachment_context.is_empty() {
+        request.prompt =
+            append_text_attachment_context(&request.prompt, &binary_attachment_context);
+    }
     let text_attachment_context =
         AttachmentPromptProcessor::build_text_attachment_context(&success);
     if !text_attachment_context.is_empty() {
         request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
     }
 
-    PreparedCodexExecutionRequest {
+    Ok(PreparedCodexExecutionRequest {
         request,
         generated_files,
+    })
+}
+
+fn ensure_codex_turn_not_cancelled(
+    cancellation: &mut Option<oneshot::Receiver<()>>,
+) -> Result<(), String> {
+    let Some(cancellation) = cancellation.as_mut() else {
+        return Ok(());
+    };
+    match cancellation.try_recv() {
+        Ok(()) | Err(oneshot::error::TryRecvError::Closed) => {
+            Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned())
+        }
+        Err(oneshot::error::TryRecvError::Empty) => Ok(()),
     }
 }
 
@@ -3377,10 +3986,18 @@ fn is_image_attachment(attachment: &AttachmentRecord) -> bool {
 fn prepare_local_image_path(
     path: &str,
     mime_type: &str,
+    resize: bool,
     generated_files: &mut Vec<PathBuf>,
 ) -> Option<String> {
+    if !resize {
+        return Some(path.to_owned());
+    }
     let image_data = fs::read(path).ok()?;
-    let prepared = prepare_image_bytes_for_model(&image_data, mime_type, None);
+    let prepared = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_data,
+        mime_type,
+        NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE,
+    );
     if !prepared.resized {
         return Some(path.to_owned());
     }
@@ -3391,6 +4008,12 @@ fn prepare_local_image_path(
     }
     generated_files.push(output_path.clone());
     Some(output_path.display().to_string())
+}
+
+fn is_official_codex_model(model_config: &Value) -> bool {
+    non_empty_config(model_config, "wework_model_kind")
+        .or_else(|| non_empty_config(model_config, "weworkModelKind"))
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("codex-official"))
 }
 
 fn model_input_image_path(path: &Path, mime_type: &str) -> PathBuf {
@@ -3478,17 +4101,17 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
         .iter()
         .filter_map(|local_image| local_image.as_ref())
         .map(|local_image| {
-            let filename = Path::new(&local_image.path)
+            let filename = Path::new(&local_image.source_path)
                 .file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or(&local_image.path);
-            format!("## {filename}: {}", local_image.path)
+                .unwrap_or(&local_image.source_path);
+            format!("## {filename}: {}", local_image.source_path)
         })
         .collect::<Vec<_>>()
         .join("\n");
     let request_text = extract_user_request_text(text_parts);
     format!(
-        "\n# Files mentioned by the user:\n\n{file_lines}\n\n## My request for Codex:\n{request_text}\n"
+        "\n{CODEX_FILES_MENTIONED_HEADER}\n\n{file_lines}\n\n{CODEX_REQUEST_MARKER}\n{request_text}\n"
     )
 }
 
@@ -3715,30 +4338,112 @@ fn parse_config_override_value(value: &str) -> Value {
     Value::String(value.to_owned())
 }
 
-fn executor_home() -> PathBuf {
-    env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
-        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
-}
-
 fn resolve_codex_binary(value: &str) -> String {
     super::resolve_codex_binary_path(value)
 }
 
+pub(crate) const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+pub(crate) const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
+pub(crate) const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
+
+pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value {
+    match codex_runtime_permission_profile(request) {
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE => Value::String("never".to_owned()),
+        _ => Value::String("on-request".to_owned()),
+    }
+}
+
+fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
+    match request
+        .extra
+        .get("runtime_permission_profile")
+        .or_else(|| request.extra.get("runtimePermissionProfile"))
+        .and_then(Value::as_str)
+    {
+        Some(CODEX_READ_ONLY_PERMISSION_PROFILE) => CODEX_READ_ONLY_PERMISSION_PROFILE,
+        Some(CODEX_WORKSPACE_PERMISSION_PROFILE) => CODEX_WORKSPACE_PERMISSION_PROFILE,
+        Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE) => {
+            CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+        }
+        _ => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+    }
+}
+
+fn insert_codex_runtime_permissions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    params.insert(
+        "permissions".to_owned(),
+        Value::String(codex_runtime_permission_profile(request).to_owned()),
+    );
+}
+
+fn insert_runtime_workspace_roots(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let roots = request
+        .runtime_workspace_roots
+        .iter()
+        .map(|root| root.trim())
+        .filter(|root| !root.is_empty())
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
+    }
+}
+
+fn validate_codex_model_provider(
+    operation: &str,
+    response: &Value,
+    expected_provider: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected_provider) = expected_provider else {
+        return Ok(());
+    };
+    let applied_provider = response
+        .get("modelProvider")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            response
+                .get("thread")
+                .and_then(|thread| thread.get("modelProvider"))
+                .and_then(Value::as_str)
+        });
+
+    match applied_provider {
+        Some(applied_provider) if applied_provider == expected_provider => Ok(()),
+        Some(applied_provider) => Err(format!(
+            "codex app-server {operation} applied unexpected model provider: \
+             expected={expected_provider}, actual={applied_provider}"
+        )),
+        // Minimal test doubles and older app-server builds may omit provider metadata. Current
+        // Codex builds return it, so reject an explicit mismatch without breaking those clients.
+        None => Ok(()),
+    }
+}
+
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
-    if let Some(model) = model_id(request) {
+    params.insert(
+        "historyMode".to_owned(),
+        Value::String("paginated".to_owned()),
+    );
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
+        codex_runtime_approval_policy(request),
     );
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3757,17 +4462,20 @@ fn thread_fork_params(
         params.insert("path".to_owned(), Value::String(path.to_owned()));
     }
     params.insert("excludeTurns".to_owned(), Value::Bool(true));
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
+        codex_runtime_approval_policy(request),
     );
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3819,18 +4527,46 @@ fn thread_resume_params(
 ) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
+    insert_runtime_workspace_roots(&mut params, request);
     params.insert(
         "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
+        codex_runtime_approval_policy(request),
     );
+    insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
+}
+
+fn insert_codex_developer_instructions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) {
+    let instructions = codex_thread_developer_instructions(
+        &launch_config.user_developer_instructions,
+        &request.system_prompt,
+        request_has_mcp_server(request, "wework_space"),
+    );
+    params.insert(
+        "developerInstructions".to_owned(),
+        Value::String(instructions),
+    );
+}
+
+fn request_has_mcp_server(request: &ExecutionRequest, name: &str) -> bool {
+    request.mcp_servers.iter().any(|server| {
+        server
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|server_name| server_name == name)
+    })
 }
 
 fn append_thread_launch_params(
@@ -3854,6 +4590,24 @@ fn append_thread_launch_params(
     }
 }
 
+fn append_turn_shell_environment_params(
+    params: &mut serde_json::Map<String, Value>,
+    launch_config: &CodexLaunchConfig,
+) {
+    let mut config = serde_json::Map::new();
+    for override_value in &launch_config.config_overrides {
+        let Some((key, value)) = config_override_entry(override_value) else {
+            continue;
+        };
+        if key.starts_with("shell_environment_policy.set.") {
+            config.insert(key, value);
+        }
+    }
+    if !config.is_empty() {
+        params.insert("config".to_owned(), Value::Object(config));
+    }
+}
+
 fn turn_start_params(
     thread_id: &str,
     request: &ExecutionRequest,
@@ -3863,18 +4617,29 @@ fn turn_start_params(
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
     params.insert("input".to_owned(), Value::Array(input));
+    if let Some(client_user_message_id) = request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        params.insert(
+            "clientUserMessageId".to_owned(),
+            Value::String(client_user_message_id.to_owned()),
+        );
+    }
     params.insert(
         "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
+        codex_runtime_approval_policy(request),
     );
-    params.insert(
-        "sandboxPolicy".to_owned(),
-        json!({"type": "dangerFullAccess"}),
-    );
+    insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
-    if let Some(model) = model_id(request) {
+    insert_runtime_workspace_roots(&mut params, request);
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     if let Some(effort) = &launch_config.effort {
@@ -3883,13 +4648,26 @@ fn turn_start_params(
     if let Some(summary) = &launch_config.summary {
         params.insert("summary".to_owned(), Value::String(summary.clone()));
     }
+    append_turn_shell_environment_params(&mut params, launch_config);
     if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
         params.insert("collaborationMode".to_owned(), collaboration_mode);
     }
     if let Some(additional_context) = codex_additional_context(request) {
         params.insert("additionalContext".to_owned(), additional_context);
     }
+    if let Some(output_schema) = codex_output_schema(request) {
+        params.insert("outputSchema".to_owned(), output_schema);
+    }
     Value::Object(params)
+}
+
+fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("outputSchema")
+        .or_else(|| request.extra.get("output_schema"))
+        .filter(|value| value.is_object())
+        .cloned()
 }
 
 fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {
@@ -3914,7 +4692,7 @@ fn codex_collaboration_mode_payload(
     Some(json!({
         "mode": mode,
         "settings": {
-            "model": model_id(request),
+            "model": codex_request_model(request),
             "reasoningEffort": launch_config.effort,
             "developerInstructions": Value::Null,
         }
@@ -3930,18 +4708,35 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
 }
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
+    let plugin_skills = PluginSkillResolver::load(
+        &wework_codex_home(),
+        &crate::local::capabilities::default_manifest_path(),
+    );
+    turn_input_with_plugin_skills(prompt, &plugin_skills)
+}
+
+fn turn_input_with_plugin_skills(
+    prompt: &Value,
+    plugin_skills: &PluginSkillResolver,
+) -> Vec<Value> {
     let Value::Array(items) = prompt else {
-        return text_input_with_structured_mentions(prompt_text(prompt));
+        return text_input_with_structured_mentions(prompt_text(prompt), plugin_skills);
     };
 
-    let mut input = items.iter().flat_map(turn_input_item).collect::<Vec<_>>();
+    let mut input = items
+        .iter()
+        .flat_map(|item| turn_input_item(item, plugin_skills))
+        .collect::<Vec<_>>();
     if input.is_empty() {
-        input.extend(text_input_with_structured_mentions(prompt_text(prompt)));
+        input.extend(text_input_with_structured_mentions(
+            prompt_text(prompt),
+            plugin_skills,
+        ));
     }
     input
 }
 
-fn turn_input_item(item: &Value) -> Vec<Value> {
+fn turn_input_item(item: &Value, plugin_skills: &PluginSkillResolver) -> Vec<Value> {
     let Some(kind) = item.get("type").and_then(Value::as_str) else {
         return Vec::new();
     };
@@ -3949,7 +4744,7 @@ fn turn_input_item(item: &Value) -> Vec<Value> {
         "input_text" | "text" => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input_with_structured_mentions(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
         "input_image" => item
             .get("image_url")
             .or_else(|| item.get("url"))
@@ -3977,7 +4772,7 @@ fn turn_input_item(item: &Value) -> Vec<Value> {
         _ => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input_with_structured_mentions(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned(), plugin_skills)),
     }
     .unwrap_or_default()
 }
@@ -4010,14 +4805,20 @@ fn mention_input(name: &str, path: &str) -> Value {
     json!({"type": "mention", "name": name, "path": path})
 }
 
-fn text_input_with_structured_mentions(text: String) -> Vec<Value> {
-    let (normalized_text, mentions) = extract_structured_mentions(&text);
+fn text_input_with_structured_mentions(
+    text: String,
+    plugin_skills: &PluginSkillResolver,
+) -> Vec<Value> {
+    let (normalized_text, mentions) = extract_structured_mentions(&text, plugin_skills);
     let mut input = vec![text_input(normalized_text)];
     input.extend(mentions);
     input
 }
 
-fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
+fn extract_structured_mentions(
+    text: &str,
+    plugin_skills: &PluginSkillResolver,
+) -> (String, Vec<Value>) {
     let mut output = String::with_capacity(text.len());
     let mut mentions = Vec::new();
     let mut seen_paths = std::collections::BTreeSet::new();
@@ -4057,6 +4858,9 @@ fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
         output.push_str(&visible_mention_text(name, uri));
         if seen_paths.insert(structured_mention_dedup_key(uri)) {
             mentions.push(mention);
+            if let Some(skill) = plugin_skills.resolve(uri) {
+                mentions.push(skill_input(&skill.name, &skill.path.display().to_string()));
+            }
         }
         cursor = uri_end + 1;
     }
@@ -4162,6 +4966,333 @@ fn request_user_input_result(response: Value) -> Value {
     response
 }
 
+const MCP_ELICITATION_APPROVAL_QUESTION_ID: &str = "__mcp_approval";
+const MCP_ELICITATION_ALLOW: &str = "Allow";
+const MCP_ELICITATION_ALLOW_SESSION: &str = "Allow for this session";
+const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
+const MCP_ELICITATION_DECLINE: &str = "Decline";
+
+async fn receive_mcp_server_elicitation_response(
+    message: &Value,
+    request_user_input_answers: Option<&mut CodexRequestUserInputReceiver>,
+) -> Result<Value, String> {
+    if mcp_server_elicitation_request_user_input_params(message_params(message)).is_none() {
+        return mcp_server_elicitation_response(message, None);
+    }
+    let Some(receiver) = request_user_input_answers else {
+        return mcp_server_elicitation_response(message, None);
+    };
+    let response = receiver
+        .recv()
+        .await
+        .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
+    mcp_server_elicitation_response(message, Some(&response))
+}
+
+fn mcp_server_elicitation_response(
+    message: &Value,
+    response: Option<&Value>,
+) -> Result<Value, String> {
+    let params = message_params(message);
+    let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
+    log_executor_event(
+        "codex mcp elicitation request",
+        &[
+            ("request_id", json_scalar_field(message, "id")),
+            ("thread_id", json_string_field(params, "threadId")),
+            ("turn_id", json_string_field(params, "turnId")),
+            ("server_name", json_string_field(params, "serverName")),
+            ("mode", mode.to_owned()),
+            (
+                "raw",
+                serde_json::to_string(message)
+                    .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>")),
+            ),
+        ],
+    );
+    if !matches!(mode, "form" | "openai/form") {
+        log_executor_event(
+            "codex mcp elicitation declined",
+            &[
+                ("mode", mode.to_owned()),
+                ("server_name", json_string_field(params, "serverName")),
+                ("reason", "unsupported elicitation mode".to_owned()),
+            ],
+        );
+        return Ok(mcp_server_elicitation_decline_result());
+    }
+
+    if mcp_server_elicitation_request_user_input_params(params).is_none() {
+        log_executor_event(
+            "codex mcp elicitation declined",
+            &[
+                ("mode", mode.to_owned()),
+                ("server_name", json_string_field(params, "serverName")),
+                ("reason", "unsupported elicitation schema".to_owned()),
+            ],
+        );
+        return Ok(mcp_server_elicitation_decline_result());
+    }
+
+    let Some(response) = response else {
+        return Ok(mcp_server_elicitation_cancel_result());
+    };
+    let result = mcp_server_elicitation_result(params, response);
+    log_executor_event(
+        "codex mcp elicitation response",
+        &[
+            ("request_id", json_scalar_field(message, "id")),
+            ("server_name", json_string_field(params, "serverName")),
+            ("action", json_string_field(&result, "action")),
+            (
+                "raw",
+                serde_json::to_string(&result)
+                    .unwrap_or_else(|error| format!("<failed to serialize response: {error}>")),
+            ),
+        ],
+    );
+    Ok(result)
+}
+
+pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -> Option<Value> {
+    let mode = params.get("mode").and_then(Value::as_str)?;
+    if !matches!(mode, "form" | "openai/form") {
+        return None;
+    }
+    let schema = params.get("requestedSchema")?;
+    let properties = schema.get("properties").and_then(Value::as_object)?;
+    let meta = params.get("_meta").and_then(Value::as_object);
+    let is_tool_approval = meta
+        .and_then(|meta| meta.get("codex_approval_kind"))
+        .and_then(Value::as_str)
+        == Some("mcp_tool_call");
+    let mut questions = Vec::new();
+
+    if is_tool_approval || properties.is_empty() {
+        let mut options = vec![json!({
+            "label": MCP_ELICITATION_ALLOW,
+            "description": "Allow this MCP tool call once.",
+        })];
+        if mcp_elicitation_persist_modes(meta).contains(&"session") {
+            options.push(json!({
+                "label": MCP_ELICITATION_ALLOW_SESSION,
+                "description": "Allow this tool for the current session.",
+            }));
+        }
+        if mcp_elicitation_persist_modes(meta).contains(&"always") {
+            options.push(json!({
+                "label": MCP_ELICITATION_ALLOW_ALWAYS,
+                "description": "Always allow this tool without asking again.",
+            }));
+        }
+        options.push(json!({
+            "label": MCP_ELICITATION_DECLINE,
+            "description": "Do not allow this MCP tool call.",
+        }));
+        questions.push(json!({
+            "id": MCP_ELICITATION_APPROVAL_QUESTION_ID,
+            "header": params.get("serverName").and_then(Value::as_str).unwrap_or("MCP"),
+            "question": params.get("message").and_then(Value::as_str).unwrap_or("Allow this MCP request?"),
+            "options": options,
+        }));
+    } else {
+        for (id, property) in properties {
+            questions.push(mcp_elicitation_question(id, property));
+        }
+    }
+
+    Some(json!({
+        "itemId": "mcp_server_elicitation",
+        "serverName": params.get("serverName").cloned().unwrap_or(Value::Null),
+        "message": params.get("message").cloned().unwrap_or(Value::Null),
+        "questions": questions,
+    }))
+}
+
+fn mcp_elicitation_persist_modes(meta: Option<&serde_json::Map<String, Value>>) -> Vec<&str> {
+    match meta.and_then(|meta| meta.get("persist")) {
+        Some(Value::String(mode)) => vec![mode.as_str()],
+        Some(Value::Array(modes)) => modes.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn mcp_elicitation_question(id: &str, property: &Value) -> Value {
+    let mut question = serde_json::Map::new();
+    question.insert("id".to_owned(), Value::String(id.to_owned()));
+    question.insert(
+        "header".to_owned(),
+        Value::String(
+            property
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or(id)
+                .to_owned(),
+        ),
+    );
+    question.insert(
+        "question".to_owned(),
+        Value::String(
+            property
+                .get("description")
+                .or_else(|| property.get("title"))
+                .and_then(Value::as_str)
+                .unwrap_or(id)
+                .to_owned(),
+        ),
+    );
+    let options = mcp_elicitation_property_options(property);
+    if !options.is_empty() {
+        question.insert("options".to_owned(), Value::Array(options));
+    }
+    Value::Object(question)
+}
+
+fn mcp_elicitation_property_options(property: &Value) -> Vec<Value> {
+    if property.get("type").and_then(Value::as_str) == Some("boolean") {
+        return vec![
+            json!({"label": "true", "description": "Yes"}),
+            json!({"label": "false", "description": "No"}),
+        ];
+    }
+    if let Some(options) = property.get("oneOf").and_then(Value::as_array) {
+        return options
+            .iter()
+            .filter_map(|option| {
+                let value = option.get("const").and_then(Value::as_str)?;
+                let label = option.get("title").and_then(Value::as_str).unwrap_or(value);
+                Some(json!({"label": label, "description": value}))
+            })
+            .collect();
+    }
+    if let Some(values) = property.get("enum").and_then(Value::as_array) {
+        let names = property.get("enumNames").and_then(Value::as_array);
+        return values
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| {
+                let value = value.as_str()?;
+                let label = names
+                    .and_then(|names| names.get(index))
+                    .and_then(Value::as_str)
+                    .unwrap_or(value);
+                Some(json!({"label": label, "description": value}))
+            })
+            .collect();
+    }
+    Vec::new()
+}
+
+fn mcp_server_elicitation_result(params: &Value, response: &Value) -> Value {
+    let answers = response.get("answers").and_then(Value::as_object);
+    if answers.map_or(true, serde_json::Map::is_empty) {
+        return mcp_server_elicitation_cancel_result();
+    }
+    let approval = answers
+        .and_then(|answers| answers.get(MCP_ELICITATION_APPROVAL_QUESTION_ID))
+        .and_then(|answer| answer.get("answers"))
+        .and_then(Value::as_array)
+        .and_then(|answers| answers.first())
+        .and_then(Value::as_str);
+    if approval == Some(MCP_ELICITATION_DECLINE) {
+        return mcp_server_elicitation_decline_result();
+    }
+    if let Some(approval) = approval {
+        let meta = match approval {
+            MCP_ELICITATION_ALLOW_SESSION => json!({"persist": "session"}),
+            MCP_ELICITATION_ALLOW_ALWAYS => json!({"persist": "always"}),
+            _ => Value::Null,
+        };
+        return json!({"action": "accept", "content": Value::Null, "_meta": meta});
+    }
+
+    let schema = params.get("requestedSchema").unwrap_or(&Value::Null);
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut content = serde_json::Map::new();
+    if let Some(answers) = answers {
+        for (id, answer) in answers {
+            let values = answer
+                .get("answers")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let Some(property) = properties.get(id) else {
+                continue;
+            };
+            if let Some(value) = mcp_elicitation_answer_value(property, &values) {
+                content.insert(id.clone(), value);
+            }
+        }
+    }
+    json!({"action": "accept", "content": content, "_meta": Value::Null})
+}
+
+fn mcp_elicitation_answer_value(property: &Value, values: &[Value]) -> Option<Value> {
+    let strings = values.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+    if property.get("type").and_then(Value::as_str) == Some("array") {
+        return Some(Value::Array(
+            strings
+                .into_iter()
+                .map(|value| Value::String(mcp_elicitation_enum_value(property, value)))
+                .collect(),
+        ));
+    }
+    let value = strings.first().copied()?;
+    match property.get("type").and_then(Value::as_str) {
+        Some("boolean") => value.parse::<bool>().ok().map(Value::Bool),
+        Some("integer") => value
+            .parse::<i64>()
+            .ok()
+            .map(|value| Value::Number(value.into())),
+        Some("number") => {
+            serde_json::Number::from_f64(value.parse::<f64>().ok()?).map(Value::Number)
+        }
+        _ => Some(Value::String(mcp_elicitation_enum_value(property, value))),
+    }
+}
+
+fn mcp_elicitation_enum_value(property: &Value, label: &str) -> String {
+    if let Some(options) = property.get("oneOf").and_then(Value::as_array) {
+        if let Some(value) = options.iter().find_map(|option| {
+            (option.get("title").and_then(Value::as_str) == Some(label))
+                .then(|| option.get("const").and_then(Value::as_str))
+                .flatten()
+        }) {
+            return value.to_owned();
+        }
+    }
+    if let (Some(values), Some(names)) = (
+        property.get("enum").and_then(Value::as_array),
+        property.get("enumNames").and_then(Value::as_array),
+    ) {
+        if let Some(index) = names.iter().position(|name| name.as_str() == Some(label)) {
+            if let Some(value) = values.get(index).and_then(Value::as_str) {
+                return value.to_owned();
+            }
+        }
+    }
+    label.to_owned()
+}
+
+fn mcp_server_elicitation_decline_result() -> Value {
+    json!({"action": "decline", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn mcp_server_elicitation_cancel_result() -> Value {
+    json!({"action": "cancel", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn json_rpc_request_id(message: &Value) -> Option<Value> {
+    message
+        .get("id")
+        .filter(|id| id.is_string() || id.is_number())
+        .cloned()
+}
+
 fn message_params(message: &Value) -> &Value {
     message.get("params").unwrap_or(message)
 }
@@ -4227,1010 +5358,5 @@ fn extract_text(item: &Value) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn normalize_reasoning_effort_preserves_supported_codex_levels() {
-        for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
-            assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
-        }
-    }
-
-    #[test]
-    fn normalize_reasoning_effort_maps_aliases_to_supported_codex_levels() {
-        for (value, expected) in [
-            ("minimal", "low"),
-            ("轻度", "low"),
-            ("中等", "medium"),
-            ("extra high", "xhigh"),
-            ("x-high", "xhigh"),
-            ("最高", "max"),
-            ("maximum", "max"),
-            ("极高", "ultra"),
-        ] {
-            assert_eq!(normalize_reasoning_effort(Some(value)), expected);
-        }
-    }
-
-    #[test]
-    fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
-        for value in [None, Some("off"), Some("unknown")] {
-            assert_eq!(normalize_reasoning_effort(value), DEFAULT_REASONING_EFFORT);
-        }
-    }
-
-    #[test]
-    fn wework_codex_home_defaults_to_executor_home_codex() {
-        let _lock = crate::test_env::lock();
-        let home = unique_test_path("wework-codex-home-default");
-        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        env::set_var("WEGENT_EXECUTOR_HOME", &home);
-        env::remove_var(WEGENT_CODEX_HOME_ENV);
-        env::set_var(
-            CODEX_HOME_ENV,
-            home.join("user-codex-should-not-be-wework-home"),
-        );
-
-        assert_eq!(wework_codex_home(), home.join("codex"));
-
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn wework_codex_home_prefers_explicit_wework_home() {
-        let _lock = crate::test_env::lock();
-        let executor_home = unique_test_path("wework-codex-home-executor");
-        let codex_home = unique_test_path("wework-codex-home-explicit");
-        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-        env::set_var(WEGENT_CODEX_HOME_ENV, &codex_home);
-        env::set_var(CODEX_HOME_ENV, executor_home.join("ignored-codex"));
-
-        assert_eq!(wework_codex_home(), codex_home);
-
-        let _ = fs::remove_dir_all(executor_home);
-        let _ = fs::remove_dir_all(codex_home);
-    }
-
-    #[test]
-    fn prepare_wework_codex_home_links_user_auth() {
-        let _lock = crate::test_env::lock();
-        let root = unique_test_path("wework-codex-home-auth");
-        let user_codex_home = root.join("user-codex");
-        let codex_home = root.join("wework-codex");
-        let source_auth = user_codex_home.join("auth.json");
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
-            .expect("user Codex home should be created");
-        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
-        env::set_var(CODEX_HOME_ENV, &user_codex_home);
-
-        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
-
-        let linked_auth = codex_home.join("auth.json");
-        assert!(linked_auth.is_file());
-        #[cfg(unix)]
-        assert_eq!(
-            fs::read_link(&linked_auth).expect("auth should be a symlink"),
-            source_auth
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn prepare_wework_codex_home_replaces_stale_auth_link() {
-        let _lock = crate::test_env::lock();
-        let root = unique_test_path("wework-codex-home-stale-auth");
-        let user_codex_home = root.join("user-codex");
-        let codex_home = root.join("wework-codex");
-        let source_auth = user_codex_home.join("auth.json");
-        let stale_source = root.join("missing-auth.json");
-        let linked_auth = codex_home.join("auth.json");
-        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
-            .expect("user Codex home should be created");
-        fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
-        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
-        std::os::unix::fs::symlink(&stale_source, &linked_auth)
-            .expect("stale auth link should be created");
-        env::set_var(CODEX_HOME_ENV, &user_codex_home);
-
-        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
-
-        assert_eq!(
-            fs::read_link(&linked_auth).expect("auth should be a symlink"),
-            source_auth
-        );
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn prepare_wework_codex_home_migrates_base_instruction_override() {
-        let _lock = crate::test_env::lock();
-        let root = unique_test_path("wework-codex-config-migration");
-        let codex_home = root.join("codex");
-        fs::create_dir_all(&codex_home).expect("Codex home should be created");
-        fs::write(
-            codex_home.join("config.toml"),
-            "instructions = \"用中文回复\"\n",
-        )
-        .expect("legacy config should be written");
-
-        prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
-
-        let config = fs::read_to_string(codex_home.join("config.toml"))
-            .expect("normalized config should be readable");
-        assert!(!config
-            .lines()
-            .any(|line| line.starts_with("instructions =")));
-        assert!(config.contains("developer_instructions"));
-        assert!(config.contains("用中文回复"));
-        assert!(config.contains("browser_navigate"));
-        assert!(config.contains("personality = \"pragmatic\""));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn codex_raw_log_preview_summarizes_large_command_output() {
-        let output = "x".repeat(4096);
-        let message = json!({
-            "method": "item/completed",
-            "params": {
-                "item": {
-                    "id": "cmd-1",
-                    "type": "commandExecution",
-                    "aggregatedOutput": output,
-                }
-            }
-        });
-
-        let preview = codex_raw_log_preview(&message);
-
-        assert!(preview.contains("4096 chars omitted"));
-        assert!(!preview.contains(&"x".repeat(512)));
-        assert_eq!(
-            serialized_json_len(&message).expect("message length should serialize"),
-            serde_json::to_string(&message)
-                .expect("message should serialize")
-                .len()
-        );
-    }
-
-    #[test]
-    fn codex_launch_config_enables_streaming_patch_updates() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-
-        assert!(launch_config
-            .config_overrides
-            .contains(&CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned()));
-        assert!(launch_config
-            .config_overrides
-            .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
-    }
-
-    #[test]
-    fn codex_launch_config_forwards_web_search_mode() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-                "web_search": "disabled",
-                "image_generation": false,
-                "model_context_window": 128000,
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-        let params = thread_start_params(&request, &launch_config);
-        let config = params
-            .get("config")
-            .and_then(Value::as_object)
-            .expect("thread config should be present");
-
-        assert_eq!(config.get("web_search"), Some(&json!("disabled")));
-        assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
-        assert_eq!(config.get("model_context_window"), Some(&json!(128000)));
-    }
-
-    #[test]
-    fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "mimo-v2.5-pro",
-                "base_url": "http://models.local/v1",
-                "api_key": "sk-local",
-                "api_format": "responses",
-                "codex_responses_compat_proxy": true,
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-
-        assert!(launch_config.config_overrides.iter().any(|override_value| {
-            override_value.starts_with("model_providers.wecode-openai.base_url=\"http://127.0.0.1:")
-                && override_value.ends_with("/v1/codex-responses-proxy\"")
-        }));
-        assert!(launch_config.config_overrides.iter().any(|override_value| {
-            override_value
-                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"codex-")
-        }));
-    }
-
-    #[test]
-    fn codex_launch_config_forwards_runtime_proxy_env() {
-        let request = ExecutionRequest {
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-                "proxy": {
-                    "url": "http://127.0.0.1:7890"
-                },
-                "runtime_config": {
-                    "codex": {
-                        "use_proxy": true
-                    }
-                }
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-
-        assert_eq!(
-            launch_config.env.get("HTTP_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-        assert_eq!(
-            launch_config.env.get("HTTPS_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-        assert_eq!(
-            launch_config.env.get("ALL_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-    }
-
-    #[test]
-    fn codex_launch_config_does_not_forward_task_identity() {
-        let request = ExecutionRequest {
-            task_id: "task-525".to_owned(),
-            auth_token: Some("task-jwt".to_owned()),
-            skill_identity_token: Some("skill-jwt".to_owned()),
-            user_name: Some("alice".to_owned()),
-            prompt: Value::String("create a file".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5-codex",
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-        let params = thread_start_params(&request, &launch_config);
-        let config = params
-            .get("config")
-            .and_then(Value::as_object)
-            .expect("thread config should include shell env");
-
-        assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
-        assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
-        assert!(config
-            .get("shell_environment_policy.set.WEGENT_TASK_ID")
-            .is_none());
-        assert!(config
-            .get("shell_environment_policy.set.AUTH_TOKEN")
-            .is_none());
-        assert!(config
-            .get("shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN")
-            .is_none());
-        assert!(config
-            .get("shell_environment_policy.set.WEGENT_SKILL_USER_NAME")
-            .is_none());
-    }
-
-    #[test]
-    fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
-        let request_launch_config = CodexLaunchConfig {
-            env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
-            config_overrides: vec![
-                "model_provider=wecode-openai".to_owned(),
-                "mcp_servers.wework.command=\"node\"".to_owned(),
-            ],
-            model_provider: Some("wecode-openai".to_owned()),
-            effort: Some("high".to_owned()),
-            summary: Some("auto".to_owned()),
-            ..CodexLaunchConfig::default()
-        };
-
-        let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
-
-        assert_eq!(
-            launch_config.env.get("HTTP_PROXY").map(String::as_str),
-            Some("http://127.0.0.1:7890")
-        );
-        assert_eq!(launch_config.config_overrides, vec!["goals=true"]);
-        assert!(launch_config.model_provider.is_none());
-        assert!(launch_config.effort.is_none());
-        assert!(launch_config.summary.is_none());
-    }
-
-    #[test]
-    fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "phase": "commentary",
-                    "delta": "I will inspect."
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: String::new()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "channel": "commentary",
-                    "delta": "I will inspect."
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: String::new()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_keeps_completed_plan_out_of_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": "turn-1-plan",
-                        "type": "plan",
-                        "text": "# Plan\n\n- Execute the steps."
-                    }
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: String::new()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_routes_item_id_deltas_by_started_phase() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-commentary",
-                        "type": "agentMessage",
-                        "phase": "commentary",
-                        "text": ""
-                    }
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-commentary",
-                    "delta": "I will inspect."
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/started",
-                "params": {
-                    "item": {
-                        "id": "msg-final",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": ""
-                    }
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "itemId": "msg-final",
-                    "delta": "Done."
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "Done.".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "delta": "Current directory: /tmp/project"
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "Current directory: /tmp/project".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
-        let mut request = ExecutionRequest {
-            prompt: Value::String("plan this".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5",
-            }),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "collaborationMode".to_owned(),
-            Value::String("plan".to_owned()),
-        );
-        let launch_config = CodexLaunchConfig {
-            effort: Some("high".to_owned()),
-            ..CodexLaunchConfig::default()
-        };
-
-        let params = turn_start_params(
-            "thread-1",
-            &request,
-            &launch_config,
-            vec![json!({"type": "text", "text": "plan this"})],
-        );
-
-        assert_eq!(params["collaborationMode"]["mode"], "plan");
-        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
-        assert_eq!(
-            params["collaborationMode"]["settings"]["reasoningEffort"],
-            "high"
-        );
-        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
-    }
-
-    #[test]
-    fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
-        let input = turn_input(&Value::String(
-            "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
-                json!({
-                    "type": "skill",
-                    "name": "linear",
-                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_expands_legacy_skill_markdown_mentions_for_app_server() {
-        let input = turn_input(&Value::String(
-            "[$linear](skill:///Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage"
-                .to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
-                json!({
-                    "type": "skill",
-                    "name": "linear",
-                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_deduplicates_legacy_and_absolute_references_to_the_same_skill() {
-        let input = turn_input(&Value::String(
-            "[$linear](skill:///Users/me/skills/linear/SKILL.md) then [$linear](/Users/me/skills/linear/SKILL.md)"
-                .to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({
-                    "type": "text",
-                    "text": "$linear then $linear",
-                    "text_elements": [],
-                }),
-                json!({
-                    "type": "skill",
-                    "name": "linear",
-                    "path": "/Users/me/skills/linear/SKILL.md",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
-        let input = turn_input(&Value::String(
-            "Use [$calendar](app://google-calendar) and [$sample](plugin://sample@test)".to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![
-                json!({
-                    "type": "text",
-                    "text": "Use $calendar and @sample",
-                    "text_elements": [],
-                }),
-                json!({
-                    "type": "mention",
-                    "name": "calendar",
-                    "path": "app://google-calendar",
-                }),
-                json!({
-                    "type": "mention",
-                    "name": "sample",
-                    "path": "plugin://sample@test",
-                }),
-            ]
-        );
-    }
-
-    #[test]
-    fn turn_input_converts_composer_file_references_to_plain_paths() {
-        let input = turn_input(&Value::String(
-            "Inspect [$frontend](folder://%2FUsers%2Fme%2FMy%20Project%2Ffrontend) and [$auth.ts](file://%2FUsers%2Fme%2FMy%20Project%2Ffrontend%2Fauth.ts)"
-                .to_owned(),
-        ));
-
-        assert_eq!(
-            input,
-            vec![json!({
-                "type": "text",
-                "text": "Inspect \"/Users/me/My Project/frontend\" and \"/Users/me/My Project/frontend/auth.ts\"",
-                "text_elements": [],
-            })]
-        );
-    }
-
-    #[test]
-    fn codex_launch_config_includes_cdp_browser_mcp_server() {
-        let _lock = crate::test_env::lock();
-        let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
-        let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-        env::set_var("WEGENT_EXECUTOR_HOME", &home);
-        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
-        let request = ExecutionRequest {
-            task_id: "task:123".to_owned(),
-            ..ExecutionRequest::default()
-        };
-
-        let launch_config = build_codex_launch_config(&request);
-        let params = thread_start_params(&request, &launch_config);
-        let config = params
-            .get("config")
-            .and_then(Value::as_object)
-            .expect("thread config should be present");
-        assert!(!config.contains_key("developer_instructions"));
-        assert_eq!(
-            config["skills.config"],
-            json!([
-                {
-                    "name": "browser:control-in-app-browser",
-                    "enabled": false,
-                },
-                {
-                    "name": "chrome:control-chrome",
-                    "enabled": false,
-                },
-            ])
-        );
-        assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
-        assert_eq!(
-            config["mcp_servers.wework_browser.command"],
-            env::current_exe().unwrap().display().to_string()
-        );
-        assert_eq!(
-            config["mcp_servers.wework_browser.args"],
-            json!(["browser-mcp-server"])
-        );
-        assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
-        assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
-        assert_eq!(
-            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
-            "http://127.0.0.1:43127"
-        );
-        assert_eq!(
-            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
-            "workspace-browser-task-123"
-        );
-
-        if let Some(old_home) = old_home {
-            env::set_var("WEGENT_EXECUTOR_HOME", old_home);
-        } else {
-            env::remove_var("WEGENT_EXECUTOR_HOME");
-        }
-        if let Some(old_bridge_addr) = old_bridge_addr {
-            env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
-        } else {
-            env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-        }
-    }
-
-    #[test]
-    fn turn_start_params_includes_default_collaboration_mode_when_requested() {
-        let mut request = ExecutionRequest {
-            prompt: Value::String("continue this".to_owned()),
-            model_config: json!({
-                "model_id": "gpt-5.5",
-            }),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "collaborationMode".to_owned(),
-            Value::String("default".to_owned()),
-        );
-        let launch_config = CodexLaunchConfig {
-            effort: Some("medium".to_owned()),
-            ..CodexLaunchConfig::default()
-        };
-
-        let params = turn_start_params(
-            "thread-1",
-            &request,
-            &launch_config,
-            vec![json!({"type": "text", "text": "continue this"})],
-        );
-
-        assert_eq!(params["collaborationMode"]["mode"], "default");
-        assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
-        assert_eq!(
-            params["collaborationMode"]["settings"]["reasoningEffort"],
-            "medium"
-        );
-        assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
-    }
-
-    #[test]
-    fn thread_goal_set_params_maps_initial_goal() {
-        let params = thread_goal_set_params(
-            "thread-1",
-            &json!({
-                "objective": "ship the feature",
-                "status": "paused",
-                "tokenBudget": 1200,
-            }),
-        )
-        .expect("initial goal should map to Codex goal params");
-
-        assert_eq!(
-            params,
-            json!({
-                "threadId": "thread-1",
-                "objective": "ship the feature",
-                "status": "paused",
-                "tokenBudget": 1200,
-            })
-        );
-    }
-
-    #[test]
-    fn thread_goal_set_params_rejects_empty_objective() {
-        let error = thread_goal_set_params("thread-1", &json!({"objective": "   "}))
-            .expect_err("empty objective should be rejected");
-
-        assert_eq!(error, "initial goal objective is required");
-    }
-
-    #[test]
-    fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("thread-root");
-
-        let active_item = json!({
-            "method": "item/started",
-            "params": {
-                "threadId": "thread-root",
-                "turnId": "turn-current",
-                "item": { "type": "reasoning" }
-            }
-        });
-        assert_eq!(
-            active_root_turn_notification_id(&active_item, &state).as_deref(),
-            Some("turn-current")
-        );
-
-        let completed_turn = json!({
-            "method": "turn/completed",
-            "params": {
-                "threadId": "thread-root",
-                "turn": { "id": "turn-current", "status": "completed" }
-            }
-        });
-        assert_eq!(
-            active_root_turn_notification_id(&completed_turn, &state),
-            None
-        );
-
-        let child_item = json!({
-            "method": "item/started",
-            "params": {
-                "threadId": "thread-root",
-                "turnId": "child-turn",
-                "agentPath": "/root/worker",
-                "item": { "type": "reasoning" }
-            }
-        });
-        assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
-    }
-
-    #[test]
-    fn codex_run_state_ignores_subagent_turn_completion() {
-        let mut state = CodexRunState::default();
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "delta": "Still working"
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed",
-                        "agent_path": "/root/worker"
-                    }
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "turn": {
-                        "status": "completed",
-                        "agent_path": "/root"
-                    }
-                }
-            }))
-            .expect("root turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "Still working".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_ignores_cross_thread_final_deltas() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("root-thread");
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "threadId": "child-thread",
-                    "turnId": "child-turn",
-                    "itemId": "msg-child",
-                    "delta": "child"
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "threadId": "root-thread",
-                    "turnId": "root-turn",
-                    "itemId": "msg-root",
-                    "delta": "root"
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "root-thread",
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("root turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "root".to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn codex_run_state_ignores_cross_thread_turn_completion() {
-        let mut state = CodexRunState::default();
-        state.set_root_thread_id("root-thread");
-
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/agentMessage/delta",
-                "params": {
-                    "threadId": "root-thread",
-                    "turnId": "root-turn",
-                    "itemId": "msg-root",
-                    "delta": "root"
-                }
-            }))
-            .is_none());
-        assert!(state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "child-thread",
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .is_none());
-
-        let outcome = state
-            .handle_message(&json!({
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "root-thread",
-                    "turn": {
-                        "status": "completed"
-                    }
-                }
-            }))
-            .expect("root turn completion should produce an outcome");
-
-        assert_eq!(
-            outcome,
-            ExecutionOutcome::Completed {
-                content: "root".to_owned()
-            }
-        );
-    }
-}
+#[path = "codex/tests.rs"]
+mod tests;
