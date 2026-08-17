@@ -106,6 +106,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       canSend,
@@ -1236,11 +1237,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
     const handleCompositionStart = useCallback(() => {
       setIsComposing(true)
+      onCompositionStart?.()
       debugComposerEvent('composition-start', {
         propValue: textMetrics(valueRef.current),
         suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
       })
-    }, [])
+    }, [onCompositionStart])
 
     const handleCompositionEnd = useCallback(() => {
       setIsComposing(false)

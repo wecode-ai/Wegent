@@ -136,6 +136,7 @@ export interface ChatInputProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (
     valueOverride?: string,
@@ -545,6 +546,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     value,
     onChange,
     onBlur,
+    onCompositionStart,
     onCompositionEnd,
     onSubmit,
     disabled,
@@ -778,6 +780,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     value,
     onChange,
     onBlur,
+    onCompositionStart,
     onCompositionEnd,
     onSubmit: handleSubmit,
     disabled,
