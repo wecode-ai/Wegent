@@ -14,9 +14,11 @@ Tests the image generation agent workflow including:
 import asyncio
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from app.services.attachment.public_link import verify_public_attachment_token
 from shared.models import EventType, ExecutionRequest
 
 
@@ -393,6 +395,15 @@ class TestImageAgent:
         done_event = done_calls[0][0][0]
         image_urls = done_event.result["blocks"][0]["image_urls"]
         assert image_urls == ["/api/attachments/999/download"]
+        image_download_urls = done_event.result["blocks"][0]["image_download_urls"]
+        download_token = parse_qs(urlparse(image_download_urls[0]).query)["token"][0]
+        token_payload = verify_public_attachment_token(download_token)
+        assert token_payload["attachment_id"] == 999
+        assert token_payload["exp"] - token_payload["iat"] == 3600
+        assert (
+            done_event.result["blocks"][0]["image_download_url_expires_in_seconds"]
+            == 3600
+        )
         uploaded_url = mock_upload.await_args.kwargs["image_url"]
         assert uploaded_url.startswith("data:image/jpeg;base64,")
 
