@@ -18,6 +18,8 @@ flowchart LR
     SETTINGS[设备 slot_max] --> SCHEDULER[Runtime scheduler]
     SCHEDULER --> CLAIM
     SCHEDULER --> CAPACITY[slot_used / slot_max 投影]
+    WECODE[wecode Nevis 云设备] --> LEGACY[兼容投影: running task 数 / 0]
+    LEGACY --> VIEW
 ```
 
 ```mermaid
@@ -53,8 +55,9 @@ sequenceDiagram
 | claim、attempt 与状态转换  | `backend/app/services/loop_item_executions/service.py`          |
 | scheduler、slot 与真实进程 | `executor/src/runner/`、`executor/src/runtime_work/`            |
 | 本地 IPC 和 Runtime RPC    | `executor/src/local/app_ipc.rs`、Backend device runtime service |
+| wecode 云设备兼容投影      | `backend/wecode/service/cloud_device_provider.py`               |
 | UI 投影                    | Wework workbench stores 与 board queries                        |
 
-不变量：attempt 身份和事件序列必须匹配；迟到事件不能覆盖新 attempt；终态与 slot 释放原子发生；取消发送不等于取消成功；容量属于各设备 Runtime scheduler，聚合容量不是执行真值；UI 不推导或回写运行状态。
+不变量：attempt 身份和事件序列必须匹配；迟到事件不能覆盖新 attempt；终态与 slot 释放原子发生；取消发送不等于取消成功；容量属于各设备 Runtime scheduler，聚合容量不是执行真值；wecode Nevis 云设备的 `slot_max=0` 仅是保持既有“不限容量”UI 语义的兼容哨兵，不得作为 Runtime scheduler 的容量真值；UI 不推导或回写运行状态。
 
 详细状态矩阵与验收见 [项目执行状态真实性重构](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md)。

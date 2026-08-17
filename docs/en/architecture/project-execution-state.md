@@ -18,6 +18,8 @@ flowchart LR
     SETTINGS[device slot_max] --> SCHEDULER[Runtime scheduler]
     SCHEDULER --> CLAIM
     SCHEDULER --> CAPACITY[slot_used / slot_max projection]
+    WECODE[wecode Nevis cloud device] --> LEGACY[compatibility projection: running task count / 0]
+    LEGACY --> VIEW
 ```
 
 ```mermaid
@@ -53,8 +55,9 @@ sequenceDiagram
 | Claim, attempt, and state transitions | `backend/app/services/loop_item_executions/service.py`          |
 | Scheduler, slots, and real process    | `executor/src/runner/`, `executor/src/runtime_work/`            |
 | Local IPC and Runtime RPC             | `executor/src/local/app_ipc.rs`, Backend device runtime service |
+| wecode cloud compatibility projection | `backend/wecode/service/cloud_device_provider.py`               |
 | UI projection                         | Wework workbench stores and board queries                       |
 
-Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; UI never derives or writes runtime state.
+Invariants: attempt identity and event sequence must match; late events cannot overwrite a newer attempt; terminal state and slot release are atomic; sending cancellation is not cancellation success; capacity belongs to each device Runtime scheduler and aggregate capacity is not execution truth; `slot_max=0` for wecode Nevis cloud devices is only a compatibility sentinel preserving the existing unbounded-capacity UI semantics and must not be treated as Runtime scheduler capacity truth; UI never derives or writes runtime state.
 
 See [project execution state-of-truth refactoring](../wework/developer-guide/wework-project-execution-state-truth-refactoring.md) for the detailed state matrix and acceptance coverage.
