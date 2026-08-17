@@ -789,14 +789,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', customManagerTaskResult)
+    await control.command('click', customManagerTaskResult, { visible: true })
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail"]`, {
       text: customManagerTask.title,
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    const customManagerCard =
-      '[data-executor-type="automation_manager"][data-manager-type="custom"]'
+    const customManagerCard = `${activeBoard} [data-executor-type="automation_manager"][data-manager-type="custom"]`
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,

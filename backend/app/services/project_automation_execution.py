@@ -754,6 +754,7 @@ class ProjectAutomationExecution:
         activity_metadata.update(
             {
                 "execution_id": execution.id,
+                "executor_type": execution.executor_type,
                 "run_status": "queued",
                 "execution_device_id": execution.execution_device_id,
             }
