@@ -1,0 +1,97 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000002",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-b9ef5aa0aa82",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/board-automation.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Board assignment exposes nullable domain semantics independently from physical storage",
+      "subject": "arch://wegent/domain/board-assignment-truth",
+      "timestamp": "2026-08-17T10:12:01Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-5d5d2dc4be9b",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/board-automation.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Production MySQL stores an unassigned loop_items Team as 0 and normalizes it to null at the API boundary",
+      "subject": "arch://wegent/storage/mysql-optional-assignee-sentinel",
+      "timestamp": "2026-08-17T10:12:02Z"
+    },
+    {
+      "action": "assert",
+      "change_id": "chg-bdeeeb9cfa00",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/models/delivery.py,backend/app/schemas/delivery.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Dialect adapter writes 0 only for a NOT NULL MySQL assignee_team_id column and response validation restores null",
+      "subject": "arch://wegent/storage/mysql-optional-assignee-sentinel",
+      "timestamp": "2026-08-17T10:12:02Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-9c0989715772",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/tests/schemas/test_delivery.py,backend/tests/services/test_loop_item_assignment.py,backend/tests/services/test_external_loop_item_execution.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Tests preserve positive Team IDs and nullable API semantics across internal and external assignment flows",
+      "subject": "arch://wegent/domain/board-assignment-truth",
+      "timestamp": "2026-08-17T10:12:02Z"
+    },
+    {
+      "action": "add-edge",
+      "change_id": "chg-4f333d22e1dc",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/board-automation.md"
+      ],
+      "object": "arch://wegent/domain/board-assignment-truth",
+      "plane": "model",
+      "predicate": "normalizes-to",
+      "reason": "Physical sentinel 0 is converted to nullable board-assignment semantics before API exposure",
+      "relationship_id": "rel://93d4431d85d9e6c8e99a07d0ff29bd0740ec7cad5dee4036ad1bba64411456d5",
+      "subject": "arch://wegent/storage/mysql-optional-assignee-sentinel",
+      "timestamp": "2026-08-17T10:12:42Z"
+    }
+  ],
+  "created_at": "2026-08-17T10:09:15Z",
+  "id": "tx-2c352ef393d7",
+  "intent": "Preserve production MySQL NOT NULL sentinel semantics for optional Team assignee fields without changing assignment, query, serialization, or execution behavior",
+  "merged_revision": "A00000003",
+  "read_set": [
+    "arch://wegent/domain/board-assignment-truth",
+    "arch://wegent/storage/mysql-optional-assignee-sentinel"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-17T10:12:51Z",
+  "write_set": [
+    "arch://wegent/domain/board-assignment-truth",
+    "arch://wegent/storage/mysql-optional-assignee-sentinel",
+    "rel://93d4431d85d9e6c8e99a07d0ff29bd0740ec7cad5dee4036ad1bba64411456d5"
+  ]
+}
