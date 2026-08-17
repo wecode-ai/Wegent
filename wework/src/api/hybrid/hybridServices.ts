@@ -520,6 +520,7 @@ export function createHybridWorkbenchServices(
         cloudModelGateway,
         user: options.user,
         syncConfiguredModelCatalog: true,
+        prepareRuntimeModel: data => runtimeApi(logicalDeviceId).prepareRuntimeModel(data),
       },
       logicalDeviceId,
       'cloud'

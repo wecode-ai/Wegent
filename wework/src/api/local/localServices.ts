@@ -494,8 +494,16 @@ interface RuntimeWorkIpcOptions {
   resolveDeviceName?: (deviceId: string) => string | undefined
 }
 
+interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
+  prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
+}
+
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
+}
+
+function modelCatalogSyncCancelled(): Error {
+  return new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
 }
 
 function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
@@ -2329,9 +2337,6 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
 
-  const modelCatalogSyncCancelled = () =>
-    new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
-
   return {
     prepareRuntimeModel,
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
@@ -2928,7 +2933,7 @@ function withAutomationRunSource(
 export function createAutomationApiFromIpc(
   request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
   requestWithLocalDevice: RequestWithLocalDevice,
-  options: RuntimeWorkIpcOptions,
+  options: AutomationIpcOptions,
   automationDeviceId = LOCAL_DEVICE_ID,
   source: AutomationSource = 'local'
 ): NonNullable<WorkbenchServices['automationApi']> {
@@ -2942,6 +2947,22 @@ export function createAutomationApiFromIpc(
     const localDeviceId = await resolveDeviceId(
       data.taskRequest as unknown as Record<string, unknown>
     )
+    const continuationRequest =
+      data.conversationMode === 'continue_thread' && data.continuationPayload
+        ? (data.continuationPayload as unknown as RuntimeSendRequest)
+        : null
+    const modelIds = new Set(
+      [
+        data.taskRequest.modelId,
+        data.taskRequest.initialSupervisor?.modelSelection?.modelName,
+        continuationRequest?.modelId,
+      ].filter((modelId): modelId is string => Boolean(modelId))
+    )
+    for (const modelId of modelIds) {
+      if (!(await options.prepareRuntimeModel({ deviceId: localDeviceId, modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+    }
     const taskPayload = await createLocalRuntimeTaskPayload(
       data.taskRequest,
       localDeviceId,
@@ -2950,16 +2971,15 @@ export function createAutomationApiFromIpc(
       user,
       requireLocalCodexCatalog
     )
-    const continuationPayload =
-      data.conversationMode === 'continue_thread' && data.continuationPayload
-        ? createLocalRuntimeSendPayload(
-            data.continuationPayload as unknown as RuntimeSendRequest,
-            localDeviceId,
-            options.cloudModelGateway,
-            user,
-            requireLocalCodexCatalog
-          )
-        : null
+    const continuationPayload = continuationRequest
+      ? createLocalRuntimeSendPayload(
+          continuationRequest,
+          localDeviceId,
+          options.cloudModelGateway,
+          user,
+          requireLocalCodexCatalog
+        )
+      : null
     return {
       id: data.id ?? '',
       version: data.version ?? 0,
@@ -3245,6 +3265,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     {
       cloudModelGateway: deps.cloudModelGateway,
       user: deps.user,
+      prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
   )
   const deliveryApi = createLocalDeliveryApi(request)

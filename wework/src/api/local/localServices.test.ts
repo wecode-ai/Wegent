@@ -1726,24 +1726,52 @@ describe('createLocalAppServices', () => {
 
   test('builds cloud automation payloads from a remotely synchronized model catalog', async () => {
     saveLocalModelConfig({
-      id: 'cloud-automation',
-      displayName: 'Cloud Automation',
-      modelId: 'qwen3-coder',
+      id: 'cloud-automation-task',
+      displayName: 'Cloud Automation Task',
+      modelId: 'qwen3-coder-task',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: 'cloud-device-key',
+      catalogReady: false,
+    })
+    saveLocalModelConfig({
+      id: 'cloud-automation-continuation',
+      displayName: 'Cloud Automation Continuation',
+      modelId: 'qwen3-coder-continuation',
       baseUrl: 'http://localhost:11434/v1',
       apiKey: 'cloud-device-key',
       catalogReady: false,
     })
     const request = vi
       .fn()
-      .mockImplementation(async (_method: string, data: Record<string, unknown>) => ({
-        automation: data.automation,
-      }))
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+        if (method === 'runtime.codex.models.list') {
+          return {
+            data: [
+              { id: 'wework-custom-cloud-automation-task' },
+              { id: 'wework-custom-cloud-automation-continuation' },
+            ],
+          }
+        }
+        if (method === 'runtime.automations.create') return { automation: data.automation }
+        return { saved: true }
+      })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+    const prepareRuntimeModel = vi.fn(data => runtimeApi.prepareRuntimeModel(data))
     const automationApi = createAutomationApiFromIpc(
       request,
       (method, data) => request(method, data as Record<string, unknown>),
       {
         resolveDeviceId: async () => 'cloud-device',
         syncConfiguredModelCatalog: true,
+        prepareRuntimeModel,
       },
       'cloud-device',
       'cloud'
@@ -1764,7 +1792,7 @@ describe('createLocalAppServices', () => {
         teamId: 0,
         runtime: 'codex',
         message: 'Run remotely',
-        modelId: 'local-model:cloud-automation',
+        modelId: 'local-model:cloud-automation-task',
       },
       continuationPayload: {
         address: {
@@ -1773,7 +1801,7 @@ describe('createLocalAppServices', () => {
           taskId: 'cloud-task',
         },
         message: 'Continue remotely',
-        modelId: 'local-model:cloud-automation',
+        modelId: 'local-model:cloud-automation-continuation',
       },
     })
 
@@ -1781,17 +1809,144 @@ describe('createLocalAppServices', () => {
       ([method]) => method === 'runtime.automations.create'
     )?.[1].automation
     expect(automation.taskPayload.executionRequest.model_config).toMatchObject({
-      model_id: 'qwen3-coder',
+      model_id: 'qwen3-coder-task',
       api_key: 'cloud-device-key',
     })
     expect(automation.continuationPayload.executionRequest.model_config).toMatchObject({
-      model_id: 'qwen3-coder',
+      model_id: 'qwen3-coder-continuation',
       api_key: 'cloud-device-key',
     })
-    expect(listLocalModelConfigs()[0]).toMatchObject({
-      id: 'cloud-automation',
+    expect(prepareRuntimeModel).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-automation-task',
+    })
+    expect(prepareRuntimeModel).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-automation-continuation',
+    })
+    const methods = request.mock.calls.map(([method]) => method)
+    expect(methods.indexOf('runtime.codex.catalog.custom.write')).toBeLessThan(
+      methods.indexOf('runtime.automations.create')
+    )
+    expect(methods.indexOf('runtime.codex.app_server.restart')).toBeLessThan(
+      methods.indexOf('runtime.automations.create')
+    )
+    expect(methods.indexOf('runtime.codex.models.list')).toBeLessThan(
+      methods.indexOf('runtime.automations.create')
+    )
+  })
+
+  test('does not create a cloud automation when model catalog synchronization is cancelled', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-automation-cancelled',
+      displayName: 'Cloud Automation Cancelled',
+      modelId: 'cancelled-model',
+      baseUrl: 'http://localhost:11434/v1',
       catalogReady: false,
     })
+    const request = vi.fn()
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: vi.fn().mockResolvedValue(false),
+    })
+    const automationApi = createAutomationApiFromIpc(
+      request,
+      (method, data) => request(method, data as Record<string, unknown>),
+      {
+        resolveDeviceId: async () => 'cloud-device',
+        syncConfiguredModelCatalog: true,
+        prepareRuntimeModel: data => runtimeApi.prepareRuntimeModel(data),
+      },
+      'cloud-device',
+      'cloud'
+    )
+
+    await expect(
+      automationApi.createAutomation({
+        source: 'cloud',
+        name: 'Cancelled automation',
+        prompt: 'Do not save',
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'UTC',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        taskRequest: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          teamId: 0,
+          runtime: 'codex',
+          message: 'Do not save',
+          modelId: 'local-model:cloud-automation-cancelled',
+        },
+      })
+    ).rejects.toThrow()
+    expect(request).not.toHaveBeenCalledWith(
+      'runtime.automations.create',
+      expect.anything(),
+      'cloud-device'
+    )
+  })
+
+  test('does not create a cloud automation when synchronized model verification fails', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-automation-missing',
+      displayName: 'Cloud Automation Missing',
+      modelId: 'missing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') return { data: [] }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+    const automationApi = createAutomationApiFromIpc(
+      request,
+      (method, data) => request(method, data as Record<string, unknown>),
+      {
+        resolveDeviceId: async () => 'cloud-device',
+        syncConfiguredModelCatalog: true,
+        prepareRuntimeModel: data => runtimeApi.prepareRuntimeModel(data),
+      },
+      'cloud-device',
+      'cloud'
+    )
+
+    await expect(
+      automationApi.createAutomation({
+        source: 'cloud',
+        name: 'Missing automation',
+        prompt: 'Do not save',
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'UTC',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        taskRequest: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          teamId: 0,
+          runtime: 'codex',
+          message: 'Do not save',
+          modelId: 'local-model:cloud-automation-missing',
+        },
+      })
+    ).rejects.toThrow()
+    expect(request).not.toHaveBeenCalledWith(
+      'runtime.automations.create',
+      expect.anything(),
+      'cloud-device'
+    )
   })
 
   test('synchronizes the same configured catalog independently for each cloud device', async () => {
