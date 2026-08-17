@@ -126,6 +126,24 @@ async function waitForWorkbenchDebugState(control, predicate, message) {
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
+async function waitForStableSnapshot(control, predicate, message) {
+  const startedAt = Date.now()
+  let stableSince = null
+  let lastSnapshot = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    lastSnapshot = snapshot
+    if (predicate(snapshot)) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= 500) return snapshot
+    } else {
+      stableSince = null
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
+}
+
 async function captureVerificationScreenshot(control, name, selector = 'body') {
   if (
     process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
@@ -440,8 +458,31 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board"]')
-  const activeBoardContentSelector =
-    '[data-testid^="workspace-tab-content-board-"][aria-hidden="false"]'
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  const activeBoardTabPrefix = 'workspace-tab-select-board-'
+  assert.ok(
+    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
+    'The active work-item board tab identity was unavailable'
+  )
+  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
+  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
+  await waitForStableSnapshot(
+    control,
+    snapshot =>
+      snapshot.location.includes(`workspaceTab=board-${activeBoardTabSuffix}`) &&
+      !snapshot.location.includes('itemId=') &&
+      snapshot.testIds.includes(`workspace-tab-content-board-${activeBoardTabSuffix}`) &&
+      !snapshot.testIds.includes('cloud-todo-board-loading') &&
+      snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
+    'The work-item board did not settle on the completed tracked task'
+  )
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-todo-column-completed"]`,
@@ -455,29 +496,28 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-completed-on-board.png',
     activeBoardContentSelector
   )
-  await control.command(
-    'markElementWithText',
-    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-"]`,
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      value: 'tracked-work-item-card',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  const boardCardSelector = [
+    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
+    ':not([data-testid^="cloud-todo-card-task-"])',
+    ':not([data-testid^="cloud-todo-card-more-"])',
+    ':not([data-testid^="cloud-todo-card-archive-"])',
+    ':not([data-testid^="cloud-todo-card-add-child-"])',
+  ].join('')
+  await control.command('markElementWithText', boardCardSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    value: 'tracked-work-item-card',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command(
     'click',
     `${activeBoardContentSelector} [data-e2e-anchor-id="tracked-work-item-card"]`
   )
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
-    {
-      text: 'WEWORK_DESKTOP_E2E_TASK',
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail"] [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeTaskConversationSelector = '[data-testid^="cloud-todo-open-task-conversation-"]'
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -485,39 +525,29 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await control.command('click', activeTaskConversationSelector, {
     visible: true,
   })
-  await control.command('waitFor', `${activeBoardContentSelector} [data-testid="ai-chat-modal"]`, {
+  await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="work-item-task-chat-panel"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', '[data-testid="work-item-task-chat-panel"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(
     control,
     'workspace-06-task-quick-conversation.png',
     activeBoardContentSelector
   )
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-testid="ai-chat-modal-close"]`
-  )
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command(
-    'click',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-detail-close"]`
-  )
+  await control.command('click', '[data-testid="ai-chat-modal-close"]', {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-todo-detail-close"]', {
+    visible: true,
+  })
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"][data-embedded="false"]`,
