@@ -455,7 +455,29 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-completed-on-board.png',
     activeBoardContentSelector
   )
-  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command(
+    'markElementWithText',
+    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      value: 'tracked-work-item-card',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    `${activeBoardContentSelector} [data-e2e-anchor-id="tracked-work-item-card"]`
+  )
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail"] [data-testid^="cloud-todo-open-task-conversation-"]`
   await control.command('waitFor', activeTaskConversationSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
