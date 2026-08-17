@@ -28,6 +28,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
+    ProjectChatAgentUpdate,
     ProjectChatSend,
     ProjectChatSubscribe,
 )
@@ -114,6 +115,7 @@ def test_project_supports_multiple_robots_with_execution_config(
             execution_mode="manual_approval",
             visibility="public",
             execution_device_id="local-dev-1",
+            max_concurrent_executions=3,
         ),
     )
     second = project_chat_service.create_agent(
@@ -139,11 +141,45 @@ def test_project_supports_multiple_robots_with_execution_config(
     assert by_id[first.id].execution_mode == "manual_approval"
     assert by_id[first.id].visibility == "public"
     assert by_id[first.id].execution_device_id == "local-dev-1"
+    assert by_id[first.id].max_concurrent_executions == 3
     assert by_id[second.id].execution_environment == "cloud"
     assert by_id[second.id].execution_mode == "auto"
     assert by_id[second.id].visibility == "private"
     assert by_id[second.id].execution_device_id == "cloud-dev-1"
+    assert by_id[second.id].max_concurrent_executions == 1
     assert by_id[second.id].created_by_user_id == test_user.id
+
+
+def test_update_agent_to_wegent_clears_codex_project_binding(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project(test_db, test_user)
+    agent = test_db.query(ProjectChatAgent).filter(ProjectChatAgent.id == "12").one()
+    agent.device_id = "local-dev-1"
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.project_automation_domain.runnable_wegent_team",
+        lambda db, user_id, team_id: object(),
+    )
+
+    updated = project_chat_service.update_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        agent_id=agent.id,
+        request=ProjectChatAgentUpdate(
+            version=agent.version,
+            runtime="wegent",
+            wegent_team_id=7,
+        ),
+    )
+
+    assert updated.runtime == "wegent"
+    assert updated.wegent_team_id == 7
+    assert updated.execution_device_id is None
+    assert updated.local_project_id is None
 
 
 def test_list_agents_filters_visibility_for_other_members(
@@ -565,12 +601,10 @@ def test_task_agent_response_updates_task_ai_state(
     assert ai_state["trigger_message_id"] == trigger.message_id
 
 
-def test_expired_task_ai_lease_terminates_streaming_message(
+def test_expired_task_ai_lease_is_presented_unknown_without_writes(
     test_db: Session, test_user: User
 ) -> None:
-    """When the executor terminal event never arrives, the lease reconcile must
-    also terminate the streaming chat message so the activity rail stops
-    showing "running"."""
+    """An expired cache is unknown; a GET must not invent a terminal event."""
 
     project = create_project(test_db, test_user)
     task = LoopItem(
@@ -611,9 +645,11 @@ def test_expired_task_ai_lease_terminates_streaming_message(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "interrupted"
-    assert message.status == "failed"
-    assert message.metadata_json.get("lease_expired") is True
+    assert values["ai_state"]["status"] == "unknown"
+    test_db.refresh(message)
+    test_db.refresh(task)
+    assert message.status == "streaming"
+    assert (task.metadata_json or {})["ai_state"]["status"] == "running"
 
 
 def test_alive_execution_keeps_task_ai_state_running(
@@ -669,6 +705,8 @@ def test_alive_execution_keeps_task_ai_state_running(
         execution_device_id="device-1",
         assigner_user_id=test_user.id,
         status="running",
+        observed_state="running",
+        sync_state="in_sync",
         priority_weight=20,
         queued_at=now,
         started_at=now,
@@ -847,7 +885,12 @@ def test_lease_reconcile_skips_when_ai_state_is_not_running(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == ai_status
+    expected = {
+        "completed": "succeeded",
+        "failed": "failed",
+        "interrupted": "failed",
+    }[ai_status]
+    assert values["ai_state"]["status"] == expected
     test_db.refresh(message)
     assert message.status == expected_message_status
 
@@ -881,7 +924,7 @@ def test_lease_reconcile_skips_when_lease_missing(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "running"
+    assert values["ai_state"]["status"] == "unknown"
     test_db.refresh(message)
     assert message.status == "streaming"
 
@@ -900,7 +943,7 @@ def test_lease_reconcile_tolerates_missing_message(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "interrupted"
+    assert values["ai_state"]["status"] == "unknown"
 
 
 def test_lease_reconcile_leaves_terminal_message_unchanged(
@@ -917,7 +960,7 @@ def test_lease_reconcile_leaves_terminal_message_unchanged(
     _expire_ai_lease(test_db, task)
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "completed"
+    assert values["ai_state"]["status"] == "succeeded"
     test_db.refresh(message)
     assert message.status == "completed"
     assert message.content == "已完成"
@@ -938,10 +981,10 @@ def test_lease_reconcile_increments_auto_retry_budget(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "interrupted"
-    assert values["ai_state"]["auto_retry_count"] == 2
+    assert values["ai_state"]["status"] == "unknown"
+    assert values["ai_state"]["auto_retry_count"] == 1
     test_db.refresh(message)
-    assert message.status == "failed"
+    assert message.status == "streaming"
 
 
 def test_message_reconcile_syncs_completed_ai_state(
@@ -955,7 +998,7 @@ def test_message_reconcile_syncs_completed_ai_state(
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
     ai_state = values["ai_state"]
-    assert ai_state["status"] == "completed"
+    assert ai_state["status"] == "succeeded"
     assert ai_state["lease_expires_at"] is None
     assert ai_state["completed_at"] is not None
 
@@ -1516,8 +1559,9 @@ def test_loop_item_response_reconciles_expired_task_ai_lease(
     values = loop_item_service.response_values(test_db, task, test_user.id)
 
     assert values["ai_state"]["run_id"] == response.metadata["run_id"]
-    assert values["ai_state"]["status"] == "interrupted"
-    assert "lease expired" in values["ai_state"]["last_error"]
+    assert values["ai_state"]["status"] == "unknown"
+    test_db.refresh(task)
+    assert task.metadata_json["ai_state"]["status"] == "running"
 
 
 def test_loop_item_response_reconciles_terminal_ai_message(
@@ -1560,9 +1604,9 @@ def test_loop_item_response_reconciles_terminal_ai_message(
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
 
-    assert values["status"] == "in_review"
+    assert values["status"] == "in_progress"
     assert values["ai_state"]["run_id"] == response.metadata["run_id"]
-    assert values["ai_state"]["status"] == "completed"
+    assert values["ai_state"]["status"] == "succeeded"
     assert values["ai_state"]["lease_expires_at"] is None
 
 
@@ -1700,6 +1744,65 @@ def test_device_runtime_projection_accepts_local_task_id(
     assert projected["message"]["messageId"] == response.message_id
     assert projected["message"]["status"] == "completed"
     assert projected["message"]["content"] == "Completed through localTaskId"
+
+
+def test_execution_truth_rejection_blocks_project_chat_projection(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="sequenced-task-1",
+        ),
+    )
+    execution = LoopItemExecution(
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="claimed",
+        runtime_device_id="local-device",
+        runtime_task_id="sequenced-task-1",
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "runtime.task.completed",
+            "payload": {
+                "localTaskId": "sequenced-task-1",
+                "data": {"value": "must not bypass execution ordering"},
+            },
+        },
+    )
+
+    assert projected is None
+    test_db.refresh(execution)
+    assert execution.status == "claimed"
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response.message_id)
+        .one_or_none()
+    )
+    assert message is not None
+    assert message.status == "streaming"
 
 
 def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
@@ -1945,6 +2048,132 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].message_id == response.message_id
     assert messages[-1].status == "completed"
     assert messages[-1].metadata["run_status"] == "completed"
+
+
+def test_subscribe_repairs_wegent_activity_sender_to_board_robot(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-ROBOT-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Run with Wegent",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    team = Kind(
+        kind="Team",
+        name="dev-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {}, "metadata": {"name": "dev-team"}},
+    )
+    test_db.add_all([task, team])
+    test_db.commit()
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        team_id=team.id,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="queued",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    message_id = str(uuid.uuid4())
+    message = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id=f"wegent_team:{team.id}",
+        sender_name="dev-team",
+        message_type="agent_status",
+        content="",
+        metadata_json={
+            "execution_id": execution.id,
+            "executor_type": "wegent_team",
+            "executor_ref": str(team.id),
+            "run_status": "queued",
+        },
+        agent_id="",
+        status="pending",
+    )
+    test_db.add(message)
+    test_db.commit()
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
+    )
+
+    assert messages[-1].sender["id"] == "12"
+    assert messages[-1].sender["name"] == "Code Reviewer"
+    assert messages[-1].agent_id == "12"
+    test_db.refresh(message)
+    assert message.sender_id == "12"
+    assert message.sender_name == "Code Reviewer"
+    assert message.agent_id == "12"
+
+
+def test_subscribe_repairs_manager_activity_sender_to_selected_board_robot(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-MANAGER-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Managed assignment",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    message_id = str(uuid.uuid4())
+    message = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="自定义 AI 调度员",
+        message_type="text",
+        content="AI 调度员已完成分派。",
+        metadata_json={
+            "kind": "project_automation_run",
+            "selected_assignee_type": "agent",
+            "selected_assignee_id": "12",
+            "run_status": "completed",
+        },
+        agent_id="",
+        status="completed",
+    )
+    test_db.add_all([task, message])
+    test_db.commit()
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
+    )
+
+    assert messages[-1].sender["id"] == "automation_manager:rule-1"
+    assert messages[-1].sender["name"] == "Code Reviewer"
+    assert messages[-1].agent_id is None
+    test_db.refresh(message)
+    assert message.sender_id == "automation_manager:rule-1"
+    assert message.sender_name == "Code Reviewer"
+    assert message.agent_id == ""
 
 
 def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(

@@ -96,10 +96,22 @@ _EXECUTION_STATE_FROM_AI_STATUS = {
 BOT_VISIBILITY_KEY = "visibility"
 BOT_EXECUTION_ENVIRONMENT_KEY = "execution_environment"
 BOT_EXECUTION_MODE_KEY = "execution_mode"
+BOT_MAX_CONCURRENT_EXECUTIONS_KEY = "max_concurrent_executions"
+BOT_RUNTIME_KEY = "runtime"
+BOT_WEGENT_TEAM_ID_KEY = "wegent_team_id"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
+BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
+
+
+def bot_max_concurrent_executions(row: ProjectChatAgent) -> int:
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    value = metadata.get(BOT_MAX_CONCURRENT_EXECUTIONS_KEY)
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 20:
+        return value
+    return BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
 
 
 def bot_config(row: ProjectChatAgent) -> dict[str, object]:
@@ -107,6 +119,8 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     return {
+        "runtime": metadata.get(BOT_RUNTIME_KEY, "codex"),
+        "wegent_team_id": metadata.get(BOT_WEGENT_TEAM_ID_KEY),
         "visibility": metadata.get(BOT_VISIBILITY_KEY, BOT_DEFAULT_VISIBILITY),
         "execution_environment": metadata.get(
             BOT_EXECUTION_ENVIRONMENT_KEY, BOT_DEFAULT_EXECUTION_ENVIRONMENT
@@ -116,7 +130,8 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         ),
         "execution_device_id": row.device_id,
         "model": metadata.get("model"),
-        "system_prompt": metadata.get("system_prompt", ""),
+        "execution_prompt": metadata.get("system_prompt", ""),
+        "max_concurrent_executions": bot_max_concurrent_executions(row),
     }
 
 
@@ -164,12 +179,17 @@ class ProjectChatService:
             task_id=None,
             required_role=BaseRole.Reporter,
         )
-        self._validate_execution_device(
-            db,
-            user_id=user_id,
-            environment=request.execution_environment,
-            execution_device_id=request.execution_device_id,
-        )
+        if request.runtime == "wegent":
+            from app.services.project_automation_domain import runnable_wegent_team
+
+            runnable_wegent_team(db, user_id, request.wegent_team_id)
+        else:
+            self._validate_execution_device(
+                db,
+                user_id=user_id,
+                environment=request.execution_environment,
+                execution_device_id=request.execution_device_id,
+            )
         row = ProjectChatAgent(
             cloud_project_id=project_id,
             title=request.name,
@@ -178,15 +198,21 @@ class ProjectChatService:
             updated_by_user_id=user_id,
             status="active",
             description=request.capability_description.strip(),
-            device_id=request.execution_device_id,
-            local_project_id=request.local_project_id,
+            device_id=(
+                request.execution_device_id if request.runtime == "codex" else None
+            ),
+            local_project_id=(
+                request.local_project_id if request.runtime == "codex" else None
+            ),
             metadata_json={
                 "runtime": request.runtime,
+                BOT_WEGENT_TEAM_ID_KEY: request.wegent_team_id,
                 "model": request.model,
                 "system_prompt": request.system_prompt,
                 BOT_VISIBILITY_KEY: request.visibility,
                 BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
                 BOT_EXECUTION_MODE_KEY: request.execution_mode,
+                BOT_MAX_CONCURRENT_EXECUTIONS_KEY: request.max_concurrent_executions,
             },
         )
         db.add(row)
@@ -218,13 +244,27 @@ class ProjectChatService:
             row.name = request.name
             row.title = request.name
         metadata = dict(row.metadata_json or {})
-        if request.model is not None:
+        runtime = request.runtime or str(metadata.get(BOT_RUNTIME_KEY) or "codex")
+        team_id = (
+            request.wegent_team_id
+            if "wegent_team_id" in request.model_fields_set
+            else metadata.get(BOT_WEGENT_TEAM_ID_KEY)
+        )
+        if runtime == "wegent":
+            from app.services.project_automation_domain import runnable_wegent_team
+
+            runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
+            row.device_id = None
+            row.local_project_id = None
+        metadata[BOT_RUNTIME_KEY] = runtime
+        metadata[BOT_WEGENT_TEAM_ID_KEY] = team_id if runtime == "wegent" else None
+        if "model" in request.model_fields_set:
             metadata["model"] = request.model
         if request.system_prompt is not None:
             metadata["system_prompt"] = request.system_prompt
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
-        if request.execution_device_id is not None:
+        if runtime == "codex" and request.execution_device_id is not None:
             self._validate_execution_device(
                 db,
                 user_id=row.created_by_user_id or user_id,
@@ -238,7 +278,7 @@ class ProjectChatService:
             row.device_id = request.execution_device_id
         if request.visibility is not None:
             metadata[BOT_VISIBILITY_KEY] = request.visibility
-        if request.execution_environment is not None:
+        if runtime == "codex" and request.execution_environment is not None:
             if row.device_id:
                 self._validate_execution_device(
                     db,
@@ -249,7 +289,11 @@ class ProjectChatService:
             metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
         if request.execution_mode is not None:
             metadata[BOT_EXECUTION_MODE_KEY] = request.execution_mode
-        if "local_project_id" in request.model_fields_set:
+        if request.max_concurrent_executions is not None:
+            metadata[BOT_MAX_CONCURRENT_EXECUTIONS_KEY] = (
+                request.max_concurrent_executions
+            )
+        if runtime == "codex" and "local_project_id" in request.model_fields_set:
             row.local_project_id = request.local_project_id
         row.metadata_json = metadata
         if request.status is not None:
@@ -1216,9 +1260,10 @@ class ProjectChatService:
         if row.sender_type != "agent":
             return False
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        reconciled = self._reconcile_board_robot_sender(db, row=row, metadata=metadata)
         if row.status in {"completed", "failed"}:
             if metadata.get("run_status") == row.status:
-                return False
+                return reconciled
             row.metadata_json = {**metadata, "run_status": row.status}
             if row.task_id:
                 self._set_task_ai_state(
@@ -1238,7 +1283,7 @@ class ProjectChatService:
             )
             return True
         if row.status != "streaming" or not row.task_id:
-            return False
+            return reconciled
 
         task = db.get(LoopItem, row.task_id)
         task_metadata = (
@@ -1250,9 +1295,9 @@ class ProjectChatService:
         ai_state = ai_state if isinstance(ai_state, dict) else {}
         run_status = ai_state.get("status")
         if run_status not in PROJECT_CHAT_TERMINAL_RUN_STATUSES:
-            return False
+            return reconciled
         if ai_state.get("project_chat_message_id") != row.message_id:
-            return False
+            return reconciled
 
         status_value = (
             "failed"
@@ -1273,6 +1318,89 @@ class ProjectChatService:
             run_status,
         )
         return True
+
+    @staticmethod
+    def _reconcile_board_robot_sender(
+        db: Session,
+        *,
+        row: ProjectChatMessage,
+        metadata: dict,
+    ) -> bool:
+        """Repair activity authors from their selected board robot."""
+
+        resolved = ProjectChatService._board_robot_for_activity(
+            db, row=row, metadata=metadata
+        )
+        if resolved is None:
+            return False
+        agent, manager_activity = resolved
+        sender_name = str(agent.title or agent.name or "AI")
+        if manager_activity:
+            if row.sender_name == sender_name:
+                return False
+            row.sender_name = sender_name
+            logger.warning(
+                "[ProjectChat] Reconciled manager activity display name to board robot: "
+                "project_id=%s task_id=%s message_id=%s agent_id=%s",
+                row.project_id,
+                row.task_id,
+                row.message_id,
+                agent.id,
+            )
+            return True
+        if (
+            row.sender_id == agent.id
+            and row.sender_name == sender_name
+            and row.agent_id == agent.id
+        ):
+            return False
+        row.sender_id = agent.id
+        row.sender_name = sender_name
+        row.agent_id = agent.id
+        logger.warning(
+            "[ProjectChat] Reconciled Wegent execution sender to board robot: "
+            "project_id=%s task_id=%s message_id=%s agent_id=%s",
+            row.project_id,
+            row.task_id,
+            row.message_id,
+            agent.id,
+        )
+        return True
+
+    @staticmethod
+    def _board_robot_for_activity(
+        db: Session,
+        *,
+        row: ProjectChatMessage,
+        metadata: dict,
+    ) -> tuple[ProjectChatAgent, bool] | None:
+        """Resolve the board robot represented by an activity projection."""
+
+        manager_activity = metadata.get("selected_assignee_type") == "agent"
+        agent_id = ""
+        if manager_activity:
+            agent_id = str(metadata.get("selected_assignee_id") or "")
+        elif metadata.get("executor_type") == "wegent_team":
+            try:
+                execution_id = int(metadata["execution_id"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            from app.models.loop_item_execution import LoopItemExecution
+
+            execution = db.get(LoopItemExecution, execution_id)
+            if (
+                execution is None
+                or execution.cloud_project_id != row.project_id
+                or execution.loop_item_id != row.task_id
+            ):
+                return None
+            agent_id = str(execution.agent_id or "")
+        if not agent_id:
+            return None
+        agent = db.get(ProjectChatAgent, agent_id)
+        if agent is None or agent.cloud_project_id != row.project_id:
+            return None
+        return agent, manager_activity
 
     @staticmethod
     def _loop_unset_datetime(db: Session) -> object:
@@ -1519,11 +1647,16 @@ class ProjectChatService:
             id=row.id,
             project_id=row.cloud_project_id,
             name=row.title or row.name or "AI",
-            runtime="codex",
+            runtime=str(config.get("runtime") or "codex"),
+            wegent_team_id=(
+                int(config["wegent_team_id"])
+                if config.get("wegent_team_id") is not None
+                else None
+            ),
             model=config.get("model") if isinstance(config.get("model"), str) else None,
             system_prompt=(
-                config.get("system_prompt")
-                if isinstance(config.get("system_prompt"), str)
+                config.get("execution_prompt")
+                if isinstance(config.get("execution_prompt"), str)
                 else ""
             ),
             capability_description=row.description or "",
@@ -1533,8 +1666,12 @@ class ProjectChatService:
                 config.get("execution_environment") or BOT_DEFAULT_EXECUTION_ENVIRONMENT
             ),
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
-            execution_device_id=row.device_id,
-            local_project_id=row.local_project_id,
+            execution_device_id=row.device_id or None,
+            local_project_id=row.local_project_id or None,
+            max_concurrent_executions=int(
+                config.get("max_concurrent_executions")
+                or BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
+            ),
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,
             version=row.version,

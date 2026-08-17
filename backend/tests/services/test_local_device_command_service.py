@@ -2554,6 +2554,59 @@ async def test_execute_device_command_endpoint_maps_request_to_service(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_device_runtime_settings_update_uses_runtime_rpc(monkeypatch):
+    from app.api.endpoints import devices
+
+    rpc_mock = AsyncMock(
+        side_effect=[
+            {"maxConcurrentTasks": 4},
+            {"limit": 4, "active": 2, "queued": 1},
+        ]
+    )
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", rpc_mock)
+
+    response = await devices.update_device_runtime_settings(
+        device_id="device-abc",
+        request=devices.DeviceRuntimeSettingsUpdate(max_concurrent_tasks=4),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.model_dump() == {
+        "device_id": "device-abc",
+        "max_concurrent_tasks": 4,
+        "active_tasks": 2,
+        "queued_tasks": 1,
+    }
+    assert rpc_mock.await_args_list[0].kwargs == {
+        "user_id": 7,
+        "device_id": "device-abc",
+        "method": "runtime.settings.update",
+        "payload": {"maxConcurrentTasks": 4},
+    }
+    assert rpc_mock.await_args_list[1].kwargs["method"] == "runtime.capacity.get"
+
+
+@pytest.mark.asyncio
+async def test_device_runtime_settings_get_maps_offline_to_service_unavailable(
+    monkeypatch,
+):
+    from fastapi import HTTPException
+
+    from app.api.endpoints import devices
+
+    rpc_mock = AsyncMock(side_effect=devices.RuntimeRpcError("Device is offline"))
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", rpc_mock)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await devices.get_device_runtime_settings(
+            device_id="offline-device",
+            current_user=SimpleNamespace(id=7),
+        )
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_execute_device_command_endpoint_allows_wework_local_project_workspace(
     monkeypatch,
     test_db,

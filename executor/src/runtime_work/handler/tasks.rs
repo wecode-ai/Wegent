@@ -1341,9 +1341,7 @@ impl RuntimeWorkRpcHandler {
                 }));
             }
             let previous = scheduler.clone();
-            let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
-                AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
-            })?;
+            let turn = scheduler.force_start(&local_task_id);
             (previous, turn, scheduler.queued_turns.clone())
         };
         if let Err(error) = self.persist_turn_queue(remaining_turns).await {
@@ -1353,6 +1351,21 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
+        let Some(queued_turn) = queued_turn else {
+            drop(_operation);
+            log_executor_event(
+                "runtime work queued turn moved to front",
+                &[("local_task_id", local_task_id.clone())],
+            );
+            return Ok(json!({
+                "success": true,
+                "accepted": true,
+                "started": false,
+                "queued": true,
+                "taskId": local_task_id,
+                "runtime": runtime,
+            }));
+        };
         self.reserve_worktree_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
@@ -1371,6 +1384,8 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "success": true,
             "accepted": true,
+            "started": true,
+            "queued": false,
             "taskId": local_task_id,
             "runtime": runtime,
         }))

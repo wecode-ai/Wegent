@@ -50,6 +50,7 @@ const items: CloudMyWorkItem[] = [
     title: '执行中的任务',
     status: 'in_progress',
     has_active_task: true,
+    execution_state: 'running',
     priority: 'medium',
     due_at: dueAt(1),
   }),
@@ -66,7 +67,7 @@ const items: CloudMyWorkItem[] = [
     id: 'WEG-6',
     title: '待我批准的任务',
     status: 'pending',
-    execution_state: 'pending_approval',
+    execution_state: 'waiting_approval',
     can_approve: true,
   }),
 ]

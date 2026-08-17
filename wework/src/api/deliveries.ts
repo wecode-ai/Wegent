@@ -54,12 +54,19 @@ export interface CloudLoopItem {
   assignee_name?: string | null
   assignee_agent_id?: string | null
   assignee_agent_name?: string | null
+  assignee_team_id?: number | null
+  assignee_team_name?: string | null
   execution_id?: number | null
   execution_state?: string | null
+  execution_control_state?: string | null
+  execution_observed_state?: string | null
+  execution_sync_state?: string | null
+  execution_attempt_no?: number | null
+  execution_last_event_seq?: number | null
   can_approve?: boolean
   assignment_history?: Array<{
     by_user_id: number
-    to_type: 'user' | 'agent' | null
+    to_type: 'user' | 'agent' | 'team' | null
     to_id: string | null
     to_name?: string | null
     action: 'assign' | 'reassign' | 'unassign'
@@ -104,6 +111,7 @@ export interface CloudLoopItem {
     run_id?: string
     status?: string
     agent_id?: string | null
+    team_id?: number | null
     agent_name?: string | null
     trigger_message_id?: string | null
     project_chat_message_id?: string | null
@@ -142,17 +150,33 @@ export interface CloudLoopItemExecution {
   task_title: string
   task_status?: string | null
   task_priority?: string | null
-  agent_id: string
+  executor_type: 'project_robot' | 'automation_manager' | 'wegent_team' | string
+  agent_id: string | null
+  team_id?: number | null
+  backend_task_id?: number | null
+  automation_run_id: string
   assigner_user_id: number
   execution_environment: string
   execution_device_id?: string | null
   status: string
+  display_state: string
+  observed_state: string
+  sync_state: string
   priority_weight: number
   queued_at?: string | null
   started_at?: string | null
   completed_at?: string | null
   lease_expires_at?: string | null
   heartbeat_at?: string | null
+  claimed_at?: string | null
+  start_requested_at?: string | null
+  observed_at?: string | null
+  cancel_requested_at?: string | null
+  attempt_no: number
+  previous_execution_id?: number | null
+  execution_scope: string
+  last_event_seq: number
+  termination_reason: string
   retry_attempt: number
   error_message?: string | null
   execution_note?: string | null
@@ -422,7 +446,7 @@ export function createDeliveryApi(client: HttpClient) {
     listLoopItems(
       projectId: CloudProjectIdInput,
       filters?: {
-        assigneeType?: 'user' | 'agent'
+        assigneeType?: 'user' | 'agent' | 'team'
         assigneeId?: string | number
         executionState?: string
       }
@@ -456,18 +480,36 @@ export function createDeliveryApi(client: HttpClient) {
             task_title: String(row.taskTitle ?? ''),
             task_status: row.taskStatus == null ? null : String(row.taskStatus),
             task_priority: row.taskPriority == null ? null : String(row.taskPriority),
-            agent_id: String(row.agentId ?? ''),
+            executor_type: String(row.executorType ?? 'project_robot'),
+            agent_id: row.agentId == null ? null : String(row.agentId),
+            team_id: row.teamId == null ? null : Number(row.teamId),
+            backend_task_id: row.backendTaskId == null ? null : Number(row.backendTaskId),
+            automation_run_id: String(row.automationRunId ?? ''),
             assigner_user_id: Number(row.assignerUserId ?? 0),
             execution_environment: String(row.executionEnvironment ?? ''),
             execution_device_id:
               row.executionDeviceId == null ? null : String(row.executionDeviceId),
             status: String(row.status ?? ''),
+            display_state: String(row.displayState ?? 'unknown'),
+            observed_state: String(row.observedState ?? 'unconfirmed'),
+            sync_state: String(row.syncState ?? 'pending'),
             priority_weight: Number(row.priorityWeight ?? 0),
             queued_at: row.queuedAt == null ? null : String(row.queuedAt),
             started_at: row.startedAt == null ? null : String(row.startedAt),
             completed_at: row.completedAt == null ? null : String(row.completedAt),
             lease_expires_at: row.leaseExpiresAt == null ? null : String(row.leaseExpiresAt),
             heartbeat_at: row.heartbeatAt == null ? null : String(row.heartbeatAt),
+            claimed_at: row.claimedAt == null ? null : String(row.claimedAt),
+            start_requested_at: row.startRequestedAt == null ? null : String(row.startRequestedAt),
+            observed_at: row.observedAt == null ? null : String(row.observedAt),
+            cancel_requested_at:
+              row.cancelRequestedAt == null ? null : String(row.cancelRequestedAt),
+            attempt_no: Number(row.attemptNo ?? 1),
+            previous_execution_id:
+              row.previousExecutionId == null ? null : Number(row.previousExecutionId),
+            execution_scope: String(row.executionScope ?? ''),
+            last_event_seq: Number(row.lastEventSeq ?? 0),
+            termination_reason: String(row.terminationReason ?? ''),
             retry_attempt: Number(row.retryAttempt ?? 0),
             error_message: row.errorMessage == null ? null : String(row.errorMessage),
             execution_note: row.executionNote == null ? null : String(row.executionNote),
@@ -525,6 +567,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'parent_id'
           | 'assignee_user_id'
           | 'assignee_agent_id'
+          | 'assignee_team_id'
           | 'due_at'
           | 'tags'
         >
@@ -539,7 +582,7 @@ export function createDeliveryApi(client: HttpClient) {
       itemId: string,
       data: {
         version: number
-        assigneeType: 'user' | 'agent'
+        assigneeType: 'user' | 'agent' | 'team'
         assigneeId: string
       }
     ): Promise<CloudLoopItem> {

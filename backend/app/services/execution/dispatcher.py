@@ -140,7 +140,7 @@ def extract_completed_result(response_data: dict) -> dict:
     # Extract text content from response output
     value = ""
     reasoning_parts: list[str] = []
-    for item in response_data.get("output", []):
+    for item in response_data.get("output") or []:
         if isinstance(item, dict):
             for content_block in item.get("content", []):
                 if not isinstance(content_block, dict):

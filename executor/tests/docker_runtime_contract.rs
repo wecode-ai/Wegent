@@ -118,6 +118,67 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reaso
 }
 
 #[tokio::test]
+async fn docker_cancel_endpoint_stops_active_task_and_sends_cancelled_callback() {
+    let fake_claude = write_fake_executable(
+        "docker-cancellable-claude",
+        r#"#!/bin/sh
+exec sleep 30
+"#,
+    );
+    let callback = CallbackCapture::start().await;
+    let _lock = env_lock().await;
+    let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let _callback = EnvGuard::set("CALLBACK_URL", &callback.url);
+    let app = create_docker_router_from_env().unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/responses")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "input": "keep running",
+                        "background": true,
+                        "model_config": {
+                            "model": "anthropic",
+                            "model_id": "claude-sonnet-4"
+                        },
+                        "metadata": {
+                            "task_id": 282,
+                            "subtask_id": 536,
+                            "bot": [{"shell_type": "ClaudeCode"}]
+                        }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/tasks/cancel?task_id=282&subtask_id=536")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let events = callback.wait_for_events(2).await;
+    assert_eq!(events[0]["event_type"], "response.created");
+    assert_eq!(events[1]["event_type"], "response.incomplete");
+    assert_eq!(events[1]["data"]["response"]["status"], "cancelled");
+    assert_eq!(events[1]["data"]["response"]["error"]["code"], "cancelled");
+}
+
+#[tokio::test]
 async fn docker_heartbeat_posts_to_sandbox_endpoint_from_python_env_contract() {
     let heartbeat = HeartbeatCapture::start().await;
     let config = {
@@ -191,7 +252,10 @@ impl HeartbeatCapture {
     }
 
     async fn wait_for_calls(&self, count: usize) -> Vec<Value> {
-        timeout(Duration::from_secs(2), async {
+        // One request may legitimately consume the five-second heartbeat
+        // client timeout under a loaded full-suite runner. Allow that request
+        // plus the configured one-second retry interval before failing.
+        timeout(Duration::from_secs(10), async {
             loop {
                 let calls = self.calls.lock().unwrap().clone();
                 if calls.len() >= count {

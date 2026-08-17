@@ -1011,7 +1011,7 @@ describe('TaskActivityView', () => {
       expect(parentComment).toHaveTextContent(name)
       expect(
         screen.getByTestId(`cloud-task-activity-execution-badge-${automationMessage.messageId}`)
-      ).toHaveAttribute('data-status', 'waiting')
+      ).toHaveAttribute('data-status', 'queued')
       expect(
         screen.queryByTestId(`cloud-task-activity-open-execution-${automationMessage.messageId}`)
       ).not.toBeInTheDocument()
@@ -1019,9 +1019,9 @@ describe('TaskActivityView', () => {
   )
 
   it.each([
-    ['queued', 'pending', 'waiting', '等待执行', false],
-    ['running', 'streaming', 'running', '正在处理', true],
-    ['completed', 'completed', 'success', '已完成', false],
+    ['queued', 'pending', 'queued', '排队中', false],
+    ['running', 'streaming', 'running', '执行中', true],
+    ['completed', 'completed', 'succeeded', '已完成', false],
     ['failed', 'failed', 'failed', '执行失败', false],
     ['cancelled', 'cancelled', 'cancelled', '已取消', false],
   ] as const)(
@@ -1616,6 +1616,102 @@ describe('TaskActivityView', () => {
       )
     )
     expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  it('continues a Wegent board Task without creating a local runtime task', async () => {
+    agentsMock.value = [
+      {
+        ...agentsMock.value[0],
+        runtime: 'wegent',
+        wegentTeamId: 32,
+      },
+    ]
+    const user = userEvent.setup()
+    const rootMessage: ProjectChatMessage = {
+      ...agentMessage,
+      messageId: 'wegent-result-1',
+      content: '请确认下一步。',
+      metadata: {
+        execution_id: 229,
+        executor_type: 'wegent_team',
+        backend_task_id: 288,
+      },
+      status: 'completed',
+      rootMessageId: null,
+      runtimeAddress: null,
+    }
+    const triggerMessage: ProjectChatMessage = {
+      ...userMessage,
+      sequenceNumber: 3,
+      messageId: 'confirmation-1',
+      content: '确认',
+      replyToMessageId: rootMessage.messageId,
+      rootMessageId: rootMessage.messageId,
+    }
+    const continuationMessage: ProjectChatMessage = {
+      ...agentMessage,
+      sequenceNumber: 4,
+      messageId: 'wegent-continuation-1',
+      metadata: {
+        execution_id: 229,
+        executor_type: 'wegent_team',
+        backend_task_id: 288,
+        backend_subtask_id: 301,
+      },
+      triggerMessageId: triggerMessage.messageId,
+      replyToMessageId: triggerMessage.messageId,
+      rootMessageId: rootMessage.messageId,
+      runtimeAddress: null,
+      status: 'pending',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [rootMessage], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => triggerMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      continueWegentTask: vi.fn(async () => continuationMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            status: 'in_review',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+        linear
+      />
+    )
+
+    await user.type(
+      await screen.findByTestId(`cloud-task-activity-card-composer-${rootMessage.messageId}`),
+      '确认{Enter}'
+    )
+
+    await waitFor(() => expect(client.continueWegentTask).toHaveBeenCalledOnce())
+    expect(client.continueWegentTask).toHaveBeenCalledWith({
+      projectId: '11',
+      taskId: 'WEG-1',
+      triggerMessageId: 'confirmation-1',
+      agentId: '12',
+      attachmentIds: [],
+    })
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+    expect(sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(
+      await screen.findByTestId('cloud-task-activity-message-wegent-continuation-1')
+    ).toBeInTheDocument()
   })
 
   it('replies to the parent comment from the card composer by default', async () => {
@@ -2218,7 +2314,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 3,
             assignee_agent_id: '12',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
           } as never
         }
       />
@@ -2255,7 +2351,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 3,
             assignee_agent_id: '12',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
           } as never
         }
       />
@@ -2266,7 +2362,7 @@ describe('TaskActivityView', () => {
     expect(screen.queryByTestId('cloud-task-activity-approve-WEG-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-task-activity-reject-WEG-1')).not.toBeInTheDocument()
     const status = screen.getByTestId('cloud-task-activity-execution-status-WEG-1')
-    expect(status).toHaveAttribute('data-status', 'waiting')
+    expect(status).toHaveAttribute('data-status', 'waiting_approval')
     expect(status).toHaveAccessibleName('待 Alice 批准')
   })
 
@@ -2295,7 +2391,7 @@ describe('TaskActivityView', () => {
             status: 'in_review',
             version: 3,
             assignee_agent_id: '12',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
             can_approve: true,
           } as never
         }

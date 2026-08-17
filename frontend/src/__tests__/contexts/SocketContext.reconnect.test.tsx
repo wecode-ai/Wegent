@@ -414,7 +414,7 @@ describe('SocketProvider reconnect notification', () => {
     expect(secondSocket.connect).toHaveBeenCalledTimes(1)
   })
 
-  it('emits chat cancel without owning ack timeout recovery', async () => {
+  it('waits for the server acknowledgement when cancelling chat', async () => {
     const socket = createMockSocket()
     mockIo.mockReturnValue(socket)
 
@@ -438,8 +438,9 @@ describe('SocketProvider reconnect notification', () => {
 
     socket.emit.mockClear()
 
-    await act(async () => {
-      await socketApi!.cancelChatStream(77, 'partial', 'Chat')
+    let cancelResult: { success: boolean; error?: string } | undefined
+    const cancellation = act(async () => {
+      cancelResult = await socketApi!.cancelChatStream(77, 'partial', 'Chat')
     })
 
     expect(socket.emit).toHaveBeenCalledTimes(1)
@@ -450,6 +451,12 @@ describe('SocketProvider reconnect notification', () => {
       partial_content: 'partial',
       shell_type: 'Chat',
     })
-    expect(ack).toBeUndefined()
+    expect(ack).toEqual(expect.any(Function))
+    if (!ack) {
+      throw new Error('chat:cancel acknowledgement callback was not registered')
+    }
+    ack({ success: true })
+    await cancellation
+    expect(cancelResult).toEqual({ success: true })
   })
 })

@@ -14,6 +14,47 @@ fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
 }
 
+#[tokio::test]
+async fn runtime_capacity_rpc_reports_scheduler_truth() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    {
+        let mut scheduler = handler
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned");
+        scheduler.max_concurrent_tasks = 4;
+        scheduler.active_tasks = 2;
+        scheduler.active_task_ids = HashSet::from(["active-1".to_owned(), "active-2".to_owned()]);
+        scheduler.queued_turns = VecDeque::from([SpawnTurnRequest {
+            local_task_id: "queued-1".to_owned(),
+            runtime: "codex".to_owned(),
+            request: ExecutionRequest::default(),
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: None,
+            initial_thread_name: None,
+            initial_thread_goal: None,
+        }]);
+    }
+
+    let capacity = handler
+        .get_runtime_capacity()
+        .await
+        .expect("capacity should be available");
+
+    assert_eq!(capacity["limit"], 4);
+    assert_eq!(capacity["active"], 2);
+    assert_eq!(capacity["queued"], 1);
+    let active_task_ids = capacity["active_task_ids"]
+        .as_array()
+        .expect("active task ids should be an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<HashSet<_>>();
+    assert_eq!(active_task_ids, HashSet::from(["active-1", "active-2"]));
+}
+
 #[test]
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

@@ -16,6 +16,7 @@ def _to_camel(value: str) -> str:
 BotVisibility = Literal["private", "creator_admin", "public"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
+BotRuntime = Literal["codex", "wegent"]
 
 
 class ProjectChatSchema(BaseModel):
@@ -24,7 +25,8 @@ class ProjectChatSchema(BaseModel):
 
 class ProjectChatAgentCreate(ProjectChatSchema):
     name: str = Field(min_length=1, max_length=100)
-    runtime: Literal["codex"] = "codex"
+    runtime: BotRuntime = "codex"
+    wegent_team_id: int | None = Field(default=None, ge=1)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
@@ -33,10 +35,13 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     execution_mode: BotExecutionMode = "auto"
     execution_device_id: str | None = Field(default=None, max_length=100)
     local_project_id: int | None = Field(default=None)
+    max_concurrent_executions: int = Field(default=1, ge=1, le=20)
 
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
     version: int = Field(ge=1)
+    runtime: BotRuntime | None = None
+    wegent_team_id: int | None = Field(default=None, ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default=None, max_length=20_000)
@@ -47,13 +52,15 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     execution_mode: BotExecutionMode | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     local_project_id: int | None = Field(default=None)
+    max_concurrent_executions: int | None = Field(default=None, ge=1, le=20)
 
 
 class ProjectChatAgentView(ProjectChatSchema):
     id: str
     project_id: str
     name: str
-    runtime: Literal["codex"]
+    runtime: BotRuntime
+    wegent_team_id: int | None
     model: str | None
     system_prompt: str
     capability_description: str
@@ -63,6 +70,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     execution_mode: BotExecutionMode
     execution_device_id: str | None
     local_project_id: int | None
+    max_concurrent_executions: int
     created_by_user_id: int | None
     created_by_user_name: str | None = None
     version: int
@@ -71,7 +79,7 @@ class ProjectChatAgentView(ProjectChatSchema):
 
 
 class LoopItemAssign(ProjectChatSchema):
-    """Assign a loop item to a project member or to a project robot."""
+    """Assign a loop item to a project member or board robot."""
 
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent"]
@@ -88,10 +96,13 @@ class LoopItemApproval(ProjectChatSchema):
 class LoopItemExecutionClaim(ProjectChatSchema):
     """Claim the next queued run for one robot on one device."""
 
+    model_config = ConfigDict(
+        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
+    )
+
     agent_id: str = Field(min_length=1, max_length=128)
     execution_device_id: str = Field(min_length=1, max_length=100)
     execution_environment: Literal["local", "cloud"] = "local"
-    device_capacity: int = Field(default=1, ge=1, le=20)
     lease_seconds: int = Field(default=300, ge=60, le=3600)
     assigner_user_id: int | None = Field(default=None)
 
@@ -99,8 +110,11 @@ class LoopItemExecutionClaim(ProjectChatSchema):
 class LoopItemExecutionDeviceClaim(ProjectChatSchema):
     """Claim the next queued local run for any robot bound to a device."""
 
+    model_config = ConfigDict(
+        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
+    )
+
     execution_device_id: str = Field(min_length=1, max_length=100)
-    device_capacity: int = Field(default=1, ge=1, le=20)
     lease_seconds: int = Field(default=300, ge=60, le=3600)
 
 
@@ -121,18 +135,24 @@ class LoopItemExecutionRuntimeStart(ProjectChatSchema):
     model: str | None = Field(default=None, max_length=255)
 
 
-class LoopItemExecutionComplete(ProjectChatSchema):
-    """Report a successful robot run."""
+class LoopItemExecutionDispatchIntent(ProjectChatSchema):
+    """Fence a Runtime create request before it can leave the App."""
 
-    note: str | None = Field(default=None, max_length=2_000)
+    runtime_device_id: str = Field(min_length=1, max_length=255)
+    runtime_task_id: str = Field(min_length=1, max_length=255)
 
 
-class LoopItemExecutionFail(ProjectChatSchema):
-    """Report a failed robot run (optionally requeue when retries remain)."""
+class LoopItemExecutionDispatchUnknown(LoopItemExecutionDispatchIntent):
+    """Report an ambiguous result after a fenced Runtime create request."""
+
+    error: str = Field(min_length=1, max_length=2_000)
+
+
+class LoopItemExecutionDispatchFailed(ProjectChatSchema):
+    """Report a local preflight failure before Runtime delivery was fenced."""
 
     error: str = Field(min_length=1, max_length=2_000)
     note: str | None = Field(default=None, max_length=2_000)
-    requeue: bool = False
 
 
 class LoopItemExecutionCancel(ProjectChatSchema):
@@ -150,16 +170,32 @@ class LoopItemExecutionView(ProjectChatSchema):
     task_priority: str | None
     executor_type: str = "project_robot"
     agent_id: str | None = None
+    team_id: int | None = None
+    backend_task_id: int | None = None
+    automation_run_id: str = ""
     assigner_user_id: int
     execution_environment: str
     execution_device_id: str | None
+    runtime_instance_id: str | None = None
     status: str
+    display_state: str
+    observed_state: str = "unconfirmed"
+    sync_state: str = "pending"
     priority_weight: int
     queued_at: Any | None = None
     started_at: Any | None = None
     completed_at: Any | None = None
     lease_expires_at: Any | None = None
     heartbeat_at: Any | None = None
+    claimed_at: Any | None = None
+    start_requested_at: Any | None = None
+    observed_at: Any | None = None
+    cancel_requested_at: Any | None = None
+    attempt_no: int = 1
+    previous_execution_id: int | None = None
+    execution_scope: str = ""
+    last_event_seq: int = 0
+    termination_reason: str = ""
     retry_attempt: int = 0
     error_message: str = ""
     execution_note: str = ""
@@ -168,6 +204,7 @@ class LoopItemExecutionView(ProjectChatSchema):
     rejected_reason: str | None = None
     runtime_device_id: str | None = None
     runtime_task_id: str | None = None
+    agent_max_concurrent_executions: int = 1
     # Materialized only for an authenticated device claim. It is never stored
     # on the execution row because model credentials are resolved just in time.
     runtime_payload: Any | None = None
@@ -221,6 +258,16 @@ class ProjectChatAgentFailure(ProjectChatSchema):
     task_id: str | None = Field(default=None, max_length=64)
     message_id: str = Field(min_length=1, max_length=64)
     error: str | None = Field(default=None, max_length=2_000)
+
+
+class ProjectChatWegentContinuation(ProjectChatSchema):
+    """Continue the native Wegent Task behind one board comment thread."""
+
+    project_id: str = Field(min_length=1, max_length=64)
+    task_id: str = Field(min_length=1, max_length=64)
+    trigger_message_id: str = Field(min_length=1, max_length=64)
+    agent_id: str = Field(min_length=1, max_length=128)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=64)
 
 
 class ProjectChatMessageView(ProjectChatSchema):

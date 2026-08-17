@@ -217,17 +217,25 @@
   flex: 0 0 auto;
 }
 
-.task-detail-execution-status-trigger[data-status='success'] {
+.task-detail-execution-status-trigger[data-status='succeeded'] {
   color: rgb(22 163 74);
 }
 
-.task-detail-execution-status-trigger[data-status='failed'],
-.task-detail-execution-status-trigger[data-status='interrupted'] {
+.task-detail-execution-status-trigger[data-status='failed'] {
   color: rgb(var(--color-destructive));
 }
 
-.task-detail-execution-status-trigger[data-status='waiting'] {
+.task-detail-execution-status-trigger[data-status='waiting_approval'],
+.task-detail-execution-status-trigger[data-status='queued'],
+.task-detail-execution-status-trigger[data-status='waiting_runtime'] {
   color: rgb(180 83 9);
+}
+
+.task-detail-execution-status-trigger[data-status='cancelled'],
+.task-detail-execution-status-trigger[data-status='skipped'],
+.task-detail-execution-status-trigger[data-status='interrupted'],
+.task-detail-execution-status-trigger[data-status='unknown'] {
+  color: rgb(var(--color-text-muted));
 }
 
 .task-detail-execution-status-popover {
@@ -501,8 +509,21 @@
 }
 
 .task-detail-execution-pill[data-status='cancelled'],
-.task-detail-execution-pill[data-status='interrupted'] {
+.task-detail-execution-pill[data-status='skipped'],
+.task-detail-execution-pill[data-status='interrupted'],
+.task-detail-execution-pill[data-status='unknown'] {
   color: rgb(var(--color-text-muted));
+}
+
+.task-detail-execution-pill[data-status='succeeded'] {
+  background: rgba(22, 163, 74, 0.1);
+  color: rgb(22 163 74);
+}
+
+.task-detail-execution-pill[data-status='waiting_approval'],
+.task-detail-execution-pill[data-status='queued'],
+.task-detail-execution-pill[data-status='waiting_runtime'] {
+  color: rgb(180 83 9);
 }
 
 .task-detail-execution-main {

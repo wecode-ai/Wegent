@@ -18,8 +18,11 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
-from app.schemas.device import MAX_DEVICE_SLOTS, DeviceConnectionMode, DeviceType
-from app.services.device.local_provider import LocalDeviceProvider
+from app.schemas.device import DeviceConnectionMode, DeviceType
+from app.services.device.local_provider import (
+    LocalDeviceProvider,
+    runtime_capacity_slot_values,
+)
 from app.services.device.version_service import executor_version_service
 
 
@@ -142,6 +145,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
             running_task_ids = []
             if online_info and "running_task_ids" in online_info:
                 running_task_ids = online_info["running_task_ids"]
+            slot_used, slot_max = runtime_capacity_slot_values(online_info)
 
             executor_version = (
                 online_info.get("executor_version") if online_info else None
@@ -165,8 +169,8 @@ class RemoteDeviceProvider(LocalDeviceProvider):
                     "last_heartbeat": (
                         online_info.get("last_heartbeat") if online_info else None
                     ),
-                    "slot_used": len(running_task_ids),
-                    "slot_max": MAX_DEVICE_SLOTS,
+                    "slot_used": slot_used,
+                    "slot_max": slot_max,
                     "running_tasks": [],
                     "executor_version": executor_version,
                     "latest_version": latest_version,
