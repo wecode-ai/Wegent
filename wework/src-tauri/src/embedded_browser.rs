@@ -128,6 +128,8 @@ struct EmbeddedBrowserEntry {
     url: Option<String>,
     loaded_url: Option<String>,
     opened_at_unix_ms: u128,
+    bootstrap_finished: bool,
+    host_ready: bool,
     phase: EmbeddedBrowserPhase,
 }
 
@@ -915,10 +917,11 @@ fn mark_entry_ready_for_native_label(
     state: &EmbeddedBrowserState,
     native_label: &str,
     webview: Webview<Wry>,
-    bridge_ready: bool,
+    host_ready: bool,
 ) -> Result<(), String> {
     let updated = update_entry_for_native_label(state, native_label, |entry| {
-        entry.phase = if bridge_ready {
+        entry.host_ready = host_ready;
+        entry.phase = if browser_host_is_ready(entry.bootstrap_finished, entry.host_ready) {
             EmbeddedBrowserPhase::Ready(webview)
         } else {
             EmbeddedBrowserPhase::Hidden(webview)
@@ -927,6 +930,31 @@ fn mark_entry_ready_for_native_label(
     updated
         .then_some(())
         .ok_or_else(|| "Embedded browser route disappeared while opening".to_string())
+}
+
+fn mark_entry_bootstrap_finished_for_native_label(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    webview: Webview<Wry>,
+) -> Result<bool, String> {
+    let mut transitioned = false;
+    update_entry_for_native_label(state, native_label, |entry| {
+        if entry.bootstrap_finished {
+            return;
+        }
+        entry.bootstrap_finished = true;
+        entry.phase = if browser_host_is_ready(entry.bootstrap_finished, entry.host_ready) {
+            EmbeddedBrowserPhase::Ready(webview)
+        } else {
+            EmbeddedBrowserPhase::Hidden(webview)
+        };
+        transitioned = true;
+    })?;
+    Ok(transitioned)
+}
+
+fn browser_host_is_ready(bootstrap_finished: bool, host_ready: bool) -> bool {
+    bootstrap_finished && host_ready
 }
 
 fn entry_readiness(
@@ -1612,7 +1640,7 @@ pub async fn embedded_browser_open(
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
         match webviews.get(&label) {
-            Some(entry) if matches!(&entry.phase, EmbeddedBrowserPhase::Opening) => {
+            Some(entry) if entry.readiness() == EmbeddedBrowserReadiness::Opening => {
                 return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
             }
             Some(entry) => Some(entry.clone()),
@@ -1672,6 +1700,7 @@ pub async fn embedded_browser_open(
         update_entry_for_native_label(&state, &entry.native_label, |entry| {
             entry.url = Some(url.clone());
             entry.title = initial_title_for_entry;
+            entry.host_ready = bridge_ready;
             entry.phase = if bridge_ready {
                 EmbeddedBrowserPhase::Ready(webview.clone())
             } else {
@@ -1727,6 +1756,8 @@ pub async fn embedded_browser_open(
         url: Some(url.clone()),
         loaded_url: None,
         opened_at_unix_ms: current_unix_millis(),
+        bootstrap_finished: false,
+        host_ready: bridge_ready,
         phase: EmbeddedBrowserPhase::Opening,
     };
     state
@@ -1869,6 +1900,23 @@ pub async fn embedded_browser_open(
                 }),
             );
             if matches!(payload.event(), PageLoadEvent::Finished) {
+                let bootstrap_finished = mark_entry_bootstrap_finished_for_native_label(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    webview.clone(),
+                )
+                .unwrap_or(false);
+                if bootstrap_finished {
+                    log_embedded_browser_diagnostic(
+                        &load_state_handle,
+                        &owner,
+                        "bootstrap_finished",
+                        json!({
+                            "url": &current_url,
+                            "nativeLabel": &native_label_for_load,
+                        }),
+                    );
+                }
                 #[cfg(target_os = "macos")]
                 crate::embedded_browser_tls::clear_invalid_tls_certificate_if_origin_changed(
                     &native_label_for_load,
@@ -2058,9 +2106,9 @@ pub async fn embedded_browser_open(
         )
         .await
         .and_then(|_| {
-            webview
-                .navigate(display_url)
-                .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
+            webview.navigate(display_url).map_err(|error| {
+                format!("Failed to navigate embedded browser after TLS setup: {error}")
+            })
         });
         if let Err(error) = tls_result {
             if let Ok(mut webviews) = state.webviews.lock() {
@@ -2149,20 +2197,12 @@ pub async fn embedded_browser_open(
     log_embedded_browser_diagnostic(
         &state,
         &label,
-        if bridge_ready {
-            "open_ready"
-        } else {
-            "open_waiting_for_visible_bounds"
-        },
+        "open_waiting_for_bootstrap",
         json!({
             "nativeLabel": &native_label,
+            "hostReady": bridge_ready,
         }),
     );
-    if bridge_ready {
-        if let Ok(mut requests) = state.pending_open_requests.lock() {
-            requests.remove(&label);
-        }
-    }
 
     Ok(EmbeddedBrowserPageState {
         #[cfg(target_os = "macos")]
@@ -2225,13 +2265,15 @@ pub fn embedded_browser_set_bounds(
         && readiness != EmbeddedBrowserReadiness::Ready
     {
         mark_entry_ready_for_native_label(&state, &native_label, webview, true)?;
-        if let Ok(mut requests) = state.pending_open_requests.lock() {
-            requests.remove(&label);
-        }
+        let ready = entry_readiness(&state, &label)? == Some(EmbeddedBrowserReadiness::Ready);
         log_embedded_browser_diagnostic(
             &state,
             &label,
-            "bounds_visible_ready",
+            if ready {
+                "bounds_visible_ready"
+            } else {
+                "bounds_waiting_for_bootstrap"
+            },
             json!({
                 "nativeLabel": native_label,
                 "visible": visible,

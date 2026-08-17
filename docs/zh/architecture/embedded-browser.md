@@ -16,7 +16,9 @@ flowchart LR
     MAIN --> PANEL[WorkspaceBrowserPanel]
     PANEL -->|仅创建 about:blank 宿主| WEBVIEW[原生 WKWebView]
     WEBVIEW --> ENTRY
-    BRIDGE -->|宿主 Ready 后唯一目标导航| WEBVIEW
+    WEBVIEW -->|bootstrap about:blank Finished| READY[宿主 Ready]
+    READY --> BRIDGE
+    BRIDGE -->|唯一目标导航| WEBVIEW
     WEBVIEW -->|PageLoadEvent::Finished| LOADED[loaded_url 真值]
     LOADED --> BRIDGE
     LOADED --> PANEL
@@ -39,7 +41,8 @@ sequenceDiagram
     B->>S: 保存 pending open
     B-->>R: open-request
     R->>W: 创建 about:blank 宿主
-    W->>S: Opening -> Ready
+    W-->>S: Finished(about:blank)
+    S->>S: Opening -> Ready
     R->>R: 结束一次性 bridge 宿主请求
     B->>W: navigate(URL)
     W->>H: GET URL
@@ -61,6 +64,6 @@ sequenceDiagram
 | `about:blank` 宿主创建与 UI 状态              | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | 多标签真实桌面回归                            | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 创建 `about:blank` 后必须结束该一次性请求；bridge 是首次目标 URL 的唯一导航者，后续 UI 重建直接使用当前目标 URL；`Ready` 不等于加载成功，只有 `Finished → loaded_url` 可以完成 `open`；关闭只能销毁 expected native label。
+不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 创建 `about:blank` 后必须结束该一次性请求；`build()` 只代表对象创建，bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`；bridge 是首次目标 URL 的唯一导航者，后续 UI 重建直接使用当前目标 URL；目标 URL 的 `Finished → loaded_url` 才能完成 `open`；关闭只能销毁 expected native label。
 
 详细能力与验证说明见 [内置浏览器开发指南](../wework/developer-guide/wework-embedded-browser.md)。

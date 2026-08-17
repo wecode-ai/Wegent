@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     available_logical_entry, bridge_navigation_url, bridge_request_authorized,
-    browser_file_url_from_path, browser_open_action, browser_webview_url,
+    browser_file_url_from_path, browser_host_is_ready, browser_open_action, browser_webview_url,
     consume_approved_agent_risk, directory_entry_modified_unix_seconds, directory_listing_html,
     download_event_owner, file_url_path, format_directory_entry_modified, format_file_size,
     loaded_browser_url, local_file_browser_title, logical_owner_for_native_label,
@@ -62,6 +62,14 @@ fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
 fn placeholder_load_does_not_replace_the_requested_url() {
     assert!(!should_record_loaded_url("about:blank"));
     assert!(should_record_loaded_url("https://example.com/"));
+}
+
+#[test]
+fn browser_ready_requires_both_bootstrap_and_host_readiness() {
+    assert!(!browser_host_is_ready(false, false));
+    assert!(!browser_host_is_ready(false, true));
+    assert!(!browser_host_is_ready(true, false));
+    assert!(browser_host_is_ready(true, true));
 }
 
 #[test]
@@ -274,6 +282,8 @@ fn closed_agent_tab_routes_fail_without_retargeting() {
                 url: None,
                 loaded_url: None,
                 opened_at_unix_ms: 0,
+                bootstrap_finished: false,
+                host_ready: false,
                 phase: super::EmbeddedBrowserPhase::Opening,
             },
         );
