@@ -177,7 +177,11 @@ async function configureClaude(control, executablePath, version, timeoutMs) {
   await control.command('click', '[data-testid="settings-menu-button"]')
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!snapshot.testIds.includes('settings-nav-harnesses')) {
-    await control.command('click', '[data-testid="general-experimental-features-toggle"]')
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="general-experimental-features-toggle"]',
+      { timeoutMs }
+    )
     await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
   }
   await control.command('click', '[data-testid="settings-nav-harnesses"]')
