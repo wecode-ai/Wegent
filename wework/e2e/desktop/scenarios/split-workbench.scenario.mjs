@@ -264,15 +264,17 @@ async function assertCompletedPanesStayIdle(control, paneSelectors, durationMs) 
   const thinkingSelector = paneSelectors
     .map(paneSelector => `${paneSelector} [data-testid="thinking-indicator"]`)
     .join(', ')
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < durationMs) {
-    assert.equal(
-      Number(await control.command('getElementCount', thinkingSelector)),
-      0,
-      'A completed split-pane task periodically returned to the thinking state'
-    )
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
+  const sample = JSON.parse(
+    await control.command('sampleElementPresence', thinkingSelector, {
+      value: String(durationMs),
+      timeoutMs: durationMs + 5_000,
+    })
+  )
+  assert.equal(
+    sample.observed,
+    false,
+    `A completed split-pane task periodically returned to the thinking state: ${JSON.stringify(sample)}`
+  )
 }
 
 async function assertIndependentTitlebar(control, paneSelector, title) {
