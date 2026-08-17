@@ -337,13 +337,14 @@ def test_fix_push_moves_card_to_in_review_then_failure_updates(
     card = _card(db, env["project"])
     assert card.status == "inbox"
 
-    # human pushes a fix -> new round, card moves to in_review
+    # human pushes a fix -> new round; CI has not confirmed it yet, so the card
+    # waits in in_progress instead of jumping to in_review.
     mr_service.handle_merge_request_event(
         db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
     )
     db.commit()
     card = _card(db, env["project"])
-    assert card.status == "in_review"
+    assert card.status == "in_progress"
     record = _record(db, env["integration"])
     assert record.round_number == 2
 
@@ -522,6 +523,36 @@ def test_standalone_comment_pulls_card_back_from_in_review(
     record = _record(db, env["integration"])
     current_notes = record.rounds_json[-1].get("notes") or []
     assert any(int(n["id"]) == 21 for n in current_notes)
+
+
+def test_card_stays_in_progress_while_run_active_after_ci_passes(
+    env: dict[str, Any],
+) -> None:
+    """The in_review invariant holds: a card whose robot run is still active
+    must not settle into the review column even after CI passes — otherwise a
+    pull-back could land on the active run and drop the new feedback."""
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.notes = []
+    fake.jobs = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
+    )
+    db.commit()
+    _start_run(env, db, _card(db, env["project"]))
+    fake.jobs = []
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA2, "success")
+    )
+    db.commit()
+    assert _card(db, env["project"]).status == "in_progress"
 
 
 def test_clean_finalize_refreshes_card_description(env: dict[str, Any]) -> None:
@@ -1358,14 +1389,20 @@ def test_repull_records_ai_started_history(env: dict[str, Any]) -> None:
         db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
     )
     db.commit()
-    # New head -> card goes to in_review.
+    # New head -> card waits in in_progress (CI not confirmed yet).
     mr_service.handle_merge_request_event(
         db, env["integration"], env["project"], _mr_event(1, "opened", SHA2)
     )
     db.commit()
-    # Round 2 CI fails -> the in-review card is pulled back to in_progress.
+    # Round 2 CI passes with no comments -> card settles into in_review.
     mr_service.handle_pipeline_event(
-        db, env["integration"], env["project"], _pipeline_event(SHA2, "failed")
+        db, env["integration"], env["project"], _pipeline_event(SHA2, "success")
+    )
+    db.commit()
+    assert _card(db, env["project"]).status == "in_review"
+    # A new standalone comment pulls the in-review card back to in_progress.
+    mr_service.handle_note_event(
+        db, env["integration"], env["project"], _note_event(1, 9, "please adjust")
     )
     db.commit()
     history = _card_history(env)

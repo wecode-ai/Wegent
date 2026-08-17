@@ -624,9 +624,12 @@ class MrService:
             self.create_or_update_card(db, integration, project, record)
             self._maybe_retrigger(db, integration, project, record)
         else:
-            # A clean outcome (CI passed, no new comments) still refreshes the
-            # card description so an in-review card reflects the green result.
-            self._refresh_card(db, project, record)
+            # CI green with no new comments: the card may move to in_review,
+            # but only when no run is still active (the _transition_card guard
+            # keeps it in progress otherwise until the run settles).
+            self._transition_card(
+                db, project, record, to_logical="in_review", trigger="ai_completed"
+            )
         db.flush()
 
     def reconcile_pending_feedback(
@@ -649,11 +652,16 @@ class MrService:
             return
         if self._has_active_run(db, record):
             return
-        if not self._unseen_note_ids(record):
-            return
-        record.state = "actionable"
-        self.create_or_update_card(db, integration, project, record)
-        self._maybe_retrigger(db, integration, project, record)
+        if self._unseen_note_ids(record):
+            record.state = "actionable"
+            self.create_or_update_card(db, integration, project, record)
+            self._maybe_retrigger(db, integration, project, record)
+        else:
+            # The run settled with no new feedback: settle the card into the
+            # review column when its CI is green and nothing is pending.
+            self._transition_card(
+                db, project, record, to_logical="in_review", trigger="ai_completed"
+            )
         db.flush()
 
     # ----------------------------------------------------------------- cards
@@ -967,6 +975,25 @@ class MrService:
             is not None
         )
 
+    def _card_ready_for_review(self, db: Session, record: MRRecord) -> bool:
+        """Whether the card satisfies the in_review invariant: CI green, no
+        current-round standalone comments, and no active robot run.
+
+        A card may sit in the review column only while nobody is working it and
+        there is nothing left to act on; otherwise a pull-back could land on an
+        active run and silently drop the new feedback.
+        """
+        if str(record.pipeline_status or "") != "success":
+            return False
+        if self._has_active_run(db, record):
+            return False
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        current = rounds[-1] if rounds else {}
+        current_notes = (
+            current.get("notes") if isinstance(current.get("notes"), list) else []
+        )
+        return not current_notes
+
     def _transition_card(
         self,
         db: Session,
@@ -982,23 +1009,31 @@ class MrService:
         Order is deliberate: the description/snapshot is updated first so the
         card never shows stale content under a new status, and every transition
         is recorded via ``write_status_change``.
+
+        ``in_review`` is an invariant: a card only sits in the review column
+        when its CI is green, it has no current-round comments, and no run is
+        active. A request that does not satisfy that (e.g. a fresh head whose
+        CI has not confirmed yet) falls back to keeping the card in progress.
         """
         if not record.current_loop_item_id:
             return
         card = db.get(LoopItem, record.current_loop_item_id)
         if card is None or card.deleted_at is not None:
             return
+        if to_logical == "in_review" and not self._card_ready_for_review(db, record):
+            to_logical = "in_progress"
         self._apply_card_content(card, project, record)
         to_status = resolve_status_id(project, to_logical)
-        self._record_card_status(
-            card,
-            project,
-            from_status=card.status,
-            to_status=to_status,
-            trigger=trigger,
-            by_user_id=by_user_id,
-        )
-        card.status = to_status
+        if to_status != card.status:
+            self._record_card_status(
+                card,
+                project,
+                from_status=card.status,
+                to_status=to_status,
+                trigger=trigger,
+                by_user_id=by_user_id,
+            )
+            card.status = to_status
         card.version += 1
         db.flush()
 
