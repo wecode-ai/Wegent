@@ -65,16 +65,19 @@ fn executor_build_entrypoints_use_rust_binary_build() {
 
     let dev_sidecar = fs::read_to_string("../wework/scripts/dev-executor-sidecar.sh").unwrap();
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_DEV_RELOAD:-1"));
-    assert!(dev_sidecar.contains("--features dev-reload"));
-    assert!(dev_sidecar.contains("--bin wegent-executor-dev"));
+    assert!(dev_sidecar.contains("dev-executor-reload.mjs"));
     assert!(dev_sidecar.contains("cargo build"));
     assert!(dev_sidecar.contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor\""));
     assert!(dev_sidecar.contains("$cache_root/executor-dev"));
     assert!(!dev_sidecar.contains("executor_source_cache_key"));
     assert!(dev_sidecar.contains("WEGENT_EXECUTOR_SOURCE_DIR"));
-    assert!(dev_sidecar
-        .contains("cargo_target_binary_path \"$EXECUTOR_DIR\" debug wegent-executor-dev"));
     assert!(!dev_sidecar.contains("exec cargo run"));
+
+    let dev_reload = fs::read_to_string("../wework/scripts/dev-executor-reload.mjs").unwrap();
+    assert!(dev_reload.contains("'cargo'"));
+    assert!(dev_reload.contains("'--bin', 'wegent-executor'"));
+    assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
+    assert!(!dev_reload.contains("wegent-executor-dev"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));
