@@ -241,6 +241,12 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
+        if execution.team_id is not None:
+            from app.services.board_team_execution import (
+                schedule_board_robot_execution,
+            )
+
+            schedule_board_robot_execution(db, execution)
         logger.info(
             "[ProjectAutomation] Queued project robot run=%s execution=%s device=%s",
             run.id,
@@ -379,17 +385,24 @@ class ProjectAutomationExecution:
         run: ProjectAutomationRun,
         context: dict,
     ) -> str:
-        return (
-            "你是这个看板的 AI 分派调度员，不是任务执行者。必须先通过 wework_space "
-            "工具读取当前项目、原始任务，以及项目成员和项目机器人的能力说明；再根据"
-            "任务内容和下面的调度要求选择最合适的人员或机器人，并通过工具直接完成"
-            "分派。不要自己执行原始任务，不要创建替代任务，也不要只在回复中建议人选。"
-            "如果没有合适人选，保持任务未分配并说明原因。工具调用完成后，最终回复只"
-            "需简要记录已分配给谁以及判断依据；最终回复不参与分派，也不要求 JSON。\n\n"
-            f"当前项目 ID：{project.id}\n"
-            f"当前任务 ID：{run.task_id or ''}\n"
-            f"调度要求：\n{rule.description or ''}"
-        )
+        del db, owner, context
+        task_id = run.task_id or ""
+        sections = [
+            (
+                f"project_id: {project.id}\n"
+                f"task_id: {task_id}\n"
+                f"automation_run_id: {run.id}"
+            ),
+            (
+                f"看板任务数据位于 cloud://projects/{project.id}/todos/{task_id}，"
+                "请通过看板工具自行查看。"
+            ),
+            "请读取候选执行者并按调度要求完成分派，不要执行任务。",
+        ]
+        instruction = (rule.description or "").strip()
+        if instruction:
+            sections.append(instruction)
+        return "\n\n".join(sections)
 
     def _create_manager_activity(
         self,
@@ -584,6 +597,11 @@ class ProjectAutomationExecution:
                 "selected_assignee_type": assignee_type,
                 "selected_assignee_id": assignee_id,
             }
+            if assignee_type == "agent":
+                selected_agent = project_agent(db, project_id, assignee_id)
+                activity.sender_name = (
+                    selected_agent.title or selected_agent.name or "AI"
+                )
             db.commit()
         return self._task_values(
             db, project_id=project_id, task_id=task_id, user_id=user_id

@@ -3107,6 +3107,24 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         return [localDeviceFromStatus(fallback)]
       }
     },
+    async getRuntimeSettings(deviceId: string) {
+      const settings = await runtimeWorkApi.getRuntimeSettings()
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
+    async updateRuntimeSettings(deviceId: string, maxConcurrentTasks: number) {
+      const settings = await runtimeWorkApi.updateRuntimeSettings({ maxConcurrentTasks })
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
     async getHomeDirectory(deviceId: string) {
       const response = await executeCommand(deviceId, {
         command_key: 'home_dir',

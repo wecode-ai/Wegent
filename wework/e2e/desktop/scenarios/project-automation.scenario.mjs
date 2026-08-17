@@ -8,7 +8,19 @@ import {
   selectE2EModel,
   withTimeout,
 } from '../modules/shared.mjs'
-import { createSse, streamingTextEvents } from '../modules/response-protocol.mjs'
+import {
+  assistantMessage,
+  createSse,
+  functionCall,
+  namespacedFunctionCall,
+  requestContainsToolOutput,
+  responseCompleted,
+  responseCreated,
+  selectMcpTool,
+  selectToolSearch,
+  streamingTextEvents,
+  toolSearchResponseEvents,
+} from '../modules/response-protocol.mjs'
 
 const PROJECT_ID = '700000000000000001'
 const AGENT_ID = 'agent-project-automation'
@@ -18,6 +30,7 @@ const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
 const PROJECT_CHAT_REMOTE_MODEL_NAME = 'desktop-e2e-project-chat-remote'
 const PROJECT_CHAT_REMOTE_MODEL_LABEL = 'Project Chat Remote Codex'
+const TEAM_ID = 88001
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -53,6 +66,15 @@ const AGENT = {
   version: 1,
   createdAt: '2026-08-11T00:00:00',
   updatedAt: '2026-08-11T00:00:00',
+}
+
+const TEAM = {
+  id: TEAM_ID,
+  name: 'board-review-team',
+  displayName: '看板评审智能体',
+  namespace: 'default',
+  is_active: true,
+  bots: [],
 }
 
 const MODEL = {
@@ -164,10 +186,11 @@ async function readJson(request) {
 }
 
 async function requestJson(baseUrl, authToken, pathname, options = {}) {
+  const { useApiKey = false, ...fetchOptions } = options
   const response = await fetch(`${baseUrl}${pathname}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
-      Authorization: `Bearer ${authToken}`,
+      ...(useApiKey ? { 'X-API-Key': authToken } : { Authorization: `Bearer ${authToken}` }),
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...options.headers,
     },
@@ -191,6 +214,44 @@ async function waitForValue(read, predicate, message, timeoutMs) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
+}
+
+function assertExecutionTruthContract(execution) {
+  assert.equal(execution.runtimeTaskId, `codex-queue-${execution.id}`)
+  assert.ok(execution.attemptNo >= 1)
+  assert.ok(execution.lastEventSeq >= 0)
+  if (
+    !['completed', 'failed', 'cancelled'].includes(execution.status) &&
+    ['stale', 'diverged'].includes(execution.syncState)
+  ) {
+    assert.equal(execution.displayState, 'unknown')
+    return
+  }
+  if (execution.status === 'claimed') {
+    assert.equal(
+      execution.displayState,
+      execution.observedState === 'unconfirmed' ? 'starting' : 'waiting_runtime'
+    )
+    return
+  }
+  const expectedDisplayState = {
+    pending_approval: 'waiting_approval',
+    queued: 'queued',
+    running: 'running',
+    cancel_requested: 'cancelling',
+    completed: 'succeeded',
+    failed: 'failed',
+    cancelled: 'cancelled',
+  }[execution.status]
+  assert.equal(execution.displayState, expectedDisplayState)
+  if (execution.status === 'running') {
+    assert.equal(execution.observedState, 'running')
+    assert.ok(execution.lastEventSeq > 0)
+  }
+  if (execution.status === 'completed') {
+    assert.equal(execution.observedState, 'succeeded')
+    assert.ok(execution.lastEventSeq > 0)
+  }
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
@@ -220,18 +281,102 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   let retryRequested = false
   let modelRequests = 0
   const remoteProjectChatRequests = []
+  let boardTeamAssignmentPayload = null
+  let createdBoardItem = null
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
+  let wegentAgent = null
+  let cloudTeam = null
+  let personalApiKey = null
+  let managerToolCalls = 0
 
   const cloudRequest = (pathname, options) => {
     assert.ok(cloudApi, 'Real cloud API was not prepared')
     return requestJson(cloudApi.backendUrl, cloudApi.authToken, pathname, options)
   }
 
+  const publicApiRequest = (pathname, options) => {
+    assert.ok(personalApiKey, 'Personal API key was not prepared')
+    return requestJson(cloudApi.backendUrl, personalApiKey, pathname, {
+      ...options,
+      useApiKey: true,
+    })
+  }
+
+  async function allExecutions(projectId) {
+    const responses = await Promise.all(
+      [null, 'completed', 'failed', 'cancelled'].map(status =>
+        cloudRequest(
+          `/api/v1/cloud-projects/${projectId}/executions${status ? `?status=${status}` : ''}`
+        )
+      )
+    )
+    return [
+      ...new Map(
+        responses.flatMap(response => response.items ?? []).map(item => [item.id, item])
+      ).values(),
+    ]
+  }
+
+  async function waitForCompletedExecution(projectId, taskId, executorType) {
+    const execution = await waitForValue(
+      () => allExecutions(projectId),
+      items =>
+        items.find(
+          item =>
+            item.loopItemId === taskId &&
+            item.executorType === executorType &&
+            item.status === 'completed'
+        ),
+      `${executorType} execution for ${taskId} did not reach completed`,
+      uiTimeoutMs * 3
+    ).then(items =>
+      items.find(
+        item =>
+          item.loopItemId === taskId &&
+          item.executorType === executorType &&
+          item.status === 'completed'
+      )
+    )
+    assert.equal(execution.observedState, 'succeeded')
+    assert.equal(execution.displayState, 'succeeded')
+    assert.equal(execution.syncState, 'in_sync')
+    return execution
+  }
+
+  async function waitForSucceededRun(projectId, ruleId, taskId = null) {
+    return waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${ruleId}/runs`),
+      items =>
+        items.find(
+          item => item.status === 'succeeded' && (taskId === null || item.taskId === taskId)
+        ),
+      `Automation ${ruleId} did not reach succeeded${taskId ? ` for ${taskId}` : ''}`,
+      uiTimeoutMs * 3
+    ).then(items =>
+      items.find(item => item.status === 'succeeded' && (taskId === null || item.taskId === taskId))
+    )
+  }
+
+  async function disableRule(projectId, rule) {
+    const rules = await cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`)
+    const current = rules.find(item => item.id === rule.id)
+    assert.ok(current, `Automation ${rule.id} disappeared before disable`)
+    return cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${rule.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ version: current.version, enabled: false }),
+    })
+  }
+
   async function verifyRealCloud(control) {
     assert.ok(cloudProject?.id, 'Real cloud project fixture is missing')
     const projectId = String(cloudProject.id)
+    const teamResponse = await cloudRequest('/api/teams?page=1&limit=100')
+    const boardTeam = (teamResponse.items ?? []).find(
+      team => Number(team.id) === Number(cloudTeam?.id)
+    )
+    assert.ok(boardTeam?.id, 'Real backend has no runnable Wegent Team fixture')
     await waitForValue(
       () => cloudRequest('/api/devices'),
       response =>
@@ -256,6 +401,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         localProjectId: null,
       }),
     })
+    wegentAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Wegent Runtime Robot',
+        runtime: 'wegent',
+        wegentTeamId: Number(boardTeam.id),
+        systemPrompt: '',
+        capabilityDescription: 'Execute through the bound Wegent Agent.',
+        visibility: 'creator_admin',
+        executionMode: 'auto',
+      }),
+    })
+    assert.equal(wegentAgent.runtime, 'wegent')
+    assert.equal(Number(wegentAgent.wegentTeamId), Number(boardTeam.id))
     assert.equal(
       cloudAgent.executionDeviceId,
       CLOUD_DEVICE_ID,
@@ -273,9 +432,86 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
       timeoutMs: uiTimeoutMs,
     })
-    const projectSelector = `[data-testid="cloud-sidebar-project-${projectId}"]`
+    const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+    const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${projectId}"]`
     await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
     await control.command('click', projectSelector)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+    await control.command('fill', `${activeBoard} [data-testid="cloud-todo-title"]`, {
+      value: '真实后端智能体看板任务',
+    })
+    const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
+    await control.command('waitFor', assigneeSelector, {
+      text: wegentAgent.name,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', assigneeSelector, {
+      value: `agent:${wegentAgent.id}`,
+    })
+    assert.equal(await control.command('getValue', assigneeSelector), `agent:${wegentAgent.id}`)
+    await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
+    const teamTask = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(
+          item =>
+            item.title === '真实后端智能体看板任务' && item.assignee_agent_id === wegentAgent.id
+        ),
+      'Board task was not assigned to the Wegent-runtime robot by the real backend',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.title === '真实后端智能体看板任务'))
+    const teamExecution = await waitForCompletedExecution(projectId, teamTask.id, 'project_robot')
+    assert.equal(teamExecution.executorType, 'project_robot')
+    assert.equal(teamExecution.agentId, wegentAgent.id)
+    assert.equal(Number(teamExecution.teamId), Number(boardTeam.id))
+    assert.ok(teamExecution.backendTaskId > 0)
+    const projectedTeamTask = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response =>
+        (response.items ?? []).find(item => item.id === teamTask.id)?.ai_state
+          ?.project_chat_message_id,
+      'The completed Wegent execution did not project its board message identity',
+      uiTimeoutMs
+    ).then(response => response.items.find(item => item.id === teamTask.id))
+    const rootMessageId = projectedTeamTask.ai_state.project_chat_message_id
+    await control.command('waitFor', `[data-testid="cloud-todo-detail"]`, {
+      text: wegentAgent.name,
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command(
+      'waitFor',
+      `[data-testid="cloud-task-activity-message-${rootMessageId}"]`,
+      { text: wegentAgent.name, timeoutMs: uiTimeoutMs }
+    )
+    const replyComposer = `[data-testid="cloud-task-activity-card-composer-${rootMessageId}"]`
+    await control.command('fill', replyComposer, { value: '确认继续执行' })
+    await control.command('press', replyComposer, { key: 'Enter' })
+    const continuedTask = await waitForValue(
+      () => cloudRequest(`/api/tasks/${teamExecution.backendTaskId}`),
+      task => (task.subtasks ?? []).some(subtask => subtask.prompt === '确认继续执行'),
+      'The board reply did not append a user turn to the native Wegent Task',
+      uiTimeoutMs * 3
+    )
+    assert.equal(continuedTask.id, teamExecution.backendTaskId)
+    const agentExecutionBadgeSelector = '[data-testid^="cloud-task-activity-execution-badge-"]'
+    await waitForValue(
+      () => control.command('getElementCount', agentExecutionBadgeSelector),
+      count => Number(count) === 2,
+      'The native Wegent continuation was not projected as a second agent comment',
+      uiTimeoutMs * 3
+    )
+    const unchangedExecution = await waitForCompletedExecution(
+      projectId,
+      teamTask.id,
+      'project_robot'
+    )
+    assert.equal(unchangedExecution.id, teamExecution.id)
+    assert.equal(unchangedExecution.backendTaskId, teamExecution.backendTaskId)
+    await captureScreenshot(control, 'project-automation-board-team-continuation.png')
+    await captureScreenshot(control, 'project-automation-board-team-real.png')
     await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -358,6 +594,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       ['queued', 'waiting_device', 'running', 'succeeded'].includes(runs[0].status),
       `Manual automation entered an unexpected state: ${runs[0].status}`
     )
+    const execution = await waitForValue(
+      async () => {
+        const responses = await Promise.all(
+          [null, 'completed', 'failed', 'cancelled'].map(status =>
+            cloudRequest(
+              `/api/v1/cloud-projects/${projectId}/executions${status ? `?status=${status}` : ''}`
+            )
+          )
+        )
+        return responses
+          .flatMap(response => response.items ?? [])
+          .filter(item => item.loopItemId === runs[0].taskId)
+          .sort((left, right) => right.id - left.id)[0]
+      },
+      value => Boolean(value),
+      'Manual automation did not expose authoritative execution truth',
+      uiTimeoutMs
+    )
+    assertExecutionTruthContract(execution)
     await control.command('waitFor', `[data-testid="project-automation-run-task-${runs[0].id}"]`, {
       timeoutMs: uiTimeoutMs,
     })
@@ -388,27 +643,360 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       ),
       'selected'
     )
+    const concurrencySelector = '[data-testid="cloud-project-chat-agent-max-concurrent-executions"]'
+    assert.equal(
+      await control.command('getValue', concurrencySelector, { visible: true }),
+      '1',
+      'Robot concurrency did not default to one'
+    )
+    await control.command('fill', concurrencySelector, { value: '2', visible: true })
+    await control.command('click', '[data-testid="cloud-project-chat-agent-save"]', {
+      visible: true,
+    })
+    const updatedAgents = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`),
+      items => items.some(item => item.id === cloudAgent.id && item.maxConcurrentExecutions === 2),
+      'Robot concurrency was not persisted by the real backend',
+      uiTimeoutMs
+    )
+    cloudAgent = updatedAgents.find(item => item.id === cloudAgent.id)
     await captureScreenshot(control, 'project-automation-04-real-robot-binding.png')
+    await verifyPublicApiAutomationMatrix(control)
+  }
+
+  async function verifyPublicApiAutomationMatrix(control) {
+    const projectId = String(cloudProject.id)
+    const createTask = (title, values = {}) =>
+      publicApiRequest(`/api/v1/cloud-projects/${projectId}/loop-items`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          description: `${title} must complete through the real automation runtime.`,
+          priority: 'high',
+          tags: ['api-e2e'],
+          ...values,
+        }),
+      })
+    const createRule = values =>
+      cloudRequest(`/api/v1/cloud-projects/${projectId}/automations`, {
+        method: 'POST',
+        body: JSON.stringify(values),
+      })
+
+    const directTeamTask = await createTask('API · Wegent runtime 机器人执行', {
+      assignee_agent_id: wegentAgent.id,
+    })
+    assert.equal(directTeamTask.assignee_agent_id, wegentAgent.id)
+    const directTeamExecution = await waitForCompletedExecution(
+      projectId,
+      directTeamTask.id,
+      'project_robot'
+    )
+    assert.equal(directTeamExecution.agentId, wegentAgent.id)
+    assert.equal(Number(directTeamExecution.teamId), Number(cloudTeam.id))
+    assert.ok(directTeamExecution.backendTaskId > 0)
+
+    const manualEventRule = await createRule({
+      name: 'API task.created · manual robot',
+      prompt: 'Complete the API-created board task.',
+      triggerType: 'event',
+      eventType: 'task.created',
+      eventConfig: { tags: ['api-e2e'] },
+      assignmentMode: 'manual',
+      agentId: cloudAgent.id,
+      enabled: true,
+    })
+    const manualEventTask = await createTask('API · task.created 手动机器人')
+    const manualEventRun = await waitForSucceededRun(
+      projectId,
+      manualEventRule.id,
+      manualEventTask.id
+    )
+    const manualEventExecution = await waitForCompletedExecution(
+      projectId,
+      manualEventTask.id,
+      'project_robot'
+    )
+    assert.equal(manualEventExecution.automationRunId, manualEventRun.id)
+    await disableRule(projectId, manualEventRule)
+
+    const customManagerRule = await createRule({
+      name: 'API task.created · custom manager',
+      prompt: 'Use the board assignment tool to choose the configured project robot.',
+      triggerType: 'event',
+      eventType: 'task.created',
+      eventConfig: { tags: ['api-e2e'] },
+      assignmentMode: 'ai_managed',
+      managerType: 'custom',
+      model: CLOUD_MODEL_NAME,
+      executionEnvironment: 'cloud',
+      executionDeviceId: CLOUD_DEVICE_ID,
+      enabled: true,
+    })
+    const customToolCallsBefore = managerToolCalls
+    const customManagerTask = await createTask('API · task.created 自定义 AI 调度')
+    const customManagerRun = await waitForSucceededRun(
+      projectId,
+      customManagerRule.id,
+      customManagerTask.id
+    )
+    const customManagerExecution = await waitForCompletedExecution(
+      projectId,
+      customManagerTask.id,
+      'automation_manager'
+    )
+    const customRobotExecution = await waitForCompletedExecution(
+      projectId,
+      customManagerTask.id,
+      'project_robot'
+    )
+    assert.equal(customManagerExecution.automationRunId, customManagerRun.id)
+    assert.equal(customRobotExecution.automationRunId, customManagerRun.id)
+    assert.ok(
+      managerToolCalls > customToolCallsBefore,
+      'Custom AI manager did not call assign_board_item'
+    )
+    await disableRule(projectId, customManagerRule)
+
+    const wegentManagerRule = await createRule({
+      name: 'API task.created · Wegent manager',
+      prompt: 'Use the board assignment tool to choose the configured project robot.',
+      triggerType: 'event',
+      eventType: 'task.created',
+      eventConfig: { tags: ['api-e2e'] },
+      assignmentMode: 'ai_managed',
+      managerType: 'wegent',
+      wegentTeamId: Number(cloudTeam.id),
+      enabled: true,
+    })
+    const wegentToolCallsBefore = managerToolCalls
+    const wegentManagerTask = await createTask('API · task.created Wegent 智能体调度')
+    const wegentManagerRun = await waitForSucceededRun(
+      projectId,
+      wegentManagerRule.id,
+      wegentManagerTask.id
+    )
+    assert.ok(wegentManagerRun.backendTaskId > 0, 'Wegent manager did not persist its Backend Task')
+    const wegentRobotExecution = await waitForCompletedExecution(
+      projectId,
+      wegentManagerTask.id,
+      'project_robot'
+    )
+    assert.equal(wegentRobotExecution.automationRunId, wegentManagerRun.id)
+    assert.ok(
+      managerToolCalls > wegentToolCallsBefore,
+      'Wegent manager did not call assign_board_item'
+    )
+    await disableRule(projectId, wegentManagerRule)
+
+    const scheduleRule = await createRule({
+      name: 'API schedule · manual robot',
+      prompt: 'Complete the scheduled board task.',
+      triggerType: 'schedule',
+      cronExpression: '0 3 * * *',
+      timezone: 'Asia/Shanghai',
+      assignmentMode: 'manual',
+      agentId: cloudAgent.id,
+      enabled: true,
+    })
+    const queuedScheduleRun = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/run`,
+      { method: 'POST' }
+    )
+    assert.ok(queuedScheduleRun.taskId, 'Run-now did not create its board task')
+    const scheduleRun = await waitForSucceededRun(
+      projectId,
+      scheduleRule.id,
+      queuedScheduleRun.taskId
+    )
+    const scheduleExecution = await waitForCompletedExecution(
+      projectId,
+      scheduleRun.taskId,
+      'project_robot'
+    )
+    assert.equal(scheduleExecution.automationRunId, scheduleRun.id)
+
+    const boardItems = await cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`)
+    for (const task of [directTeamTask, manualEventTask, customManagerTask, wegentManagerTask]) {
+      assert.ok(
+        boardItems.items.some(item => item.id === task.id),
+        `API-created task ${task.id} was not projected back to the board`
+      )
+    }
+    await captureScreenshot(control, 'project-automation-05-public-api-matrix.png')
   }
 
   return {
     async prepareCloud({ authToken, backendUrl }) {
       cloudApi = { authToken, backendUrl }
-      cloudProject = await requestJson(backendUrl, authToken, '/api/v1/cloud-projects', {
+      const createdKey = await requestJson(backendUrl, authToken, '/api/api-keys', {
         method: 'POST',
         body: JSON.stringify({
-          projectKey: 'AUTO',
+          name: 'Project automation public API E2E',
+          description: 'Creates a board and tasks through the public API contract',
+        }),
+      })
+      personalApiKey = createdKey.key
+      assert.match(personalApiKey, /^wg-/, 'Personal API key did not use the public key format')
+      cloudProject = await requestJson(backendUrl, personalApiKey, '/api/v1/cloud-projects', {
+        method: 'POST',
+        useApiKey: true,
+        body: JSON.stringify({
+          project_key: 'AUTO',
           name: PROJECT.name,
           description: PROJECT.description,
-          taskProvider: 'local',
-          providerConfig: {},
+          task_provider: 'local',
+          provider_config: {},
           visibility: 'private',
         }),
       })
       assert.ok(cloudProject?.id, 'Real cloud project fixture did not return an id')
+      const bot = await requestJson(backendUrl, authToken, '/api/bots', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `project-automation-e2e-bot-${process.pid}`,
+          shell_name: 'Chat',
+          agent_config: {
+            bind_model: CLOUD_MODEL_NAME,
+            bind_model_type: 'public',
+          },
+          system_prompt: 'Complete the assigned board task and report success.',
+          namespace: 'default',
+        }),
+      })
+      cloudTeam = await requestJson(backendUrl, authToken, '/api/teams', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `project-automation-e2e-team-${process.pid}`,
+          displayName: 'Project Automation E2E Team',
+          description: 'Deterministic real-backend automation team',
+          bots: [
+            {
+              bot_id: bot.id,
+              role: 'leader',
+              bot_prompt: '',
+              requireConfirmation: false,
+              contextPassing: 'none',
+            },
+          ],
+          workflow: { mode: 'solo' },
+          bind_mode: ['wework'],
+          namespace: 'default',
+          is_active: true,
+        }),
+      })
+      assert.ok(cloudTeam?.id, 'Real cloud Team fixture did not return an id')
     },
 
     async handleHttp(request, response, url) {
+      if (request.method === 'POST' && url.pathname === '/v1/responses' && cloudApi) {
+        const payload = await readJson(request)
+        const responseId = `project-automation-real-${Date.now()}`
+        const serialized = JSON.stringify(payload)
+        const writeEvents = events => {
+          response.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          })
+          response.end(createSse(events))
+        }
+        if (serialized.includes('"request_kind":"prewarm"')) {
+          writeEvents([responseCreated(responseId), responseCompleted(responseId)])
+          return true
+        }
+        const isManagerRequest = serialized.includes(
+          '请读取候选执行者并按调度要求完成分派，不要执行任务。'
+        )
+        if (isManagerRequest) {
+          assert.ok(cloudAgent?.id, 'AI manager ran before the project robot was prepared')
+          const assignment = {
+            assignee_type: 'agent',
+            assignee_id: cloudAgent.id,
+          }
+          const searchCallId = 'project-automation-search-assignee'
+          const assignCallId = 'project-automation-assign-board-item'
+          if (requestContainsToolOutput(payload, assignCallId)) {
+            writeEvents([
+              responseCreated(responseId),
+              assistantMessage('已通过看板工具完成机器人分派。'),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (requestContainsToolOutput(payload, searchCallId)) {
+            const tool = selectMcpTool(payload, 'wework_space', 'assign_board_item', assignment)
+            managerToolCalls += 1
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(assignCallId, tool.namespace, tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          const namespace = payload.tools?.find(
+            tool =>
+              tool?.type === 'namespace' &&
+              tool.name === 'wework_space' &&
+              tool.tools?.some(candidate => candidate?.name === 'assign_board_item')
+          )
+          const convertedName = payload.tools
+            ?.map(tool => tool?.name ?? tool?.function?.name)
+            .find(
+              name =>
+                name === 'assign_board_item' ||
+                name?.endsWith('_assign_board_item') ||
+                name === 'assign_task' ||
+                name?.endsWith('_assign_task')
+            )
+          if (namespace) {
+            managerToolCalls += 1
+            writeEvents([
+              responseCreated(responseId),
+              ...namespacedFunctionCall(
+                assignCallId,
+                namespace.name,
+                'assign_board_item',
+                assignment
+              ),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          if (convertedName) {
+            let convertedArguments = assignment
+            if (convertedName.endsWith('assign_task')) {
+              const taskId = serialized.match(/AUTO-\d+/g)?.at(-1)
+              assert.ok(taskId, 'Chat manager request did not retain its board task id')
+              convertedArguments = {
+                project_id: String(cloudProject.id),
+                task_id: taskId,
+                ...assignment,
+              }
+            }
+            managerToolCalls += 1
+            writeEvents([
+              responseCreated(responseId),
+              ...functionCall(assignCallId, convertedName, convertedArguments),
+              responseCompleted(responseId),
+            ])
+            return true
+          }
+          const search = selectToolSearch(payload, 'assign_board_item')
+          writeEvents([
+            responseCreated(responseId),
+            ...toolSearchResponseEvents(searchCallId, search),
+            responseCompleted(responseId),
+          ])
+          return true
+        }
+        writeEvents([
+          responseCreated(responseId),
+          assistantMessage('真实自动化执行已完成。'),
+          responseCompleted(responseId),
+        ])
+        return true
+      }
       if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: [PROJECT] })
         return true
@@ -417,7 +1005,54 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         request.method === 'GET' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
       ) {
-        json(response, 200, { items: [] })
+        json(response, 200, { items: createdBoardItem ? [createdBoardItem] : [] })
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
+      ) {
+        const payload = await readJson(request)
+        createdBoardItem = {
+          id: 'AUTO-201',
+          cloud_project_id: PROJECT_ID,
+          sequence_number: 201,
+          parent_id: null,
+          created_by_user_id: 9001,
+          assignee_user_id: 9001,
+          assignee_agent_id: null,
+          assignee_team_id: null,
+          title: payload.title,
+          description: payload.description ?? '',
+          status: payload.status ?? 'inbox',
+          priority: payload.priority ?? 'none',
+          due_at: null,
+          tags: payload.tags ?? [],
+          sort_order: 0,
+          current_delivery_id: null,
+          version: 1,
+          created_at: '2026-08-15T00:00:00Z',
+          updated_at: '2026-08-15T00:00:00Z',
+          completed_at: null,
+        }
+        json(response, 201, createdBoardItem)
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items/AUTO-201/assign`
+      ) {
+        boardTeamAssignmentPayload = await readJson(request)
+        createdBoardItem = {
+          ...createdBoardItem,
+          assignee_user_id: null,
+          assignee_team_id: TEAM_ID,
+          assignee_team_name: TEAM.displayName,
+          execution_state: 'queued',
+          execution_control_state: 'queued',
+          version: 2,
+        }
+        json(response, 200, createdBoardItem)
         return true
       }
       if (
@@ -464,7 +1099,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         return true
       }
       if (request.method === 'GET' && url.pathname === '/api/teams') {
-        json(response, 200, { items: [], total: 0 })
+        json(response, 200, { items: [TEAM], total: 1 })
         return true
       }
       if (
@@ -600,9 +1235,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const projectSelector = `[data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
+      const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-settings"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="project-space-settings"]`, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', `${activeBoard} [data-testid="project-space-api-wiki"]`, {
+        text: 'POST /api/v1/cloud-projects',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="project-space-device-concurrency"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${PROJECT_ID}"]`
       await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
       await control.command('click', projectSelector)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
+      await control.command('fill', `${activeBoard} [data-testid="cloud-todo-title"]`, {
+        value: '由智能体评审看板状态',
+      })
+      const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
+      await control.command('waitFor', assigneeSelector, {
+        text: TEAM.displayName,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', assigneeSelector, {
+        value: `team:${TEAM_ID}`,
+      })
+      assert.equal(await control.command('getValue', assigneeSelector), `team:${TEAM_ID}`)
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-card-AUTO-201"]`, {
+        text: TEAM.displayName,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(boardTeamAssignmentPayload?.assigneeType, 'team')
+      assert.equal(boardTeamAssignmentPayload?.assigneeId, String(TEAM_ID))
+      await captureScreenshot(control, 'project-automation-board-team-assignment.png')
       await control.command('waitFor', '[data-testid="cloud-project-ask-ai"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -953,6 +1631,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         createdPayloads,
         modelRequests,
         retryRequested,
+        boardTeamAssignmentPayload,
+        managerToolCalls,
         rules,
         runs,
       }

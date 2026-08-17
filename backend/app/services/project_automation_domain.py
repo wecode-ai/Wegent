@@ -120,7 +120,7 @@ def wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind:
     if team is None or team.kind != "Team" or not team.is_active:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Wegent robot is not accessible or active",
+            "Wegent Team is not accessible or active",
         )
     return team
 
@@ -138,7 +138,7 @@ def runnable_wegent_team(db: Session, user_id: int, team_id: int | None) -> Kind
     except ValueError as exc:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Wegent robot is not runnable: {exc}",
+            f"Wegent Team is not runnable: {exc}",
         ) from exc
     return team
 

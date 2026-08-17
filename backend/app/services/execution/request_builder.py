@@ -53,6 +53,20 @@ SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
 WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 SYSTEM_RESOURCE_USER_ID = 0
+BOARD_WEGENT_TASK_SOURCES = {
+    "project_automation",
+    "board_team_assignment",
+    "board_team_continuation",
+}
+BOARD_MCP_GUIDANCE = """
+<wegent_board_runtime>
+This execution is bound to a Wework board item. The injected
+wegent-wework-space MCP is the source of truth for the board. Call
+get_current_context before board operations; do not probe Backend routes,
+read authentication files, or guess project/item identifiers. Use the MCP
+tools to read, create, update, assign, comment, attach, and inspect deliveries.
+</wegent_board_runtime>
+""".strip()
 
 
 def _normalize_provider_keyword_text(value: str) -> str:
@@ -186,6 +200,9 @@ class TaskRequestBuilder:
         Returns:
             ExecutionRequest ready for dispatch
         """
+        include_wework_space_mcp = (
+            include_wework_space_mcp or self._is_board_wegent_task(task)
+        )
         # Parse team CRD
         team_crd = Team.model_validate(team.json)
 
@@ -240,6 +257,8 @@ class TaskRequestBuilder:
             team_crd=team_crd,
             team_member_prompt=team_member_prompt,
         )
+        if include_wework_space_mcp:
+            system_prompt = f"{system_prompt.rstrip()}\n\n{BOARD_MCP_GUIDANCE}"
 
         # Get skills for the bot (full resolution from Ghost)
         # Convert preload_skills to the format expected by _get_bot_skills
@@ -519,6 +538,21 @@ class TaskRequestBuilder:
             bool(execution_request.backend_url),
         )
         return execution_request
+
+    @staticmethod
+    def _is_board_wegent_task(task: TaskResource) -> bool:
+        """Identify a native Wegent Task created for one board execution."""
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        metadata = task_json.get("metadata")
+        labels = metadata.get("labels") if isinstance(metadata, dict) else None
+        if not isinstance(labels, dict):
+            return False
+        return bool(
+            labels.get("source") in BOARD_WEGENT_TASK_SOURCES
+            and labels.get("weworkSpaceProjectId")
+            and labels.get("weworkSpaceTaskId")
+        )
 
     @staticmethod
     def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:

@@ -116,6 +116,8 @@ export interface WorkbenchServices {
   deviceApi: Pick<
     ReturnType<typeof createDeviceApi>,
     | 'listDevices'
+    | 'getRuntimeSettings'
+    | 'updateRuntimeSettings'
     | 'getHomeDirectory'
     | 'getProjectWorkspaceRoot'
     | 'listDirectories'

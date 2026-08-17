@@ -4,6 +4,8 @@ sidebar_position: 38
 
 # 内置浏览器
 
+架构评审以 [内置浏览器导航与多标签](../../architecture/embedded-browser.md) 为准；本文只保留能力、兼容性和验证说明。
+
 Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互网页，并让本地运行时通过 WKWebView bridge 控制同一个页面。它不是截图预览，也不会新开外部 Chrome 窗口。
 
 ## 架构
@@ -21,6 +23,100 @@ Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏�
 bridge 请求必须携带认证 token。`open` 和 `navigate` 只允许安全的网页 scheme；不要允许 `file:`、`javascript:` 或其它可以读取本机文件或执行任意脚本的地址进入 Agent 导航路径。
 
 bridge 支持有限并发。长时间 `waitFor` 不应阻塞独立的 `click`、`fill` 或 `inspect` 请求；超出并发上限时返回明确的忙碌错误，而不是让调用无限等待。
+
+### 多标签导航连线图
+
+```mermaid
+flowchart LR
+    E2E[E2E browser-multi-tabs] -->|读取 identity + Bearer token| BRIDGE[loopback browser bridge]
+    MCP[Executor browser MCP] -->|同一协议| BRIDGE
+    BRIDGE -->|base label + browser_session_id| ROUTE[active_tabs / agent_tabs 路由]
+    ROUTE -->|解析唯一 logical label| ENTRY[(EmbeddedBrowserState.webviews)]
+
+    BRIDGE -->|首次 open，宿主不存在| PENDING[(pending_open_requests)]
+    PENDING -->|open-request event / pending snapshot| MAIN[DesktopWorkbenchMain]
+    MAIN -->|创建顶层 browser:N + 选中| PANEL[WorkspaceBrowserPanel]
+    PANEL -->|embedded_browser_open| NATIVE[logical label 对应的原生 WKWebView]
+    NATIVE --> ENTRY
+
+    BRIDGE -->|宿主 ready 后 navigate| NATIVE
+    PANEL -->|地址栏提交或消费 open request| NATIVE
+    NATIVE -->|PageLoadEvent::Finished| LOAD[更新 loaded_url]
+    LOAD -->|page-state-change| PANEL
+    LOAD -->|解除 bridge open 等待| BRIDGE
+
+    MAIN -->|set_active_tab| ROUTE
+    MAIN -->|关闭标签，携带 expected native label| CLOSE[close / close_many]
+    CLOSE --> ENTRY
+    ENTRY -->|pageState / inspect / status| BRIDGE
+```
+
+连线职责如下：
+
+| 连线                           | 唯一职责                                                                | 当前代码归属                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| E2E/MCP → bridge               | 读取最新 identity、认证请求并携带基础 label 与可选 session ID           | `e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`、`executor/src/browser_mcp`、`src-tauri/src/embedded_browser/bridge_server.rs` |
+| bridge → 路由                  | 将基础 label 解析为当前活动的唯一逻辑标签；不得由测试猜测原生 label     | `src-tauri/src/embedded_browser.rs` 的 `active_tabs`、`agent_tabs`                                                                              |
+| bridge → pending open          | 首次打开先持久化带 ID 的请求，再通知 React 创建宿主                     | `request_browser_open`、`embedded_browser_pending_open_requests`                                                                                |
+| React → 顶层标签               | 为每个 `browser:N` 创建独立状态和逻辑 label，并同步活动标签             | `DesktopWorkbenchMain.tsx`、`RightWorkspacePanel.tsx`                                                                                           |
+| panel → 原生 WebView           | 宿主有可用 bounds 后创建或复用 logical label 对应的 WebView             | `WorkspaceBrowserPanel.tsx`、`embedded_browser_open`                                                                                            |
+| 原生加载 → 执行真值            | 只有 `PageLoadEvent::Finished` 写入 `loaded_url`；`url` 只表示导航意图  | `embedded_browser.rs` 的 `on_page_load`                                                                                                         |
+| 加载真值 → bridge              | `open` 等到目标 entry 的 `loaded_url` 后才成功                          | `wait_for_browser_navigation`                                                                                                                   |
+| 标签选择/关闭 → 路由与生命周期 | 选择更新 base label 路由；关闭只能销毁 expected native label 对应的实例 | `DesktopWorkbenchMain.tsx`、`embedded_browser_set_active_tab`、`embedded_browser_close(_many)`                                                  |
+
+### 多标签首次导航时序图
+
+```mermaid
+sequenceDiagram
+    participant T as E2E / browser MCP
+    participant B as loopback bridge
+    participant S as EmbeddedBrowserState
+    participant R as React 工作台
+    participant P as WorkspaceBrowserPanel
+    participant W as 原生 WKWebView
+    participant H as 目标 HTTP 服务
+
+    T->>B: open(base label, URL, timeout)
+    B->>S: 解析 active logical label
+    alt logical label 尚无宿主
+        B->>S: 写 pending open(request ID, target label, URL)
+        B-->>R: embedded-browser-open-request
+        R->>R: 创建并选中 browser:N
+        R->>S: set_active_tab(base, target label)
+        R->>P: 渲染带 openRequest 的 panel
+        P->>W: embedded_browser_open(URL, bounds, target label)
+        W->>S: Opening -> Ready
+        B->>S: 观察 target label Ready
+    else logical label 已 Ready
+        B->>S: 复用现有 entry
+    end
+    B->>W: navigate(URL)
+    W->>H: GET URL
+    H-->>W: 页面响应
+    W-->>S: PageLoadEvent::Finished(URL)
+    S->>S: loaded_url = URL
+    S-->>P: page-state-change(URL, title)
+    B->>S: 读取 loaded_url
+    S-->>B: 已完成导航
+    B-->>T: open 成功
+
+    T->>R: 新增第二个 browser:N 并选择
+    R->>S: set_active_tab(base, second label)
+    T->>B: open(base label, URL B)
+    B->>S: base label 路由到 second label
+    Note over B,W: 后续切换、检查、关闭都必须命中各自 logical label，两个 WebView 的页面状态互不覆盖
+```
+
+这条链路必须满足以下不变量：
+
+1. base label 只是 Agent 入口；实际状态、生命周期和页面真值都属于解析后的 logical label。
+2. `Ready` 只表示原生宿主可操作，不表示目标页面已加载；导航成功必须由该 entry 的 `loaded_url` 证明。
+3. 首次 `open` 只能有一个导航所有者。React 负责创建宿主，bridge 负责等待并提交目标导航；消费同一 pending request 不得形成相互覆盖的重复导航。
+4. `PageLoadEvent::Finished` 必须更新当前 native label 的 logical owner；标签切换或 relabel 后不得把事件写给旧 owner。
+5. E2E fixture 必须实际收到目标 URL 请求，并在 bridge 返回成功后同时断言地址栏和 `inspect` 内容；仅看到标签、地址草稿或 `navigation_requested` 日志不代表成功。
+6. 第二个浏览器标签必须拥有不同 logical label 和原生 WebView；`set_active_tab` 只改变 base-label 路由，不复制或交换页面状态。
+7. 关闭标签必须携带 expected native label，且关闭后 base label 必须路由到仍存活的活动标签。
+8. 超时、重试或扩大等待时间不能替代缺失的 `GET → Finished → loaded_url` 完成边。
 
 ## Agent 浏览器能力
 

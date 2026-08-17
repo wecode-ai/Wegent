@@ -39,7 +39,6 @@ describe('createProjectAutomationApi', () => {
 
     const claimed = await createProjectAutomationApi(client).claimNext({
       execution_device_id: 'local-device',
-      device_capacity: 5,
       lease_seconds: 300,
     })
 
@@ -60,7 +59,6 @@ describe('createProjectAutomationApi', () => {
 
     const claimed = await createProjectAutomationApi(client).claimNext({
       execution_device_id: 'local-device',
-      device_capacity: 5,
       lease_seconds: 300,
     })
 

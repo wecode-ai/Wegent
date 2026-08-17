@@ -688,6 +688,32 @@ export function createHybridWorkbenchServices(
       const devices = await listKnownDevices(requestOptions?.signal)
       return devices as Awaited<ReturnType<WorkbenchServices['deviceApi']['listDevices']>>
     },
+    async getRuntimeSettings(deviceId) {
+      if (!isLocalDeviceId(deviceId)) {
+        return deviceApi(deviceId).getRuntimeSettings(deviceId)
+      }
+      const settings = await localServices.runtimeWorkApi!.getRuntimeSettings()
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
+    async updateRuntimeSettings(deviceId, maxConcurrentTasks) {
+      if (!isLocalDeviceId(deviceId)) {
+        return deviceApi(deviceId).updateRuntimeSettings(deviceId, maxConcurrentTasks)
+      }
+      const settings = await localServices.runtimeWorkApi!.updateRuntimeSettings({
+        maxConcurrentTasks,
+      })
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
     getHomeDirectory(deviceId) {
       return deviceApi(deviceId).getHomeDirectory(deviceId)
     },

@@ -70,7 +70,15 @@ describe('local delivery API', () => {
     const api = createLocalDeliveryApi(request)
 
     await expect(api.listLoopItemExecutions('project-1')).resolves.toEqual({
-      items: [execution],
+      items: [
+        {
+          ...execution,
+          executor_type: 'project_robot',
+          team_id: null,
+          backend_task_id: null,
+          automation_run_id: '',
+        },
+      ],
     })
     expect(request).toHaveBeenCalledWith('executions.list', {
       project_id: 'project-1',
@@ -87,7 +95,7 @@ describe('local delivery API', () => {
             ...taskRecord,
             assignee_agent_id: 'LA-1',
             execution_id: 5,
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
           },
         ]
       }
@@ -96,7 +104,7 @@ describe('local delivery API', () => {
     const api = createLocalDeliveryApi(request)
     const { items } = await api.listLoopItems('project-1')
     expect(items[0].execution_id).toBe(5)
-    expect(items[0].execution_state).toBe('pending_approval')
+    expect(items[0].execution_state).toBe('waiting_approval')
     expect(items[0].assignee_agent_id).toBe('LA-1')
   })
 

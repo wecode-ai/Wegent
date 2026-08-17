@@ -125,8 +125,8 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
             path="/mcp/wework-space/sse",
             method="tools/call",
             params={
-                "name": "list_tasks",
-                "arguments": {"project_id": str(project.id)},
+                "name": "list_board_items",
+                "arguments": {"space_id": str(project.id)},
             },
         )
         authenticated = _rpc(
@@ -135,17 +135,34 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
             path="/mcp/wework-space/sse",
             method="tools/call",
             params={
-                "name": "list_tasks",
-                "arguments": {"project_id": str(project.id)},
+                "name": "list_board_items",
+                "arguments": {"space_id": str(project.id)},
             },
             token=test_task_token,
         )
 
     assert {tool["name"] for tool in listed["result"]["tools"]} == {
-        "get_project",
-        "list_tasks",
-        "get_task",
-        "assign_task",
+        "get_current_context",
+        "list_spaces",
+        "create_space",
+        "update_space",
+        "list_board_items",
+        "search_board_items",
+        "create_board_item",
+        "get_board_item",
+        "get_assignment_candidates",
+        "assign_board_item",
+        "update_board_item",
+        "add_board_item_comment",
+        "list_space_files",
+        "read_space_file",
+        "list_item_attachments",
+        "upload_item_attachment",
+        "read_item_attachment",
+        "delete_item_attachment",
+        "list_deliveries",
+        "read_delivery",
+        "reorder_board_items",
     }
     unauthenticated_text = unauthenticated["result"]["content"][0]["text"]
     authenticated_text = authenticated["result"]["content"][0]["text"]

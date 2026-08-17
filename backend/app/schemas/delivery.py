@@ -27,12 +27,27 @@ class LoopItemCreate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     assignee_agent_id: str | None = Field(default=None, max_length=64)
+    assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
 
     _normalize = field_validator("tags", mode="before")(_normalize_tags)
+
+    @model_validator(mode="after")
+    def validate_assignee(self) -> "LoopItemCreate":
+        selected = sum(
+            value is not None
+            for value in (
+                self.assignee_user_id,
+                self.assignee_agent_id,
+                self.assignee_team_id,
+            )
+        )
+        if selected > 1:
+            raise ValueError("Only one assignee may be selected")
+        return self
 
 
 class LoopItemUpdate(BaseModel):
@@ -42,6 +57,7 @@ class LoopItemUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     assignee_agent_id: str | None = Field(default=None, max_length=64)
+    assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
@@ -50,6 +66,21 @@ class LoopItemUpdate(BaseModel):
     _normalize = field_validator("tags", mode="before")(
         lambda value: None if value is None else _normalize_tags(value)
     )
+
+    @model_validator(mode="after")
+    def validate_assignee(self) -> "LoopItemUpdate":
+        values = [
+            value
+            for field, value in (
+                ("assignee_user_id", self.assignee_user_id),
+                ("assignee_agent_id", self.assignee_agent_id),
+                ("assignee_team_id", self.assignee_team_id),
+            )
+            if field in self.model_fields_set and value is not None
+        ]
+        if len(values) > 1:
+            raise ValueError("Only one assignee may be selected")
+        return self
 
 
 class LoopItemReorder(BaseModel):
@@ -74,8 +105,15 @@ class LoopItemResponse(BaseModel):
     assignee_name: str | None = None
     assignee_agent_id: str | None = None
     assignee_agent_name: str | None = None
+    assignee_team_id: int | None = None
+    assignee_team_name: str | None = None
     ai_state: dict[str, Any] | None = None
     execution_state: str | None = None
+    execution_control_state: str | None = None
+    execution_observed_state: str | None = None
+    execution_sync_state: str | None = None
+    execution_attempt_no: int | None = None
+    execution_last_event_seq: int | None = None
     can_approve: bool = False
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
     status_history: list[dict[str, Any]] = Field(default_factory=list)

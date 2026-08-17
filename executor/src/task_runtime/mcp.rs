@@ -1837,6 +1837,24 @@ mod tests {
     }
 
     #[test]
+    fn injects_wework_space_for_automation_assigned_board_robot() {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
+        request.extra.insert(
+            "origin".to_owned(),
+            json!({"type": "board_task", "run_id": "run-1"}),
+        );
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_eq!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"], "cloud-42");
+        assert!(request.mcp_servers[0]["env"]["WEWORK_AUTOMATION_RUN_ID"].is_null());
+    }
+
+    #[test]
     fn injects_assignment_tools_for_project_automation_manager() {
         let mut request = ExecutionRequest::default();
         request
