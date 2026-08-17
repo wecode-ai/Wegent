@@ -597,11 +597,6 @@ class ProjectAutomationExecution:
                 "selected_assignee_type": assignee_type,
                 "selected_assignee_id": assignee_id,
             }
-            if assignee_type == "agent":
-                selected_agent = project_agent(db, project_id, assignee_id)
-                activity.sender_name = (
-                    selected_agent.title or selected_agent.name or "AI"
-                )
             db.commit()
         return self._task_values(
             db, project_id=project_id, task_id=task_id, user_id=user_id

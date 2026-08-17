@@ -29,6 +29,7 @@ from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
     ProjectChatAgentUpdate,
+    ProjectChatAutomationManagerContinuation,
     ProjectChatSend,
     ProjectChatSubscribe,
 )
@@ -343,6 +344,122 @@ def test_send_and_agent_response_record_requested_model_metadata(
 
     assert trigger.metadata["model"] == "gpt-5.5-codex"
     assert response.metadata["model"] == "gpt-5.5-codex"
+    assert trigger.sender["type"] == "user"
+    assert trigger.sender["id"] == str(test_user.id)
+    assert response.sender["type"] == "agent"
+    assert response.sender["id"] == "12"
+    assert response.message_id != trigger.message_id
+    assert response.trigger_message_id == trigger.message_id
+    assert response.reply_to_message_id == trigger.message_id
+
+
+def test_custom_manager_continuation_creates_a_new_manager_reply(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-MANAGER-CONTINUE-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Managed task",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="",
+        assigner_user_id=test_user.id,
+        automation_run_id="manager-run-1",
+        execution_environment="local",
+        execution_device_id="local-device",
+        runtime_device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        status="completed",
+    )
+    test_db.add_all([task, execution])
+    test_db.flush()
+    manager_message_id = str(uuid.uuid4())
+    manager = ProjectChatMessage(
+        message_id=manager_message_id,
+        client_message_id=manager_message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="自定义 AI 调度员",
+        message_type="text",
+        content="已完成分派。",
+        metadata_json={
+            "kind": "project_automation_run",
+            "manager_type": "custom",
+            "executor_type": "automation_manager",
+            "execution_id": execution.id,
+            "run_status": "completed",
+            "model": "manager-model",
+        },
+        agent_id="",
+        runtime_device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        status="completed",
+    )
+    test_db.add(manager)
+    test_db.commit()
+
+    trigger = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=task.id,
+            content="任务完成了吗？",
+            replyToMessageId=manager.message_id,
+        ),
+    ).message
+    response = project_chat_service.start_automation_manager_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAutomationManagerContinuation(
+            projectId=project.id,
+            taskId=task.id,
+            triggerMessageId=trigger.message_id,
+            managerMessageId=manager.message_id,
+        ),
+    )
+
+    assert trigger.sender["type"] == "user"
+    assert response.message_id != manager.message_id
+    assert response.sender == {
+        "type": "agent",
+        "id": manager.sender_id,
+        "name": manager.sender_name,
+    }
+    assert response.agent_id is None
+    assert response.trigger_message_id == trigger.message_id
+    assert response.reply_to_message_id == trigger.message_id
+    assert response.root_message_id == manager.message_id
+    assert response.runtime_address is not None
+    assert response.runtime_address["taskId"] == "manager-runtime-1"
+    assert response.metadata["conversation_only"] is True
+
+    completed = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        event_name="response.completed",
+        payload={"data": {"value": "任务已分派，执行机器人仍在处理。"}},
+    )
+    assert completed is not None
+    assert completed[0].sender == response.sender
+    assert completed[0].content == "任务已分派，执行机器人仍在处理。"
+    test_db.refresh(task)
+    assert "ai_state" not in dict(task.metadata_json or {})
+    assert task.status == "in_progress"
 
 
 def test_task_subscription_returns_only_the_task_thread(
@@ -2050,7 +2167,7 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].metadata["run_status"] == "completed"
 
 
-def test_subscribe_repairs_wegent_activity_sender_to_board_robot(
+def test_subscribe_never_rewrites_wegent_activity_sender(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
@@ -2115,16 +2232,16 @@ def test_subscribe_repairs_wegent_activity_sender_to_board_robot(
         request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
     )
 
-    assert messages[-1].sender["id"] == "12"
-    assert messages[-1].sender["name"] == "Code Reviewer"
-    assert messages[-1].agent_id == "12"
+    assert messages[-1].sender["id"] == f"wegent_team:{team.id}"
+    assert messages[-1].sender["name"] == "dev-team"
+    assert messages[-1].agent_id is None
     test_db.refresh(message)
-    assert message.sender_id == "12"
-    assert message.sender_name == "Code Reviewer"
-    assert message.agent_id == "12"
+    assert message.sender_id == f"wegent_team:{team.id}"
+    assert message.sender_name == "dev-team"
+    assert message.agent_id == ""
 
 
-def test_subscribe_repairs_manager_activity_sender_to_selected_board_robot(
+def test_subscribe_preserves_manager_activity_sender_after_robot_assignment(
     test_db: Session, test_user: User
 ) -> None:
     project = create_project(test_db, test_user)
@@ -2168,11 +2285,11 @@ def test_subscribe_repairs_manager_activity_sender_to_selected_board_robot(
     )
 
     assert messages[-1].sender["id"] == "automation_manager:rule-1"
-    assert messages[-1].sender["name"] == "Code Reviewer"
+    assert messages[-1].sender["name"] == "自定义 AI 调度员"
     assert messages[-1].agent_id is None
     test_db.refresh(message)
     assert message.sender_id == "automation_manager:rule-1"
-    assert message.sender_name == "Code Reviewer"
+    assert message.sender_name == "自定义 AI 调度员"
     assert message.agent_id == ""
 
 

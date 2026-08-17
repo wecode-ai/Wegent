@@ -756,6 +756,45 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       managerToolCalls > customToolCallsBefore,
       'Custom AI manager did not call assign_board_item'
     )
+    await control.command('click', '[data-testid="cloud-project-board-view"]')
+    const customManagerTaskSelector = `[data-testid="cloud-todo-card-${customManagerTask.id}"]`
+    await control.command('waitFor', customManagerTaskSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', customManagerTaskSelector)
+    const customManagerCard =
+      '[data-executor-type="automation_manager"][data-manager-type="custom"]'
+    await control.command('waitFor', customManagerCard, {
+      text: '自定义 AI 调度员',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const managerReplyComposer = `${customManagerCard} [data-testid^="cloud-task-activity-card-composer-"]`
+    await control.command('fill', managerReplyComposer, {
+      value: '请确认当前分派结果',
+      visible: true,
+    })
+    await control.command('press', managerReplyComposer, {
+      key: 'Enter',
+      visible: true,
+    })
+    await control.command('waitFor', customManagerCard, {
+      text: '真实自动化执行已完成。',
+      timeoutMs: uiTimeoutMs * 3,
+      visible: true,
+    })
+    const managerExecutionsAfterReply = await allExecutions(projectId)
+    assert.equal(
+      managerExecutionsAfterReply.filter(
+        execution =>
+          execution.loopItemId === customManagerTask.id &&
+          execution.executorType === 'automation_manager'
+      ).length,
+      1,
+      'Manager conversation created a second board execution'
+    )
+    await captureScreenshot(control, 'project-automation-custom-manager-continuation.png')
     await disableRule(projectId, customManagerRule)
 
     const wegentManagerRule = await createRule({
