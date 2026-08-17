@@ -110,25 +110,20 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     runningSnapshot.workbench?.currentRuntimeTask,
     'The send-rejection task did not expose its runtime address'
   )
-  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
-    value: JSON.stringify({
-      address: runningSnapshot.workbench.currentRuntimeTask,
-      type: 'turn_settled',
-    }),
-  })
-  await waitForWorkbenchDebugState(
-    control,
-    snapshot => snapshot.pane?.status?.isBusy === false,
-    'The send-rejection fixture did not make the composer available'
-  )
-
   await control.command('fill', composerSelector, { value: SEND_REJECTION_RETRY_PROMPT })
   await captureVerificationScreenshot(
     control,
     'send-rejection-02-retry-ready.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
-  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: runningSnapshot.workbench.currentRuntimeTask,
+      type: 'turn_settled',
+    }),
+    target: composerSelector,
+    key: 'Enter',
+  })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: SEND_REJECTION_RETRY_PROMPT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

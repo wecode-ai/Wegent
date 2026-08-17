@@ -440,10 +440,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
-    await control.command('fill', `${activeBoard} [data-testid="cloud-todo-title"]`, {
+    await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       value: '真实后端智能体看板任务',
     })
-    const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
+    await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-detail-assignee"]`
     await control.command('waitFor', assigneeSelector, {
       text: wegentAgent.name,
       timeoutMs: uiTimeoutMs,
@@ -452,7 +459,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       value: `agent:${wegentAgent.id}`,
     })
     assert.equal(await control.command('getValue', assigneeSelector), `agent:${wegentAgent.id}`)
-    await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
+    await control.command('clickWhenEnabled', `${activeBoard} [data-testid="cloud-todo-save"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
     const teamTask = await waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
       response =>
@@ -1038,6 +1047,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         json(response, 201, createdBoardItem)
         return true
       }
+      if (request.method === 'PATCH' && url.pathname === '/api/v1/loop-items/AUTO-201') {
+        const payload = await readJson(request)
+        createdBoardItem = {
+          ...createdBoardItem,
+          ...payload,
+          version: createdBoardItem.version + 1,
+          updated_at: '2026-08-15T00:01:00Z',
+        }
+        json(response, 200, createdBoardItem)
+        return true
+      }
       if (
         request.method === 'POST' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items/AUTO-201/assign`
@@ -1050,7 +1070,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           assignee_team_name: TEAM.displayName,
           execution_state: 'queued',
           execution_control_state: 'queued',
-          version: 2,
+          version: createdBoardItem.version + 1,
         }
         json(response, 200, createdBoardItem)
         return true
@@ -1261,10 +1281,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', `${activeBoard} [data-testid="cloud-todo-add"]`)
-      await control.command('fill', `${activeBoard} [data-testid="cloud-todo-title"]`, {
+      await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
         value: '由智能体评审看板状态',
       })
-      const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-create-assignee"]`
+      await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const assigneeSelector = `${activeBoard} [data-testid="cloud-todo-detail-assignee"]`
       await control.command('waitFor', assigneeSelector, {
         text: TEAM.displayName,
         timeoutMs: uiTimeoutMs,
@@ -1273,7 +1300,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         value: `team:${TEAM_ID}`,
       })
       assert.equal(await control.command('getValue', assigneeSelector), `team:${TEAM_ID}`)
-      await control.command('click', `${activeBoard} [data-testid="cloud-todo-create-confirm"]`)
+      await control.command('clickWhenEnabled', `${activeBoard} [data-testid="cloud-todo-save"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-card-AUTO-201"]`, {
         text: TEAM.displayName,
         timeoutMs: uiTimeoutMs,

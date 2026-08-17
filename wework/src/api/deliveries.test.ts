@@ -1,9 +1,42 @@
 import { describe, expect, it, test, vi } from 'vitest'
 import type { HttpClient } from './http'
 import { ApiError } from './http'
-import { createDeliveryApi, type CloudLoopItem, type CloudTaskContext } from './deliveries'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  DEFAULT_WORK_ITEM_PROJECT_KEY,
+  createDeliveryApi,
+  isDefaultWorkItemProject,
+  nextTaskTrackingStatus,
+  type CloudLoopItem,
+  type CloudTaskContext,
+} from './deliveries'
 
 describe('createDeliveryApi queue and assignment routes', () => {
+  it('recognizes only the canonical default work-item project', () => {
+    const canonical = {
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+    } as CloudTaskContext['project']
+    expect(isDefaultWorkItemProject(canonical)).toBe(true)
+    expect(isDefaultWorkItemProject({ ...canonical, id: 'user-board' })).toBe(false)
+    expect(
+      isDefaultWorkItemProject({
+        ...canonical,
+        metadata: { system_kind: 'user_project' },
+      })
+    ).toBe(false)
+  })
+
+  it('closes and reopens default-board tasks with the runtime lifecycle', () => {
+    expect(nextTaskTrackingStatus('in_progress', 'succeeded', { completeOnSuccess: true })).toBe(
+      'completed'
+    )
+    expect(nextTaskTrackingStatus('completed', 'running', { completeOnSuccess: true })).toBe(
+      'in_progress'
+    )
+    expect(nextTaskTrackingStatus('in_review', 'archived')).toBe('completed')
+  })
+
   it('lists loop items with queue filters', async () => {
     const client = {
       get: vi.fn(async () => ({ items: [] })),
@@ -226,6 +259,76 @@ describe('createDeliveryApi task tracking', () => {
       status: 'in_review',
     })
     expect(patch).toHaveBeenCalledOnce()
+  })
+
+  test('completes a successful runtime task on the default work-item project', async () => {
+    const completedItem = { ...trackedItem, status: 'completed', version: 2 }
+    const context = {
+      loop_item_id: trackedItem.id,
+      loop_item: trackedItem,
+      project: {
+        id: DEFAULT_WORK_ITEM_PROJECT_ID,
+        project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      },
+    } as CloudTaskContext
+    const get = vi.fn().mockResolvedValue(context)
+    const patch = vi.fn().mockResolvedValue(completedItem)
+    const api = createDeliveryApi(clientWith({ get, patch }))
+
+    await expect(
+      api.updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
+    ).resolves.toEqual(completedItem)
+    expect(patch).toHaveBeenCalledWith('/v1/loop-items/WEG-1', {
+      version: 1,
+      status: 'completed',
+    })
+  })
+
+  test('serializes rapid runtime status updates for the same board task', async () => {
+    const task = { deviceId: 'local-device', taskId: 'runtime-1' }
+    const defaultProject = {
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+    } as CloudTaskContext['project']
+    let currentItem = { ...trackedItem, status: 'pending' as const }
+    let releaseRunningUpdate: (() => void) | null = null
+    const runningUpdateReleased = new Promise<void>(resolve => {
+      releaseRunningUpdate = resolve
+    })
+    const get = vi.fn(async () => ({
+      loop_item_id: currentItem.id,
+      loop_item: currentItem,
+      project: defaultProject,
+    }))
+    const patch = vi.fn(async (_endpoint: string, body: { version: number; status: string }) => {
+      if (body.status === 'in_progress') await runningUpdateReleased
+      currentItem = {
+        ...currentItem,
+        status: body.status as CloudLoopItem['status'],
+        version: body.version + 1,
+      }
+      return currentItem
+    })
+    const runningApi = createDeliveryApi(clientWith({ get, patch }))
+    const succeededApi = createDeliveryApi(clientWith({ get, patch }))
+
+    const running = runningApi.updateTaskTrackingStatus(task, 'running')
+    const succeeded = succeededApi.updateTaskTrackingStatus(task, 'succeeded')
+    await vi.waitFor(() => expect(patch).toHaveBeenCalledTimes(1))
+    expect(get).toHaveBeenCalledOnce()
+
+    releaseRunningUpdate?.()
+
+    await expect(running).resolves.toMatchObject({ status: 'in_progress', version: 2 })
+    await expect(succeeded).resolves.toMatchObject({ status: 'completed', version: 3 })
+    expect(patch).toHaveBeenNthCalledWith(1, `/v1/loop-items/${trackedItem.id}`, {
+      version: 1,
+      status: 'in_progress',
+    })
+    expect(patch).toHaveBeenNthCalledWith(2, `/v1/loop-items/${trackedItem.id}`, {
+      version: 2,
+      status: 'completed',
+    })
   })
 
   test('synchronizes a friendly runtime title to the bound task', async () => {
