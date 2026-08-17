@@ -53,7 +53,7 @@ pub(super) fn session_start_request(
             .ok_or_else(|| "session_id is required".to_owned())?,
         project_id: value_u64(payload.get("project_id"))
             .ok_or_else(|| "project_id is required".to_owned())?,
-        path: value_string(payload.get("path")).ok_or_else(|| "path is required".to_owned())?,
+        path: session_path(payload.get("path"))?,
         access_token: value_string(payload.get("access_token"))
             .ok_or_else(|| "access_token is required".to_owned())?,
         rows: value_u16(payload.get("rows")),
@@ -69,6 +69,14 @@ pub(super) fn session_start_request(
                 .or_else(|| payload.get("ttlSeconds")),
         ),
     })
+}
+
+fn session_path(value: Option<&Value>) -> Result<String, String> {
+    match value {
+        None | Some(Value::Null) => Ok(String::new()),
+        Some(Value::String(value)) => Ok(value.trim().to_owned()),
+        Some(_) => Err("path must be a string".to_owned()),
+    }
 }
 
 pub(super) fn session_result_payload(result: SessionResult) -> Value {
