@@ -2387,6 +2387,141 @@ async def test_execute_configured_device_command_allows_remote_directory_creatio
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command_key", "stdout", "env"),
+    [
+        (
+            "read_runtime_auth_file",
+            '{"status":"read","path":"~/.codex/auth.json","content":"{}"}',
+            {
+                "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+                "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+            },
+        ),
+        (
+            "sync_runtime_auth_file",
+            '{"status":"written","path":"~/.codex/auth.json"}',
+            {
+                "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+                "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+                "WEGENT_RUNTIME_CONFIG_CONTENT": "{}",
+            },
+        ),
+    ],
+)
+async def test_execute_configured_device_command_allows_cloud_runtime_auth_commands(
+    monkeypatch,
+    command_key,
+    stdout,
+    env,
+):
+    """Cloud devices should support the constrained runtime auth commands."""
+    from app.schemas.device import DeviceType
+    from app.services.device import command_service
+    from app.services.device.command_registry import resolve_local_device_command
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="cloud-crd",
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": "runtime-cloud"},
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="cloud-crd",
+        command_key=command_key,
+        env=env,
+    )
+
+    command_definition = resolve_local_device_command(command_key)
+    assert command_definition is not None
+    assert result["success"] is True
+    assert isinstance(result["stdout"], dict)
+    online_mock.assert_awaited_once_with(7, "runtime-cloud", DeviceType.CLOUD)
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="runtime-cloud",
+        command=command_definition.command,
+        path=None,
+        args=[],
+        env=env,
+        timeout_seconds=60,
+        max_output_bytes=1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_rejects_remote_runtime_auth_command(
+    monkeypatch,
+):
+    """Remote devices should not gain access to runtime auth commands."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock()
+    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="remote-device",
+            json={"spec": {"deviceType": "remote"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="remote-device",
+            command_key="read_runtime_auth_file",
+        )
+
+    assert "not supported for remote devices" in str(exc_info.value)
+    online_mock.assert_not_awaited()
+    execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_execute_configured_device_command_rejects_cloud_unsupported_command_key(
     monkeypatch,
 ):
