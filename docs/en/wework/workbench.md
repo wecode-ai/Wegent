@@ -14,9 +14,44 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
-## Move between project-space tasks and runtime tasks
+## Manage issues and tasks in workspaces
 
-When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
+The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
+
+Selecting **New Issue** in a workspace opens a lightweight composer instead of a task form. Choose the destination board and describe the outcome in natural language; the first non-empty line becomes the title and the remaining text becomes the description. The issue is created directly in the selected status column and opens immediately for follow-up details such as participants and execution steps. The board header and every status column expose the same creation flow.
+
+Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. A successful runtime task moves the work item to **Completed** instead of leaving a stale in-progress card or removing it from the board.
+
+The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+
+Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
+
+## Create issues from external systems
+
+Maintainers of a cloud workspace can generate a hook address under **Manage > External task intake**. Configure this address in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+
+The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
+
+Built-in adapters recognize GitHub Issue `opened` and `reopened` events, GitLab Issue `open` and `reopen` events, and unresolved Sentry and Grafana alerts. Closed, resolved, or titleless events do not create issues, but their receipt is recorded. The same external event ID, delivery ID, or request body is processed only once.
+
+Other systems do not need to implement a Wework-specific protocol. They can send JSON, form data, or plain text. Generic JSON must provide at least one of `title`, `subject`, `summary`, `name`, or `message`:
+
+```bash
+curl -X POST '<Hook address>' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: incident-2026-08-16-001' \
+  -d '{
+    "title": "Production payment failures",
+    "description": "The error rate crossed its threshold. Investigate and restore service.",
+    "url": "https://monitor.example.com/incidents/001"
+  }'
+```
+
+For plain-text requests, the first line becomes the title and the complete body becomes the description. Request bodies are limited to 1 MiB. The service returns HTTP `202` with a `status` of `created`, `duplicate`, `ignored`, or `failed`; a `created` response also includes the new issue's `loop_item_id`.
+
+## Move between issues and runtime tasks
+
+The issue details' **Execution history** section lists linked Wework runtime tasks. Selecting a record opens the issue context and task conversation side by side in the unified workspace; select **Open full task** only when the complete execution interface is needed. Board and Task tabs retain their own routes and interface state.
 
 ## Use the project sidebar
 

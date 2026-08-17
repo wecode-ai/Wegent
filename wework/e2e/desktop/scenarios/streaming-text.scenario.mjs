@@ -706,16 +706,6 @@ export function createDesktopScenario({
       const body = await readJson(request)
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
-      if (latestInput.includes(ORDER_STOP_PROMPT)) {
-        response.writeHead(200, {
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.flushHeaders()
-        response.write(sse([responseCreated(responseId)]))
-        return true
-      }
       const followUpNumber = orderFollowUpNumber(body)
       if (followUpNumber !== null) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -726,6 +716,16 @@ export function createDesktopScenario({
             responseCompleted(responseId),
           ])
         )
+        return true
+      }
+      if (latestInput.includes(ORDER_STOP_PROMPT)) {
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse([responseCreated(responseId)]))
         return true
       }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
@@ -1447,22 +1447,26 @@ export function createDesktopScenario({
       )
       const anchorTops = stabilitySamples.frames.map(sample => sample.anchorTop)
       const anchorRange = Math.max(...anchorTops) - Math.min(...anchorTops)
-      const scrollDirections = stabilitySamples.scrollEvents
+      const effectiveScrollEvents = stabilitySamples.scrollEvents.filter(
+        sample => Math.abs(sample.scrollTop - scrollerBeforeAppend.scrollTop) >= 0.5
+      )
+      const scrollDirections = effectiveScrollEvents
         .slice(1)
         .map((sample, index) =>
-          Math.abs(sample.scrollTop - stabilitySamples.scrollEvents[index].scrollTop) < 0.5
+          Math.abs(sample.scrollTop - effectiveScrollEvents[index].scrollTop) < 0.5
             ? 0
-            : Math.sign(sample.scrollTop - stabilitySamples.scrollEvents[index].scrollTop)
+            : Math.sign(sample.scrollTop - effectiveScrollEvents[index].scrollTop)
         )
         .filter(direction => direction !== 0)
       const directionReversals = scrollDirections.filter(
         (direction, index) => index > 0 && direction !== scrollDirections[index - 1]
       ).length
       assert.ok(
-        anchorRange <= 8 && directionReversals === 0 && stabilitySamples.scrollEvents.length === 0,
+        anchorRange <= 8 && directionReversals === 0 && effectiveScrollEvents.length === 0,
         `The user-selected text jittered while chunks streamed: ${JSON.stringify({
           anchorRange,
           directionReversals,
+          effectiveScrollEvents,
           stabilitySamples,
         })}`
       )

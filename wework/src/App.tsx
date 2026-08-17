@@ -535,7 +535,7 @@ function AppShell() {
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
-      board: t('workbench.workspace_tab_board', '项目空间'),
+      board: t('workbench.workspace_tab_board', '工作空间'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: {
