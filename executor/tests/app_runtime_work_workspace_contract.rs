@@ -1212,6 +1212,100 @@ async fn runtime_task_list_uses_thread_root_hints_and_skips_projectless_threads(
 }
 
 #[tokio::test]
+async fn runtime_task_list_preserves_unlisted_thread_order_for_hinted_manual_project() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-hinted-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-hinted-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Wegent"],
+            "project-order": ["/repo/Wegent"],
+            "thread-workspace-root-hints": {
+                "thread-unlisted-first": "/repo/Wegent",
+                "thread-unlisted-second": "/repo/Wegent",
+                "thread-listed": "/repo/Wegent"
+            },
+            "sidebar-project-thread-orders": {
+                "/repo/Wegent": {
+                    "threadIds": ["thread-listed"],
+                    "sortKey": "manual"
+                }
+            }
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-unlisted-first",
+            "cwd": "/tmp/outside-a",
+            "name": "Unlisted first",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000010000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-unlisted-second",
+            "cwd": "/tmp/outside-b",
+            "name": "Unlisted second",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000030000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-listed",
+            "cwd": "/tmp/outside-c",
+            "name": "Listed",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000020000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-hinted-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["tasks"]
+        .as_array()
+        .expect("workspace tasks");
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task["taskId"].as_str().expect("task id"))
+            .collect::<Vec<_>>(),
+        vec![
+            "thread-listed",
+            "thread-unlisted-first",
+            "thread-unlisted-second"
+        ]
+    );
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task["sidebarOrder"].as_u64().expect("sidebar order"))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+}
+
+#[tokio::test]
 async fn runtime_archives_project_and_all_conversations() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-archive-project-home", "dir");
