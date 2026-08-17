@@ -2,6 +2,7 @@ import {
   File,
   FileDiff,
   Globe2,
+  LayoutDashboard,
   ListChecks,
   MessageCircle,
   Plus,
@@ -10,7 +11,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
-import type { ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react'
+import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   FileChangesReviewPanel,
   type FileChangesReviewViewOption,
@@ -66,6 +67,7 @@ export type RightWorkspacePanelTab =
   | 'review'
   | 'files'
   | 'plan'
+  | 'work-item'
   | RightWorkspaceChatTab
   | RightWorkspaceBrowserTab
   | RightWorkspaceHarnessTab
@@ -153,6 +155,7 @@ interface RightWorkspacePanelProps {
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   planContent?: string | null
+  workItemPanel?: ReactNode
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
@@ -283,6 +286,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   workspaceTargetError,
   review,
   planContent,
+  workItemPanel,
   browserStates,
   onBrowserStateChange,
   codeCommentCount = 0,
@@ -527,6 +531,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />
+        ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
+          workItemPanel
         ) : !isRightWorkspaceChatTab(activeView) && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
@@ -914,6 +920,7 @@ function getRightWorkspaceTabLabel(
     )
   }
   if (tab === 'plan') return t('workbench.workspace_tab_plan', '计划')
+  if (tab === 'work-item') return t('workbench.work_item_detail', 'Issue 详情')
   return t('workbench.workspace_tab_files', '文件')
 }
 
@@ -944,5 +951,6 @@ function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
   if (isRightWorkspaceChatTab(tab)) return MessageCircle
   if (isRightWorkspaceHarnessTab(tab)) return SquareTerminal
   if (tab === 'plan') return ListChecks
+  if (tab === 'work-item') return LayoutDashboard
   return File
 }

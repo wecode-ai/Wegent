@@ -18,6 +18,10 @@ import type {
   WorkbenchPaneContextValue,
 } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import {
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
@@ -60,6 +64,8 @@ const deliveryApiMock = vi.hoisted(() => ({
   listCloudFiles: vi.fn(),
   listLoopItems: vi.fn(),
   listDeliveries: vi.fn(),
+  findCloudContextForTask: vi.fn(),
+  trackProjectTask: vi.fn(),
 }))
 const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
@@ -598,6 +604,8 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudFiles.mockResolvedValue({ items: [] })
     deliveryApiMock.listLoopItems.mockResolvedValue({ items: [] })
     deliveryApiMock.listDeliveries.mockResolvedValue({ items: [] })
+    deliveryApiMock.findCloudContextForTask.mockRejectedValue(new Error('Context not found'))
+    deliveryApiMock.trackProjectTask.mockImplementation(() => new Promise(() => {}))
     cloudDesktopExtensionMock.available = false
     cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
@@ -1127,6 +1135,8 @@ describe('DesktopWorkbenchLayout', () => {
                 listCloudFiles: deliveryApiMock.listCloudFiles,
                 listLoopItems: deliveryApiMock.listLoopItems,
                 listDeliveries: deliveryApiMock.listDeliveries,
+                findCloudContextForTask: deliveryApiMock.findCloudContextForTask,
+                trackProjectTask: deliveryApiMock.trackProjectTask,
               },
             }
           : {}),
@@ -1499,6 +1509,48 @@ describe('DesktopWorkbenchLayout', () => {
     expect(
       screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
     ).toHaveStyle({ display: 'none' })
+  })
+
+  test('uses the independent board tab instead of a work-items sidebar destination', () => {
+    const taskTab = {
+      id: 'task-existing',
+      kind: 'task' as const,
+      title: '当前任务',
+      contentRoute: '/?deviceId=local-device&taskId=runtime-1',
+    }
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '工作项',
+      contentRoute: '/todo',
+    }
+    const selectTab = vi.fn()
+    const openTab = vi.fn()
+    const workspaceTabs = {
+      tabs: [taskTab, boardTab],
+      activeTabId: taskTab.id,
+      activeTab: taskTab,
+      openTab,
+      selectTab,
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout {...baseProps} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.queryByTestId('work-items-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-board-loading')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-workbench-content')).toBeVisible()
+    expect(selectTab).not.toHaveBeenCalled()
+    expect(openTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
 
   test('submits implementation plan confirmation as a user message response', async () => {
@@ -2093,9 +2145,9 @@ describe('DesktopWorkbenchLayout', () => {
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
         {
-          id: 'space-1',
+          id: 'default-work-items',
           public_id: 'public-space-1',
-          project_key: 'SPACE-1',
+          project_key: 'WORK',
           name: 'Task Follow-up Board',
           description: '',
           project_store: 'local',
@@ -2114,7 +2166,7 @@ describe('DesktopWorkbenchLayout', () => {
     const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
     runtimeWork.projects[0].project.defaultProjectSpace = {
       projectStore: 'local',
-      projectId: 'space-1',
+      projectId: 'default-work-items',
     }
 
     render(
@@ -2140,6 +2192,69 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('project-space-context-pill')).toHaveTextContent(
       'Task Follow-up Board'
+    )
+  })
+
+  test('keeps the work-item guide visible while a runtime task binding is unresolved', async () => {
+    deliveryApiMock.available = true
+    deliveryApiMock.listCloudProjects.mockResolvedValue({
+      items: [
+        {
+          id: 'default-work-items',
+          public_id: 'public-space-1',
+          project_key: 'WORK',
+          name: '工作项',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          created_by_user_id: 1,
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_at: '2026-08-09T00:00:00Z',
+          updated_at: '2026-08-09T00:00:00Z',
+        },
+      ],
+    })
+    deliveryApiMock.findCloudContextForTask.mockImplementation(() => new Promise(() => {}))
+    const currentProject = activeProjectState.currentProject
+    const runtimeWork = structuredClone(createRuntimeWorkForProject(currentProject)!)
+    runtimeWork.projects[0].deviceWorkspaces[0].tasks.push({
+      taskId: 'runtime-1',
+      workspacePath: '/workspace/github_wegent',
+      title: '完成默认工作项流程',
+      runtime: 'codex',
+      running: true,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/github_wegent',
+            taskId: 'runtime-1',
+          },
+          runtimeWork,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          currentProject,
+          currentProjectId: currentProject.id,
+          runtimeWork,
+        }}
+      />
+    )
+
+    const workItemGuide = await screen.findByTestId('project-space-context-pill')
+    const composerInput = screen.getByTestId('chat-message-input')
+    expect(workItemGuide).toHaveTextContent('工作空间')
+    expect(workItemGuide).toHaveAttribute('title', '工作空间')
+    expect(workItemGuide.compareDocumentPosition(composerInput)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
     )
   })
 
