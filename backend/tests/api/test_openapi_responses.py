@@ -39,7 +39,12 @@ async def test_callback_event_stream_waits_for_executor_terminal_event():
         {
             "type": "message",
             "data": json.dumps(
-                {"type": "block_created", "task_id": 1, "subtask_id": 2}
+                {
+                    "type": "chunk",
+                    "task_id": 1,
+                    "subtask_id": 2,
+                    "content": "hello",
+                }
             ),
         },
         None,
@@ -53,7 +58,8 @@ async def test_callback_event_stream_waits_for_executor_terminal_event():
 
     events = [event async for event in _iter_callback_events(pubsub, asyncio.Event())]
 
-    assert [event.type for event in events] == ["block_created", "done"]
+    assert [event.type for event in events] == ["chunk", "done"]
+    assert events[0].content == "hello"
     assert pubsub.get_message.await_count == 4
 
 
@@ -731,54 +737,23 @@ class TestOpenAPIResponsesCreate:
 
         assert filtered == [current_assistant]
 
-    @patch("app.api.endpoints.openapi_responses._create_streaming_response_unified")
-    def test_create_response_streaming_not_supported_for_executor(
-        self,
-        mock_create_streaming,
-        test_client: TestClient,
-        test_api_key,
-        test_team: Kind,
-        test_bot: Kind,
-        test_model: Kind,
-        test_public_shell: Kind,
-    ):
-        """Test streaming returns error when not supported by shell type.
-
-        Note: With the unified trigger architecture, streaming support is determined
-        by ExecutionRouter based on shell_type. For non-Chat Shell types, the
-        dispatch_sse_stream will raise NotImplementedError.
-        """
-        from fastapi import HTTPException
-
-        # Mock the streaming function to raise NotImplementedError (simulating non-SSE mode)
-        mock_create_streaming.side_effect = HTTPException(
-            status_code=400,
-            detail="Streaming is only supported for Chat Shell type teams",
-        )
-
-        response = test_client.post(
-            "/api/v1/responses",
-            headers={"X-API-Key": test_api_key[0]},
-            json={"model": "default#test-team", "input": "Hello", "stream": True},
-        )
-
-        assert response.status_code == 400
-        assert "Streaming is only supported" in response.json()["detail"]
-
     @pytest.mark.asyncio
-    async def test_streaming_unsupported_returns_bad_request(
+    async def test_callback_streaming_subscribe_failure_returns_failed_event(
         self,
         test_db: Session,
         test_user: User,
         test_team: Kind,
+        caplog,
     ):
-        """Non-SSE shells reject stream=true before returning a response."""
-        from fastapi import HTTPException
-
+        """Callback streaming reports a stream error when Redis subscribe fails."""
         from app.api.endpoints.openapi_responses import (
             _create_streaming_response_unified,
         )
         from app.schemas.openapi_response import ResponseCreateInput
+        from app.services.execution.router import (
+            CommunicationMode,
+            ExecutionTarget,
+        )
 
         setup = SimpleNamespace(
             task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
@@ -786,7 +761,14 @@ class TestOpenAPIResponsesCreate:
             user_subtask=SimpleNamespace(id=321),
             assistant_subtask=SimpleNamespace(id=654),
         )
-        execution_request = SimpleNamespace(task_id=101, subtask_id=654)
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+        expected_user_id = test_user.id
+        expected_username = test_user.user_name
+        expected_team_owner_id = test_team.user_id
 
         with (
             patch(
@@ -802,45 +784,72 @@ class TestOpenAPIResponsesCreate:
                 return_value=False,
             ),
             patch(
-                "app.services.execution.execution_dispatcher.dispatch",
-                new=AsyncMock(),
-            ) as mock_dispatch,
+                "app.services.execution.execution_dispatcher.router.route",
+                return_value=ExecutionTarget(
+                    mode=CommunicationMode.HTTP_CALLBACK,
+                ),
+            ),
             patch(
                 "app.services.chat.storage.session_manager.register_stream",
-                new=AsyncMock(),
-            ) as mock_register_stream,
+                new=AsyncMock(return_value=asyncio.Event()),
+            ),
             patch(
-                "app.api.endpoints.openapi_responses._persist_terminal_failure",
+                "app.services.chat.storage.session_manager.subscribe_callback_channel",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.unregister_stream",
                 new=AsyncMock(),
-            ) as mock_persist_failure,
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.delete_streaming_content",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.collect_completed_result",
+                new=AsyncMock(return_value={"value": ""}),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.persist_completed_result",
+                new=AsyncMock(),
+            ),
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await _create_streaming_response_unified(
-                    db=test_db,
-                    user=test_user,
-                    team=test_team,
-                    model_info={"namespace": "default", "team_name": "test-team"},
-                    request_body=ResponseCreateInput(
-                        model="default#test-team",
-                        input="hello",
-                        stream=True,
-                    ),
-                    input_text="hello",
-                    tool_settings={},
-                )
+            response = await _create_streaming_response_unified(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                ),
+                input_text="hello",
+                tool_settings={},
+            )
+            body = []
+            async for chunk in response.body_iterator:
+                body.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
 
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == (
-            "Streaming is only supported for Chat Shell type teams"
+        payload = "".join(body)
+        events = []
+        for chunk in payload.split("\n\n"):
+            chunk = chunk.strip()
+            if chunk.startswith("data: "):
+                events.append(json.loads(chunk.removeprefix("data: ").strip()))
+
+        failed_event = next(
+            event for event in events if event["type"] == "response.failed"
         )
-        mock_persist_failure.assert_awaited_once_with(
-            subtask_id=654,
-            task_id=101,
-            error_message="Streaming is only supported for Chat Shell type teams",
-            error_code="streaming_not_supported",
-        )
-        mock_dispatch.assert_not_awaited()
-        mock_register_stream.assert_not_awaited()
+        assert failed_event["response"]["status"] == "failed"
+        assert failed_event["response"]["error"]["code"] == "stream_error"
+        assert f"caller_user_id={expected_user_id}" in caplog.text
+        assert f"caller_username={expected_username}" in caplog.text
+        assert f"team_owner_user_id={expected_team_owner_id}" in caplog.text
+        assert "team_namespace=default" in caplog.text
+        assert "team_name=test-team" in caplog.text
+        assert "shell_type=ClaudeCode" in caplog.text
+        assert "route_mode=http_callback" in caplog.text
 
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key
