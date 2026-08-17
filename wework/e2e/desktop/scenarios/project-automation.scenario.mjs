@@ -765,7 +765,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       managerToolCalls > customToolCallsBefore,
       'Custom AI manager did not call assign_board_item'
     )
+    const readyCountBeforeBoardReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeBoardReload),
+      uiTimeoutMs * 3,
+      'The redesigned project board did not reconnect after loading API-created issues'
+    )
     const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       visible: true,
     })
@@ -799,6 +810,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,
+    })
+    await control.command('scrollIntoView', customManagerCard)
+    await control.command('waitFor', customManagerCard, {
+      text: '自定义 AI 调度员',
+      timeoutMs: uiTimeoutMs,
       visible: true,
     })
     const managerReplyComposer = `${customManagerCard} [data-testid^="cloud-task-activity-card-composer-"]`
@@ -810,11 +826,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       key: 'Enter',
       visible: true,
     })
-    await control.command('waitFor', customManagerCard, {
-      text: '真实自动化执行已完成。',
-      timeoutMs: uiTimeoutMs * 3,
-      visible: true,
-    })
+    await waitForValue(
+      () => control.command('getText', customManagerCard),
+      text =>
+        text.includes('请确认当前分派结果') &&
+        text.split('已通过看板工具完成机器人分派。').length >= 3 &&
+        text.split('自定义 AI 调度员').length >= 3,
+      'The custom manager did not append a distinct reply to its comment thread',
+      uiTimeoutMs * 3
+    )
+    await control.command('scrollIntoView', customManagerCard)
     const managerExecutionsAfterReply = await allExecutions(projectId)
     assert.equal(
       managerExecutionsAfterReply.filter(
