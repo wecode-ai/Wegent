@@ -1970,7 +1970,13 @@ class LoopItemExecutionService:
             project = db.get(CloudProject, integration.cloud_project_id)
             if project is None:
                 return
-            mr_service.reconcile_pending_feedback(db, integration, project, record)
+            mr_service.reconcile_pending_feedback(
+                db,
+                integration,
+                project,
+                record,
+                seen_through=execution.started_at,
+            )
         except Exception:
             logger.exception(
                 "[RobotQueue] MR pending-feedback settle failed execution=%s",

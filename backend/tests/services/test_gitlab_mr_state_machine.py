@@ -1388,6 +1388,112 @@ def test_first_mid_run_comment_repulls_when_run_saw_nothing(
     assert record.auto_retrigger_count == 1
 
 
+def test_comments_before_run_start_do_not_repull(env: dict[str, Any]) -> None:
+    """Two comments of one review posted back-to-back must not cascade into a
+    second run when they already existed by the time the run started working."""
+    from datetime import datetime, timedelta, timezone
+
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    _start_run(env, db, card)
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    assert execution is not None
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    execution.started_at = started_at
+    db.commit()
+    # Both comments already existed when the run started; their webhooks land
+    # while the run is active (queued), so neither may re-pull the card.
+    before = (started_at - timedelta(minutes=1)).isoformat() + "Z"
+    for note_id, body in ((21, "c1"), (22, "c2")):
+        payload = _note_event(1, note_id, body)
+        payload["object_attributes"]["created_at"] = before
+        mr_service.handle_note_event(db, env["integration"], env["project"], payload)
+    db.commit()
+    execution.status = "completed"
+    db.commit()
+    from app.services.loop_item_executions.service import (
+        loop_item_execution_service,
+    )
+
+    loop_item_execution_service._maybe_settle_mr_pending(db, execution)
+    db.commit()
+    record = _record(db, env["integration"])
+    assert set(record.seen_note_ids or []) == {21, 22}
+    assert record.state == "clean"
+    assert record.auto_retrigger_count == 0
+    assert (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .count()
+        == 1
+    )
+
+
+def test_comment_after_run_start_still_repulls(env: dict[str, Any]) -> None:
+    """A comment created after the run started stays mid-run feedback and
+    re-pulls the card when the run completes."""
+    from datetime import datetime, timedelta, timezone
+
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    card = _card(db, env["project"])
+    _start_run(env, db, card)
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    assert execution is not None
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    execution.started_at = started_at
+    db.commit()
+    after = (started_at + timedelta(minutes=1)).isoformat() + "Z"
+    payload = _note_event(1, 23, "c_mid_after_start")
+    payload["object_attributes"]["created_at"] = after
+    mr_service.handle_note_event(db, env["integration"], env["project"], payload)
+    db.commit()
+    execution.status = "completed"
+    db.commit()
+    from app.services.loop_item_executions.service import (
+        loop_item_execution_service,
+    )
+
+    loop_item_execution_service._maybe_settle_mr_pending(db, execution)
+    db.commit()
+    record = _record(db, env["integration"])
+    assert record.state == "actionable"
+    assert record.auto_retrigger_count == 1
+    assert (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .count()
+        == 2
+    )
+
+
 def test_pipeline_ref_mismatch_does_not_finalize_wrong_record(
     env: dict[str, Any],
 ) -> None:

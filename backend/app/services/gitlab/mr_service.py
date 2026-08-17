@@ -57,6 +57,22 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _parse_note_created_at(value: str) -> datetime | None:
+    """Parse a GitLab note ``created_at`` (UTC ISO 8601) to a naive UTC datetime."""
+    if not value:
+        return None
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _note_position(attrs: dict[str, object]) -> dict[str, object]:
     """Extract the diff position (file/line) GitLab attaches to diff notes."""
     pos = attrs.get("position")
@@ -658,6 +674,8 @@ class MrService:
         integration: MRIntegration,
         project: CloudProject,
         record: MRRecord,
+        *,
+        seen_through: datetime | None = None,
     ) -> None:
         """Re-pull the card when a run finished with comments it never saw.
 
@@ -665,6 +683,10 @@ class MrService:
         running AI never read) trigger one batched re-run instead of being
         treated as addressed. ``finalize_round`` covers the fix-pushed path; this
         covers runs that complete without pushing a new head.
+
+        ``seen_through`` is the run's ``started_at``: notes that already existed
+        when the run started are treated as read by it, so back-to-back comments
+        of one review do not cascade into one extra run each.
         """
         if record.state in {"closed", "evaluating"}:
             return
@@ -672,6 +694,7 @@ class MrService:
             return
         if self._has_active_run(db, record):
             return
+        self._mark_seen_through(record, seen_through)
         if self._unseen_note_ids(record):
             record.state = "actionable"
             self.create_or_update_card(db, integration, project, record)
@@ -679,6 +702,7 @@ class MrService:
         else:
             # The run settled with no new feedback: settle the card into the
             # review column when its CI is green and nothing is pending.
+            record.state = "clean"
             self._transition_card(
                 db, project, record, to_logical="in_review", trigger="ai_completed"
             )
@@ -967,6 +991,34 @@ class MrService:
                 continue
             pending.add(note_id)
         return pending
+
+    def _mark_seen_through(
+        self, record: MRRecord, seen_through: datetime | None
+    ) -> None:
+        """Record every note that already existed by ``seen_through`` as seen.
+
+        A run is assumed to have read everything present when it started working
+        (it reads the card at dispatch and re-fetches MR notes per the task
+        instruction). Without this, ``seen_note_ids`` is only snapshotted when
+        the run is queued, so a comment that arrives a moment later (but before
+        the run starts) counts as mid-run feedback and triggers an extra run on
+        completion. ``None`` (the run never started) leaves the snapshot alone.
+        """
+        if seen_through is None:
+            return
+        if seen_through.tzinfo is not None:
+            seen_through = seen_through.astimezone(timezone.utc).replace(tzinfo=None)
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        ids: set[int] = set()
+        for item in rounds:
+            for note in item.get("notes") or []:
+                if not isinstance(note, dict):
+                    continue
+                created = _parse_note_created_at(str(note.get("created_at") or ""))
+                if created is not None and created <= seen_through:
+                    ids.add(int(note.get("id") or 0))
+        merged = {int(x) for x in (record.seen_note_ids or [])} | ids
+        record.seen_note_ids = sorted(merged)
 
     def _unseen_note_ids(self, record: MRRecord) -> set[int]:
         """Note ids the latest robot run has not seen, per discussion.
