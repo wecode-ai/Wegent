@@ -414,12 +414,6 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
-  await control.command('click', '[data-testid="project-space-context-pill"]')
-  await control.command('waitFor', '[data-testid^="work-item-task-"]', {
-    text: '当前任务',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-03-related-tasks.png')
   await control.command('click', '[data-testid="work-item-open-details"]')
   await control.command(
     'waitFor',

@@ -668,6 +668,36 @@ async function pressDesktopControlKey(selector: string, key: string): Promise<st
   return element.textContent?.trim() ?? ''
 }
 
+let activeDesktopControlPointer: {
+  element: HTMLElement
+  options: MouseEventInit & PointerEventInit
+} | null = null
+
+function startDesktopControlPointer(selector: string): string {
+  if (activeDesktopControlPointer) throw new Error('A desktop control pointer is already active')
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.scrollIntoView({ block: 'center', inline: 'center' })
+  const options = { ...desktopControlEventOptions(element), buttons: 1 }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
+  activeDesktopControlPointer = { element, options }
+  return element.textContent?.trim() ?? ''
+}
+
+function endDesktopControlPointer(): string {
+  const activePointer = activeDesktopControlPointer
+  if (!activePointer) throw new Error('No desktop control pointer is active')
+  try {
+    dispatchDesktopControlPointerEvent(activePointer.element, 'pointerup', {
+      ...activePointer.options,
+      buttons: 0,
+    })
+    return activePointer.element.textContent?.trim() ?? ''
+  } finally {
+    activeDesktopControlPointer = null
+  }
+}
+
 let activeDesktopControlDrag: {
   sourceText: string
   target: HTMLElement
@@ -1487,6 +1517,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerDownOnly':
+      return startDesktopControlPointer(command.selector)
+    case 'pointerUp':
+      return endDesktopControlPointer()
     case 'navigate': {
       const appPath = normalizeAppPath(command.value ?? '/')
       window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))

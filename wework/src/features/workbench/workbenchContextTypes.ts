@@ -13,6 +13,7 @@ import type {
   LocalDeviceApp,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
+  MultiAttachmentUploadState,
   ModelOptions,
   ModelSelectionConfig,
   ModelType,
@@ -185,6 +186,7 @@ export interface WorkbenchContextValue {
     dismissTrialGuide?: () => void
     applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
+    attachmentStateByScope: Readonly<Record<string, MultiAttachmentUploadState>>
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
     errors: Map<string, string>
@@ -203,9 +205,13 @@ export interface WorkbenchContextValue {
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
+    handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
+    addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
     removeAttachment: (attachmentId: number) => Promise<void>
+    removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
     resetAttachments: () => void
+    resetAttachmentsForScope: (scopeKey: string) => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
     listLocalApps: () => Promise<LocalDeviceApp[]>
   }

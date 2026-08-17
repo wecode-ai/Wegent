@@ -5074,6 +5074,8 @@ pub fn run() {
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_close_many,
+            #[cfg(target_os = "macos")]
+            embedded_browser::embedded_browser_capture_snapshot,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
