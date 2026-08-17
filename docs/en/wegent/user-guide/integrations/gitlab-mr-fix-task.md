@@ -62,14 +62,32 @@ The card description starts with a **task instruction** that varies by state:
 Below it sit the data: review comments (all), current-round CI (failed jobs +
 log tail), and history (one-line summaries of recent rounds).
 
+## Project automation assignment (optional)
+
+An MR fix card is a standard board task: **creating one fires the project
+automation `task.created` event**, so a project automation rule can decide who
+handles it instead of only the hard-coded "collect inbox + MR author" flow.
+
+Configure a rule on the project manage page with `event_config`
+`sources: ["gitlab"]` and `tags: ["mr-fix"]` to match MR fix cards exactly:
+
+- **Manual assignment**: the rule names a project robot; new MR fix cards are
+  dispatched to it automatically.
+- **AI-managed assignment**: a custom WeWork AI or Wegent team acts as the
+  dispatcher, reading project/task/member capabilities and assigning the card to
+  the best person or robot.
+
+With no matching rule, the card keeps the default behavior: it lands in the
+inbox assigned to the MR author.
+
 ## AI execution
 
 - Once a card is assigned to a project robot, each actionable round (CI failure
   or a new comment) **auto-re-triggers a fresh run** (a new run reads the
   latest card).
 - Auto re-triggers are capped by the project's
-  `ai_automation.max_retry_count` (default 3); past the cap the card stays "in
-  progress" for a human.
+  `ai_automation.max_retry_count` (default 10; set 0 to disable); past the cap
+  the card stays "in progress" for a human.
 - A running robot reads the card via `get_board_item` (including the task
   instruction); pushing a fix re-runs CI automatically.
 
