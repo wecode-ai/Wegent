@@ -5176,7 +5176,9 @@ pub fn run() {
             todo_store::write_todo_workspace_file,
             system_drag::complete_system_drag_drop,
             system_drag::dismiss_system_drag_panel,
+            system_drag::get_system_drag_panel_visibility_for_e2e,
             system_drag::log_system_drag_debug,
+            system_drag::show_system_drag_panel_for_e2e,
             system_drag::take_pending_system_drag_drops,
             #[cfg(desktop)]
             system_lock::get_system_session_locked,

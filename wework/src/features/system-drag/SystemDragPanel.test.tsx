@@ -40,6 +40,25 @@ describe('SystemDragPanel', () => {
 
     expect(screen.getByTestId('system-drag-brand')).toHaveTextContent('Wework')
     expect(screen.getByTestId('system-drag-panel')).toHaveClass('h-[60px]')
+    expect(screen.getByTestId('system-drag-close-button')).toHaveAccessibleName('关闭')
+  })
+
+  test('closes manually without completing a drop', () => {
+    render(<SystemDragPanel />)
+
+    fireEvent.click(screen.getByTestId('system-drag-close-button'))
+
+    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
+  })
+
+  test('closes on Escape without completing a drop', () => {
+    render(<SystemDragPanel />)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
   })
 
   test('only shows follow-up when a conversation is selected', async () => {
@@ -67,11 +86,11 @@ describe('SystemDragPanel', () => {
         payload: {
           type: 'drop',
           paths: ['/tmp/notes.txt', '/tmp/notes.txt'],
-          position: { x: 20, y: 20 },
+          position: { x: 80, y: 20 },
         },
       })
       mocks.dragDropHandler?.({
-        payload: { type: 'drop', paths: ['/tmp/notes.txt'], position: { x: 24, y: 22 } },
+        payload: { type: 'drop', paths: ['/tmp/notes.txt'], position: { x: 84, y: 22 } },
       })
     })
 
@@ -117,10 +136,10 @@ describe('SystemDragPanel', () => {
 
     act(() => {
       mocks.eventHandlers.get('wework-system-drag-native-text-drop')?.({
-        payload: { text: '网页里的文字', x: 32 },
+        payload: { text: '网页里的文字', x: 80 },
       })
       mocks.eventHandlers.get('wework-system-drag-native-text-drop')?.({
-        payload: { text: '网页里的文字', x: 32 },
+        payload: { text: '网页里的文字', x: 80 },
       })
     })
 
@@ -139,12 +158,30 @@ describe('SystemDragPanel', () => {
     await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
 
     act(() => {
-      mocks.dragDropHandler?.({ payload: { type: 'over', position: { x: 411, y: 107 } } })
+      mocks.dragDropHandler?.({ payload: { type: 'over', position: { x: 390, y: 107 } } })
     })
 
     expect(screen.getByTestId('system-drag-stash-zone')).toHaveClass(
       'border-text-primary/15',
       'bg-muted'
     )
+  })
+
+  test('dismisses instead of completing when a native drop lands on the close area', async () => {
+    render(<SystemDragPanel />)
+    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
+
+    act(() => {
+      mocks.dragDropHandler?.({
+        payload: {
+          type: 'drop',
+          paths: ['/tmp/notes.txt'],
+          position: { x: 424, y: 20 },
+        },
+      })
+    })
+
+    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
   })
 })

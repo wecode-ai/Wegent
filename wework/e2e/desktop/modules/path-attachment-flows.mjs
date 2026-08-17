@@ -89,10 +89,36 @@ async function verifySystemDragPanelLayout(control) {
     /Temporary stash|临时暂存/,
     'The system drag panel did not expose the stash destination'
   )
+  assert.ok(
+    snapshot.testIds.includes('system-drag-close-button'),
+    'The system drag panel did not expose a manual close button'
+  )
   await captureVerificationScreenshot(
     control,
     'system-drag-panel.png',
     '[data-testid="system-drag-panel"]'
+  )
+  assert.equal(
+    await control.command('showSystemDragPanel', 'body'),
+    'true',
+    'The native system drag panel did not become visible for manual-close verification'
+  )
+  await control.command('click', '[data-testid="system-drag-close-button"]', { visible: true })
+  assert.equal(
+    await control.command('getSystemDragPanelVisibility', 'body'),
+    'false',
+    'Clicking the system drag close button did not hide the native panel window'
+  )
+  assert.equal(
+    await control.command('showSystemDragPanel', 'body'),
+    'true',
+    'The native system drag panel did not reopen for Escape verification'
+  )
+  await control.command('press', '[data-testid="system-drag-close-button"]', { key: 'Escape' })
+  assert.equal(
+    await control.command('getSystemDragPanelVisibility', 'body'),
+    'false',
+    'Pressing Escape did not hide the native system drag panel window'
   )
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="new-chat-button"]', {
