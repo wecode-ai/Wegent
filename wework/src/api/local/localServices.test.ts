@@ -3,6 +3,7 @@ import { getLocalUser, LOCAL_USER } from './localSession'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from './localServices'
 import {
   clearLocalModelConfigs,
+  listLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -1569,7 +1570,7 @@ describe('createLocalAppServices', () => {
       modelId: 'qwen3-coder',
       baseUrl: 'http://localhost:11434/v1',
       apiKey: 'cloud-device-key',
-      catalogReady: true,
+      catalogReady: false,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.app_server.restart') return { restarted: true }
@@ -1654,6 +1655,10 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.create', expect.any(Object), 'cloud-device')
     expect(request).toHaveBeenCalledWith('runtime.tasks.send', expect.any(Object), 'cloud-device')
     expect(requestModelCatalogSync).toHaveBeenCalledTimes(1)
+    expect(listLocalModelConfigs()[0]).toMatchObject({
+      id: 'cloud-ollama',
+      catalogReady: false,
+    })
   })
 
   test('synchronizes the same configured catalog independently for each cloud device', async () => {
