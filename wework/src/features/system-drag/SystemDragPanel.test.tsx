@@ -26,6 +26,18 @@ vi.mock('@tauri-apps/api/webview', () => ({
   }),
 }))
 
+function dropNativeFileAt(x: number, path: string) {
+  act(() => {
+    mocks.dragDropHandler?.({
+      payload: {
+        type: 'drop',
+        paths: [path],
+        position: { x, y: 20 },
+      },
+    })
+  })
+}
+
 describe('SystemDragPanel', () => {
   beforeEach(() => {
     mocks.eventHandlers.clear()
@@ -165,6 +177,44 @@ describe('SystemDragPanel', () => {
       'border-text-primary/15',
       'bg-muted'
     )
+  })
+
+  test('keeps the brand-to-action boundary aligned with the rendered panel inset', async () => {
+    render(<SystemDragPanel />)
+    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
+
+    dropNativeFileAt(68, '/tmp/brand-edge.txt')
+
+    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
+
+    mocks.invoke.mockClear()
+    dropNativeFileAt(69, '/tmp/action-edge.txt')
+
+    await vi.waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
+        payload: { action: 'new-chat', text: null, paths: ['/tmp/action-edge.txt'] },
+      })
+    })
+  })
+
+  test('keeps the action-to-close boundary aligned with the rendered panel inset', async () => {
+    render(<SystemDragPanel />)
+    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
+
+    dropNativeFileAt(402, '/tmp/action-edge.txt')
+
+    await vi.waitFor(() => {
+      expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
+        payload: { action: 'stash', text: null, paths: ['/tmp/action-edge.txt'] },
+      })
+    })
+
+    mocks.invoke.mockClear()
+    dropNativeFileAt(403, '/tmp/close-edge.txt')
+
+    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
   })
 
   test('dismisses instead of completing when a native drop lands on the close area', async () => {

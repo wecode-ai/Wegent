@@ -14,12 +14,15 @@ type NativeTextDropPayload = { text: string; x: number }
 const FEEDBACK_DURATION_MS = 800
 const DROP_DEDUP_WINDOW_MS = 500
 const PANEL_WIDTH = 440
+const PANEL_CONTENT_INSET = 5
 const BRAND_WIDTH = 64
 const CLOSE_AREA_WIDTH = 32
 
 function actionAtPosition(x: number, hasConversation: boolean): DropAction | null {
-  const dropAreaWidth = PANEL_WIDTH - BRAND_WIDTH - CLOSE_AREA_WIDTH
-  const relativeX = x - BRAND_WIDTH
+  const actionAreaStart = PANEL_CONTENT_INSET + BRAND_WIDTH
+  const actionAreaEnd = PANEL_WIDTH - PANEL_CONTENT_INSET - CLOSE_AREA_WIDTH
+  const dropAreaWidth = actionAreaEnd - actionAreaStart
+  const relativeX = x - actionAreaStart
   if (relativeX < 0 || relativeX >= dropAreaWidth) return null
   if (!hasConversation) return relativeX < dropAreaWidth / 2 ? 'new-chat' : 'stash'
   if (relativeX < dropAreaWidth / 3) return 'new-chat'
