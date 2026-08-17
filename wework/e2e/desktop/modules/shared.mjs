@@ -1222,7 +1222,11 @@ function hasModelOption(menu, targetOptionIds) {
   return targetOptionIds.some(targetOptionId => menu.testIds.includes(targetOptionId))
 }
 
-async function ensureModelOptionVisible(control, modelIds) {
+async function ensureModelOptionVisible(
+  control,
+  modelIds,
+  modelSelectorButton = '[data-testid="model-selector-button"]'
+) {
   const targetOptionIds = modelOptionIdCandidates(modelIds)
   for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
@@ -1235,13 +1239,13 @@ async function ensureModelOptionVisible(control, modelIds) {
         .catch(() => undefined)
     } else {
       await control
-        .command('hover', '[data-testid="model-selector-button"]', {
+        .command('hover', modelSelectorButton, {
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
         .catch(() => undefined)
       menu = JSON.parse(await control.command('snapshot', 'body'))
       if (!menu.testIds.includes('model-selector-menu')) {
-        await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+        await control.command('clickWhenEnabled', modelSelectorButton, {
           stableMs: 100,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
@@ -1297,25 +1301,24 @@ async function createSingleRootLocalProject(control, workspacePath, name) {
 async function selectE2EModel(
   control,
   modelIds = DEFAULT_MODEL_ID,
-  modelLabels = DEFAULT_MODEL_LABEL
+  modelLabels = DEFAULT_MODEL_LABEL,
+  composerSelector = ''
 ) {
   const labels = Array.isArray(modelLabels) ? modelLabels : [modelLabels]
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+  const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
+  await control.command('waitFor', modelSelectorButton, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const selectedModelLabel = await control.command(
-    'getText',
-    '[data-testid="model-selector-button"]'
-  )
+  const selectedModelLabel = await control.command('getText', modelSelectorButton)
   if (labels.some(label => selectedModelLabel.includes(label))) return
 
-  await ensureModelOptionVisible(control, modelIds)
+  await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
   const targetOptionIds = modelOptionIdCandidates(modelIds)
   let targetOptionId = await visibleModelOptionId(control, targetOptionIds)
   if (!targetOptionId) {
     const menu = JSON.parse(await control.command('snapshot', 'body'))
     if (!menu.testIds.includes('model-selector-menu')) {
-      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+      await control.command('clickWhenEnabled', modelSelectorButton, {
         stableMs: 100,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -1339,7 +1342,7 @@ async function selectE2EModel(
       }
     )
   }
-  await waitForE2EModelLabel(control, labels)
+  await waitForE2EModelLabel(control, labels, modelSelectorButton)
   await control.command('press', 'body', { key: 'Escape' })
   await waitForSnapshot(
     control,
@@ -1348,13 +1351,14 @@ async function selectE2EModel(
   )
 }
 
-async function waitForE2EModelLabel(control, labels) {
+async function waitForE2EModelLabel(
+  control,
+  labels,
+  modelSelectorButton = '[data-testid="model-selector-button"]'
+) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const selectedModelLabel = await control.command(
-      'getText',
-      '[data-testid="model-selector-button"]'
-    )
+    const selectedModelLabel = await control.command('getText', modelSelectorButton)
     if (labels.some(label => selectedModelLabel.includes(label))) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }

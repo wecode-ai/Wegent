@@ -145,7 +145,14 @@ class LocalPluginObjectStorage {
 }
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
+  constructor({
+    claudeBinary,
+    codexBinary,
+    modelServerUrl,
+    scenarioConfigToml = '',
+    workspacePath,
+  }) {
+    this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
@@ -334,6 +341,7 @@ class RealCloudEnvironment {
   }) {
     return {
       ...process.env,
+      ...(this.claudeBinary ? { CLAUDE_BINARY_PATH: this.claudeBinary } : {}),
       CODEX_BIN: this.codexBinary,
       CODEX_HOME: codexHome,
       HOME: home,

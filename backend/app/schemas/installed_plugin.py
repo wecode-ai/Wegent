@@ -444,6 +444,23 @@ class PluginAccessResponse(BaseModel):
     revocationPendingCount: int = 0
 
 
+class PluginDeleteImpactResponse(BaseModel):
+    pluginId: int
+    affectedUserCount: int = 0
+    installedDeviceCount: int = 0
+    sharedTargetCount: int = 0
+    impactRevision: str
+
+
+class PluginDeleteRequest(BaseModel):
+    impactRevision: str = Field(..., min_length=1)
+    revokeAndDelete: bool = False
+
+
+class PluginDeleteResponse(BaseModel):
+    pendingDeviceCount: int = 0
+
+
 class PluginCopyResponse(BaseModel):
     sourcePluginId: int
     sourceReleaseId: int

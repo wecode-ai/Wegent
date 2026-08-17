@@ -1185,6 +1185,7 @@
       "taskFailed": "执行任务失败",
       "republish": "恢复此版本",
       "republished": "已恢复该版本",
+      "republishedDescription": "页面内容已刷新。",
       "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
       "republishConfirmTitle": "恢复这个版本？",
       "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",

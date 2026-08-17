@@ -14,6 +14,7 @@ const MAX_LOG_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ENTRY_PREVIEW_CHARS: usize = 20_000;
 const MAX_ATTACHMENT_COUNT: usize = 20;
 const MAX_ATTACHMENT_TOTAL_BYTES: usize = 100 * 1024 * 1024;
+const MAX_COMPOSER_DIAGNOSTICS_BYTES: usize = 256 * 1024;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +34,8 @@ pub struct FeedbackExportRequest {
     note: String,
     task_context: Option<serde_json::Value>,
     screenshot_data_url: Option<String>,
+    #[serde(default)]
+    composer_diagnostics: Option<serde_json::Value>,
     attachments: Vec<FeedbackAttachment>,
 }
 
@@ -202,6 +205,19 @@ fn build_pending_bundle(
                     &mut warnings,
                 )?,
                 Err(error) => warnings.push(format!("Runtime logs unavailable: {error}")),
+            }
+        }
+        if let Some(mut diagnostics) = request.composer_diagnostics.clone() {
+            redact_json_value(&mut diagnostics);
+            let serialized = serde_json::to_string_pretty(&diagnostics)
+                .map_err(|error| format!("Failed to serialize composer diagnostics: {error}"))?;
+            if serialized.len() <= MAX_COMPOSER_DIAGNOSTICS_BYTES {
+                entries.push(text_entry(
+                    "logs/webview/composer-diagnostics.json",
+                    serialized,
+                ));
+            } else {
+                warnings.push("Composer diagnostics exceeded 256 KB and were skipped".to_string());
             }
         }
         if entries.len() == entries_before {

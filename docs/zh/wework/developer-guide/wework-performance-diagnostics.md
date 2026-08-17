@@ -20,6 +20,22 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC stdio ready`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
 
+## Runtime 任务创建诊断
+
+前端会将任务创建关键阶段以 `[Wework] Runtime task create diagnostic` 前缀写入持久化日志，无需开启性能诊断。记录只包含阶段、任务/设备标识、模型标识、耗时和结果，不包含消息正文、凭据或模型连接配置。
+
+排查“乐观任务已显示，但 executor 没有收到 `runtime.tasks.create`”时，按以下顺序查找最后出现的阶段：
+
+1. `workbench-model-prepare-*`：工作台发起并完成首次模型准备。
+2. `workbench-runtime-create-dispatched`：工作台开始调用 runtime 创建接口。
+3. `hybrid-local-device-discovery-*` 和 `hybrid-route-resolved`：混合服务完成设备发现并选定本地或云端路由。
+4. `hybrid-create-forwarded`：创建请求已转发到选定的 runtime API。
+5. `local-device-resolved`、`local-primary-model-prepared`、`local-supervisor-model-prepared` 和 `local-payload-built`：本地/远程 Executor IPC 客户端完成设备解析、模型准备和 payload 构建。
+6. `local-rpc-dispatched` 与 `local-rpc-resolved`：`runtime.tasks.create` 已发出并返回。
+7. `hybrid-create-resolved` 或 `hybrid-create-failed`：混合服务观察到最终结果。
+
+缺少下一个阶段通常表示调用停在两条记录之间。结合相同 `taskId` 对齐前端日志、云端 WebSocket RPC 日志和 executor 日志，确认是模型同步、设备发现、payload 构建、IPC 发送还是 executor 响应卡住。
+
 ## 开启方式
 
 在 Wework 窗口中按隐藏快捷键：

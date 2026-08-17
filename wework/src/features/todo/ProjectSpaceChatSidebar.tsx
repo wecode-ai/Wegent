@@ -16,6 +16,8 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { CloudProject } from '@/api/deliveries'
 import type {
   Attachment,
+  ModelOptions,
+  ModelType,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -195,13 +197,20 @@ export function ProjectSpaceChatSidebar({
       message: string,
       options: {
         attachments: Attachment[]
+        executionModel: {
+          modelId?: string
+          modelType?: ModelType | null
+          modelOptions?: ModelOptions
+        }
         onError: (message: string) => void
         onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
       }
     ) => {
       const address = await createProjectRuntimeTask(message, {
         project: selectedLocalProject,
+        runtime: 'codex',
         attachments: options.attachments,
+        executionModel: options.executionModel,
         collaborationMode: 'default',
         cloudProjectId: String(project.id),
         additionalContext: projectSpaceChatRuntimeContext(project),

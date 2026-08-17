@@ -1,8 +1,8 @@
 import type { LocalLoopItemExecution } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createConversationWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
-import type { RuntimeAdditionalContext, RuntimeTaskCreateRequest, UnifiedModel } from '@/types/api'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import type { RuntimeTaskCreateRequest } from '@/types/api'
 
 const LOCAL_QUEUE_POLL_MS = 3000
 const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
@@ -11,40 +11,45 @@ const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 60_000
 const LOCAL_QUEUE_DEVICE_CAPACITY = 5
 const LOCAL_QUEUE_LEASE_SECONDS = 300
 
-function robotRoleDescription(agentName: string, systemPrompt: string): string {
-  return systemPrompt
-    ? `你是 ${agentName}，这个项目任务的 AI 执行者。\n${systemPrompt}`
-    : `你是 ${agentName}，这个项目任务的 AI 执行者。`
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
 }
 
-function queuePrompt(execution: LocalLoopItemExecution): string {
-  const commentText =
-    typeof execution.execution_payload?.text === 'string'
-      ? (execution.execution_payload.text as string)
-      : ''
-  // The task title/description is not embedded here; the AI reads the bound
-  // task itself through wework_space (get_board_item). The sent content is
-  // the robot's role description plus the triggering comment requirement.
-  const role = robotRoleDescription(execution.agent_name, execution.agent_system_prompt ?? '')
-  if (commentText) {
-    return `${role}\n\n以下是任务评论中提出的最新要求：\n${commentText}`
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function requiredNumber(value: unknown, field: string): number {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value
+  throw new Error(`Transient runtime payload is missing ${field}`)
+}
+
+function runtimeBot(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    throw new Error('Transient runtime payload is missing bot identity')
   }
-  return role
+  const bots = value.map(recordValue).filter((bot): bot is Record<string, unknown> => bot !== null)
+  if (bots.length !== value.length || bots.length === 0) {
+    throw new Error('Transient runtime payload has an invalid bot identity')
+  }
+  return bots
 }
 
 /**
  * Dispatch local-project robot executions from the App, the same way cloud
- * projects with local execution are dispatched: claim the queued run, build
- * the runtime task with the complete App payload builder (model catalog, cloud
- * gateway, standalone workspace) and start it on the executor. The executor
- * only stores the run and writes the outcome back.
+ * projects with local execution are dispatched: claim the queued run, resolve
+ * local model configuration immediately before execution, and start it on the
+ * executor. Queue rows retain execution identities only; current model
+ * configuration and credentials are resolved at claim time and never written
+ * back to the queue.
  */
 export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () => void {
   const executionApi = services.localLoopItemExecutionApi
   const cloudExecutionApi = services.projectAutomationApi
   const runtimeWorkApi = services.runtimeWorkApi
   const deviceApi = services.deviceApi
-  const modelApi = services.modelApi
   if (!executionApi || !runtimeWorkApi || !deviceApi) {
     console.warn('[local-robot-queue] dispatcher unavailable', {
       hasExecutionApi: Boolean(executionApi),
@@ -58,31 +63,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   let dispatching = false
   let resolvedDeviceIds: string[] | null = null
   let deviceCacheExpiresAt = 0
-  let modelCache: UnifiedModel[] | null = null
-  let modelCacheExpiresAt = 0
-
-  // Resolve the robot's configured model to its full runtime selection (cloud
-  // gateway identity, catalog id, provider) the same way a chat send does.
-  // Without this, cloud/public models fall back to the local Codex account
-  // and the run fails before it starts.
-  const modelsByAgentModel = async (): Promise<Map<string, UnifiedModel>> => {
-    const now = Date.now()
-    if (modelCache && now < modelCacheExpiresAt) {
-      return new Map(modelCache.map(model => [model.name, model]))
-    }
-    if (!modelApi?.listModels) return new Map()
-    try {
-      const response = await modelApi.listModels()
-      modelCache = response.data
-      modelCacheExpiresAt = now + LOCAL_QUEUE_DEVICE_CACHE_MS
-      return new Map(response.data.map(model => [model.name, model]))
-    } catch (cause) {
-      console.warn('[local-robot-queue] failed to resolve model catalog', {
-        error: cause instanceof Error ? cause.message : String(cause),
-      })
-      return new Map()
-    }
-  }
 
   // A robot may be bound to any local-capable device (the desktop executor
   // itself is `local`, companion apps are `app`). Claim from every one of
@@ -176,141 +156,129 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
     if (!execution) return
     const deviceId = claimDeviceId ?? 'local-device'
 
-    // Bind the run to a local code project: the user-selected project on the
-    // triggering comment wins, then the robot's bound project, then nothing.
-    let boundLocalProjectId: number | null =
-      typeof execution.execution_payload?.local_project_id === 'number'
-        ? execution.execution_payload.local_project_id
-        : null
-    if (boundLocalProjectId == null && services.projectChatAgentApi) {
-      try {
-        const agents = await services.projectChatAgentApi.list(execution.cloud_project_id)
-        boundLocalProjectId =
-          agents.find(agent => agent.id === execution.agent_id)?.localProjectId ?? null
-      } catch {
-        // Agent list failures keep the current no-project behavior.
+    const taskId = nonEmptyString(execution.runtime_task_id) ?? ''
+    try {
+      const runtimePayload = recordValue(execution.runtime_payload)
+      if (!runtimePayload) {
+        throw new Error('Execution claim is missing its transient runtime payload')
       }
-    }
-    let boundWorkspacePath: string | null = null
-    if (boundLocalProjectId != null) {
-      try {
-        // Resolve the bound project's workspace from the same runtime work
-        // registry the chat send uses, so a robot bound to a project runs in
-        // that project's directory instead of a fresh conversation workspace.
+      const prompt = nonEmptyString(runtimePayload.message)
+      const payloadTaskId = nonEmptyString(runtimePayload.taskId)
+      if (!taskId || !payloadTaskId || !prompt) {
+        throw new Error('Transient runtime payload is missing task identity or prompt')
+      }
+      if (payloadTaskId !== taskId) {
+        throw new Error(`Runtime task identity '${payloadTaskId}' does not match '${taskId}'`)
+      }
+      if (runtimePayload.runtime !== 'codex') {
+        throw new Error('Transient runtime payload must target the Codex runtime')
+      }
+      const cloudProjectId = nonEmptyString(runtimePayload.cloudProjectId)
+      if (!cloudProjectId || cloudProjectId !== execution.cloud_project_id) {
+        throw new Error('Transient runtime payload does not match the claimed project')
+      }
+      if (execution.execution_device_id !== deviceId) {
+        throw new Error('Execution device does not match the claiming device')
+      }
+
+      const payloadLocalProjectId = runtimePayload.local_project_id
+      const boundLocalProjectId =
+        typeof payloadLocalProjectId === 'number' && payloadLocalProjectId > 0
+          ? payloadLocalProjectId
+          : null
+      let boundWorkspacePath: string | null = null
+      if (boundLocalProjectId != null) {
         const runtimeWork = await services.runtimeWorkApi?.listRuntimeWork()
         const projectWork = runtimeWork?.projects.find(
           item => item.project.id === boundLocalProjectId
         )
         const workspace = projectWork?.deviceWorkspaces.find(
-          candidate =>
-            candidate.deviceId === (execution.execution_device_id ?? deviceId) &&
-            candidate.available
+          candidate => candidate.deviceId === deviceId && candidate.available
         )
         boundWorkspacePath =
           workspace?.workspacePath ?? projectWork?.project.roots?.[0]?.path ?? null
-      } catch (cause) {
-        console.warn('[local-robot-queue] failed to resolve bound project workspace', {
-          projectId: boundLocalProjectId,
-          error: cause instanceof Error ? cause.message : String(cause),
-        })
       }
-    }
-    // The backend binds the canonical runtime task identity at claim time.
-    // Use it verbatim so runtime events always match the execution row; the
-    // transport must never mint its own task id.
-    const taskId = execution.runtime_task_id ?? `codex-queue-${execution.id}`
-    const backendPayload = execution.execution_payload ?? {}
-    const payloadMessage =
-      typeof backendPayload.message === 'string' && backendPayload.message.trim()
-        ? backendPayload.message
-        : null
-    const payloadContext =
-      backendPayload.additionalContext && typeof backendPayload.additionalContext === 'object'
-        ? (backendPayload.additionalContext as RuntimeAdditionalContext)
-        : null
-    const backendExecutionRequest =
-      backendPayload.executionRequest && typeof backendPayload.executionRequest === 'object'
-        ? (backendPayload.executionRequest as Record<string, unknown>)
-        : null
-    const payloadBot =
-      Array.isArray(backendExecutionRequest?.bot) && backendExecutionRequest.bot.length > 0
-        ? (backendExecutionRequest.bot as Array<Record<string, unknown>>)
-        : null
-    const payloadModelConfig =
-      backendExecutionRequest?.model_config &&
-      typeof backendExecutionRequest.model_config === 'object'
-        ? (backendExecutionRequest.model_config as Record<string, unknown>)
-        : null
-    console.log('[local-robot-queue] claimed execution payload', {
-      executionId: execution.id,
-      runtimeTaskId: taskId,
-      hasExecutionRequest: Boolean(backendExecutionRequest),
-      botCount: payloadBot?.length ?? 0,
-      hasModelConfig: Boolean(payloadModelConfig),
-      modelConfigBaseUrl: payloadModelConfig?.base_url ?? null,
-      hasAdditionalContext: Boolean(payloadContext),
-      boundLocalProjectId,
-      boundWorkspacePath,
-    })
-    // The robot prompt and bound-task context are backend-owned business
-    // content; only fall back to local derivation for legacy payloads.
-    const prompt = payloadMessage ?? queuePrompt(execution)
-    const systemPrompt = execution.agent_system_prompt ?? ''
-    const roleDescription = robotRoleDescription(execution.agent_name, systemPrompt)
-    const agentModel = execution.agent_model ?? null
-    const resolvedModel = agentModel ? ((await modelsByAgentModel()).get(agentModel) ?? null) : null
-    const executionModel = resolvedModel
-      ? selectedModelExecutionFields(resolvedModel, {})
-      : agentModel
-        ? { modelId: agentModel, modelType: null, modelOptions: {} }
-        : null
-    const request: RuntimeTaskCreateRequest = {
-      taskId,
-      teamId: typeof backendPayload.teamId === 'number' ? backendPayload.teamId : 0,
-      runtime: 'codex',
-      message: prompt,
-      title: execution.task_title,
-      cloudProjectId: execution.cloud_project_id,
-      origin: {
-        type: 'board_task',
-        cloudProjectId: execution.cloud_project_id,
-        loopItemId: execution.loop_item_id,
-      },
-      deviceId: execution.execution_device_id ?? deviceId,
-      ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
-      ...(payloadBot ? { bot: payloadBot } : {}),
-      ...(payloadModelConfig ? { modelConfig: payloadModelConfig } : {}),
-      ...(executionModel?.modelId ? { modelId: executionModel.modelId } : {}),
-      ...(executionModel?.modelType ? { modelType: executionModel.modelType } : {}),
-      ...(executionModel?.modelOptions ? { modelOptions: executionModel.modelOptions } : {}),
-      modelSelection: resolvedModel
-        ? { modelName: resolvedModel.name, modelType: resolvedModel.type, options: {} }
-        : agentModel
-          ? { modelName: agentModel, modelType: null, options: {} }
-          : null,
-      additionalContext: payloadContext ?? {
-        projectChat: {
-          kind: 'application',
-          value: [
-            'This run is bound to the current project space board task.',
-            `Reply to task cloud://projects/${execution.cloud_project_id}/todos/${execution.loop_item_id}.`,
-            'Read the task with the wework_space get_board_item tool before executing; the task link already contains the space_id and item_id, so do not call list_spaces to find the project.',
-            'Your final response is a reviewable task comment. Report actual changes, verification, unfinished work, and risks.',
-          ].join('\n'),
-        },
-        projectChatAgent: {
-          kind: 'application',
-          value: roleDescription,
-        },
-      },
-    }
-
-    try {
       if (boundLocalProjectId != null && !boundWorkspacePath) {
         throw new Error(
-          `Bound local project ${boundLocalProjectId} is unavailable on device ${request.deviceId ?? deviceId}`
+          `Bound local project ${boundLocalProjectId} is unavailable on device ${deviceId}`
         )
       }
+
+      const title = typeof runtimePayload.title === 'string' ? runtimePayload.title : null
+      const origin = recordValue(runtimePayload.origin)
+      const additionalContext = recordValue(runtimePayload.additionalContext)
+      const standaloneChatWorkspace = runtimePayload.standaloneChatWorkspace
+      if (
+        title == null ||
+        !origin ||
+        !additionalContext ||
+        typeof standaloneChatWorkspace !== 'boolean'
+      ) {
+        throw new Error('Transient runtime payload is missing execution context')
+      }
+      if (!['board_comment', 'board_task', 'project_automation'].includes(String(origin.type))) {
+        throw new Error('Transient runtime payload has an invalid execution origin')
+      }
+      if (
+        nonEmptyString(origin.cloudProjectId) !== cloudProjectId ||
+        nonEmptyString(origin.loopItemId) !== execution.loop_item_id
+      ) {
+        throw new Error('Transient runtime payload origin does not match the claimed execution')
+      }
+
+      if (runtimePayload.executionRequest != null) {
+        throw new Error(
+          'Local execution claims must not contain a backend-materialized execution request'
+        )
+      }
+      let modelFields: Pick<RuntimeTaskCreateRequest, 'modelId' | 'modelType' | 'modelOptions'> = {}
+      const requestedModelName = nonEmptyString(runtimePayload.modelId)
+      if (requestedModelName) {
+        const modelResponse = await services.modelApi.listModels()
+        const matchingModels = modelResponse.data.filter(
+          model =>
+            model.name === requestedModelName &&
+            model.isActive !== false &&
+            !model.compatibilityDisabled
+        )
+        if (matchingModels.length !== 1) {
+          throw new Error(
+            `Execution model '${requestedModelName}' is unavailable in the current App model catalog`
+          )
+        }
+        modelFields = selectedModelExecutionFields(matchingModels[0], {})
+        if (!modelFields.modelId) {
+          throw new Error(`Execution model '${requestedModelName}' has no runtime identity`)
+        }
+      }
+
+      const payloadBot = runtimeBot(runtimePayload.bot)
+      const request: RuntimeTaskCreateRequest = {
+        taskId,
+        teamId: requiredNumber(runtimePayload.teamId, 'team identity'),
+        runtime: 'codex',
+        message: prompt,
+        title,
+        cloudProjectId,
+        deviceId,
+        bot: payloadBot,
+        origin: origin as RuntimeTaskCreateRequest['origin'],
+        additionalContext: additionalContext as RuntimeTaskCreateRequest['additionalContext'],
+        standaloneChatWorkspace,
+        ...modelFields,
+        ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
+      }
+
+      console.log('[local-robot-queue] claimed transient runtime payload', {
+        executionId: execution.id,
+        runtimeTaskId: taskId,
+        botCount: payloadBot.length,
+        hasExecutionRequest: false,
+        model: request.modelId ?? null,
+        hasAdditionalContext: true,
+        boundLocalProjectId,
+        boundWorkspacePath,
+      })
       // Open the reviewable AI activity before the executor can emit events:
       // the canonical runtime identity is already bound at claim time, so the
       // comment exists first and the event write-back can only reuse it.
@@ -320,7 +288,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           deviceId,
           taskId,
           prompt,
-          executionModel?.modelId ?? agentModel ?? null
+          request.modelId ?? null
         )
       }
       const workspacePath =
@@ -376,8 +344,8 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         agentId: execution.agent_id,
         taskId: response.taskId,
         model: execution.agent_model ?? null,
-        botCount: payloadBot?.length ?? 0,
-        modelConfigBaseUrl: payloadModelConfig?.base_url ?? null,
+        botCount: payloadBot.length,
+        runtimeRequestSource: 'app',
       })
     } catch (cause) {
       const errorText = cause instanceof Error ? cause.message : String(cause)

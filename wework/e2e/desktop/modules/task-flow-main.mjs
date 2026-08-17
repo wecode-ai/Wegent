@@ -238,6 +238,7 @@ import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyPriorityFilter,
+  verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
 
@@ -510,21 +511,28 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
+    const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
     if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
-      DESKTOP_SEGMENT === 'remote-device-onboarding'
+      DESKTOP_SEGMENT === 'remote-device-onboarding' ||
+      scenarioRequiresCloudEnvironment
     ) {
       cloudEnvironment = new RealCloudEnvironment({
+        claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
         modelServerUrl: control.url,
         scenarioConfigToml:
           SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
-        workspacePath,
+        workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
       const [builtExecutor] = await Promise.all([buildExecutor(), cloudEnvironment.startBackend()])
       executorBinary = builtExecutor
+      await desktopScenario?.prepareCloud?.({
+        authToken: cloudEnvironment.authToken,
+        backendUrl: cloudEnvironment.backendUrl,
+      })
     } else {
       executorBinary = await buildExecutor()
     }
@@ -544,6 +552,7 @@ async function main() {
           ])
         )[0]
       : await desktopAppPromise
+    desktopScenario?.setCloudEnvironment?.(cloudEnvironment)
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
@@ -599,6 +608,9 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      ...(DESKTOP_SEGMENT === 'local-file-preview'
+        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
+        : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
@@ -1258,6 +1270,12 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('priority-filter')) {
       phase = 'priority-filter'
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      phase = 'runtime-task-order-unread'
+      await verifyRuntimeTaskOrderAndUnreadVisibility({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        executorHome,
+      })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
         return

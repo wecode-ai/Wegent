@@ -251,11 +251,22 @@ graph LR
 
 当 Codex 在任务工作区中生成 HTML 可视化文件并在回复中引用它时，Wework 会在该回复内直接显示图表或交互页面，无需复制文件路径或另开浏览器。
 
-- Wework 支持最新的 visualize 内容引用，例如 `visualize{"path":"/绝对路径/visualizations/chart.html"}`。该绝对路径无需出现在当前回复的文件变更摘要中，但必须指向 `visualizations` 目录内的 HTML 文件。
+- Wework 支持最新的 visualize 内容引用，例如 `visualize{"path":"/绝对路径/output/chart.html"}`。该绝对路径无需出现在当前回复的文件变更摘要中，也不限定文件所在目录，因此工作区输出和 Wework 附件草稿中的 HTML 都可以直接显示。
 - 旧版 `::codex-inline-vis{file="chart.html"}` 指令仍然可用。旧版指令只会从当前回复创建或修改的文件中解析相对路径或唯一同名文件，包括 `.codex/visualizations/` 下按日期和会话组织的片段。
 - 可视化在脚本隔离的 iframe 中运行，无法访问 Wework 页面。
-- 只接受 `.html`、`.htm` 或 `.xhtml` 文件。格式错误、包含父目录跳转的路径，以及位于代码块内的指令按普通文本显示。
+- HTML 由 Wework 桌面后端读取，再交给隔离的 iframe 渲染。只接受不超过 5 MB 的 UTF-8 `.html`、`.htm` 或 `.xhtml` 普通文件；符号链接、格式错误、包含父目录跳转的路径，以及位于代码块内的指令按普通文本显示或不会加载。
 - Wework 使用 UTF-8 的可视化宿主包装 HTML 片段，提供 Codex 可视化主题变量，并根据片段内容自动调整 iframe 高度。
+
+### Mermaid 和 PlantUML 图表
+
+当模型在回复中输出 `mermaid`、`mmd`、`plantuml` 或 `puml` 代码块时，Wework 会在流式输出过程中直接渲染图表，不需要先创建 HTML 文件。图表跟随当前明暗主题，并自动适应会话宽度。
+
+图表右下角提供两个操作：
+
+- **复制图片**：把当前图表以 PNG 格式写入系统剪贴板。
+- **保存图片**：打开系统保存窗口，将 PNG 保存到本地。
+
+工作区文件面板也可以直接预览 `.mermaid`、`.mmd`、`.plantuml` 和 `.puml` 文件，并提供相同的复制和保存操作。
 
 ## 清理过期运行时
 

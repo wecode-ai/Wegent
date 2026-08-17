@@ -3,13 +3,16 @@ mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
 mod desktop_capture;
+mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
+mod inline_visualization;
 mod local_executor;
 mod local_terminal;
+mod local_workspace_files;
 mod local_workspace_openers;
 #[cfg(target_os = "windows")]
 mod opener_store;
@@ -2351,11 +2354,7 @@ pub(crate) fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Res
 }
 
 #[tauri::command]
-fn open_local_workspace(
-    app: tauri::AppHandle,
-    opener: String,
-    path: String,
-) -> Result<(), String> {
+fn open_local_workspace(app: tauri::AppHandle, opener: String, path: String) -> Result<(), String> {
     let opener =
         normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
     let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
@@ -4300,9 +4299,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalize_local_harness_preferences,
-        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
-        wework_cli_launcher_content, LocalHarnessPreference,
+        normalize_local_harness_preferences, normalized_browser_link_target,
+        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4560,28 +4559,6 @@ mod tests {
             *transport.shutdown_timeouts.lock().unwrap(),
             vec![Duration::ZERO]
         );
-    }
-
-    #[test]
-    fn maps_local_workspace_openers_to_macos_app_names() {
-        assert_eq!(
-            local_workspace_opener_app_name("vscode"),
-            Some("Visual Studio Code")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("vscode-insiders"),
-            Some("Visual Studio Code - Insiders")
-        );
-        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
-        assert_eq!(
-            local_workspace_opener_app_name("android-studio"),
-            Some("Android Studio")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("intellij-idea"),
-            Some("IntelliJ IDEA")
-        );
-        assert_eq!(local_workspace_opener_app_name("unknown"), None);
     }
 
     #[test]
@@ -5097,6 +5074,8 @@ pub fn run() {
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_close_many,
+            #[cfg(target_os = "macos")]
+            embedded_browser::embedded_browser_capture_snapshot,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
@@ -5119,12 +5098,18 @@ pub fn run() {
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
             local_terminal::delete_archived_local_harness_session,
+            local_workspace_files::read_local_workspace_file_chunk,
+            local_workspace_files::read_local_workspace_text_file,
+            local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            inline_visualization::read_inline_visualization_html,
+            diagram_image::copy_diagram_png,
+            diagram_image::save_diagram_png,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
@@ -5134,8 +5119,14 @@ pub fn run() {
             local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
+            local_executor::local_executor_delete_personal_plugin,
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
+            local_executor::local_executor_import_plugin_package,
+            local_executor::local_executor_preview_plugin_import,
+            local_executor::local_executor_finalize_plugin_import,
+            local_executor::local_executor_rollback_plugin_import,
+            local_executor::local_executor_save_plugin_example,
             local_executor::local_executor_link_plugin_release,
             local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,

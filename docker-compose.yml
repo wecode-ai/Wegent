@@ -125,6 +125,9 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       # Internal URL for MCP and other internal service calls (use container name in Docker)
       BACKEND_INTERNAL_URL: http://backend:8000
+      # URL embedded in managed Executor MCP configs. Container-localhost is
+      # never valid here; temporary executors share wegent-network.
+      WEGENT_BACKEND_PUBLIC_URL: ${WEGENT_BACKEND_PUBLIC_URL:-http://backend:8000}
       # Knowledge Runtime URL for RAG operations
       KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
       # RAG Runtime Mode: "local" (default) or "remote" to use knowledge_runtime

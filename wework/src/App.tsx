@@ -13,6 +13,14 @@ import { Check, Copy, Info, Minimize2 } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import {
+  RuntimeTaskLifecycleStore,
+  RuntimeTaskLifecycleStreamCoordinator,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  createDefaultWorkbenchServices,
+  type WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -201,8 +209,10 @@ function workspaceTabAuxiliaryPage(path: string, search: string) {
 interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
+  lifecycleStore: RuntimeTaskLifecycleStore
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
+  services: WorkbenchServices
   tab: WorkspaceTab
   user: User
 }
@@ -210,8 +220,10 @@ interface WorkspaceTabSurfaceProps {
 function WorkspaceTabSurface({
   active,
   cloudWebUrl,
+  lifecycleStore,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
+  services,
   tab,
   user,
 }: WorkspaceTabSurfaceProps) {
@@ -266,10 +278,13 @@ function WorkspaceTabSurface({
         >
           {renderProvider ? (
             <WorkbenchProvider
+              lifecycleStore={lifecycleStore}
+              services={services}
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
               syncRemoteProjects={active}
+              syncRuntimeTaskLifecycle={active}
             >
               {onOpenWeworkForAppshot && active && !iframe ? (
                 <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
@@ -318,6 +333,41 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
   }))
   const telemetryEnabled = useTelemetryEnabled()
+  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
+  const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
+  const runtimeServiceUser = useMemo<User | undefined>(
+    () =>
+      workbenchIdentity
+        ? {
+            id: workbenchIdentity.id,
+            user_name: workbenchIdentity.user_name,
+            email: workbenchIdentity.email,
+          }
+        : undefined,
+    [workbenchIdentity]
+  )
+  const services = useMemo(
+    () =>
+      createDefaultWorkbenchServices({
+        isConnected: cloudConnection.isConnected,
+        backendUrl: cloudConnection.backendUrl,
+        apiBaseUrl: cloudConnection.apiBaseUrl,
+        socketBaseUrl: cloudConnection.socketBaseUrl,
+        socketPath: cloudConnection.socketPath,
+        token: cloudConnection.token,
+        user: runtimeServiceUser,
+      }),
+    [
+      cloudConnection.apiBaseUrl,
+      cloudConnection.backendUrl,
+      cloudConnection.isConnected,
+      cloudConnection.socketBaseUrl,
+      cloudConnection.socketPath,
+      cloudConnection.token,
+      runtimeServiceUser,
+    ]
+  )
 
   useEffect(() => {
     track('feature_opened', {
@@ -360,33 +410,48 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
   if (isPopoutWindow) {
     return (
-      <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
-        {hasTauriIpc() && <SystemDragBridge />}
-        <PopoutWorkbenchPage />
-      </WorkbenchProvider>
+      <>
+        <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+        <WorkbenchProvider
+          lifecycleStore={lifecycleStore}
+          services={services}
+          user={user}
+          onStartupReadyChange={onWorkbenchStartupReadyChange}
+        >
+          {hasTauriIpc() && <SystemDragBridge />}
+          <PopoutWorkbenchPage />
+        </WorkbenchProvider>
+      </>
     )
   }
 
   if (!workspaceTabs) return null
 
-  return workspaceTabs.tabs.map(tab => {
-    if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
-    return (
-      <WorkspaceTabSurface
-        key={tab.id}
-        active={tab.id === workspaceTabs.activeTabId}
-        cloudWebUrl={
-          cloudConnection.webUrl
-            ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
-            : cloudConnection.webUrl
-        }
-        onOpenWeworkForAppshot={onOpenWeworkForAppshot}
-        onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-        tab={tab}
-        user={user}
-      />
-    )
-  })
+  return (
+    <>
+      <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+      {workspaceTabs.tabs.map(tab => {
+        if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
+        return (
+          <WorkspaceTabSurface
+            key={tab.id}
+            active={tab.id === workspaceTabs.activeTabId}
+            lifecycleStore={lifecycleStore}
+            services={services}
+            cloudWebUrl={
+              cloudConnection.webUrl
+                ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
+                : cloudConnection.webUrl
+            }
+            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+            tab={tab}
+            user={user}
+          />
+        )
+      })}
+    </>
+  )
 }
 
 export default function App() {

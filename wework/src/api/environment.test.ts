@@ -222,6 +222,8 @@ describe('loadProjectEnvironment', () => {
             title: 'feat(wework): show pull request status',
             state: 'OPEN',
             isDraft: false,
+            mergeable: 'CONFLICTING',
+            mergeStateStatus: 'DIRTY',
             statusCheckRollup: [
               { status: 'COMPLETED', conclusion: 'SUCCESS' },
               { status: 'IN_PROGRESS', conclusion: '' },
@@ -252,6 +254,7 @@ describe('loadProjectEnvironment', () => {
         state: 'open',
         draft: false,
         checks: 'pending',
+        mergeability: 'conflicting',
       },
     })
     expect(executeCommand).toHaveBeenLastCalledWith('local-device', {
@@ -320,6 +323,90 @@ describe('loadProjectEnvironment', () => {
     )
 
     expect(info.changeRequest?.changeRequest?.checks).toBe(expected)
+  })
+
+  test('uses the latest GitHub run when an earlier run was cancelled', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'feature/change-request-status\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: [
+          {
+            number: 2631,
+            url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+            title: 'feat(wework): show pull request status',
+            state: 'MERGED',
+            isDraft: false,
+            statusCheckRollup: [
+              {
+                name: 'Test Wework',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:19:55Z',
+                status: 'COMPLETED',
+                conclusion: 'CANCELLED',
+              },
+              {
+                name: 'Test Summary',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:20:54Z',
+                status: 'COMPLETED',
+                conclusion: 'FAILURE',
+              },
+              {
+                name: 'Test Wework',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:21:16Z',
+                status: 'COMPLETED',
+                conclusion: 'SUCCESS',
+              },
+              {
+                name: 'Test Summary',
+                workflowName: 'Tests',
+                startedAt: '2026-08-14T06:25:46Z',
+                status: 'COMPLETED',
+                conclusion: 'SUCCESS',
+              },
+            ],
+          },
+        ],
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      null,
+      {
+        deviceId: 'local-device',
+        path: '/workspace/Wegent',
+      },
+      { force: true }
+    )
+
+    expect(info.changeRequest?.changeRequest).toMatchObject({
+      state: 'merged',
+      checks: 'success',
+      mergeability: 'unknown',
+    })
   })
 
   test('keeps create request available when the provider CLI is unavailable', async () => {
@@ -469,6 +556,7 @@ describe('loadProjectEnvironment', () => {
         state: 'open',
         draft: true,
         checks: 'success',
+        mergeability: 'unknown',
       },
     })
   })

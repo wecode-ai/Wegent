@@ -156,6 +156,8 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
+import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
   useWorkbenchPaneActive,
   useWorkbenchPaneId,
@@ -464,6 +466,7 @@ function createInitialBrowserWorkspaceState({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  splitGroups: WorkbenchSplitGroupsController
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   visible?: boolean
@@ -527,7 +530,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
-  const { services, workspaceTabId, openRuntimeTask } = useWorkbench()
+  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const {
     onLocalHarnessSessionStarted,
@@ -539,7 +542,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
-  const [splitMode, setSplitMode] = useState(false)
+  const splitMode = props.splitGroups.splitMode
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
@@ -748,19 +751,37 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       updateHarnessSessionTitle,
     ]
   )
+  const {
+    focusPane: focusSplitGroupPane,
+    closePane: closeSplitGroupPane,
+    splitPane: splitSplitGroupPane,
+    placeTask: placeSplitGroupTask,
+    updateSizes: updateSplitGroupSizes,
+  } = props.splitGroups
+  const focusSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(focusSplitGroupPane(paneId)),
+    [focusSplitGroupPane]
+  )
+  const closeSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(closeSplitGroupPane(paneId)),
+    [closeSplitGroupPane]
+  )
   const paneStack = (
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
-      storageKey={`wework:workbench-split-layout:v2:${workspaceTabId ?? 'popout'}`}
+      layout={props.splitGroups.activeLayout}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
-      runtimeKeysReady={state.runtimeWork !== null}
       activeTestId="desktop-workbench-main"
       workbenchVisible={props.visible ?? true}
       resolvePane={resolvePane}
       getPaneTitle={getPaneTitle}
       onPaneFocus={focusPane}
-      onSplitModeChange={setSplitMode}
+      onLayoutFocus={focusSplitPane}
+      onLayoutClose={closeSplitPane}
+      onLayoutSplit={splitSplitGroupPane}
+      onLayoutPlace={placeSplitGroupTask}
+      onLayoutSizesChange={updateSplitGroupSizes}
       renderPane={renderWorkbenchPane}
     />
   )
@@ -969,6 +990,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const currentRuntimeConversationSource: RuntimeTaskAddress | null =
+    currentRuntimeTask && runtimeTaskSummary
+      ? {
+          ...currentRuntimeTask,
+          runtime: runtimeTaskSummary.runtime,
+          workspacePath: runtimeTaskSummary.workspacePath || currentRuntimeTask.workspacePath,
+          threadId: runtimeTaskSummary.threadId ?? currentRuntimeTask.threadId,
+          runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
+        }
+      : currentRuntimeTask
   const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
@@ -2530,6 +2561,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
       ...projectChat,
+      scopeKey: paneSession.scopeKey,
+      attachments: paneSession.attachments,
+      uploadingFiles: paneSession.uploadingFiles,
+      errors: paneSession.attachmentErrors,
+      handleFileSelect: paneSession.handleFileSelect,
+      removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
       setSelectedModel: model => {
         projectChat.setSelectedModel(model)
@@ -2548,6 +2585,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }),
     [
       modelSelectorOpenSignal,
+      paneSession.attachmentErrors,
+      paneSession.attachments,
+      paneSession.handleFileSelect,
+      paneSession.removeAttachment,
+      paneSession.scopeKey,
+      paneSession.uploadingFiles,
       projectChat,
       refinePluginTrialPrompt,
       retryFailedMessageAfterModelSelect,
@@ -4224,7 +4267,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               allowTemporaryChat={temporaryChatAvailable}
               currentProject={workspaceProject}
               canBrowseFiles={canBrowseFiles}
-              currentRuntimeTask={currentRuntimeTask}
+              currentRuntimeTask={currentRuntimeConversationSource}
               devices={devices}
               workspaceTarget={workspacePanelTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}

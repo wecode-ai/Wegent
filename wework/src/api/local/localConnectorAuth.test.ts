@@ -48,6 +48,14 @@ describe('localConnectorAuthHealth cache', () => {
     await expect(localConnectorAuthHealth(target)).resolves.toEqual({ status: 'ok' })
     expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
   })
+
+  test('bypasses a cached result while waiting for a fresh local installation', async () => {
+    const target = { pluginKey: 'dingtalk', connectorSlug: 'dingtalk' }
+    await localConnectorAuthHealth(target)
+    await localConnectorAuthHealth(target, { bypassCache: true })
+
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('local connector kinds', () => {
