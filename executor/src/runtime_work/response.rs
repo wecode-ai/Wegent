@@ -194,8 +194,10 @@ impl RuntimeTaskLink {
         ) {
             git_info.insert("currentBranch".to_owned(), Value::String(current_branch));
         }
-        let running =
-            !local_archived && (execution_running || codex_thread_has_in_progress_turn(thread));
+        let local_completed_at = local_link.as_ref().and_then(|link| link.completed_at);
+        let provider_turn_running =
+            codex_thread_has_in_progress_turn_after(thread, local_completed_at);
+        let running = !local_archived && (execution_running || provider_turn_running);
         let mut status = merged_task_status(thread, running, local_archived);
         let mut thread_status =
             codex_thread_status_type(thread).unwrap_or_else(|| "notLoaded".to_owned());
@@ -858,13 +860,28 @@ fn task_turn_status(thread: &Value, running: bool) -> Option<String> {
 }
 
 pub(super) fn codex_thread_has_in_progress_turn(thread: &Value) -> bool {
+    codex_thread_has_in_progress_turn_after(thread, None)
+}
+
+fn codex_thread_has_in_progress_turn_after(
+    thread: &Value,
+    local_completed_at: Option<i64>,
+) -> bool {
     thread
         .get("turns")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|turn| string_field(turn, "status"))
-        .any(|status| runtime_status_is_running(&status))
+        .filter(|turn| {
+            string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
+        })
+        .any(|turn| {
+            local_completed_at.is_none_or(|completed_at| {
+                timestamp_ms_field(turn, "startedAt")
+                    .or_else(|| timestamp_ms_field(turn, "started_at"))
+                    .is_some_and(|started_at| started_at > completed_at)
+            })
+        })
 }
 
 pub(super) fn codex_thread_in_progress_turn_id(thread: &Value) -> Option<String> {
@@ -1193,6 +1210,73 @@ mod tests {
         assert_eq!(payload["threadStatus"], "active");
         assert_eq!(payload["turnStatus"], "inProgress");
         assert_eq!(payload["goalStatus"], "active");
+    }
+
+    #[test]
+    fn stale_provider_turn_does_not_revive_a_completed_local_task() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "updatedAt": 1_780_000_003,
+                "turns": [{
+                    "id": "turn-1",
+                    "status": "inProgress",
+                    "startedAt": 1_780_000_001,
+                }],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(!link.running);
+        assert_eq!(link.status, "active");
+        assert_eq!(link.thread_status, "idle");
+        assert_eq!(link.turn_status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn newer_provider_turn_can_restart_a_completed_local_task() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "turns": [{
+                    "id": "turn-2",
+                    "status": "inProgress",
+                    "startedAt": 1_780_000_003,
+                }],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(link.running);
+        assert_eq!(link.status, "running");
+        assert_eq!(link.thread_status, "active");
+        assert_eq!(link.turn_status.as_deref(), Some("inProgress"));
     }
 
     #[test]
