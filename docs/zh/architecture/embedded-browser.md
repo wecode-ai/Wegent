@@ -14,9 +14,10 @@ flowchart LR
     BRIDGE -->|宿主不存在| PENDING[(pending_open_requests)]
     PENDING --> MAIN[DesktopWorkbenchMain]
     MAIN --> PANEL[WorkspaceBrowserPanel]
-    PANEL -->|仅创建 about:blank 宿主| WEBVIEW[原生 WKWebView]
+    PANEL -->|创建宿主| WEBVIEW[原生 WebView]
     WEBVIEW --> ENTRY
-    WEBVIEW -->|bootstrap about:blank Finished| READY[宿主 Ready]
+    WEBVIEW -->|macOS: about:blank Finished| READY[宿主 Ready]
+    WEBVIEW -->|其他平台: builder 原子绑定初始 URL| READY
     READY --> BRIDGE
     BRIDGE -->|唯一目标导航| WEBVIEW
     WEBVIEW -->|PageLoadEvent::Finished| LOADED[loaded_url 真值]
@@ -33,15 +34,19 @@ sequenceDiagram
     participant B as bridge
     participant S as EmbeddedBrowserState
     participant R as React
-    participant W as WKWebView
+    participant W as 原生 WebView
     participant H as HTTP 服务
 
     C->>B: open(base label, URL)
     B->>S: 解析 logical label
     B->>S: 保存 pending open
     B-->>R: open-request
-    R->>W: 创建 about:blank 宿主
-    W-->>S: Finished(about:blank)
+    R->>W: 创建宿主
+    alt macOS 后置导航
+        W-->>S: Finished(about:blank)
+    else builder 原子绑定初始 URL
+        W-->>S: build 完成且无后置导航
+    end
     S->>S: Opening -> Ready
     R->>R: 结束一次性 bridge 宿主请求
     B->>W: navigate(URL)
@@ -64,6 +69,6 @@ sequenceDiagram
 | `about:blank` 宿主创建与 UI 状态              | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | 多标签真实桌面回归                            | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 创建 `about:blank` 后必须结束该一次性请求；`build()` 只代表对象创建，bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`；bridge 是首次目标 URL 的唯一导航者，后续 UI 重建直接使用当前目标 URL；目标 URL 的 `Finished → loaded_url` 才能完成 `open`；关闭只能销毁 expected native label。
+不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 创建宿主后必须结束该一次性请求；macOS 的 `build()` 只代表对象创建，后置 bootstrap `about:blank` 的 `Finished` 才能把宿主从 `Opening` 变为 `Ready`，其他平台由 builder 原子绑定初始 URL，无后置导航竞争；bridge 是首次目标 URL 的唯一后置导航者；目标 URL 的 `Finished → loaded_url` 才能完成 `open`；关闭只能销毁 expected native label。
 
 详细能力与验证说明见 [内置浏览器开发指南](../wework/developer-guide/wework-embedded-browser.md)。

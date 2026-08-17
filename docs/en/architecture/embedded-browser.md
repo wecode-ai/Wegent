@@ -14,9 +14,10 @@ flowchart LR
     BRIDGE -->|host absent| PENDING[(pending_open_requests)]
     PENDING --> MAIN[DesktopWorkbenchMain]
     MAIN --> PANEL[WorkspaceBrowserPanel]
-    PANEL -->|create about:blank host only| WEBVIEW[native WKWebView]
+    PANEL -->|create host| WEBVIEW[native WebView]
     WEBVIEW --> ENTRY
-    WEBVIEW -->|bootstrap about:blank Finished| READY[host Ready]
+    WEBVIEW -->|macOS: about:blank Finished| READY[host Ready]
+    WEBVIEW -->|other platforms: builder binds initial URL atomically| READY
     READY --> BRIDGE
     BRIDGE -->|sole destination navigation| WEBVIEW
     WEBVIEW -->|PageLoadEvent::Finished| LOADED[loaded_url truth]
@@ -33,15 +34,19 @@ sequenceDiagram
     participant B as bridge
     participant S as EmbeddedBrowserState
     participant R as React
-    participant W as WKWebView
+    participant W as native WebView
     participant H as HTTP service
 
     C->>B: open(base label, URL)
     B->>S: resolve logical label
     B->>S: persist pending open
     B-->>R: open-request
-    R->>W: create about:blank host
-    W-->>S: Finished(about:blank)
+    R->>W: create host
+    alt macOS post-build navigation
+        W-->>S: Finished(about:blank)
+    else builder binds the initial URL atomically
+        W-->>S: build completes with no post-build navigation
+    end
     S->>S: Opening -> Ready
     R->>R: finish one-shot bridge host request
     B->>W: navigate(URL)
@@ -64,6 +69,6 @@ sequenceDiagram
 | `about:blank` host creation and UI state                 | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | Real-desktop multi-tab regression                        | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-Invariants: a base label is only a routing entry; every tab owns a distinct logical label and WebView; a bridge request is valid only while its first host is being created, and React must finish that one-shot request after creating `about:blank`; `build()` means only that the object exists, and bootstrap `about:blank` must emit `Finished` before the host changes from `Opening` to `Ready`; the bridge solely owns the first destination navigation, while later UI reconstruction opens the current destination directly; only destination `Finished → loaded_url` completes `open`; close may destroy only the expected native label.
+Invariants: a base label is only a routing entry; every tab owns a distinct logical label and WebView; a bridge request is valid only while its first host is being created, and React must finish that one-shot request after creating the host; on macOS, `build()` means only that the object exists, so the post-build bootstrap `about:blank` must emit `Finished` before `Opening → Ready`; other platforms bind the initial URL atomically in the builder and have no post-build navigation race; the bridge solely owns the first post-build destination navigation; only destination `Finished → loaded_url` completes `open`; close may destroy only the expected native label.
 
 See the [embedded-browser developer guide](../wework/developer-guide/wework-embedded-browser.md) for capabilities and verification details.

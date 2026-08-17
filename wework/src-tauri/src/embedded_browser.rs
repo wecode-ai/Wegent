@@ -957,6 +957,10 @@ fn browser_host_is_ready(bootstrap_finished: bool, host_ready: bool) -> bool {
     bootstrap_finished && host_ready
 }
 
+fn bootstrap_is_stable_at_build(post_build_navigation: bool) -> bool {
+    !post_build_navigation
+}
+
 fn entry_readiness(
     state: &EmbeddedBrowserState,
     label: &str,
@@ -1756,7 +1760,11 @@ pub async fn embedded_browser_open(
         url: Some(url.clone()),
         loaded_url: None,
         opened_at_unix_ms: current_unix_millis(),
-        bootstrap_finished: false,
+        // macOS attaches the destination with a post-build navigate(), so its
+        // initial about:blank load must finish before bridge navigation. Other
+        // platforms bind the initial URL atomically in the builder and have no
+        // post-build bootstrap navigation to wait for.
+        bootstrap_finished: bootstrap_is_stable_at_build(cfg!(target_os = "macos")),
         host_ready: bridge_ready,
         phase: EmbeddedBrowserPhase::Opening,
     };
