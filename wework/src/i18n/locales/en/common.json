@@ -2784,6 +2784,8 @@
     "select_files": "Files",
     "select_folder": "Folder",
     "file_count": "{{count}} files",
+    "conversation_attachments": "Conversation attachments",
+    "attachment_unavailable": "Attachment file is unavailable: {{name}}",
     "remove_file": "Remove file",
     "markdown_placeholder": "Describe the outcome, key decisions, and suggested next steps…",
     "immutable_hint": "Confirming completes the current task and creates an immutable snapshot.",

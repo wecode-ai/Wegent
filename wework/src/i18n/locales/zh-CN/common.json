@@ -2781,6 +2781,8 @@
     "select_files": "文件",
     "select_folder": "文件夹",
     "file_count": "{{count}} 个文件",
+    "conversation_attachments": "会话附件",
+    "attachment_unavailable": "附件文件不可用：{{name}}",
     "remove_file": "移除文件",
     "markdown_placeholder": "写下交付说明、关键结论和后续建议…",
     "immutable_hint": "确认后将完成当前任务，并生成不可变快照。",
