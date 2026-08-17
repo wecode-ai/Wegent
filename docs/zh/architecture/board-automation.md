@@ -10,6 +10,8 @@ sidebar_position: 10
 flowchart LR
     ENTRY[人工 / API / 自动化] --> ASSIGN[统一指派服务]
     ASSIGN --> ITEM[(loop_items 负责人真值)]
+    ITEM --> NORMALIZE[存储哨兵归一化]
+    NORMALIZE --> API[API null 语义]
     ASSIGN --> EXEC[(loop_item_executions 执行真值)]
     EXEC --> ACTIVATE[统一 runtime 激活器]
     ACTIVATE -->|Wework local/cloud| DEVICE[设备 Runtime]
@@ -27,12 +29,15 @@ flowchart LR
 sequenceDiagram
     participant E as 指派入口
     participant A as 指派服务
+    participant I as loop_items
     participant X as execution 真值
     participant R as runtime 激活器
     participant T as Runtime / Team
     participant P as 终态投影器
 
     E->>A: assign(agent, item)
+    A->>I: 写负责人；MySQL 未分配 Team 写 0 哨兵
+    I-->>A: 读取时将 0 归一化为领域 null
     A->>X: 取消旧尝试并创建 queued execution
     A-->>E: 提交负责人和 execution
     E->>R: activate(execution_id)
@@ -47,12 +52,13 @@ sequenceDiagram
 | 边                       | 代码归属                                                              |
 | ------------------------ | --------------------------------------------------------------------- |
 | 入口 → 指派              | `backend/app/services/loop_items/`、`project_automation_execution.py` |
+| 负责人存储 → API 语义    | `backend/app/models/delivery.py`、`backend/app/schemas/delivery.py`   |
 | 指派 → execution 真值    | `backend/app/services/loop_item_executions/service.py`                |
 | execution → runtime 激活 | `board_team_execution.py`、`robot_queue_tasks.py`、Wework puller      |
 | Wegent 请求 → 看板 MCP   | `execution/request_builder.py`、`mcp_server/tools/wework_space.py`    |
 | Runtime 事件 → 终态      | `board_team_completion.py`、Executor 状态更新                         |
 | 评论 → 精确续聊          | `board_team_continuation.py`、`project_automation_tasks.py`           |
 
-不变量：所有入口共用指派与激活器；激活只能发生在提交后；`loop_item_executions` 是看板执行唯一真值；Wegent 绑定使用精确 execution/task/subtask/team ID；取消先写意图，只有 Runtime ACK 写终态；消息和 UI 不能反向覆盖执行状态。
+不变量：所有入口共用指派与激活器；激活只能发生在提交后；`loop_item_executions` 是看板执行唯一真值；Wegent 绑定使用精确 execution/task/subtask/team ID；MySQL `loop_items.assignee_team_id=0` 只表示未分配，服务和 API 必须将其归一化为 `null`，不得把 `0` 当作 Team ID；`loop_item_executions` 的可选 Team/Task ID 使用独立但一致的 `0 ↔ null` 边界；取消先写意图，只有 Runtime ACK 写终态；消息和 UI 不能反向覆盖执行状态。
 
 详细领域、API 与交付说明见 [云项目协作开发指南](../wegent/developer-guide/cloud-project-collaboration.md)。
