@@ -314,6 +314,52 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
     assert next(item for item in result.items if item.id == skill.id).bind_modes == []
 
 
+def test_market_search_matches_tags_within_selected_type(test_db, test_user):
+    agent = Kind(
+        user_id=0,
+        kind="Team",
+        name="global-search-agent",
+        namespace="default",
+        json={
+            "kind": "Team",
+            "metadata": {"name": "global-search-agent"},
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "capability": {"tags": ["data_analysis"]},
+            },
+        },
+        is_active=True,
+    )
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name="global-search-model",
+        namespace="default",
+        json={
+            "kind": "Model",
+            "metadata": {"name": "global-search-model"},
+            "spec": {"capability": {"tags": ["data_analysis"]}},
+        },
+        is_active=True,
+    )
+    test_db.add_all([agent, model])
+    test_db.commit()
+
+    result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="agent",
+        keyword="data_analysis",
+        tags=[],
+        limit=20,
+    )
+
+    assert [item.id for item in result.items] == [agent.id]
+    assert result.items[0].resource_type == "agent"
+    assert model.id not in {item.id for item in result.items}
+
+
 def test_system_only_discovery_excludes_user_publications(test_db, test_user):
     published_agent = _create_published_agent(test_db)
     publisher = test_db.get(User, published_agent.user_id)
