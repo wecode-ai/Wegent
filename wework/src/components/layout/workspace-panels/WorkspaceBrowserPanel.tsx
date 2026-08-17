@@ -1166,6 +1166,9 @@ export function WorkspaceBrowserTabPanel({
         adoptNativeLabel(pageState.nativeLabel, openingLabel)
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
+        if (activeOpenRequestIdRef.current === requestId) {
+          activeOpenRequestIdRef.current = null
+        }
         updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)

@@ -40,6 +40,7 @@ sequenceDiagram
     B-->>R: open-request
     R->>W: 创建 about:blank 宿主
     W->>S: Opening -> Ready
+    R->>R: 结束一次性 bridge 宿主请求
     B->>W: navigate(URL)
     W->>H: GET URL
     H-->>W: response
@@ -47,6 +48,9 @@ sequenceDiagram
     S->>S: loaded_url = URL
     S-->>B: 导航完成
     B-->>C: success
+
+    Note over R,W: 后续关闭再由 UI 打开
+    R->>W: 直接创建目标 URL 宿主
 ```
 
 | 边                                            | 代码归属                                                                  |
@@ -57,6 +61,6 @@ sequenceDiagram
 | `about:blank` 宿主创建与 UI 状态              | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | 多标签真实桌面回归                            | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；React 只创建首次宿主，bridge 是目标 URL 的唯一导航者；`Ready` 不等于加载成功，只有 `Finished → loaded_url` 可以完成 `open`；关闭只能销毁 expected native label。
+不变量：base label 只负责入口路由；每个标签拥有独立 logical label 和 WebView；bridge 请求只在首次宿主创建期间有效，React 创建 `about:blank` 后必须结束该一次性请求；bridge 是首次目标 URL 的唯一导航者，后续 UI 重建直接使用当前目标 URL；`Ready` 不等于加载成功，只有 `Finished → loaded_url` 可以完成 `open`；关闭只能销毁 expected native label。
 
 详细能力与验证说明见 [内置浏览器开发指南](../wework/developer-guide/wework-embedded-browser.md)。

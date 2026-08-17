@@ -40,6 +40,7 @@ sequenceDiagram
     B-->>R: open-request
     R->>W: create about:blank host
     W->>S: Opening -> Ready
+    R->>R: finish one-shot bridge host request
     B->>W: navigate(URL)
     W->>H: GET URL
     H-->>W: response
@@ -47,6 +48,9 @@ sequenceDiagram
     S->>S: loaded_url = URL
     S-->>B: navigation complete
     B-->>C: success
+
+    Note over R,W: later UI reopen after closure
+    R->>W: create host directly at destination URL
 ```
 
 | Edge                                                     | Code owner                                                                |
@@ -57,6 +61,6 @@ sequenceDiagram
 | `about:blank` host creation and UI state                 | `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx` |
 | Real-desktop multi-tab regression                        | `wework/e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`   |
 
-Invariants: a base label is only a routing entry; every tab owns a distinct logical label and WebView; React creates only the first host and the bridge solely owns destination navigation; `Ready` is not load completion and only `Finished → loaded_url` completes `open`; close may destroy only the expected native label.
+Invariants: a base label is only a routing entry; every tab owns a distinct logical label and WebView; a bridge request is valid only while its first host is being created, and React must finish that one-shot request after creating `about:blank`; the bridge solely owns the first destination navigation, while later UI reconstruction opens the current destination directly; `Ready` is not load completion and only `Finished → loaded_url` completes `open`; close may destroy only the expected native label.
 
 See the [embedded-browser developer guide](../wework/developer-guide/wework-embedded-browser.md) for capabilities and verification details.
