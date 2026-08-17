@@ -105,13 +105,6 @@
     "confirm_hint": "Continue with this message",
     "confirming": "Processing..."
   },
-  "weiboVideoBinding": {
-    "title": "Bind Weibo account for full video capability",
-    "description": "We recommend binding your Weibo account for full video capability. You can also continue without binding and adjust the Weibo binding later in personal settings.",
-    "confirmBind": "Confirm binding and upload",
-    "continueWithoutBinding": "Continue without binding",
-    "bindSuccess": "Weibo account bound. Continuing video upload"
-  },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",

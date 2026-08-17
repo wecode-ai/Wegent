@@ -72,7 +72,7 @@ Backend 只向当前用户在线或 busy 的设备 fan-out `runtime.tasks.search
 
 ## 云设备附件传输
 
-Wework 不能把桌面端的本地文件路径直接交给云设备。创建任务、继续对话、指导、打断发送或回滚编辑时，如果目标是 cloud/remote 设备，Wework 会先通过 Backend 附件接口上传本地文件，再把正数附件 ID 和不含本地路径的附件元数据放入设备 RPC。local/app 设备仍直接使用本机路径，不经过这次云端提升。
+Wework 不能把桌面端的本地文件路径直接交给云设备。创建任务、继续对话、指导、打断发送或编辑消息时，如果目标是 cloud/remote 设备，Wework 会先通过 Backend 附件接口上传本地文件，再把正数附件 ID 和不含本地路径的附件元数据放入设备 RPC。local/app 设备仍直接使用本机路径，不经过这次云端提升。
 
 云 executor 收到运行请求后，会在启动 Codex turn 前通过已认证的 Backend executor-download 接口下载缺少 `local_path` 的附件，并把设备侧路径合并回 execution request。已经有设备侧路径的附件不会重复下载；下载失败会沿用现有失败附件处理，不允许退回桌面端路径。
 
@@ -117,9 +117,24 @@ POST /api/runtime-work/send
 
 Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件携带当前 LocalTask 的 `local_task_id`、本轮 `task_id` 和 `subtask_id`；Wework 入口层把本地任务映射成统一的 task 身份，把 `subtask_id` 当作本轮 turn 身份，后续消息 reducer 不再使用单独的 `message_id`。这些事件不携带 `workspacePath`。
 
+编辑最后一条已完成的用户消息沿用 replacement turn 语义。Wework 必须生成新的 `clientUserMessageId`，并把原消息的 provider turn ID 作为 `retrySourceTurnId` 发送。executor 不调用已废弃的 `thread/rollback`，因为分页 thread 不支持该操作；它先通过 `thread/resume` 恢复事件订阅，再通过 `turn/start` 发送编辑后的内容，并把旧 turn 记录到 `runtimeHandle.supersededTranscriptTurnIds`。实时 UI 会立即替换旧轮次，后续分页 transcript 也会过滤旧 turn，因此刷新或重开任务不会恢复旧问题和旧回复。
+
 executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex 卡在 MCP 初始化等启动阶段时让 Wework 永久显示“正在思考”。默认超时为 180 秒，可以通过 `WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS` 调整。用户输入回显、声明仍会重试的错误和子 agent 事件不算有效进展；首个 assistant、reasoning 或 tool item 到达后立即关闭这个启动看门狗，因此已经开始执行的长工具调用不会被误杀。启动超时后，executor 会结束卡住的共享 app-server、让当前 turn 以明确错误结束，并在用户重试或发送下一条消息时启动新进程。Wework 必须保留原用户消息和失败卡片，重试时发送与失败 turn 绑定的同一条用户输入，不能留下空白 assistant 消息或误发更早的消息。
 
 排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。Tauri 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
+
+### 前端生命周期投影
+
+Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task lifecycle 状态。可见 pane 拥有 stream 事件的写权限；为了保留布局和快速切换而挂载的隐藏 Provider 可以继续订阅和读取，但不能写入 `turnStarted`、`turnSettled`、goal 状态或 executor snapshot。侧栏、composer 和任务执行遮罩都从同一个不可变 store snapshot 读取，不能再从 Provider 私有 state 或缓存 work list 生成第二份运行状态。
+
+来自 `runtime.tasks.list`、任务创建响应、stream 事件和本地缓存的 task summary 在进入 store 前都经过同一投影规则：
+
+- `running: false` 且 `completedAt` 非空表示权威终态；即使上游仍携带 `status: active`，也统一规范为 `done`、`failed`、`cancelled` 或 `archived`。
+- optimistic `active` 不能覆盖已经确认的终态。
+- 只有 `running: true`、线程或 turn 状态为运行中、`completedAt` 为空且不是 optimistic snapshot，才表示一个新的活跃 turn。
+- task address 只使用 `deviceId + taskId`；workspace 路径、tab id 和隐藏布局实例不能形成第二个生命周期身份。
+
+因此任务完成后的唯一数据流是：executor/Backend task snapshot 或终止 stream 事件进入共享 lifecycle store，投影收敛到 idle，所有 UI 消费者在同一次 store 更新后移除 running 状态。
 
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。本地 IPC 和远程 WebSocket 都只负责传输同一份 canonical 模型选择；本地设备调用远程模型、远程设备调用远程模型，都进入 executor backend 的同一套执行逻辑。新建任务和继续任务都必须复用同一套模型选择路径。
 
@@ -263,6 +278,7 @@ Project 场景使用运行时 workspace 引用：
 复制运行时任务时，Wework 只在当前任务所属 Project 内选择目标工作区：
 
 - 从消息操作复制到新任务时，Wework 会把所选已完成回合的 `lastTurnId` 传给 executor。executor 可以在源任务正在执行后续回合时调用 Codex `thread/fork`；fork 的历史边界由 `lastTurnId` 决定，不得停止、取消或修改源任务当前正在运行的回合。
+- executor 创建 fork 任务时必须继承源任务的 `runtime_project_key` 和 `runtime_workspace_roots`。这两个字段是列表按 Project 归组和工作区过滤的路由元数据；缺失时，fork 虽然成功，但新任务会被误判为不属于当前 Project。
 - 已经绑定到该 Project 的其他 Device Workspace 可以直接作为目标。
 - 没有绑定到该 Project 的在线设备，需要先走和项目创建/编辑一致的设备目录准备流程：选择设备目录，并选择该目录在 Project 下的类型是 `worktree` 还是普通 `workspace`。
 - Backend 调用 `POST /api/runtime-work/device-workspaces/prepare` 写入 Device Workspace 映射后，再继续执行任务复制。

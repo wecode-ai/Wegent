@@ -12,7 +12,8 @@ Redis Data Structure:
   - __sandbox__ field: Sandbox metadata JSON
   - {subtask_id} fields: Execution data JSON
   - TTL: session_hash_ttl (longer than redis_ttl to ensure GC can load data)
-- Active Sandboxes ZSet: wegent-sandbox:active (score = last_activity timestamp)
+- Active Sandboxes ZSet: wegent-sandbox:active:{manager_scope}
+  (score = last_activity timestamp)
   - GC uses redis_ttl to determine which sandboxes are expired
 
 GC Design:
@@ -22,7 +23,9 @@ GC Design:
 - This ensures GC can still load sandbox data even when it's marked as expired
 """
 
+import hashlib
 import json
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -45,8 +48,17 @@ logger = setup_logger(__name__)
 # Redis key prefixes
 SESSION_HASH_PREFIX = "wegent-sandbox-session:"
 SANDBOX_FIELD_NAME = "__sandbox__"
-ACTIVE_SANDBOXES_ZSET = "wegent-sandbox:active"
+LEGACY_ACTIVE_SANDBOXES_ZSET = "wegent-sandbox:active"
+ACTIVE_SANDBOXES_ZSET_PREFIX = f"{LEGACY_ACTIVE_SANDBOXES_ZSET}:"
 E2B_SANDBOX_ID_INDEX_PREFIX = "wegent-sandbox-e2b-index:"
+
+
+def _build_active_sandboxes_zset(manager_scope: str) -> str:
+    """Build a readable, collision-resistant Redis key for a manager scope."""
+    normalized_scope = manager_scope.strip().lower() or "default"
+    scope_slug = re.sub(r"[^a-z0-9]+", "-", normalized_scope).strip("-")
+    scope_digest = hashlib.sha256(normalized_scope.encode()).hexdigest()[:12]
+    return f"{ACTIVE_SANDBOXES_ZSET_PREFIX}{scope_slug[:48]}-{scope_digest}"
 
 
 class SandboxRepository(metaclass=SingletonMeta):
@@ -59,8 +71,37 @@ class SandboxRepository(metaclass=SingletonMeta):
     def __init__(self):
         """Initialize the repository."""
         self._config = get_config()
+        self._active_sandboxes_zset = _build_active_sandboxes_zset(
+            self._config.sandbox.manager_scope
+        )
         self._redis_client: Optional[redis.Redis] = None
         self._async_redis_client: Optional[aioredis.Redis] = None
+        logger.info(
+            "[SandboxRepository] Using deployment-scoped active sandbox index: %s",
+            self._active_sandboxes_zset,
+        )
+
+    @property
+    def active_sandboxes_zset(self) -> str:
+        """Return the active sandbox index owned by this deployment."""
+        return self._active_sandboxes_zset
+
+    def _mark_sandbox_active(self, sandbox_id: str, timestamp: float) -> None:
+        """Move a sandbox into this deployment's active index.
+
+        Removing the legacy membership prevents old executor-manager replicas
+        from treating a sandbox created by a different deployment as their own
+        during a rolling upgrade.
+        """
+        assert self.redis_client is not None
+        self.redis_client.zrem(LEGACY_ACTIVE_SANDBOXES_ZSET, sandbox_id)
+        self.redis_client.zadd(self._active_sandboxes_zset, {sandbox_id: timestamp})
+
+    def _remove_sandbox_from_active_indexes(self, sandbox_id: str) -> None:
+        """Remove a sandbox from scoped and legacy active indexes."""
+        assert self.redis_client is not None
+        self.redis_client.zrem(self._active_sandboxes_zset, sandbox_id)
+        self.redis_client.zrem(LEGACY_ACTIVE_SANDBOXES_ZSET, sandbox_id)
 
     @property
     def redis_client(self) -> Optional[redis.Redis]:
@@ -125,8 +166,8 @@ class SandboxRepository(metaclass=SingletonMeta):
             # Use session_hash_ttl (longer than redis_ttl) to ensure GC can load data
             self.redis_client.expire(hash_key, self._config.timeout.session_hash_ttl)
 
-            # Update active sandboxes ZSet with current timestamp
-            self.redis_client.zadd(ACTIVE_SANDBOXES_ZSET, {str(task_id): time.time()})
+            # Claim ownership in this deployment's active sandbox index.
+            self._mark_sandbox_active(str(task_id), time.time())
 
             # Save e2b_sandbox_id index for O(1) lookup
             e2b_sandbox_id = sandbox.metadata.get("e2b_sandbox_id")
@@ -285,8 +326,8 @@ class SandboxRepository(metaclass=SingletonMeta):
                 if e2b_sandbox_id:
                     self._delete_e2b_index(e2b_sandbox_id)
 
-            # Remove from active sandboxes ZSet
-            self.redis_client.zrem(ACTIVE_SANDBOXES_ZSET, str(task_id))
+            # Remove from both the scoped index and any legacy membership.
+            self._remove_sandbox_from_active_indexes(str(task_id))
 
             # Delete entire session Hash
             hash_key = f"{SESSION_HASH_PREFIX}{task_id}"
@@ -310,7 +351,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return []
 
         try:
-            return self.redis_client.zrange(ACTIVE_SANDBOXES_ZSET, 0, -1)
+            return self.redis_client.zrange(self._active_sandboxes_zset, 0, -1)
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to get active sandboxes: {e}")
             return []
@@ -328,7 +369,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return []
 
         try:
-            return await client.zrange(ACTIVE_SANDBOXES_ZSET, 0, -1)
+            return await client.zrange(self._active_sandboxes_zset, 0, -1)
         except Exception as e:
             logger.error(
                 f"[SandboxRepository] Failed to get active sandboxes async: {e}"
@@ -353,7 +394,7 @@ class SandboxRepository(metaclass=SingletonMeta):
         try:
             cutoff_timestamp = time.time() - max_age_seconds
             return self.redis_client.zrangebyscore(
-                ACTIVE_SANDBOXES_ZSET,
+                self._active_sandboxes_zset,
                 min=0,
                 max=cutoff_timestamp,
             )
@@ -374,7 +415,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return False
 
         try:
-            self.redis_client.zrem(ACTIVE_SANDBOXES_ZSET, sandbox_id)
+            self._remove_sandbox_from_active_indexes(sandbox_id)
             return True
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to remove from active set: {e}")
@@ -393,7 +434,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             return False
 
         try:
-            self.redis_client.zadd(ACTIVE_SANDBOXES_ZSET, {sandbox_id: time.time()})
+            self._mark_sandbox_active(sandbox_id, time.time())
             return True
         except Exception as e:
             logger.error(f"[SandboxRepository] Failed to update activity: {e}")
@@ -441,9 +482,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             # Only update ZSet timestamp for new executions (not status updates)
             # This ensures GC only considers "last new task time" for expiration
             if update_activity:
-                self.redis_client.zadd(
-                    ACTIVE_SANDBOXES_ZSET, {str(task_id): time.time()}
-                )
+                self._mark_sandbox_active(str(task_id), time.time())
 
             logger.info(
                 f"[SandboxRepository] Execution saved successfully: task_id={task_id}, subtask_id={subtask_id}"

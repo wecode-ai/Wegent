@@ -205,13 +205,12 @@ impl RuntimeWorkRpcHandler {
                 if let Some(thread_id) = link.thread_id.as_deref() {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
-                    if infer_workspace_kind(&link.workspace_path) == "chat" {
-                        link.list_order = Some(project_index.thread_sort_order(
-                            "chats",
-                            thread_id,
-                            link.list_order.unwrap_or(usize::MAX / 2),
-                        ));
-                    }
+                    let project_key = runtime_task_sidebar_project_key(&link, project_index);
+                    link.list_order = Some(project_index.thread_sort_order(
+                        &project_key,
+                        thread_id,
+                        link.list_order.unwrap_or(usize::MAX / 2),
+                    ));
                 }
                 link
             })
@@ -661,10 +660,14 @@ impl RuntimeWorkRpcHandler {
             .active_turn_cancellations
             .lock()
             .expect("active turn cancellation map lock should not be poisoned")
-            .insert(local_task_id, control)
+            .insert(local_task_id.clone(), control)
         {
             let _ = previous.cancel.send(());
         }
+        self.store.update_task(&local_task_id, |link| {
+            apply_local_execution_state(link, true, None);
+            link.completed_at = None;
+        });
         execution_id
     }
 
@@ -823,7 +826,9 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
+                link.status = status.to_owned();
             }
+            apply_local_execution_state(link, status == "running", None);
             if link.thread_id.is_some() {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
@@ -882,4 +887,35 @@ impl RuntimeWorkRpcHandler {
             }
         });
     }
+}
+
+fn runtime_task_sidebar_project_key(
+    link: &RuntimeTaskLink,
+    project_index: &CodexGlobalProjectIndex,
+) -> String {
+    if let Some(project_key) = link
+        .thread_id
+        .as_deref()
+        .and_then(|thread_id| project_index.sidebar_project_key_for_thread(thread_id))
+    {
+        return project_key.to_owned();
+    }
+    if let Some(project_key) = link
+        .runtime_project_key
+        .as_deref()
+        .filter(|project_key| !project_key.trim().is_empty())
+    {
+        return project_key.to_owned();
+    }
+    if let Some(workspace_path) = link
+        .group_workspace_path
+        .as_deref()
+        .filter(|workspace_path| !workspace_path.trim().is_empty())
+    {
+        return format!("local:{workspace_path}");
+    }
+    if infer_workspace_kind(&link.workspace_path) == "chat" {
+        return "chats".to_owned();
+    }
+    format!("local:{}", workspace_group_path(&link.workspace_path))
 }

@@ -538,7 +538,7 @@ def start_code_wiki_run(
     """Regenerate a code wiki now, without waiting for its schedule.
 
     Requires Knowledge Base manage permission, not merely the ability to read the
-    wiki. A run rewrites every page, and must follow the same ACL as other mutations
+    wiki. A run may rewrite every page, and must follow the same ACL as other mutations
     of that knowledge resource.
 
     Answers 202 even when no run was needed. "The repository has not changed since the
@@ -562,6 +562,7 @@ def start_code_wiki_run(
                     for item in data.changed_paths
                 ]
             ),
+            force_full=data.force_full,
         )
     except GenerationInFlight as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e

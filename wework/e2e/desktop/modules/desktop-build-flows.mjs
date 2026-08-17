@@ -104,14 +104,14 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     const projectMenuTestIds = snapshot.testIds.filter(testId => testId.startsWith('project-menu-'))
-    if (projectMenuTestIds.length === 1) {
-      const projectId = projectMenuTestIds[0].slice('project-menu-'.length)
-      try {
-        const title = await control.command('getText', `[data-testid="project-title-${projectId}"]`)
-        if (title.trim() === expectedTitle) return { projectId, snapshot }
-      } catch {
-        // The transient project row can disappear between snapshot and lookup.
-      }
+    const matchingProjectIds = []
+    for (const projectMenuTestId of projectMenuTestIds) {
+      const projectId = projectMenuTestId.slice('project-menu-'.length)
+      const title = await control.command('getText', `[data-testid="project-title-${projectId}"]`)
+      if (title.trim() === expectedTitle) matchingProjectIds.push(projectId)
+    }
+    if (matchingProjectIds.length === 1) {
+      return { projectId: matchingProjectIds[0], snapshot }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -508,6 +508,44 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
+async function verifyFailedCloudConnectionCanDisconnect(control) {
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '云端工作',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('hover', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('click', '[data-testid="sidebar-cloud-management-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-disconnect-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="settings-cloud-disconnect-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="settings-cloud-connect-button"]')
+  await control.command('fill', '[data-testid="cloud-backend-url-input"]', {
+    value: 'http://127.0.0.1:1',
+  })
+  await control.command('click', '[data-testid="cloud-authorization-submit-button"]')
+  await control.command('waitFor', '[data-testid="cloud-connection-error"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="cloud-disconnect-button"]', {
+    text: '断开连接',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-disconnect-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('cloud-connection-dialog'),
+    'Disconnecting a failed cloud connection did not clear the sidebar error state'
+  )
+}
+
 async function verifyCloudProjectFlow(
   control,
   cloudEnvironment,
@@ -852,11 +890,9 @@ async function verifyCloudProjectFlow(
 
   await cloudEnvironment.aliasCloudDeviceToCurrentApp()
   await createSingleRootLocalProject(control, replacementWorkspacePath, 'replacement-workspace')
-  await waitForSnapshot(
+  await waitForSingleProjectByTitle(
     control,
-    snapshot =>
-      snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1 &&
-      snapshot.text.includes('replacement-workspace'),
+    'replacement-workspace',
     'Creating a local project while cloud work was connected exposed duplicate projects',
     WORKBENCH_READY_TIMEOUT_MS
   )
@@ -875,6 +911,7 @@ async function verifyCloudProjectFlow(
     'Restarting Wework restored the removed project identity'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
+  await verifyFailedCloudConnectionCanDisconnect(control)
 }
 
 async function verifyRetryFailureRestoration(control, composerSelector) {

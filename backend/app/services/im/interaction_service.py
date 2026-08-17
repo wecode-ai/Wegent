@@ -178,10 +178,23 @@ class IMInteractionService:
         message_context: MessageContext,
     ) -> dict | None:
         reply_to_message_id = message_context.extra_data.get("reply_to_message_id")
-        return await im_session_service.get_runtime_task_reply_target(
+        reply_target = await im_session_service.get_runtime_task_reply_target(
             session=im_session,
             message_id=reply_to_message_id,
         )
+        active_runtime_task = im_session.active_runtime_task
+        if reply_target is None or not isinstance(active_runtime_task, dict):
+            return reply_target
+        try:
+            reply_key = im_session_service.runtime_task_notification_key(reply_target)
+            active_key = im_session_service.runtime_task_notification_key(
+                active_runtime_task
+            )
+        except ValueError:
+            return reply_target
+        if reply_key != active_key:
+            return reply_target
+        return {**active_runtime_task, **reply_target}
 
     def _should_continue_task_media_message(
         self,

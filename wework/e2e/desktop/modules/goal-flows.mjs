@@ -46,9 +46,28 @@ import {
   withTimeout,
 } from './shared.mjs'
 
-import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  waitForAttribute,
+  waitForWorkbenchDebugState,
+} from './workspace-flows.mjs'
 
-const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}`
+const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
+
+async function selectSupervisorModel(control) {
+  await control.command(
+    'click',
+    '[data-testid="task-supervisor-model"] [data-testid="model-selector-button"]'
+  )
+  await control.command('click', '[data-testid="model-control-menu-model"]')
+  await control.command('click', `[data-testid="model-option-${CLOUD_PUBLIC_MODEL_NAME}"]`)
+}
+
+async function getSelectedSupervisorModel(control) {
+  return control.command('getAttribute', '[data-testid="task-supervisor-model"]', {
+    value: 'data-value',
+  })
+}
 
 async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath }) {
   control.setScenario('goal_idle')
@@ -466,11 +485,9 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await control.command('waitFor', '[data-testid="task-supervisor-model"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="task-supervisor-model"]', {
-    value: SUPERVISOR_MODEL_KEY,
-  })
+  await selectSupervisorModel(control)
   assert.equal(
-    await control.command('getValue', '[data-testid="task-supervisor-model"]'),
+    await getSelectedSupervisorModel(control),
     SUPERVISOR_MODEL_KEY,
     'The supervisor model selector did not retain the selected model'
   )
@@ -494,7 +511,7 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getValue', '[data-testid="task-supervisor-model"]'),
+    await getSelectedSupervisorModel(control),
     SUPERVISOR_MODEL_KEY,
     'Reopening the supervisor reset its selected model'
   )
@@ -590,9 +607,16 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getValue', '[data-testid="task-supervisor-model"]'),
+    await getSelectedSupervisorModel(control),
     SUPERVISOR_MODEL_KEY,
     'The active supervisor did not retain its selected model'
+  )
+  await waitForAttribute(
+    control,
+    '[data-testid="task-supervisor-run-now-button"]',
+    'disabled',
+    '',
+    'The immediate supervisor review did not become available'
   )
   await control.command('click', '[data-testid="task-supervisor-run-now-button"]')
   await withTimeout(

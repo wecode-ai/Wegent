@@ -475,7 +475,6 @@ class ResourceLibraryService:
         capability = {
             "visibility": ("public" if request.status == "published" else "private"),
             "publishStatus": request.status,
-            "listingName": request.name.strip(),
             "displayName": request.display_name.strip(),
             "description": request.description,
             "icon": request.icon,
@@ -523,7 +522,6 @@ class ResourceLibraryService:
         if not capability:
             capability = {
                 **self._effective_capability(source),
-                "listingName": source.name,
                 "displayName": self._display_name(source),
                 "description": self._description(source),
                 "icon": self._icon(source),
@@ -533,6 +531,7 @@ class ResourceLibraryService:
                 ).isoformat(),
                 "publishedBy": source.user_id,
             }
+        capability.pop("listingName", None)
 
         updates = request.model_dump(exclude_unset=True)
         field_map = {
@@ -1031,7 +1030,7 @@ class ResourceLibraryService:
         return ResourceLibraryListing(
             id=source.id,
             resource_type=resource_type,
-            name=str(capability.get("listingName") or source.name),
+            name=source.name,
             display_name=str(display_name),
             description=description,
             icon=icon,

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -35,6 +36,7 @@ from app.schemas.kind import (
     Shell,
     Task,
     Team,
+    TeamInputPlaceholder,
     dump_team_display_config,
 )
 from app.schemas.namespace import GroupRole
@@ -267,6 +269,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         quick_phrases = getattr(obj_in, "quick_phrases", None)
         if quick_phrases is not None:
             spec["quick_phrases"] = normalize_quick_phrases(quick_phrases)
+
+        input_placeholder = getattr(obj_in, "inputPlaceholder", None)
+        if input_placeholder is not None:
+            spec["inputPlaceholder"] = input_placeholder.model_dump(exclude_none=True)
 
         metadata = {"name": obj_in.name, "namespace": namespace}
         display_name = getattr(obj_in, "displayName", None)
@@ -1268,7 +1274,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         return team_dict
 
     def update_with_user(
-        self, db: Session, *, team_id: int, obj_in: TeamUpdate, user_id: int
+        self,
+        db: Session,
+        *,
+        team_id: int,
+        obj_in: TeamUpdate,
+        user_id: int,
+        force_identity_change: bool = False,
+        confirm_name: str | None = None,
     ) -> Dict[str, Any]:
         """
         Update user Team.
@@ -1302,6 +1315,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         old_namespace = team.namespace
         new_name = update_data.get("name", old_name)
         new_namespace = update_data.get("namespace", old_namespace)
+        identity_changed = new_name != old_name or new_namespace != old_namespace
+
+        if identity_changed and (not force_identity_change or confirm_name != old_name):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Changing the agent technical name or namespace requires "
+                    "force_identity_change=true and the current technical name"
+                ),
+            )
 
         if not new_namespace:
             raise HTTPException(status_code=400, detail="Team namespace is required")
@@ -1321,7 +1344,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
 
         # Check uniqueness in the destination scope when name or namespace changes.
-        if new_name != old_name or new_namespace != old_namespace:
+        if identity_changed:
             conflict_query = db.query(Kind).filter(
                 Kind.kind == "Team",
                 Kind.name == new_name,
@@ -1347,16 +1370,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "namespace" in update_data:
             team.namespace = new_namespace
             team_crd.metadata.namespace = new_namespace
-
-        if new_name != old_name or new_namespace != old_namespace:
-            self._update_team_references_in_tasks(
-                db,
-                old_name,
-                old_namespace,
-                new_name,
-                new_namespace,
-                team.user_id,
-            )
 
         if "displayName" in update_data:
             team_crd.metadata.displayName = update_data["displayName"]
@@ -1447,6 +1460,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 update_data["quick_phrases"]
             )
 
+        if "inputPlaceholder" in update_data:
+            input_placeholder = update_data["inputPlaceholder"]
+            team_crd.spec.inputPlaceholder = (
+                TeamInputPlaceholder.model_validate(input_placeholder)
+                if input_placeholder
+                else None
+            )
+
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
         team.updated_at = datetime.now()
@@ -1501,7 +1522,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         }
 
     def delete_with_user(
-        self, db: Session, *, team_id: int, user_id: int, force: bool = False
+        self,
+        db: Session,
+        *,
+        team_id: int,
+        user_id: int,
+        force: bool = False,
+        confirm_name: str | None = None,
     ) -> None:
         """
         Delete user Team.
@@ -1511,7 +1538,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db: Database session
             team_id: Team ID to delete
             user_id: User ID
-            force: If True, force delete even if there are running tasks
+            force: Whether the caller explicitly confirmed destructive deletion
+            confirm_name: Current technical name entered by the caller
         """
         from app.schemas.namespace import GroupRole
         from app.services.group_permission import check_group_permission
@@ -1556,19 +1584,22 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 # Personal team but wrong owner
                 raise HTTPException(status_code=403, detail="Access denied")
 
-        # Check if team has running tasks (unless force delete)
-        if not force:
-            running_tasks = self._get_running_tasks_for_team(db, team)
-            if running_tasks:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Team '{team.name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
-                )
+        if not force or confirm_name != team.name:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Deleting an agent requires force=true and the current "
+                    "technical name"
+                ),
+            )
 
         # delete share team - use ResourceMember
         db.query(ResourceMember).filter(
             ResourceMember.resource_type == ResourceType.TEAM,
             ResourceMember.resource_id == team_id,
+        ).delete()
+        db.query(MarketplaceResource).filter(
+            MarketplaceResource.kind_id == team_id
         ).delete()
 
         db.delete(team)
@@ -1940,6 +1971,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = team_crd.spec.requiresWorkspace
 
         quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+        input_placeholder = (
+            team_crd.spec.inputPlaceholder.model_dump(exclude_none=True)
+            if team_crd.spec.inputPlaceholder
+            else None
+        )
         capability = (team.json.get("spec") or {}).get("capability") or {}
         publication_status = capability.get("publishStatus")
 
@@ -1968,6 +2004,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "icon": icon,  # Add icon field
             "display_config": display_config,
             "quick_phrases": quick_phrases,
+            "inputPlaceholder": input_placeholder,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
             "publication_status": publication_status,
         }
@@ -2149,6 +2186,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = team_crd.spec.requiresWorkspace
 
         quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+        input_placeholder = (
+            team_crd.spec.inputPlaceholder.model_dump(exclude_none=True)
+            if team_crd.spec.inputPlaceholder
+            else None
+        )
         capability = (team.json.get("spec") or {}).get("capability") or {}
         publication_status = capability.get("publishStatus")
 
@@ -2171,6 +2213,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "icon": icon,
             "display_config": display_config,
             "quick_phrases": quick_phrases,
+            "inputPlaceholder": input_placeholder,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
             "publication_status": publication_status,
         }
@@ -2431,40 +2474,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
         }
-
-    def _update_team_references_in_tasks(
-        self,
-        db: Session,
-        old_name: str,
-        old_namespace: str,
-        new_name: str,
-        new_namespace: str,
-        team_owner_id: int,
-    ) -> None:
-        """Update active Task references when a Team identity changes."""
-        tasks = task_store.list_active_tasks_referencing_team(
-            db,
-            team_name=old_name,
-            team_namespace=old_namespace,
-        )
-
-        for task in tasks:
-            task_crd = Task.model_validate(task.json)
-            ref_owner_id = task_crd.spec.teamRef.user_id
-            if ref_owner_id not in {None, team_owner_id}:
-                continue
-            if (
-                old_namespace == "default"
-                and ref_owner_id is None
-                and task.user_id != team_owner_id
-            ):
-                continue
-
-            task_crd.spec.teamRef.name = new_name
-            task_crd.spec.teamRef.namespace = new_namespace
-            task.json = task_crd.model_dump(mode="json")
-            task.updated_at = datetime.now()
-            flag_modified(task, "json")
 
     def get_team_input_parameters(
         self, db: Session, *, team_id: int, user_id: int

@@ -70,6 +70,13 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("source".to_owned(), source);
     }
+    if let Some(origin) = payload
+        .get("origin")
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request.extra.insert("origin".to_owned(), origin);
+    }
     if let Some(attachments) = payload
         .get("attachments")
         .filter(|value| value.is_array())
@@ -144,6 +151,19 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
         request
             .extra
             .insert("cloudProjectId".to_owned(), project_id);
+    }
+}
+
+pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if request.extra.contains_key("origin") {
+        return;
+    }
+    if let Some(origin) = runtime_handle
+        .get("origin")
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request.extra.insert("origin".to_owned(), origin);
     }
 }
 
@@ -715,11 +735,41 @@ mod tests {
     }
 
     #[test]
+    fn copies_runtime_origin_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"origin": {"type": "project_automation", "run_id": "run-1"}}),
+        );
+
+        assert_eq!(
+            request.extra.get("origin"),
+            Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
+    }
+
+    #[test]
     fn restores_cloud_project_id_for_a_follow_up_turn() {
         let mut request = ExecutionRequest::default();
 
         restore_cloud_project_id(&mut request, &json!({"cloudProjectId": "local-42"}));
 
         assert_eq!(cloud_project_id(&request), Some(json!("local-42")));
+    }
+
+    #[test]
+    fn restores_origin_for_a_follow_up_turn() {
+        let mut request = ExecutionRequest::default();
+
+        restore_origin(
+            &mut request,
+            &json!({"origin": {"type": "project_automation", "run_id": "run-1"}}),
+        );
+
+        assert_eq!(
+            request.extra.get("origin"),
+            Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
     }
 }

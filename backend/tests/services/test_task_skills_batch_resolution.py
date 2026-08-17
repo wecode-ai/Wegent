@@ -132,6 +132,75 @@ def test_resolve_task_skills_uses_batched_kind_loading_for_bots_and_ghosts():
 
 
 @pytest.mark.unit
+def test_resolve_task_skills_includes_skill_for_persisted_knowledge_provider():
+    db = Mock(spec=Session)
+    task = SimpleNamespace(
+        id=123,
+        user_id=7,
+        project_id=None,
+        json={"kind": "Task"},
+    )
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="missing-team", namespace="default"),
+            externalKnowledgeRefs=[SimpleNamespace(provider="ap")],
+        ),
+        metadata=SimpleNamespace(labels={}),
+    )
+    skill = SimpleNamespace(id=456)
+    skill_ref = {
+        "skill_id": 456,
+        "namespace": "default",
+        "is_public": True,
+    }
+
+    with (
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.task_store.get_active_task",
+            return_value=task,
+        ),
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=None,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.get_provider_skill_name",
+            return_value="ap-knowledge",
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.find_skill_by_ref",
+            return_value=skill,
+        ) as find_skill,
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.build_skill_ref_meta",
+            return_value=skill_ref,
+        ),
+    ):
+        result = resolve_task_skills(db, task_id=123, user_id=99)
+
+    assert result["skills"] == ["ap-knowledge"]
+    assert result["preload_skills"] == ["ap-knowledge"]
+    assert result["skill_refs"] == {"ap-knowledge": skill_ref}
+    assert result["preload_skill_refs"] == {"ap-knowledge": skill_ref}
+    find_skill.assert_called_once_with(
+        db,
+        skill_name="ap-knowledge",
+        namespace="default",
+        is_public=True,
+        user_id=7,
+        team_namespace="default",
+    )
+
+
+@pytest.mark.unit
 def test_resolve_task_skills_returns_refs_for_ghost_task_and_subscription_sources():
     db = Mock(spec=Session)
 

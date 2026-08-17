@@ -61,7 +61,7 @@ executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型
 
 ### Claude Code 工具结果完整性
 
-Claude Code 使用 Anthropic Messages 协议调用 Wework 模型路由。转换到 OpenAI Responses 或 Chat Completions 前，executor 会检查每个 assistant `tool_use` 是否在后续 user 消息中具有同 ID 的 `tool_result`。如果工具进程在返回结果前异常结束，代理会补充一个明确的失败结果，使请求历史保持协议合法，并允许模型继续处理失败；已有的正常工具结果不会被覆盖或重复。
+Claude Code 使用 Anthropic Messages 协议调用 Wework 模型路由。转换到 OpenAI Responses 或 Chat Completions 前，executor 会检查每个 assistant `tool_use` 是否在后续 user 消息中具有同 ID 的 `tool_result`。并行工具结果可以拆分到多个 user 消息并按完成顺序乱序到达；只要整个请求历史中存在匹配结果，代理就必须保留该结果且不得提前补充失败。只有工具进程在返回结果前异常结束、整个历史都缺少匹配结果时，代理才会补充一个明确的失败结果，使请求历史保持协议合法并允许模型继续处理失败；已有的正常工具结果不会被覆盖或重复。
 
 ### Namespace 工具兼容
 

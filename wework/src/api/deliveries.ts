@@ -65,6 +65,22 @@ export interface CloudLoopItem {
     action: 'assign' | 'reassign' | 'unassign'
     at: string
   }>
+  status_history?: Array<{
+    from_status: string
+    from_status_name?: string | null
+    to_status: string
+    to_status_name?: string | null
+    trigger:
+      | 'create'
+      | 'user_update'
+      | 'ai_started'
+      | 'ai_completed'
+      | 'task_started'
+      | 'delivery'
+      | 'status_removed'
+    by_user_id: number | null
+    at: string
+  }>
   approval?: {
     status: 'pending' | 'approved' | 'rejected'
     requested_at?: string
@@ -266,6 +282,7 @@ export interface CloudProjectMember {
   user_name: string
   email: string | null
   role: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+  capability_description?: string
 }
 
 export interface CloudLoopItemCollaborator {
@@ -737,9 +754,12 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProjectMember(
       projectId: CloudProjectIdInput,
       userId: number,
-      role: Exclude<CloudProjectMember['role'], 'Owner'>
+      values: {
+        role?: Exclude<CloudProjectMember['role'], 'Owner'>
+        capability_description?: string
+      }
     ): Promise<CloudProjectMember> {
-      return client.patch(`/v1/cloud-projects/${projectId}/members/${userId}`, { role })
+      return client.patch(`/v1/cloud-projects/${projectId}/members/${userId}`, values)
     },
     removeCloudProjectMember(projectId: CloudProjectIdInput, userId: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}/members/${userId}`)

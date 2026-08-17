@@ -22,6 +22,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
+import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 
 type FeedbackCategory =
   | 'report'
@@ -254,6 +255,7 @@ function TaskFeedbackDialogContent({
           note,
           taskContext,
           screenshotDataUrl,
+          composerDiagnostics: selection.runtimeLogs ? getComposerDiagnosticsSnapshot() : null,
           attachments: await Promise.all(
             attachments.map(async attachment => {
               try {

@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { teamApis, TeamShareResponse, CreateTeamRequest } from '@/apis/team'
+import {
+  teamApis,
+  TeamShareResponse,
+  CreateTeamRequest,
+  TeamIdentityConfirmation,
+} from '@/apis/team'
 import { CheckRunningTasksResponse } from '@/apis/common'
 import { Team } from '@/types/api'
 
@@ -43,17 +48,21 @@ export async function copyTeam(
 /**
  * Delete team
  * @param teamId - Team ID
- * @param force - Force delete even if team has running tasks
+ * @param confirmName - Current name for destructive deletion
  */
-export async function deleteTeam(teamId: number, force: boolean = false): Promise<void> {
-  await teamApis.deleteTeam(teamId, force)
+export async function deleteTeam(teamId: number, confirmName?: string): Promise<void> {
+  await teamApis.deleteTeam(teamId, confirmName)
 }
 
 /**
  * Edit team
  */
-export async function updateTeam(teamId: number, teamData: CreateTeamRequest): Promise<Team> {
-  return await teamApis.updateTeam(teamId, teamData)
+export async function updateTeam(
+  teamId: number,
+  teamData: CreateTeamRequest,
+  identityConfirmation?: TeamIdentityConfirmation
+): Promise<Team> {
+  return await teamApis.updateTeam(teamId, teamData, identityConfirmation)
 }
 
 /**

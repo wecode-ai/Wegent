@@ -3,6 +3,7 @@ mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
 mod desktop_capture;
+mod diagram_image;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
@@ -10,8 +11,14 @@ mod embedded_browser_tls;
 mod feedback;
 mod local_executor;
 mod local_terminal;
+mod local_workspace_files;
+mod local_workspace_openers;
+#[cfg(target_os = "windows")]
+mod opener_store;
+mod platform_fs;
 #[cfg(desktop)]
 mod popout_window;
+mod process;
 mod process_environment;
 #[cfg(desktop)]
 mod storage_maintenance;
@@ -496,34 +503,7 @@ fn open_app_log_directory(app: tauri::AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&log_directory)
         .map_err(|error| format!("Failed to create app log directory: {error}"))?;
 
-    #[cfg(target_os = "macos")]
-    let output = std::process::Command::new("open")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
-
-    #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("explorer")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run Windows explorer command: {error}"))?;
-
-    #[cfg(target_os = "linux")]
-    let output = std::process::Command::new("xdg-open")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run xdg-open command: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("Failed to open app log directory".to_string())
-    } else {
-        Err(stderr)
-    }
+    platform_fs::open_directory(&log_directory.to_string_lossy())
 }
 
 #[cfg(not(desktop))]
@@ -624,6 +604,10 @@ struct AppPreferences {
     telemetry_enabled: bool,
     supervisor_principles: String,
     #[serde(default)]
+    supervisor_model_selection: Option<serde_json::Value>,
+    #[serde(default = "default_supervisor_interval_seconds")]
+    supervisor_interval_seconds: u32,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -651,6 +635,8 @@ struct AppPreferences {
     friendly_task_titles_enabled: bool,
     #[serde(default)]
     friendly_task_title_model: Option<serde_json::Value>,
+    #[serde(default = "default_true")]
+    change_request_status_enabled: bool,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
     #[serde(default = "default_local_harness_preferences")]
@@ -792,6 +778,10 @@ fn default_context_compaction_threshold() -> u8 {
     85
 }
 
+fn default_supervisor_interval_seconds() -> u32 {
+    30
+}
+
 #[cfg(desktop)]
 fn default_language_preference() -> String {
     "zh-CN".to_string()
@@ -834,6 +824,8 @@ impl Default for AppPreferences {
             telemetry_consent_asked: false,
             telemetry_enabled: false,
             supervisor_principles: String::new(),
+            supervisor_model_selection: None,
+            supervisor_interval_seconds: default_supervisor_interval_seconds(),
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -848,6 +840,7 @@ impl Default for AppPreferences {
             popout_window_projectless_default_enabled: false,
             friendly_task_titles_enabled: false,
             friendly_task_title_model: None,
+            change_request_status_enabled: true,
             quick_phrases: default_quick_phrases(),
             local_harnesses: default_local_harness_preferences(),
         }
@@ -892,6 +885,8 @@ struct AppPreferencesPatch {
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: Option<u32>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -908,6 +903,7 @@ struct AppPreferencesPatch {
     friendly_task_titles_enabled: Option<bool>,
     #[serde(default)]
     friendly_task_title_model: PatchField<serde_json::Value>,
+    change_request_status_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
     local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
@@ -1203,6 +1199,9 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
+    if !matches!(preferences.supervisor_interval_seconds, 10 | 30 | 60 | 300) {
+        preferences.supervisor_interval_seconds = default_supervisor_interval_seconds();
+    }
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -1509,6 +1508,12 @@ fn update_app_preferences(
     if let Some(value) = patch.supervisor_principles {
         preferences.supervisor_principles = value;
     }
+    if let Some(value) = patch.supervisor_model_selection {
+        preferences.supervisor_model_selection = Some(value);
+    }
+    if let Some(value) = patch.supervisor_interval_seconds {
+        preferences.supervisor_interval_seconds = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -1554,6 +1559,9 @@ fn update_app_preferences(
     if let PatchField::Value(value) = patch.friendly_task_title_model {
         preferences.friendly_task_title_model = value;
     }
+    if let Some(value) = patch.change_request_status_enabled {
+        preferences.change_request_status_enabled = value;
+    }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
     }
@@ -1587,6 +1595,8 @@ struct AppPreferences {
     telemetry_consent_asked: bool,
     telemetry_enabled: bool,
     supervisor_principles: String,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: u32,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -1601,6 +1611,7 @@ struct AppPreferences {
     popout_window_projectless_default_enabled: bool,
     friendly_task_titles_enabled: bool,
     friendly_task_title_model: Option<serde_json::Value>,
+    change_request_status_enabled: bool,
     quick_phrases: Vec<QuickPhrase>,
     local_harnesses: Vec<LocalHarnessPreference>,
 }
@@ -1622,6 +1633,8 @@ struct AppPreferencesPatch {
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
     supervisor_principles: Option<String>,
+    supervisor_model_selection: Option<serde_json::Value>,
+    supervisor_interval_seconds: Option<u32>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -1636,6 +1649,7 @@ struct AppPreferencesPatch {
     popout_window_projectless_default_enabled: Option<bool>,
     friendly_task_titles_enabled: Option<bool>,
     friendly_task_title_model: Option<serde_json::Value>,
+    change_request_status_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
     local_harnesses: Option<Vec<LocalHarnessPreference>>,
 }
@@ -1657,6 +1671,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         telemetry_consent_asked: false,
         telemetry_enabled: false,
         supervisor_principles: String::new(),
+        supervisor_model_selection: None,
+        supervisor_interval_seconds: default_supervisor_interval_seconds(),
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -1671,6 +1687,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         popout_window_projectless_default_enabled: false,
         friendly_task_titles_enabled: false,
         friendly_task_title_model: None,
+        change_request_status_enabled: true,
         quick_phrases: default_quick_phrases(),
         local_harnesses: default_local_harness_preferences(),
     })
@@ -1704,6 +1721,11 @@ fn update_app_preferences(
         telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
         telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),
         supervisor_principles: patch.supervisor_principles.unwrap_or_default(),
+        supervisor_model_selection: patch.supervisor_model_selection,
+        supervisor_interval_seconds: patch
+            .supervisor_interval_seconds
+            .filter(|value| matches!(value, 10 | 30 | 60 | 300))
+            .unwrap_or_else(default_supervisor_interval_seconds),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),
@@ -1733,6 +1755,7 @@ fn update_app_preferences(
             .unwrap_or(false),
         friendly_task_titles_enabled: patch.friendly_task_titles_enabled.unwrap_or(false),
         friendly_task_title_model: patch.friendly_task_title_model,
+        change_request_status_enabled: patch.change_request_status_enabled.unwrap_or(true),
         quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
         local_harnesses: normalize_local_harness_preferences(
             patch
@@ -2215,10 +2238,10 @@ fn process_config_arg(tokens: &[&str]) -> Option<std::path::PathBuf> {
 }
 
 fn read_executor_process_device_id(expected_backend_url: Option<&str>) -> Option<String> {
-    let output = std::process::Command::new("ps")
-        .args(["eww", "-axo", "pid=,command="])
-        .output()
-        .ok()?;
+    let mut command = std::process::Command::new("ps");
+    command.args(["eww", "-axo", "pid=,command="]);
+    process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -2306,27 +2329,8 @@ fn get_local_path_kind(path: String) -> Option<&'static str> {
     }
 }
 
-fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
-    match opener {
-        "vscode" => Some("Visual Studio Code"),
-        "vscode-insiders" => Some("Visual Studio Code - Insiders"),
-        "cursor" => Some("Cursor"),
-        "sublime-text" => Some("Sublime Text"),
-        "windsurf" => Some("Windsurf"),
-        "finder" => Some("Finder"),
-        "terminal" => Some("Terminal"),
-        "iterm2" => Some("iTerm"),
-        "ghostty" => Some("Ghostty"),
-        "warp" => Some("Warp"),
-        "xcode" => Some("Xcode"),
-        "android-studio" => Some("Android Studio"),
-        "intellij-idea" => Some("IntelliJ IDEA"),
-        _ => None,
-    }
-}
-
 #[cfg(target_os = "macos")]
-fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
+pub(crate) fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
     let output = std::process::Command::new("open")
         .args(["-a", app_name, path])
         .output()
@@ -2345,47 +2349,21 @@ fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), Strin
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
+pub(crate) fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
     Err("Opening a local workspace is only supported on macOS".to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn open_local_file_with_default_app(path: &str) -> Result<(), String> {
-    let output = std::process::Command::new("open")
-        .arg(path)
-        .output()
-        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("Failed to open local file".to_string())
-    } else {
-        Err(stderr)
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn open_local_file_with_default_app(_path: &str) -> Result<(), String> {
-    Err("Opening a local file is only supported on macOS".to_string())
-}
-
 #[tauri::command]
-fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
+fn open_local_workspace(app: tauri::AppHandle, opener: String, path: String) -> Result<(), String> {
     let opener =
         normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
     let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
-    let app_name = local_workspace_opener_app_name(&opener)
-        .ok_or_else(|| format!("Unsupported workspace opener: {opener}"))?;
 
     if !std::path::Path::new(&path).exists() {
         return Err("Workspace path does not exist".to_string());
     }
 
-    open_local_workspace_with_app(app_name, &path)
+    local_workspace_openers::launch_opener(&app, &opener, &path)
 }
 
 #[tauri::command]
@@ -2396,7 +2374,7 @@ fn open_local_file(path: String) -> Result<(), String> {
         return Err("Local path does not exist".to_string());
     }
 
-    open_local_file_with_default_app(&path)
+    platform_fs::open_with_default_app(&path)
 }
 
 #[tauri::command]
@@ -2406,20 +2384,7 @@ fn reveal_local_file(path: String) -> Result<(), String> {
         return Err("Local path does not exist".to_string());
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let status = std::process::Command::new("open")
-            .args(["-R", &path])
-            .status()
-            .map_err(|error| format!("Failed to reveal local file: {error}"))?;
-        if !status.success() {
-            return Err("Failed to reveal local file".to_string());
-        }
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    Err("Revealing local files is only supported on macOS".to_string())
+    platform_fs::reveal_file_in_manager(&path)
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -4334,9 +4299,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalize_local_harness_preferences,
-        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
-        wework_cli_launcher_content, LocalHarnessPreference,
+        normalize_local_harness_preferences, normalized_browser_link_target,
+        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4348,7 +4313,7 @@ mod tests {
     #[cfg(desktop)]
     use super::{
         close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
-        AppPreferencesPatch, PatchField,
+        AppPreferences, AppPreferencesPatch, PatchField,
     };
     use std::collections::HashSet;
     #[cfg(desktop)]
@@ -4440,6 +4405,16 @@ mod tests {
             cleared.popout_window_shortcut,
             PatchField::Value(None)
         ));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn defaults_missing_change_request_status_preference_to_enabled() {
+        let preferences: AppPreferences =
+            serde_json::from_value(serde_json::json!({ "supervisorPrinciples": "" }))
+                .expect("preferences should parse");
+
+        assert!(preferences.change_request_status_enabled);
     }
 
     #[test]
@@ -4584,28 +4559,6 @@ mod tests {
             *transport.shutdown_timeouts.lock().unwrap(),
             vec![Duration::ZERO]
         );
-    }
-
-    #[test]
-    fn maps_local_workspace_openers_to_macos_app_names() {
-        assert_eq!(
-            local_workspace_opener_app_name("vscode"),
-            Some("Visual Studio Code")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("vscode-insiders"),
-            Some("Visual Studio Code - Insiders")
-        );
-        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
-        assert_eq!(
-            local_workspace_opener_app_name("android-studio"),
-            Some("Android Studio")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("intellij-idea"),
-            Some("IntelliJ IDEA")
-        );
-        assert_eq!(local_workspace_opener_app_name("unknown"), None);
     }
 
     #[test]
@@ -5144,12 +5097,17 @@ pub fn run() {
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
             local_terminal::delete_archived_local_harness_session,
+            local_workspace_files::read_local_workspace_file_chunk,
+            local_workspace_files::read_local_workspace_text_file,
+            local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            diagram_image::copy_diagram_png,
+            diagram_image::save_diagram_png,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
@@ -5159,8 +5117,14 @@ pub fn run() {
             local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
+            local_executor::local_executor_delete_personal_plugin,
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
+            local_executor::local_executor_import_plugin_package,
+            local_executor::local_executor_preview_plugin_import,
+            local_executor::local_executor_finalize_plugin_import,
+            local_executor::local_executor_rollback_plugin_import,
+            local_executor::local_executor_save_plugin_example,
             local_executor::local_executor_link_plugin_release,
             local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
@@ -5195,6 +5159,8 @@ pub fn run() {
             open_local_file_with_application,
             get_local_file_opener_icon,
             open_local_workspace,
+            local_workspace_openers::list_local_workspace_openers,
+            local_workspace_openers::pick_local_workspace_opener_exe,
             read_dropped_files,
             save_local_attachment_file,
             todo_store::ensure_todo_work_directory,

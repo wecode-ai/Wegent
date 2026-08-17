@@ -31,8 +31,8 @@ from app.services.chat.storage import (
     get_task_with_access_check,
 )
 from app.services.chat.task_device_resolution import (
-    resolve_chat_task_dispatch_device_id,
-    resolve_online_local_executor_device_id,
+    resolve_chat_task_device_id,
+    resolve_local_executor_device_id,
 )
 from app.services.chat.trigger import (
     collect_completed_result,
@@ -89,12 +89,12 @@ async def create_device_chat_task(
         params.client_origin = existing_task.client_origin or params.client_origin
     elif request.client_origin == CLIENT_ORIGIN_WEWORK:
         params = await apply_wework_task_defaults(db, user=user, params=params)
-    params.device_id = await _resolve_device_id(
+    params.device_id = _resolve_device_id(
         db=db,
         user_id=user.id,
         params=params,
         task=existing_task,
-        allow_default=not request.device_id,
+        allow_default=existing_task is None and not request.device_id,
     )
 
     result = await create_chat_task(
@@ -215,7 +215,7 @@ def _generate_params_as_dict(
     return request.generate_params.model_dump(mode="json")
 
 
-async def _resolve_device_id(
+def _resolve_device_id(
     *,
     db: Session,
     user_id: int,
@@ -223,7 +223,7 @@ async def _resolve_device_id(
     task: TaskResource | None,
     allow_default: bool,
 ) -> str:
-    resolved = await resolve_chat_task_dispatch_device_id(
+    resolved = resolve_chat_task_device_id(
         db,
         user_id=user_id,
         params=params,
@@ -239,7 +239,7 @@ async def _resolve_device_id(
             DeviceType.LOCAL,
         )
         if default_device:
-            default_id = await resolve_online_local_executor_device_id(
+            default_id = resolve_local_executor_device_id(
                 db,
                 user_id=user_id,
                 device_id=default_device.name,

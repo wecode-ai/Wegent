@@ -41,7 +41,6 @@ LIST_KNOWLEDGE_BASES_TOOL = "ks_kb_list_knowledge_bases"
 LIST_NODES_TOOL = "ks_kb_list_nodes"
 SEARCH_CONTENT_TOOL = "ks_kb_search_content"
 RAW_PREVIEW_URL_FIELD = "browser_open_url"
-ALL_ACCESSIBLE_LIST_PAGE_SIZE = 100
 MAX_SEARCH_KNOWLEDGE_BASES = 100
 DEFAULT_RETRIEVAL_MAX_RESULTS = 10
 LIST_DOCUMENTS_NODE_PAGE_SIZE = 500
@@ -197,10 +196,7 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
             knowledge_base_ids=resolved.search_ids,
             max_results=DEFAULT_RETRIEVAL_MAX_RESULTS,
         )
-        document_filters = self._build_document_filters(refs)
-        records = self._filter_records_by_document_refs(
-            result.records, document_filters
-        )
+        records = result.records
         ignored_ids = list(
             dict.fromkeys(resolved.ignored_ids + result.ignored_knowledge_base_ids)
         )
@@ -258,13 +254,11 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
             )
 
         documents: list[ExternalKnowledgeDocument] = []
-        document_filters = self._build_document_filters(refs)
         for kb_id in resolved.search_ids:
             documents.extend(
                 await self._list_documents_from_kb(
                     employee_id,
                     kb_id=kb_id,
-                    document_filters=document_filters,
                     stop_after=offset + limit,
                 )
             )
@@ -282,7 +276,6 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
         employee_id: str,
         *,
         kb_id: str,
-        document_filters: dict[str, set[str]],
         stop_after: int,
     ) -> list[ExternalKnowledgeDocument]:
         documents: list[ExternalKnowledgeDocument] = []
@@ -303,9 +296,7 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
                 kb_id=kb_id,
                 kb_name=kb_name,
             )
-            documents.extend(
-                self._filter_documents_by_document_refs(kb_documents, document_filters)
-            )
+            documents.extend(kb_documents)
 
             returned = int(payload.get("total_returned") or len(items))
             if len(documents) >= stop_after or not payload.get("has_more"):
@@ -322,6 +313,8 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
         *,
         binding_level: ExternalKnowledgeBindingLevel,
     ) -> None:
+        del binding_level
+        self._ensure_whole_kb_refs(refs)
         explicit_ids = {
             ref.id for ref in refs if ref.mode == "explicit" and ref.id is not None
         }
@@ -462,6 +455,8 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
         employee_id: str,
         refs: list[ExternalKnowledgeRef],
     ) -> "_ResolvedRetrievalSources":
+        del employee_id
+        self._ensure_whole_kb_refs(refs)
         explicit_ids = [ref.id for ref in refs if ref.mode == "explicit" and ref.id]
         explicit_ids = list(dict.fromkeys(explicit_ids))
         if len(explicit_ids) > MAX_SEARCH_KNOWLEDGE_BASES:
@@ -471,70 +466,7 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
                 status_code=400,
             )
 
-        all_accessible_refs = [ref for ref in refs if ref.mode == "all_accessible"]
-        if not all_accessible_refs:
-            return _ResolvedRetrievalSources(search_ids=explicit_ids)
-
-        accessible = await self._list_all_accessible_knowledge_bases(employee_id)
-        ordered_accessible = self._sort_all_accessible_knowledge_bases(accessible)
-        accessible_ids = [kb.knowledge_base_id for kb in ordered_accessible]
-        merged_ids = list(dict.fromkeys(explicit_ids + accessible_ids))
-
-        ignored_ids: list[str] = []
-        warnings: list[str] = []
-        if len(merged_ids) > MAX_SEARCH_KNOWLEDGE_BASES:
-            search_ids = merged_ids[:MAX_SEARCH_KNOWLEDGE_BASES]
-            ignored_ids = merged_ids[MAX_SEARCH_KNOWLEDGE_BASES:]
-            warnings.append(
-                "AP all_accessible resolved "
-                f"{len(merged_ids)} knowledge bases; searched first "
-                f"{MAX_SEARCH_KNOWLEDGE_BASES} and ignored {len(ignored_ids)}."
-            )
-        else:
-            search_ids = merged_ids
-
-        return _ResolvedRetrievalSources(
-            search_ids=search_ids,
-            ignored_ids=ignored_ids,
-            warnings=warnings,
-        )
-
-    async def _list_all_accessible_knowledge_bases(
-        self,
-        employee_id: str,
-    ) -> list[ExternalKnowledgeBase]:
-        items: list[ExternalKnowledgeBase] = []
-        offset = 0
-        while True:
-            response = await self.list_knowledge_bases(
-                employee_id,
-                scope="all",
-                query=None,
-                limit=ALL_ACCESSIBLE_LIST_PAGE_SIZE,
-                offset=offset,
-            )
-            items.extend(response.items)
-            if not response.has_more or response.total_returned <= 0:
-                break
-            offset += response.total_returned
-        return items
-
-    @staticmethod
-    def _sort_all_accessible_knowledge_bases(
-        items: list[ExternalKnowledgeBase],
-    ) -> list[ExternalKnowledgeBase]:
-        unique_items = {
-            item.knowledge_base_id: item for item in items if item.knowledge_base_id
-        }
-        by_id = sorted(
-            unique_items.values(),
-            key=lambda item: item.knowledge_base_id,
-        )
-        return sorted(
-            by_id,
-            key=lambda item: item.updated_at or "",
-            reverse=True,
-        )
+        return _ResolvedRetrievalSources(search_ids=explicit_ids)
 
     def _map_retrieve_record(self, record: ExternalSearchRecord):
         from app.api.endpoints.internal.rag import RetrieveRecord
@@ -555,42 +487,11 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
         )
 
     @staticmethod
-    def _build_document_filters(
-        refs: list[ExternalKnowledgeRef],
-    ) -> dict[str, set[str]]:
-        filters: dict[str, set[str]] = {}
-        whole_kb_ids = {
-            ref.id
-            for ref in refs
-            if ref.id
-            and (ref.target_type is None or ref.target_type == "knowledge_base")
-        }
-        for ref in refs:
-            if ref.target_type != "document" or not ref.id or ref.id in whole_kb_ids:
-                continue
-            candidate_ids = {
-                ref.document_id or "",
-                ref.node_id or "",
-                ApExternalKnowledgeProvider._strip_typed_id(ref.node_id),
-            }
-            candidate_ids.discard("")
-            if candidate_ids:
-                filters.setdefault(ref.id, set()).update(candidate_ids)
-        return filters
-
-    @staticmethod
-    def _filter_records_by_document_refs(
-        records: list[ExternalSearchRecord],
-        filters: dict[str, set[str]],
-    ) -> list[ExternalSearchRecord]:
-        if not filters:
-            return records
-        return [
-            record
-            for record in records
-            if not filters.get(record.knowledge_base_id)
-            or record.document_id in filters[record.knowledge_base_id]
-        ]
+    def _ensure_whole_kb_refs(refs: list[ExternalKnowledgeRef]) -> None:
+        if any(ref.target_type not in (None, "knowledge_base") for ref in refs):
+            raise ExternalRefValidationError(
+                "AP supports whole knowledge base selection only"
+            )
 
     @staticmethod
     def _count_records_by_source(
@@ -620,36 +521,6 @@ class ApExternalKnowledgeProvider(ExternalKnowledgeProvider):
             if ref.id and ref.name:
                 names.setdefault(ref.id, ref.name)
         return names
-
-    @staticmethod
-    def _filter_documents_by_document_refs(
-        documents: list[ExternalKnowledgeDocument],
-        filters: dict[str, set[str]],
-    ) -> list[ExternalKnowledgeDocument]:
-        if not filters:
-            return documents
-
-        filtered_documents: list[ExternalKnowledgeDocument] = []
-        for document in documents:
-            allowed_ids = filters.get(document.source_id)
-            if not allowed_ids:
-                filtered_documents.append(document)
-                continue
-
-            candidate_ids = {
-                document.document_id,
-                document.node_id or "",
-                ApExternalKnowledgeProvider._strip_typed_id(document.node_id),
-            }
-            if candidate_ids & allowed_ids:
-                filtered_documents.append(document)
-        return filtered_documents
-
-    @staticmethod
-    def _strip_typed_id(value: str | None) -> str:
-        if not value:
-            return ""
-        return value.split(":", 1)[1] if ":" in value else value
 
     async def _list_nodes_raw(
         self,

@@ -189,7 +189,7 @@ describe('McpTargetSelectorDialog', () => {
       expect(mockedBotApis.updateBot).toHaveBeenCalledWith(20, {
         mcp_servers: {
           existing: { type: 'stdio', command: 'existing' },
-          '%40community%2Fsearch': {
+          search: {
             type: 'http',
             url: 'https://example.test/mcp',
             headers: { Authorization: 'Bearer token' },
@@ -199,7 +199,7 @@ describe('McpTargetSelectorDialog', () => {
     )
     expect(mockedBotApis.updateBot).toHaveBeenCalledWith(21, {
       mcp_servers: {
-        '%40community%2Fsearch': {
+        search: {
           type: 'streamable-http',
           url: 'https://example.test/mcp',
           headers: { Authorization: 'Bearer token' },

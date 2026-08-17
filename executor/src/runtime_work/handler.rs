@@ -99,8 +99,8 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, restore_cloud_project_id, runtime_task_id, string_field, timestamp_ms_field,
-        workspace_group_path, workspace_path,
+        prompt_text, restore_cloud_project_id, restore_origin, runtime_task_id, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -413,11 +413,13 @@ pub struct RuntimeWorkRpcHandler {
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
+    preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
+    supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
@@ -445,6 +447,11 @@ struct ActiveTurnCancellation {
     execution_id: u64,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PreparingWorktreeTurn {
+    cancellation_requested: bool,
 }
 
 #[derive(Clone)]
@@ -539,11 +546,13 @@ impl RuntimeWorkRpcHandler {
             ))),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
+            preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
+            supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,

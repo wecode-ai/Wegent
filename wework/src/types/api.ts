@@ -795,6 +795,7 @@ export interface RuntimeSupervisorSetRequest {
   mode: RuntimeSupervisorMode
   instructions?: string
   modelSelection?: ModelSelectionConfig | null
+  modelConfig?: Record<string, unknown> | null
   intervalSeconds: number
 }
 
@@ -941,6 +942,7 @@ export interface RuntimeTaskPinRequest {
 export interface BindRuntimeTaskIMSessionsRequest {
   address: RuntimeTaskAddress
   sessionKeys: string[]
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface BindRuntimeTaskIMSessionsResponse {
@@ -1221,10 +1223,11 @@ export interface RuntimeTaskCreateRequest {
   deliveryId?: string
   cloudProjectId?: string
   origin?: {
-    type: 'board_comment' | 'board_task'
+    type: 'board_comment' | 'board_task' | 'project_automation'
     cloudProjectId: string
     loopItemId: string
     rootCommentId?: string
+    [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
 }
@@ -2077,7 +2080,7 @@ export interface InstalledPlugin {
     pluginId?: number | null
     releaseId?: number | null
     desiredVersion?: string | null
-    updatePolicy?: 'manual'
+    updatePolicy?: 'manual' | 'auto'
     sourceProvider?: 'wegent' | 'codex' | 'user'
     sourceLabel?: string
     visibility?: 'personal' | 'workspace' | 'public'
@@ -2143,6 +2146,10 @@ export interface PluginMarketplaceItem {
   origin?: 'market'
   sourceProvider?: 'wegent' | 'codex' | 'user'
   sourceLabel?: string
+  localPersonalSource?: {
+    marketplacePath: string
+    pluginName: string
+  } | null
   updateAvailable?: boolean
   currentDeviceInstallation?: {
     deviceId: string
@@ -2207,6 +2214,20 @@ export interface PluginDeviceSyncResponse {
   sync: DeviceCapabilitySyncResponse
 }
 
+export interface PluginAutoUpdateItem {
+  installedPluginId: number
+  pluginId: number
+  fromReleaseId: number
+  toReleaseId: number
+  version: string
+}
+
+export interface PluginAutoUpdateBatchResponse {
+  updated: PluginAutoUpdateItem[]
+  updatedCount: number
+  remainingCount: number
+}
+
 export interface PluginMarketplaceCapabilities {
   canPublish: boolean
   canSharePersonalPlugins?: boolean
@@ -2218,6 +2239,7 @@ export interface InstalledPluginUpdateRequest {
   displayName?: string
   description?: string
   releaseId?: number
+  updatePolicy?: 'manual' | 'auto'
 }
 
 export interface PluginSubmissionInitRequest {
@@ -2273,6 +2295,23 @@ export interface PluginAccessUpdateRequest {
 export interface PluginAccessResponse extends PluginAccessUpdateRequest {
   pluginId: number
   revocationPendingCount: number
+}
+
+export interface PluginDeleteImpactResponse {
+  pluginId: number
+  affectedUserCount: number
+  installedDeviceCount: number
+  sharedTargetCount: number
+  impactRevision: string
+}
+
+export interface PluginDeleteRequest {
+  impactRevision: string
+  revokeAndDelete: boolean
+}
+
+export interface PluginDeleteResponse {
+  pendingDeviceCount: number
 }
 
 export interface PluginCopyResponse {

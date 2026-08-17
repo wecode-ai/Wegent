@@ -1,11 +1,11 @@
-import { useContext, useMemo, useSyncExternalStore } from 'react'
+import { useContext, useSyncExternalStore } from 'react'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { RuntimeTaskLifecycleContext } from './internalContext'
-import { RuntimeTaskLifecycleStore, selectRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStore'
+import { RuntimeTaskLifecycleContext, RuntimeTaskLifecycleWriterContext } from './internalContext'
+import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import type { RuntimeTaskLifecycleSnapshot, RuntimeTaskLifecycleStoreSnapshot } from './types'
 
 export function useRuntimeTaskLifecycleStore(): RuntimeTaskLifecycleStore {
-  const store = useContext(RuntimeTaskLifecycleContext)
+  const store = useContext(RuntimeTaskLifecycleWriterContext)
   if (!store) {
     throw new Error('RuntimeTaskLifecycleProvider is required')
   }
@@ -26,6 +26,10 @@ export function useRuntimeTaskLifecycleStoreSnapshot(
 export function useRuntimeTaskLifecycle(
   address: RuntimeTaskAddress | null | undefined
 ): RuntimeTaskLifecycleSnapshot | null {
-  const snapshot = useRuntimeTaskLifecycleStoreSnapshot()
-  return useMemo(() => selectRuntimeTaskLifecycle(snapshot, address), [address, snapshot])
+  const store = useContext(RuntimeTaskLifecycleContext)
+  if (!store) {
+    throw new Error('RuntimeTaskLifecycleProvider is required')
+  }
+  const snapshot = useRuntimeTaskLifecycleStoreSnapshot(store)
+  return store.selectTask(snapshot, address)
 }

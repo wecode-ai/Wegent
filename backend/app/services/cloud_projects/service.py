@@ -29,11 +29,56 @@ from app.schemas.cloud_project import (
     normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_item_status_history import write_status_change
 
 logger = logging.getLogger(__name__)
 
 
 class CloudProjectService:
+    @staticmethod
+    def _lock_project(db: Session, cloud_project_id: int) -> CloudProject:
+        project = (
+            db.query(CloudProject)
+            .filter(CloudProject.id == cloud_project_id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+        return project
+
+    @staticmethod
+    def _member_capabilities(project: CloudProject) -> dict[str, str]:
+        metadata = (
+            project.metadata_json if isinstance(project.metadata_json, dict) else {}
+        )
+        values = metadata.get("member_capabilities")
+        if not isinstance(values, dict):
+            return {}
+        return {
+            str(member_id): description.strip()
+            for member_id, description in values.items()
+            if isinstance(description, str) and description.strip()
+        }
+
+    @classmethod
+    def _set_member_capability(
+        cls, project: CloudProject, member_user_id: int, description: str
+    ) -> None:
+        metadata = dict(project.metadata_json or {})
+        capabilities = cls._member_capabilities(project)
+        normalized = description.strip()
+        if normalized:
+            capabilities[str(member_user_id)] = normalized
+        else:
+            capabilities.pop(str(member_user_id), None)
+        if capabilities:
+            metadata["member_capabilities"] = capabilities
+        else:
+            metadata.pop("member_capabilities", None)
+        project.metadata_json = metadata
+
     def _generate_project_key(self, db: Session, name: str) -> str:
         prefix = re.sub(r"[^A-Za-z0-9]", "", name).upper()[:8] or "PRJ"
         for _ in range(10):
@@ -181,18 +226,33 @@ class CloudProjectService:
                 next_ids = {item.id for item in values.board_config.statuses}
                 removed_ids = previous_ids - next_ids
                 if removed_ids:
-                    db.query(LoopItem).filter(
-                        LoopItem.cloud_project_id == project.id,
-                        LoopItem.status.in_(removed_ids),
-                        loop_datetime_is_unset(LoopItem.deleted_at),
-                    ).update(
-                        {
-                            "status": "",
-                            "completed_at": None,
-                            "version": LoopItem.version + 1,
-                        },
-                        synchronize_session=False,
+                    affected = (
+                        db.query(LoopItem)
+                        .filter(
+                            LoopItem.cloud_project_id == project.id,
+                            LoopItem.status.in_(removed_ids),
+                            loop_datetime_is_unset(LoopItem.deleted_at),
+                        )
+                        .all()
                     )
+                    for item in affected:
+                        item_metadata = (
+                            dict(item.metadata_json)
+                            if isinstance(item.metadata_json, dict)
+                            else {}
+                        )
+                        write_status_change(
+                            item_metadata,
+                            project=project,
+                            from_status=item.status,
+                            to_status="",
+                            trigger="status_removed",
+                            by_user_id=user_id,
+                        )
+                        item.metadata_json = item_metadata
+                        item.status = ""
+                        item.completed_at = None
+                        item.version += 1
                 metadata["board_config"] = values.board_config.model_dump()
                 updates.pop("board_config", None)
             if (
@@ -291,6 +351,7 @@ class CloudProjectService:
             .order_by(ResourceMember.id)
             .all()
         )
+        capabilities = self._member_capabilities(project)
         members = [
             {
                 "id": member.id,
@@ -298,6 +359,7 @@ class CloudProjectService:
                 "user_name": member_user.user_name,
                 "email": member_user.email,
                 "role": member.role,
+                "capability_description": capabilities.get(str(member_user.id), ""),
             }
             for member, member_user in rows
         ]
@@ -314,6 +376,7 @@ class CloudProjectService:
                         "user_name": creator.user_name,
                         "email": creator.email,
                         "role": BaseRole.Owner.value,
+                        "capability_description": capabilities.get(str(creator.id), ""),
                     },
                 )
         return members
@@ -326,6 +389,7 @@ class CloudProjectService:
         values: CloudProjectMemberCreate,
     ) -> dict[str, object]:
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        project = self._lock_project(db, cloud_project_id)
         target = db.get(User, values.user_id)
         if target is None or not target.is_active:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
@@ -351,6 +415,7 @@ class CloudProjectService:
         else:
             member.role = values.role.value
             member.status = MemberStatus.APPROVED.value
+        self._set_member_capability(project, target.id, values.capability_description)
         db.commit()
         db.refresh(member)
         return {
@@ -359,6 +424,9 @@ class CloudProjectService:
             "user_name": target.user_name,
             "email": target.email,
             "role": member.role,
+            "capability_description": self._member_capabilities(project).get(
+                str(target.id), ""
+            ),
         }
 
     def update_member(
@@ -369,21 +437,37 @@ class CloudProjectService:
         user_id: int,
         values: CloudProjectMemberUpdate,
     ) -> dict[str, object]:
-        project = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.Maintainer
-        ).project
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        project = self._lock_project(db, cloud_project_id)
         if member_user_id == project.created_by_user_id:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Project owner is immutable")
-        member, target = self._get_member(db, cloud_project_id, member_user_id)
-        member.role = values.role.value
+            if values.role is not None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Project owner is immutable"
+                )
+            target = db.get(User, member_user_id)
+            if target is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+            member = None
+        else:
+            member, target = self._get_member(db, cloud_project_id, member_user_id)
+            if values.role is not None:
+                member.role = values.role.value
+        if values.capability_description is not None:
+            self._set_member_capability(
+                project, member_user_id, values.capability_description
+            )
         db.commit()
-        db.refresh(member)
+        if member is not None:
+            db.refresh(member)
         return {
-            "id": member.id,
+            "id": member.id if member is not None else 0,
             "user_id": target.id,
             "user_name": target.user_name,
             "email": target.email,
-            "role": member.role,
+            "role": member.role if member is not None else BaseRole.Owner.value,
+            "capability_description": self._member_capabilities(project).get(
+                str(target.id), ""
+            ),
         }
 
     def remove_member(
@@ -393,14 +477,14 @@ class CloudProjectService:
         member_user_id: int,
         user_id: int,
     ) -> None:
-        project = require_cloud_project_role(
-            db, cloud_project_id, user_id, BaseRole.Maintainer
-        ).project
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
+        project = self._lock_project(db, cloud_project_id)
         if member_user_id == project.created_by_user_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Project owner cannot be removed"
             )
         member, _ = self._get_member(db, cloud_project_id, member_user_id)
+        self._set_member_capability(project, member_user_id, "")
         db.delete(member)
         db.commit()
 

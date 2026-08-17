@@ -12,7 +12,7 @@ cloud Celery dispatcher (which also calls the service directly).
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -34,12 +34,12 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_executions.service import (
+    WeworkRuntimeConfigurationError,
     _optional_datetime,
     _optional_text,
     _optional_user_id,
     loop_item_execution_service,
 )
-from app.services.project_automations import project_automation_service
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,7 @@ def _require_run_creator(
     row = db.get(LoopItemExecution, execution_id)
     if row is None or row.cloud_project_id != str(project_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
-    agent = db.get(ProjectChatAgent, row.agent_id)
-    if agent is None or agent.created_by_user_id != user_id:
+    if row.executor_owner_user_id != user_id:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Only the robot creator can report its runs",
@@ -84,8 +83,19 @@ def _require_run_creator(
     return row
 
 
+def _require_project_execution(
+    db: Session, *, project_id: int, execution_id: int
+) -> LoopItemExecution:
+    """Resolve an execution only inside the project named by the route."""
+
+    row = db.get(LoopItemExecution, execution_id)
+    if row is None or row.cloud_project_id != str(project_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+    return row
+
+
 def _execution_view(
-    db: Session, row: object, *, include_payload: bool = False
+    db: Session, row: object, *, include_runtime_payload: bool = False
 ) -> LoopItemExecutionView:
     item = db.get(LoopItem, row.loop_item_id)
     return LoopItemExecutionView.model_validate(
@@ -96,7 +106,8 @@ def _execution_view(
             "task_title": (item.title or item.name or "") if item else "",
             "task_status": item.status if item else None,
             "task_priority": item.priority if item else None,
-            "agent_id": row.agent_id,
+            "executor_type": row.executor_type,
+            "agent_id": _optional_text(row.agent_id),
             "assigner_user_id": row.assigner_user_id,
             "execution_environment": row.execution_environment,
             "execution_device_id": _optional_text(row.execution_device_id),
@@ -115,7 +126,14 @@ def _execution_view(
             "rejected_reason": _optional_text(row.rejected_reason),
             "runtime_device_id": _optional_text(row.runtime_device_id),
             "runtime_task_id": _optional_text(row.runtime_task_id),
-            "execution_payload": (row.execution_payload if include_payload else None),
+            "runtime_payload": (
+                loop_item_execution_service.build_runtime_payload(
+                    db,
+                    execution=row,
+                )
+                if include_runtime_payload
+                else None
+            ),
             "version": row.version,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
@@ -214,20 +232,7 @@ def claim_execution(
         device_capacity=values.device_capacity,
         assigner_filter=values.assigner_user_id,
     )
-    view = _execution_view(db, row, include_payload=True) if row else None
-    if view is not None:
-        task = loop_item_execution_service.resolve_task_context(
-            db, execution=row, user_id=current_user.id
-        )
-        payload = (
-            loop_item_execution_service.build_runtime_payload(
-                db, execution=row, task=task
-            )
-            if task is not None
-            else None
-        )
-        view.execution_payload = payload
-    return view
+    return _claimed_execution_view(db, row) if row else None
 
 
 @claim_router.post(
@@ -242,61 +247,60 @@ def claim_my_next_execution(
     """Device-scoped claim used by the creator's local App puller.
 
     Finds the next queued local run for any robot bound to the caller's device
-    and returns it with the prebuilt runtime payload. The atomic CAS plus the
+    and returns it with a just-in-time runtime request. The atomic CAS plus the
     caller-supplied device capacity keeps multiple computers from double-
     claiming the same run.
     """
 
-    project_automation_service.activate_waiting_for_device(
+    row = loop_item_execution_service.claim_next_for_device(
         db,
-        user_id=current_user.id,
-        device_id=values.execution_device_id,
+        execution_device_id=values.execution_device_id,
+        environment="local",
+        lease_seconds=values.lease_seconds,
+        device_capacity=values.device_capacity,
+        owner_user_id=current_user.id,
     )
-    while True:
-        row = loop_item_execution_service.claim_next_for_device(
+    if row is None:
+        row = loop_item_execution_service.claim_next_unbound_local(
             db,
+            owner_user_id=current_user.id,
             execution_device_id=values.execution_device_id,
-            environment="local",
             lease_seconds=values.lease_seconds,
             device_capacity=values.device_capacity,
         )
-        if row is None:
-            row = loop_item_execution_service.claim_next_unbound_local(
-                db,
-                creator_user_id=current_user.id,
-                execution_device_id=values.execution_device_id,
-                lease_seconds=values.lease_seconds,
-            )
-        if row is None:
-            return None
-        agent = db.get(ProjectChatAgent, row.agent_id)
-        if (
-            agent is not None
-            and agent.created_by_user_id == current_user.id
-            and (
-                agent.device_id == values.execution_device_id
-                or row.execution_device_id == values.execution_device_id
-            )
-        ):
-            view = _execution_view(db, row, include_payload=True)
-            task = loop_item_execution_service.resolve_task_context(
-                db, execution=row, user_id=current_user.id
-            )
-            payload = (
-                loop_item_execution_service.build_runtime_payload(
-                    db, execution=row, task=task
-                )
-                if task is not None
-                else None
-            )
-            view.execution_payload = payload
-            return view
-        # Not this user's robot (should not happen for bound devices), skip it.
-        loop_item_execution_service.cancel(
+    if row is None:
+        return None
+    if row.executor_owner_user_id != current_user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Claimed Wework execution belongs to another user",
+        )
+    return _claimed_execution_view(db, row)
+
+
+def _claimed_execution_view(
+    db: Session,
+    row: LoopItemExecution,
+) -> LoopItemExecutionView:
+    """Materialize a claimed run or durably fail an unavailable model."""
+
+    try:
+        return _execution_view(db, row, include_runtime_payload=True)
+    except WeworkRuntimeConfigurationError as exc:
+        logger.warning(
+            "[LoopItemExecution] Runtime configuration unavailable "
+            "execution=%s model_error=%s",
+            row.id,
+            str(exc),
+        )
+        loop_item_execution_service.fail(
             db,
             execution_id=row.id,
-            note="Claimed by a device that does not own the robot",
+            error=str(exc),
+            note="runtime_configuration_unavailable",
+            requeue=False,
         )
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 @router.post(
@@ -456,14 +460,14 @@ def stop_execution(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Optional[LoopItemExecutionView]:
-    """Stop a run from the automation page (project member action).
-
-    Cancels the queued/claimed/running execution and best-effort asks the
-    executor to terminate its codex session, so the task unlocks and the
-    device slot frees without hunting for the per-message stop button.
-    """
+    """Stop a run from the automation page (project member action)."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
+    _require_project_execution(
+        db,
+        project_id=project_id,
+        execution_id=execution_id,
+    )
     row = loop_item_execution_service.cancel(
         db,
         execution_id=execution_id,

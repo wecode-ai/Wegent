@@ -31,6 +31,10 @@ import {
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   IMAGE_ARTIFACT_BASE64,
+  MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+  MESSAGE_EDIT_ORIGINAL_PROMPT,
+  MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+  MESSAGE_EDIT_UPDATED_PROMPT,
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
@@ -720,6 +724,20 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       scroller,
     })}`
   )
+  const composerMetrics = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+    )
+  ).at(-1)
+  assert.ok(composerMetrics, 'The conversation composer was not rendered after guidance')
+  assert.ok(
+    guidanceMessage.bottom <= composerMetrics.top + 2,
+    `The newly applied guidance message rendered below the composer: ${JSON.stringify({
+      guidanceMessage,
+      composer: composerMetrics,
+    })}`
+  )
   await captureVerificationScreenshot(control, 'guidance-scroll-01-message-visible.png')
 
   control.releaseGuidanceScrollCompletion()
@@ -817,9 +835,6 @@ async function reopenCurrentTurnNavigationTask(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await restartDesktopApp()
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1225,6 +1240,63 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'queue-management-03-dialog-paths.png')
 }
 
+async function verifyLastUserMessageEdit({ composerSelector, control }) {
+  control.setScenario('message_edit')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await sendPrompt(control, composerSelector, MESSAGE_EDIT_ORIGINAL_PROMPT)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-hover-region"]`
+  )
+  await control.command('click', '[data-testid="edit-message-button"]')
+  await control.command('waitFor', '[data-testid="edit-user-message-textarea"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="edit-user-message-textarea"]', {
+    value: MESSAGE_EDIT_UPDATED_PROMPT,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="submit-edit-user-message-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await withTimeout(
+    control.awaitScenarioRequestCount('message_edit', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Editing the last user message did not start a replacement model request'
+  )
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: MESSAGE_EDIT_UPDATED_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  assert.equal(
+    transcriptText.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+    false,
+    'The edited conversation still rendered the original user message'
+  )
+  assert.equal(
+    transcriptText.includes(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT),
+    false,
+    'The edited conversation still rendered the superseded assistant response'
+  )
+}
+
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -1264,5 +1336,6 @@ export {
   pauseQueuedConversation,
   assertLatestScenarioRequestContains,
   verifyPausedQueueLifecycle,
+  verifyLastUserMessageEdit,
   waitForSuccessfulMatrixSubmission,
 }

@@ -54,6 +54,11 @@ from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
 from app.services.loop_item_executions.wake import wake_robot_creator
+from app.services.loop_item_status_history import (
+    STATUS_HISTORY_KEY,
+    project_board_statuses,
+    write_status_change,
+)
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.stores.tasks import task_store
 
@@ -66,19 +71,7 @@ logger = logging.getLogger(__name__)
 class LoopItemService:
     @staticmethod
     def _project_status_ids(project: CloudProject) -> list[str]:
-        metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
-        )
-        board = metadata.get("board_config")
-        board = board if isinstance(board, dict) else {}
-        statuses = board.get("statuses")
-        if not isinstance(statuses, list):
-            return ["inbox", "pending", "in_progress", "in_review", "completed"]
-        return [
-            str(item["id"])
-            for item in statuses
-            if isinstance(item, dict) and item.get("id")
-        ]
+        return [status_id for status_id, _ in project_board_statuses(project)]
 
     def _require_internal_task_project(
         self,
@@ -159,6 +152,10 @@ class LoopItemService:
         values["assignment_history"] = (
             assignment_history if isinstance(assignment_history, list) else []
         )
+        status_history = metadata.get(STATUS_HISTORY_KEY)
+        values["status_history"] = (
+            status_history if isinstance(status_history, list) else []
+        )
         # Surface the newest run even after it ends, so a terminal failure is
         # visible to the UI instead of silently disappearing from the task.
         execution = loop_item_execution_service.latest_for_item(db, item_id=item.id)
@@ -197,7 +194,9 @@ class LoopItemService:
     def _reconcile_task_ai_state_from_message(
         self, db: Session, item: LoopItem
     ) -> bool:
-        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        metadata = (
+            dict(item.metadata_json) if isinstance(item.metadata_json, dict) else {}
+        )
         ai_state = metadata.get(TASK_AI_STATE_KEY)
         if not isinstance(ai_state, dict) or ai_state.get("status") != "running":
             return False
@@ -252,11 +251,23 @@ class LoopItemService:
             next_state["auto_retry_count"] = (
                 int(ai_state.get("auto_retry_count") or 0) + 1
             )
-        item.metadata_json = {**metadata, TASK_AI_STATE_KEY: next_state}
-        if message.status == "completed" and item.status not in {
+        completed_transition = message.status == "completed" and item.status not in {
             "in_review",
             "completed",
-        }:
+        }
+        if completed_transition:
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is not None:
+                write_status_change(
+                    metadata,
+                    project=project,
+                    from_status=item.status,
+                    to_status="in_review",
+                    trigger="ai_completed",
+                    by_user_id=None,
+                )
+        item.metadata_json = {**metadata, TASK_AI_STATE_KEY: next_state}
+        if completed_transition:
             item.status = "in_review"
             item.completed_at = self._loop_unset_datetime(db)
         item.version += 1
@@ -525,6 +536,9 @@ class LoopItemService:
         values: LoopItemCreate,
         *,
         commit: bool = True,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
+        assign_creator_if_unassigned: bool = True,
     ) -> LoopItem:
         self._require_internal_task_project(
             db,
@@ -548,6 +562,11 @@ class LoopItemService:
         agent_id = payload.get("assignee_agent_id")
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict = {}
+        if automation_context is not None:
+            task_metadata["automation"] = {
+                **automation_context,
+                **({"prompt": instruction} if instruction is not None else {}),
+            }
         if agent_id:
             agent = db.get(ProjectChatAgent, agent_id)
             if (
@@ -567,7 +586,7 @@ class LoopItemService:
                 agent.id,
                 agent.title or agent.name,
             )
-        elif payload.get("assignee_user_id") is None:
+        elif payload.get("assignee_user_id") is None and assign_creator_if_unassigned:
             payload["assignee_user_id"] = user_id
             self._write_assignment_change(
                 task_metadata,
@@ -592,6 +611,15 @@ class LoopItemService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
+        if payload["status"]:
+            write_status_change(
+                task_metadata,
+                project=project,
+                from_status="",
+                to_status=payload["status"],
+                trigger="create",
+                by_user_id=user_id,
+            )
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
@@ -601,11 +629,12 @@ class LoopItemService:
             **payload,
         )
         if tags:
-            item.metadata_json = {"tags": tags}
+            item.metadata_json = {**task_metadata, "tags": tags}
         if item.status == "completed":
             item.completed_at = self._now()
         db.add(item)
         if agent_id:
+            db.flush()
             agent = db.get(ProjectChatAgent, agent_id)
             if agent is not None:
                 config = bot_config(agent)
@@ -622,6 +651,8 @@ class LoopItemService:
                         else None
                     ),
                     priority=item.priority,
+                    automation_context=automation_context,
+                    instruction=instruction,
                 )
         if commit:
             db.commit()
@@ -982,6 +1013,21 @@ class LoopItemService:
                     raise HTTPException(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
                     )
+        if "status" in values.model_fields_set and updates.get("status") != item.status:
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is not None:
+                metadata = updates.get("metadata_json")
+                if not isinstance(metadata, dict):
+                    metadata = dict(item.metadata_json or {})
+                write_status_change(
+                    metadata,
+                    project=project,
+                    from_status=item.status,
+                    to_status=updates["status"] or "",
+                    trigger="user_update",
+                    by_user_id=user_id,
+                )
+                updates["metadata_json"] = metadata
         if next_status and next_status != item.status:
             updates["completed_at"] = (
                 self._now() if next_status == "completed" else None
@@ -1014,6 +1060,8 @@ class LoopItemService:
         item_id: str,
         user_id: int,
         values: LoopItemAssign,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> LoopItem:
         """Assign a task to a project member or to a project robot.
 
@@ -1068,6 +1116,8 @@ class LoopItemService:
                 target_id=agent.id,
                 agent=agent,
                 priority=item.priority,
+                automation_context=automation_context,
+                instruction=instruction,
             )
         elif values.assignee_type == "user":
             try:
@@ -1103,11 +1153,14 @@ class LoopItemService:
                 target_id=str(target_user_id),
                 agent=None,
                 priority=item.priority,
+                automation_context=automation_context,
+                instruction=instruction,
             )
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
+
         updated = self._versioned_metadata_update(
             db, item, values.version, metadata, **assignee_updates
         )
@@ -1330,7 +1383,7 @@ class LoopItemService:
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
-                self._advance_task_started_item(db, item.id)
+                self._advance_task_started_item(db, item.id, user_id)
                 db.commit()
                 db.refresh(active)
                 return active
@@ -1347,7 +1400,7 @@ class LoopItemService:
         )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
-        self._advance_task_started_item(db, item.id)
+        self._advance_task_started_item(db, item.id, user_id)
         db.commit()
         db.refresh(binding)
         return binding
@@ -1461,24 +1514,36 @@ class LoopItemService:
         return query.first()
 
     @staticmethod
-    def _advance_task_started_item(db: Session, item_id: str) -> None:
+    def _advance_task_started_item(db: Session, item_id: str, user_id: int) -> None:
         """Move an unstarted TODO to in progress when execution is attached."""
 
-        updates = adapt_loop_node_values_for_dialect(
-            {"status": "in_progress", "completed_at": None},
-            db.get_bind().dialect.name,
-            loop_node_non_nullable_attributes(db.connection()),
+        item = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == item_id,
+                LoopItem.status.in_(("inbox", "pending")),
+            )
+            .first()
         )
-        db.query(LoopItem).filter(
-            LoopItem.id == item_id,
-            LoopItem.status.in_(("inbox", "pending")),
-        ).update(
-            {
-                **updates,
-                "version": LoopItem.version + 1,
-            },
-            synchronize_session=False,
-        )
+        if item is None:
+            return
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is not None:
+            metadata = (
+                dict(item.metadata_json) if isinstance(item.metadata_json, dict) else {}
+            )
+            write_status_change(
+                metadata,
+                project=project,
+                from_status=item.status,
+                to_status="in_progress",
+                trigger="task_started",
+                by_user_id=user_id,
+            )
+            item.metadata_json = metadata
+        item.status = "in_progress"
+        item.completed_at = LoopItemService._loop_unset_datetime(db)
+        item.version += 1
 
     def list_task_bindings(
         self, db: Session, item_id: str, user_id: int
@@ -1642,6 +1707,7 @@ class LoopItemService:
                 external_index_rows.append(item)
                 continue
             assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
+            status_history = metadata.get(STATUS_HISTORY_KEY)
             execution = executions_by_item.get(item.id)
             result.append(
                 {
@@ -1653,6 +1719,9 @@ class LoopItemService:
                         assignment_history
                         if isinstance(assignment_history, list)
                         else []
+                    ),
+                    "status_history": (
+                        status_history if isinstance(status_history, list) else []
                     ),
                     "execution_id": getattr(execution, "id", None),
                     "execution_state": getattr(execution, "status", None),
@@ -1701,6 +1770,8 @@ class LoopItemService:
                             if isinstance(assignment_history, list)
                             else []
                         ),
+                        # External provider tasks never carry status history.
+                        "status_history": [],
                     }
                 )
         return result
@@ -1807,6 +1878,8 @@ class LoopItemService:
         target_id: str | None,
         agent: ProjectChatAgent | None,
         priority: str | None,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> list:
         """Create/cancel execution records when the assignee changes.
 
@@ -1819,6 +1892,7 @@ class LoopItemService:
         from app.models.loop_item_execution import LoopItemExecution
 
         cancelled_runs = []
+        preserve_run_id = str((automation_context or {}).get("run_id") or "")
         active = (
             db.query(LoopItemExecution)
             .filter(
@@ -1830,6 +1904,12 @@ class LoopItemService:
             .all()
         )
         for execution in active:
+            if (
+                preserve_run_id
+                and execution.executor_type == "automation_manager"
+                and str(execution.automation_run_id or "") == preserve_run_id
+            ):
+                continue
             execution.status = "cancelled"
             execution.completed_at = self._now()
             execution.execution_note = (
@@ -1852,6 +1932,8 @@ class LoopItemService:
                     else None
                 ),
                 priority=priority,
+                automation_context=automation_context,
+                instruction=instruction,
             )
         return cancelled_runs
 

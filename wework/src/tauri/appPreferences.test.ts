@@ -25,6 +25,8 @@ const mergedDefaultPreferences = {
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   supervisorPrinciples: '',
+  supervisorModelSelection: null,
+  supervisorIntervalSeconds: 30,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -39,6 +41,7 @@ const mergedDefaultPreferences = {
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
+  changeRequestStatusEnabled: true,
   quickPhrases: [
     {
       id: 'default-summary-progress',
@@ -157,6 +160,48 @@ describe('appPreferences', () => {
       browserDownloadDirectory: '/tmp/downloads',
       browserAskBeforeDownload: true,
     })
+  })
+
+  test('normalizes the last selected supervisor model', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      supervisorModelSelection: {
+        modelName: '  review-model  ',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+          invalid: 1,
+        },
+      },
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      supervisorModelSelection: {
+        modelName: 'review-model',
+        modelType: 'public',
+        options: {
+          weworkCloudModelNamespace: 'default',
+        },
+      },
+    })
+  })
+
+  test('normalizes the last selected supervisor interval', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({ supervisorIntervalSeconds: 60 })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      supervisorIntervalSeconds: 60,
+    })
+
+    invokeMock.mockResolvedValue({ supervisorIntervalSeconds: 15 })
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
   test('clamps the context compaction threshold to 1..100', async () => {

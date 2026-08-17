@@ -37,22 +37,25 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   compareDevicesByExecutionPriority,
   formatSlotUsage,
-  getSelectableDevices,
+  getAccountDefaultDeviceId,
   getStatusColor,
   isDeviceAtCapacity,
 } from '@/features/devices/utils/execution-target'
 import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { paths } from '@/config/paths'
 import type { DeviceInfo } from '@/apis/devices'
+import type { TaskType } from '@/types/api'
 
 interface DeviceSelectorTabProps {
   /** Additional className */
   className?: string
   /** Disabled state */
   disabled?: boolean
-  /** Whether the chat has messages (read-only mode) */
-  hasMessages?: boolean
+  /** Existing task ID. Its persisted execution target is always read-only. */
+  taskId?: number | null
+  /** Persisted task type used to distinguish managed and device execution. */
+  taskType?: TaskType | null
   /** The device ID used when the task was created (for read-only display) */
   taskDeviceId?: string | null
 }
@@ -238,14 +241,17 @@ function CloudModeCard({
 export function DeviceSelectorTab({
   className,
   disabled,
-  hasMessages = false,
+  taskId,
+  taskType,
   taskDeviceId,
 }: DeviceSelectorTabProps) {
   const { t } = useTranslation('devices')
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, updatePreferences } = useUser()
   const { devices, selectedDeviceId, setSelectedDeviceId, isLoading } = useDevices()
-  const autoSelectionInitializedRef = useRef(false)
+  const newTaskSelectionInitializedRef = useRef(false)
+  const previousTaskIdRef = useRef<number | null>(taskId ?? null)
   const [isOpen, setIsOpen] = useState(false)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -253,7 +259,7 @@ export function DeviceSelectorTab({
 
   // Handle hover open with delay
   const handleMouseEnter = useCallback(() => {
-    if (disabled || isLoading || hasMessages) return
+    if (disabled || isLoading || taskId != null) return
     // Clear any pending close timeout
     if (closeTimeoutRef.current) {
       clearTimeout(closeTimeoutRef.current)
@@ -263,7 +269,7 @@ export function DeviceSelectorTab({
     hoverTimeoutRef.current = setTimeout(() => {
       setIsOpen(true)
     }, 150)
-  }, [disabled, isLoading, hasMessages])
+  }, [disabled, isLoading, taskId])
 
   // Handle hover close with delay
   const handleMouseLeave = useCallback(() => {
@@ -289,7 +295,6 @@ export function DeviceSelectorTab({
   // Get user's default execution target preference
   const defaultExecutionTarget = user?.preferences?.default_execution_target
 
-  const selectableDevices = useMemo(() => getSelectableDevices(devices), [devices])
   const displayDevices = useMemo(
     () => [...devices].sort(compareDevicesByExecutionPriority),
     [devices]
@@ -303,32 +308,6 @@ export function DeviceSelectorTab({
 
   const totalDeviceCount = devices.length
 
-  // Get preferred device based on user preference or fallback to first available
-  const preferredDevice = useMemo(() => {
-    // If user has set a default execution target
-    if (defaultExecutionTarget) {
-      if (defaultExecutionTarget === 'cloud') {
-        return null // Cloud mode
-      }
-      // Find the device by ID
-      const device = selectableDevices.find(d => d.device_id === defaultExecutionTarget)
-      if (device && !isDeviceAtCapacity(device.slot_used, device.slot_max)) {
-        return device
-      }
-    }
-    // Fallback: find first available device that is default or online
-    const defaultDevice = selectableDevices.find(
-      d => d.is_default && !isDeviceAtCapacity(d.slot_used, d.slot_max)
-    )
-    if (defaultDevice) return defaultDevice
-
-    return (
-      selectableDevices.find(
-        d => d.status === 'online' && !isDeviceAtCapacity(d.slot_used, d.slot_max)
-      ) || null
-    )
-  }, [selectableDevices, defaultExecutionTarget])
-
   const localDevices = useMemo(() => {
     return displayDevices.filter(device => device.device_type !== 'cloud')
   }, [displayDevices])
@@ -337,64 +316,61 @@ export function DeviceSelectorTab({
     return displayDevices.filter(device => device.device_type === 'cloud')
   }, [displayDevices])
 
-  const selectedDevice = useMemo(() => {
-    if (hasMessages) {
-      if (!taskDeviceId) {
-        return null
-      }
-
-      return devices.find(device => device.device_id === taskDeviceId) ?? null
-    }
-
-    return selectedDeviceId
-      ? (devices.find(device => device.device_id === selectedDeviceId) ?? null)
-      : null
-  }, [devices, selectedDeviceId, hasMessages, taskDeviceId])
+  const isExistingTask = taskId != null
+  const persistedTaskDeviceId =
+    isExistingTask && taskType === 'task' ? taskDeviceId?.trim() || null : null
+  const selectedTargetDeviceId = isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  const selectedDevice = selectedTargetDeviceId
+    ? (devices.find(device => device.device_id === selectedTargetDeviceId) ?? null)
+    : null
+  const hasExplicitDeviceParam = Boolean(
+    searchParams.get('deviceId') || searchParams.get('device_id')
+  )
 
   useEffect(() => {
-    if (hasMessages || isLoading || autoSelectionInitializedRef.current) {
+    if (isExistingTask) {
+      previousTaskIdRef.current = taskId ?? null
+      newTaskSelectionInitializedRef.current = false
       return
     }
 
-    if (selectedDeviceId) {
-      autoSelectionInitializedRef.current = true
+    if (isLoading || hasExplicitDeviceParam || newTaskSelectionInitializedRef.current) {
       return
     }
 
-    autoSelectionInitializedRef.current = true
-    // Use user's default preference
-    // Only auto-select device if user has explicitly set a device as default
-    // Otherwise, default to cloud mode (selectedDeviceId = null)
-    if (defaultExecutionTarget && defaultExecutionTarget !== 'cloud') {
-      setSelectedDeviceId(preferredDevice?.device_id || null)
-    } else {
-      // Default to cloud mode when no preference is set or cloud is explicitly selected
-      setSelectedDeviceId(null)
+    const returningFromTask = previousTaskIdRef.current != null
+    previousTaskIdRef.current = null
+    newTaskSelectionInitializedRef.current = true
+
+    // A new draft starts from the account default. Preserve an existing
+    // selection only on the first mount, where it may be an explicit launch
+    // choice made by the device page before this selector mounted.
+    if (returningFromTask || !selectedDeviceId) {
+      setSelectedDeviceId(getAccountDefaultDeviceId(defaultExecutionTarget))
     }
   }, [
-    hasMessages,
+    defaultExecutionTarget,
+    hasExplicitDeviceParam,
+    isExistingTask,
     isLoading,
-    preferredDevice,
     selectedDeviceId,
     setSelectedDeviceId,
-    defaultExecutionTarget,
+    taskId,
   ])
 
-  const isSelectedDeviceAvailable = useMemo(() => {
-    if (!selectedDevice) return true
-    return selectedDevice.status !== 'offline'
-  }, [selectedDevice])
+  const isSelectedDeviceAvailable =
+    !selectedTargetDeviceId || (selectedDevice != null && selectedDevice.status !== 'offline')
 
   const handleDeviceSelect = (deviceId: string) => {
-    if (disabled || hasMessages || isLoading) return
-    autoSelectionInitializedRef.current = true
+    if (disabled || isExistingTask || isLoading) return
+    newTaskSelectionInitializedRef.current = true
     setSelectedDeviceId(deviceId)
     setIsOpen(false)
   }
 
   const handleCloudModeSelect = () => {
-    if (disabled || hasMessages || isLoading) return
-    autoSelectionInitializedRef.current = true
+    if (disabled || isExistingTask || isLoading) return
+    newTaskSelectionInitializedRef.current = true
     setSelectedDeviceId(null)
     setIsOpen(false)
   }
@@ -456,6 +432,23 @@ export function DeviceSelectorTab({
       )
     }
 
+    if (selectedTargetDeviceId) {
+      return (
+        <>
+          <Monitor className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="max-w-[200px] truncate">{selectedTargetDeviceId}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[300px]">
+              <p className="break-all">{selectedTargetDeviceId}</p>
+            </TooltipContent>
+          </Tooltip>
+          <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+        </>
+      )
+    }
+
     return (
       <>
         <Cloud className="w-3.5 h-3.5 text-primary" />
@@ -470,7 +463,7 @@ export function DeviceSelectorTab({
   }
 
   // Read-only mode for existing chats
-  if (hasMessages) {
+  if (isExistingTask) {
     return (
       <TooltipProvider>
         <Tooltip>
@@ -502,6 +495,12 @@ export function DeviceSelectorTab({
                       getStatusColor(selectedDevice.status)
                     )}
                   />
+                </>
+              ) : persistedTaskDeviceId ? (
+                <>
+                  <Monitor className="w-3.5 h-3.5 text-red-500" />
+                  <span className="truncate max-w-[160px]">{persistedTaskDeviceId}</span>
+                  <AlertCircle className="w-3.5 h-3.5 text-red-500" />
                 </>
               ) : (
                 <>
@@ -591,7 +590,7 @@ export function DeviceSelectorTab({
                       <DeviceCard
                         key={device.device_id}
                         device={device}
-                        isSelected={selectedDeviceId === device.device_id}
+                        isSelected={selectedTargetDeviceId === device.device_id}
                         isDefault={defaultExecutionTarget === device.device_id}
                         disabled={disabled || isLoading}
                         onSelect={() => handleDeviceSelect(device.device_id)}
@@ -615,7 +614,7 @@ export function DeviceSelectorTab({
                       <DeviceCard
                         key={device.device_id}
                         device={device}
-                        isSelected={selectedDeviceId === device.device_id}
+                        isSelected={selectedTargetDeviceId === device.device_id}
                         isDefault={defaultExecutionTarget === device.device_id}
                         disabled={disabled || isLoading}
                         onSelect={() => handleDeviceSelect(device.device_id)}
@@ -634,7 +633,7 @@ export function DeviceSelectorTab({
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <CloudModeCard
-                    isSelected={!selectedDeviceId}
+                    isSelected={!selectedTargetDeviceId}
                     isDefault={defaultExecutionTarget === 'cloud'}
                     disabled={disabled || isLoading}
                     onSelect={handleCloudModeSelect}
@@ -668,7 +667,7 @@ export function DeviceSelectorTab({
           </PopoverContent>
         </Popover>
 
-        {selectedDevice && !isSelectedDeviceAvailable && (
+        {selectedTargetDeviceId && !isSelectedDeviceAvailable && (
           <Tooltip>
             <TooltipTrigger asChild>
               <div className="px-1.5">

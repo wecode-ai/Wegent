@@ -105,10 +105,10 @@ export interface WorkbenchServices {
     | 'executeCommand'
     | 'upgradeDevice'
     | 'listSkills'
-    | 'listWorkspaceEntries'
-    | 'readWorkspaceTextFile'
-    | 'readWorkspaceFileChunk'
   > & {
+    listWorkspaceEntries: WorkspaceFileApi['listWorkspaceEntries']
+    readWorkspaceTextFile: WorkspaceFileApi['readWorkspaceTextFile']
+    readWorkspaceFileChunk: NonNullable<WorkspaceFileApi['readWorkspaceFileChunk']>
     writeWorkspaceTextFile?: NonNullable<WorkspaceFileApi['writeWorkspaceTextFile']>
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi

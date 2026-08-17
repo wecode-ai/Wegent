@@ -1,0 +1,19 @@
+{
+  "name": "wework-plugin-example",
+  "version": "0.1.0",
+  "description": "展示 Wework 标准插件包中的 Skill 与 MCP 组件。",
+  "author": {
+    "name": "Wework"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Wework 插件示例",
+    "shortDescription": "包含一个 Skill 和一个本地 MCP 工具的标准示例包",
+    "longDescription": "用于学习 Wework 插件目录、manifest、Skill 和 MCP 配置。可以直接导入验证，也可以复制后修改为自己的插件。",
+    "developerName": "Wework",
+    "category": "效率工具",
+    "capabilities": ["Read", "MCP"],
+    "defaultPrompt": ["使用示例插件向我问好。"]
+  },
+  "mcpServers": "./.mcp.json"
+}

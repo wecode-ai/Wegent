@@ -61,6 +61,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 ## Testing and verification
 
 Run focused tests before committing; run broader tests when risk warrants it. E2E tests must use real backend requests, may not silently skip or fail gracefully, and failures must be fixed rather than skipped.
+Treat intermittent test failures as defects: investigate and fix them immediately before proceeding; never use reruns or retries to obtain a passing result or hide the underlying problem.
 Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
 

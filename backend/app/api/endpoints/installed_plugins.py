@@ -24,7 +24,11 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessResponse,
     PluginAccessUpdateRequest,
+    PluginAutoUpdateBatchResponse,
     PluginCopyResponse,
+    PluginDeleteImpactResponse,
+    PluginDeleteRequest,
+    PluginDeleteResponse,
     PluginDeviceSyncResponse,
     PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
@@ -73,6 +77,21 @@ def list_installed_plugins(
     )
 
 
+@router.post(
+    "/installed/auto-update-batch",
+    response_model=PluginAutoUpdateBatchResponse,
+)
+def auto_update_installed_plugins(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginAutoUpdateBatchResponse:
+    """Advance one bounded batch of cloud marketplace plugin installations."""
+    return plugin_marketplace_service.auto_update_batch(
+        db,
+        user_id=current_user.id,
+    )
+
+
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
@@ -94,11 +113,11 @@ async def sync_installed_plugins_to_device(
         db,
         user_id=current_user.id,
         device_id=normalized_device_id,
-        reset_failed=True,
     )
     payload = device_capability_sync_service.build_desired_capabilities(
         db,
         user_id=current_user.id,
+        device_id=normalized_device_id,
     )
     db.close()
     result = await device_capability_sync_service.sync_device_payload(
@@ -301,6 +320,76 @@ async def update_marketplace_plugin_access(
             )
     access.revocationPendingCount = len(revoked_installs)
     return access
+
+
+@router.get(
+    "/marketplace/{plugin_id}/delete-impact",
+    response_model=PluginDeleteImpactResponse,
+)
+def get_marketplace_plugin_delete_impact(
+    plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeleteImpactResponse:
+    return plugin_marketplace_service.get_personal_plugin_delete_impact(
+        db,
+        plugin_id=plugin_id,
+        user_id=current_user.id,
+    )
+
+
+@router.delete(
+    "/marketplace/{plugin_id}",
+    response_model=PluginDeleteResponse,
+)
+async def delete_marketplace_plugin(
+    plugin_id: int,
+    request: PluginDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeleteResponse:
+    installations = plugin_marketplace_service.delete_owned_personal_plugin(
+        db,
+        plugin_id=plugin_id,
+        user_id=current_user.id,
+        impact_revision=request.impactRevision,
+        revoke_and_delete=request.revokeAndDelete,
+    )
+    for installation_user_id, installed_id in installations:
+        try:
+            plugin_device_installation_service.mark_uninstalling(
+                db,
+                user_id=installation_user_id,
+                installed_kind_id=installed_id,
+            )
+            result = await _sync_global_capabilities(
+                db,
+                installation_user_id,
+                required_installed_kind_id=installed_id,
+                expect_installed=False,
+            )
+            plugin_device_installation_service.record_uninstall_response(
+                db,
+                user_id=installation_user_id,
+                installed_kind_id=installed_id,
+                response=result,
+            )
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Deleted plugin uninstall sync failed: plugin_id=%s user_id=%s",
+                plugin_id,
+                installation_user_id,
+            )
+    installation_ids = [installed_id for _, installed_id in installations]
+    pending_device_count = 0
+    if installation_ids:
+        pending_device_count = (
+            db.query(PluginDeviceInstallation.id)
+            .filter(PluginDeviceInstallation.installed_kind_id.in_(installation_ids))
+            .count()
+        )
+    return PluginDeleteResponse(pendingDeviceCount=pending_device_count)
 
 
 @router.post(
@@ -525,7 +614,7 @@ async def update_installed_plugin(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
-    """Update an installed plugin's enabled state or display metadata."""
+    """Update an installed plugin's runtime state, metadata, or update policy."""
     if request.releaseId is not None:
         installed = plugin_marketplace_service.update_release(
             db,
@@ -546,6 +635,7 @@ async def update_installed_plugin(
             user_id=current_user.id,
             installed_kind_id=installed_id,
             desired_release_id=installed.spec.releaseId,
+            reset_failures=request.releaseId is not None,
         )
     await _sync_global_capabilities(
         db,
@@ -560,6 +650,7 @@ async def update_installed_plugin(
         user_id=current_user.id,
         device_id=device_id,
         installed_id=installed_id,
+        manual_retry=request.releaseId is not None,
     )
     return plugin_marketplace_service.enrich_installed_list(
         db,
@@ -622,6 +713,7 @@ async def _ensure_installed_plugin_on_device(
     device_id: str | None,
     installed_id: int,
     previous: DeviceCapabilitySyncResponse | None = None,
+    manual_retry: bool = False,
 ) -> DeviceCapabilitySyncResponse | None:
     """Retry a single-plugin merge when the global replace left the device short."""
     if not device_id:
@@ -635,6 +727,15 @@ async def _ensure_installed_plugin_on_device(
         .first()
     )
     if device_row and device_row.state == "installed":
+        return previous
+    if (
+        not manual_retry
+        and device_row
+        and plugin_device_installation_service.auto_update_blocked_release_id(
+            device_row,
+            desired_release_id=device_row.desired_release_id,
+        )
+    ):
         return previous
     try:
         merge_sync = (

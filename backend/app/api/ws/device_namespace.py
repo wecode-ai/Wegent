@@ -624,28 +624,20 @@ def _project_chat_runtime_event_sync(
             payload.get("status"),
         )
         return None
-    logger.info(
-        "[ProjectChat] Runtime event projection received: "
-        "device_id=%s runtime_task_id=%s event=%s payload_status=%s data_status=%s",
-        device_id,
-        runtime_task_id,
-        event_name,
-        payload.get("status"),
-        (
-            (payload.get("data") or {}).get("status")
-            if isinstance(payload.get("data"), dict)
-            else None
-        ),
-    )
     with get_db_session() as db:
-        projected = project_chat_service.project_runtime_event(
+        # The LoopItemExecution is the aggregate root for Wework automation
+        # outcomes. Elect its terminal state before projecting chat so a
+        # concurrent complete/fail/cancel cannot leave the run and activity
+        # disagreeing with the execution. Streaming events remain ordinary
+        # chat projections after the lease write-back.
+        matched_execution = loop_item_execution_service.handle_runtime_event(
             db,
             device_id=device_id,
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
         )
-        matched_execution = loop_item_execution_service.handle_runtime_event(
+        projected = project_chat_service.project_runtime_event(
             db,
             device_id=device_id,
             runtime_task_id=runtime_task_id,
@@ -657,28 +649,8 @@ def _project_chat_runtime_event_sync(
 
             publish_run_event(device_id, runtime_task_id, event_name)
         if projected is None:
-            logger.info(
-                "[ProjectChat] Runtime event projection produced no project chat message: "
-                "device_id=%s runtime_task_id=%s event=%s",
-                device_id,
-                runtime_task_id,
-                event_name,
-            )
             return None
         message, mode = projected
-        logger.info(
-            "[ProjectChat] Runtime event projection produced message: "
-            "device_id=%s runtime_task_id=%s event=%s mode=%s "
-            "project_id=%s task_id=%s message_id=%s message_status=%s",
-            device_id,
-            runtime_task_id,
-            event_name,
-            mode,
-            message.project_id,
-            message.task_id,
-            message.message_id,
-            message.status,
-        )
         return {"message": message.model_dump(mode="json", by_alias=True), "mode": mode}
 
 
@@ -762,6 +734,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # This prevents race conditions when multiple response.output_text.delta
         # events arrive concurrently for the same subtask
         self._subtask_locks: Dict[int, asyncio.Lock] = {}
+        self._runtime_event_locks: Dict[str, asyncio.Lock] = {}
         self._runtime_auth_sync_inflight: set[tuple[int, str, str]] = set()
         self._connection_attempts: Dict[str, list[float]] = {}
         self._recent_registrations: Dict[tuple[int, str], tuple[float, str]] = {}
@@ -846,6 +819,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
             subtask_id: Subtask ID
         """
         self._subtask_locks.pop(subtask_id, None)
+
+    def _get_runtime_event_lock(self, sid: str) -> asyncio.Lock:
+        """Return the ordered runtime-event relay lock for one device socket."""
+        if sid not in self._runtime_event_locks:
+            self._runtime_event_locks[sid] = asyncio.Lock()
+        return self._runtime_event_locks[sid]
 
     @trace_websocket_event(
         exclude_events={"connect"},
@@ -1175,6 +1154,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         except Exception as e:
             logger.error(f"[Device WS] Error in disconnect handler: {e}")
+        finally:
+            self._runtime_event_locks.pop(sid, None)
 
     # ============================================================
     # Device Registration and Heartbeat Events
@@ -1330,11 +1311,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     db,
                     user_id=user_id,
                     device_id=device_id,
-                    reset_failed=True,
                 )
                 payload = device_capability_sync_service.build_desired_capabilities(
                     db,
                     user_id=user_id,
+                    device_id=device_id,
                 )
             result = await device_capability_sync_service.sync_device_payload(
                 user_id=user_id,
@@ -2030,6 +2011,22 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not isinstance(data, dict):
             return {"error": "Invalid runtime event payload"}
 
+        async with self._get_runtime_event_lock(sid):
+            return await self._forward_runtime_event(
+                user_id=int(user_id),
+                device_id=device_id,
+                data=data,
+            )
+
+    async def _forward_runtime_event(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        data: dict,
+    ) -> dict:
+        """Persist and relay one runtime event without reordering its socket stream."""
+
         payload = dict(data)
         nested_payload = payload.get("payload")
         if isinstance(nested_payload, dict):
@@ -2055,17 +2052,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 if projected["mode"] == "delta"
                 else PROJECT_CHAT_CREATED_EVENT
             )
-            logger.info(
-                "[ProjectChat] Emitting projected runtime message: "
-                "socket_event=%s project_id=%s task_id=%s message_id=%s "
-                "message_status=%s mode=%s",
-                event_name,
-                project_id,
-                task_id,
-                message.get("messageId"),
-                message.get("status"),
-                projected["mode"],
-            )
             await get_sio().emit(
                 event_name,
                 message,
@@ -2075,7 +2061,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         await get_sio().emit(
             WEWORK_RUNTIME_EVENT,
             payload,
-            room=wework_runtime_user_room(int(user_id)),
+            room=wework_runtime_user_room(user_id),
             namespace=WEWORK_RUNTIME_NAMESPACE,
         )
         return {"success": True}

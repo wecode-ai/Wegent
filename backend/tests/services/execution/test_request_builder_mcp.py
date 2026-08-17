@@ -394,6 +394,75 @@ class TestBuildMcpServers:
         assert servers["native-server"]["timeout"] == 900000
 
 
+def test_wework_space_mcp_uses_existing_chat_and_code_shell_contracts(test_db, mocker):
+    builder = TaskRequestBuilder(test_db)
+    subtask = SimpleNamespace(
+        id=2,
+        message_id=33,
+        executor_name="",
+        executor_namespace="",
+    )
+    task = SimpleNamespace(id=1, json={"spec": {}}, project_id=None)
+    user = SimpleNamespace(id=7, user_name="alice")
+    team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
+    bot = SimpleNamespace(id=9)
+
+    mocker.patch(
+        "app.services.execution.request_builder.Team.model_validate",
+        return_value=SimpleNamespace(spec=SimpleNamespace(collaborationModel="solo")),
+    )
+    mocker.patch.object(builder, "_get_bot_for_subtask", return_value=bot)
+    mocker.patch.object(builder, "_build_workspace", return_value={})
+    mocker.patch.object(builder, "_build_user_info", return_value={"id": 7})
+    mocker.patch.object(builder, "_get_model_config", return_value={})
+    mocker.patch.object(builder, "_get_base_system_prompt", return_value="sys")
+    mocker.patch.object(builder, "_inject_conditional_provider_skills", return_value=[])
+    mocker.patch.object(builder, "_get_bot_skills", return_value=([], [], [], {}))
+    mocker.patch.object(
+        builder,
+        "_build_bot_config",
+        return_value=[{"shell_type": "ClaudeCode", "skills": [], "mcp_servers": []}],
+    )
+    mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
+    mocker.patch.object(builder, "_is_group_chat", return_value=False)
+    mocker.patch.object(builder, "_generate_auth_token", return_value="task-jwt")
+    mocker.patch.object(
+        builder, "_generate_skill_identity_token", return_value="skill-jwt"
+    )
+    mocker.patch(
+        "app.services.execution.request_builder.settings.WEGENT_BACKEND_PUBLIC_URL",
+        "http://localhost:8000",
+    )
+
+    result = builder.build(
+        subtask=subtask,
+        task=task,
+        user=user,
+        team=team,
+        message="hello",
+        include_wework_space_mcp=True,
+    )
+
+    assert result.mcp_servers == [
+        {
+            "name": "wegent-wework-space",
+            "type": "streamable-http",
+            "url": "http://localhost:8000/mcp/wework-space/sse",
+            "timeout": 60,
+            "auth": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+    assert result.bot[0]["mcp_servers"] == [
+        {
+            "name": "wegent-wework-space",
+            "type": "http",
+            "url": "http://localhost:8000/mcp/wework-space/sse",
+            "timeout": 60,
+            "headers": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+
+
 class TestPrepareMcpForClaudeCode:
     """Integration tests for _prepare_mcp_for_claude_code."""
 

@@ -1,11 +1,14 @@
-import { AlertCircle, Check, Loader2, MessageSquareText, ShieldCheck, X } from 'lucide-react'
-import { useState } from 'react'
+import { AlertCircle, Check, Loader2, MessageSquareText, Play, ShieldCheck, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getDefaultModelOptions } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
 import type {
+  ModelOptions,
   ModelSelectionConfig,
   RuntimeSupervisorMode,
   RuntimeSupervisorState,
@@ -24,6 +27,8 @@ interface TaskSupervisorControlProps {
   open: boolean
   supervisor?: RuntimeSupervisorState | null
   initialConfig?: TaskSupervisorConfig | null
+  defaultModelSelection?: ModelSelectionConfig | null
+  defaultIntervalSeconds?: number
   defaultInstructions?: string
   models?: UnifiedModel[]
   onOpenChange: (open: boolean) => void
@@ -42,6 +47,8 @@ export function TaskSupervisorControl({
   open,
   supervisor,
   initialConfig,
+  defaultModelSelection,
+  defaultIntervalSeconds = 30,
   defaultInstructions = '',
   models = [],
   onOpenChange,
@@ -54,9 +61,11 @@ export function TaskSupervisorControl({
 
   return (
     <TaskSupervisorDialogContent
-      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelSelection?.modelName ?? initialConfig?.modelSelection?.modelName ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30}`}
+      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelSelection?.modelName ?? initialConfig?.modelSelection?.modelName ?? defaultModelSelection?.modelName ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? defaultIntervalSeconds}`}
       supervisor={supervisor}
       initialConfig={initialConfig}
+      defaultModelSelection={defaultModelSelection}
+      defaultIntervalSeconds={defaultIntervalSeconds}
       defaultInstructions={defaultInstructions}
       models={models}
       onOpenChange={onOpenChange}
@@ -71,13 +80,17 @@ export function TaskSupervisorControl({
 interface TaskSupervisorStatusButtonProps {
   supervisor: RuntimeSupervisorState
   onClick: () => void
+  onRunNow?: () => Promise<RuntimeSupervisorState | null>
 }
 
 export function TaskSupervisorStatusButton({
   supervisor,
   onClick,
+  onRunNow,
 }: TaskSupervisorStatusButtonProps) {
   const { t } = useTranslation('common')
+  const [runningNow, setRunningNow] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
   const pendingCount = supervisor.suggestions.filter(
     suggestion => suggestion.status === 'pending'
   ).length
@@ -95,37 +108,105 @@ export function TaskSupervisorStatusButton({
         : latestCheckFoundNoCorrection
           ? t('workbench.supervisor_aligned')
           : t('workbench.supervisor_active')
+  const nextCheckAt = supervisor.lastEvaluatedAt
+    ? supervisor.lastEvaluatedAt + (supervisor.intervalSeconds ?? 30) * 1_000
+    : null
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!nextCheckAt) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [nextCheckAt])
+
+  const nextCheckLabel = nextCheckAt
+    ? t('workbench.supervisor_next_check', {
+        time: formatCountdown(Math.max(0, nextCheckAt - now)),
+      })
+    : t('workbench.supervisor_waiting_first_check')
+
+  const runNow = async () => {
+    if (!onRunNow) return
+    setRunningNow(true)
+    setRunError(null)
+    try {
+      await onRunNow()
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : t('workbench.supervisor_run_now_failed'))
+    } finally {
+      setRunningNow(false)
+    }
+  }
 
   return (
-    <button
-      type="button"
-      data-testid="task-supervisor-toggle-button"
-      onClick={onClick}
-      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-    >
-      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-        {supervisor.status === 'error' ? (
-          <AlertCircle className="h-[18px] w-[18px] text-amber-600" />
-        ) : supervisor.status === 'checking' ? (
-          <Loader2 className="h-[18px] w-[18px] animate-spin" />
-        ) : (
-          <ShieldCheck className="h-[18px] w-[18px]" />
+    <div className="w-full">
+      <div
+        data-testid="task-supervisor-status-row"
+        className="flex min-h-11 w-full items-center gap-2"
+      >
+        <button
+          type="button"
+          data-testid="task-supervisor-toggle-button"
+          onClick={onClick}
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-md py-2 text-left text-sm text-text-primary hover:bg-hover"
+        >
+          <span
+            data-testid="task-supervisor-status-icon"
+            aria-label={statusLabel}
+            title={statusLabel}
+            className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary"
+          >
+            {supervisor.status === 'error' ? (
+              <AlertCircle className="h-[18px] w-[18px] text-amber-600" />
+            ) : supervisor.status === 'checking' ? (
+              <Loader2 className="h-[18px] w-[18px] animate-spin" />
+            ) : latestCheckFoundNoCorrection ? (
+              <Check className="h-[18px] w-[18px] text-green-500" />
+            ) : (
+              <ShieldCheck className="h-[18px] w-[18px]" />
+            )}
+          </span>
+          <span className="min-w-0 flex-1 truncate">{t('workbench.supervisor_title')}</span>
+          <span
+            data-testid="task-supervisor-status-next-check"
+            className="shrink-0 text-xs text-text-muted"
+          >
+            {nextCheckLabel}
+          </span>
+          {pendingCount > 0 && (
+            <span className="rounded-full bg-text-primary px-1.5 text-xs text-background">
+              {pendingCount}
+            </span>
+          )}
+        </button>
+        {onRunNow && (
+          <button
+            type="button"
+            data-testid="task-supervisor-status-run-now-button"
+            disabled={runningNow || supervisor.status === 'checking'}
+            onClick={() => void runNow()}
+            aria-label={t('workbench.supervisor_run_now')}
+            title={t('workbench.supervisor_run_now')}
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+          >
+            {runningNow ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+          </button>
         )}
-      </span>
-      <span className="min-w-0 flex-1 truncate">{t('workbench.supervisor_title')}</span>
-      <span className="shrink-0 text-xs text-text-muted">{statusLabel}</span>
-      {pendingCount > 0 && (
-        <span className="rounded-full bg-text-primary px-1.5 text-xs text-background">
-          {pendingCount}
-        </span>
-      )}
-    </button>
+      </div>
+      {runError && <p className="ml-[30px] text-xs text-red-600">{runError}</p>}
+    </div>
   )
 }
 
 function TaskSupervisorDialogContent({
   supervisor,
   initialConfig,
+  defaultModelSelection,
+  defaultIntervalSeconds = 30,
   defaultInstructions = '',
   models = [],
   onOpenChange,
@@ -135,35 +216,37 @@ function TaskSupervisorDialogContent({
   className,
 }: Omit<TaskSupervisorControlProps, 'open'>) {
   const { t } = useTranslation('common')
-  const configuredModelSelection = supervisor?.modelSelection ?? initialConfig?.modelSelection
-  const configuredModel = models.find(
-    model =>
-      model.name === configuredModelSelection?.modelName &&
-      (!configuredModelSelection.modelType || model.type === configuredModelSelection.modelType)
+  const configuredModelSelection: ModelSelectionConfig | null | undefined =
+    supervisor?.modelSelection ?? initialConfig?.modelSelection ?? defaultModelSelection
+  const configuredModelFromCatalog = models.find(model =>
+    modelMatchesSelection(model, configuredModelSelection)
   )
+  const configuredModel = configuredModelFromCatalog ?? modelFromSelection(configuredModelSelection)
+  const selectableModels =
+    configuredModel && !configuredModelFromCatalog ? [configuredModel, ...models] : models
   const [mode, setMode] = useState<RuntimeSupervisorMode>(
     supervisor?.mode ?? initialConfig?.mode ?? 'auto'
   )
   const [instructions, setInstructions] = useState(
     supervisor?.instructions ?? initialConfig?.instructions ?? defaultInstructions
   )
-  const [modelKey, setModelKey] = useState(
-    configuredModel
-      ? `${configuredModel.type}:${configuredModel.name}`
-      : modelSelectionKey(models[0])
+  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null)
+  const selectedModel =
+    selectedModelKey &&
+    selectableModels.some(candidate => modelSelectionKey(candidate) === selectedModelKey)
+      ? (selectableModels.find(candidate => modelSelectionKey(candidate) === selectedModelKey) ??
+        null)
+      : (configuredModel ?? selectableModels[0] ?? null)
+  const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>(
+    configuredModelSelection?.options ?? getDefaultModelOptions(selectedModel)
   )
+  const modelKey = modelSelectionKey(selectedModel ?? undefined)
   const [intervalSeconds, setIntervalSeconds] = useState(
-    supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30
+    supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? defaultIntervalSeconds
   )
   const [saving, setSaving] = useState(false)
   const [runningNow, setRunningNow] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const formatCheckTime = (timestamp: number) =>
-    new Date(timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
   const lastCheckedAt = supervisor?.lastEvaluatedAt
     ? formatCheckTime(supervisor.lastEvaluatedAt)
     : null
@@ -180,18 +263,23 @@ function TaskSupervisorDialogContent({
     setSaving(true)
     setError(null)
     try {
-      const model = models.find(candidate => modelSelectionKey(candidate) === modelKey)
-      const modelSelection =
-        model && model.namespace && model.resourceUserId !== undefined
-          ? {
-              modelName: model.name,
-              modelType: model.type,
-              options: {
-                weworkCloudModelNamespace: model.namespace,
-                weworkCloudModelResourceUserId: String(model.resourceUserId),
-              },
-            }
-          : null
+      const modelSelection = selectedModel
+        ? {
+            modelName: selectedModel.name,
+            modelType: selectedModel.type,
+            options: {
+              ...selectedModelOptions,
+              ...(selectedModel.namespace
+                ? { weworkCloudModelNamespace: selectedModel.namespace }
+                : {}),
+              ...(selectedModel.resourceUserId !== undefined
+                ? {
+                    weworkCloudModelResourceUserId: String(selectedModel.resourceUserId),
+                  }
+                : {}),
+            },
+          }
+        : null
       await onSet(mode, instructions, modelSelection, intervalSeconds)
       onOpenChange(false)
     } catch (saveError) {
@@ -332,18 +420,34 @@ function TaskSupervisorDialogContent({
           <div className="mt-3 grid grid-cols-2 gap-2">
             <label className="block text-xs font-medium text-text-secondary">
               {t('workbench.supervisor_model')}
-              <select
+              <div
                 data-testid="task-supervisor-model"
-                value={modelKey}
-                onChange={event => setModelKey(event.target.value)}
-                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-primary"
+                data-value={modelKey}
+                className="mt-1 min-w-0"
               >
-                {models.map(model => (
-                  <option key={`${model.type}:${model.name}`} value={modelSelectionKey(model)}>
-                    {model.displayName || model.name}
-                  </option>
-                ))}
-              </select>
+                <ModelSelector
+                  models={selectableModels}
+                  selectedModel={selectedModel}
+                  selectedModelOptions={selectedModelOptions}
+                  disabled={saving || runningNow || selectableModels.length === 0}
+                  onSelectModel={model => {
+                    if (!model) return false
+                    setSelectedModelKey(modelSelectionKey(model))
+                    setSelectedModelOptions(getDefaultModelOptions(model))
+                    return true
+                  }}
+                  onSelectModelAndOptions={(model, options) => {
+                    setSelectedModelKey(modelSelectionKey(model))
+                    setSelectedModelOptions(options)
+                  }}
+                  onSelectModelOption={(optionId, value) =>
+                    setSelectedModelOptions(current => ({ ...current, [optionId]: value }))
+                  }
+                  menuPlacement="below"
+                  buttonClassName="!w-full rounded-md border border-border bg-background px-2 hover:bg-surface"
+                  menuClassName="w-72"
+                />
+              </div>
             </label>
             <label className="block text-xs font-medium text-text-secondary">
               {t('workbench.supervisor_frequency')}
@@ -417,7 +521,61 @@ function TaskSupervisorDialogContent({
 }
 
 function modelSelectionKey(model: UnifiedModel | undefined): string {
-  return model ? `${model.type}:${model.name}` : ''
+  if (!model) return ''
+  return [
+    model.type,
+    model.name,
+    model.namespace ?? '',
+    model.resourceUserId === undefined ? '' : String(model.resourceUserId),
+  ].join(':')
+}
+
+function modelMatchesSelection(
+  model: UnifiedModel,
+  selection: ModelSelectionConfig | null | undefined
+): boolean {
+  if (!selection || model.name !== selection.modelName) return false
+  if (selection.modelType && model.type !== selection.modelType) return false
+  const namespace = selection.options?.weworkCloudModelNamespace
+  if (namespace && model.namespace !== namespace) return false
+  const resourceUserId = selection.options?.weworkCloudModelResourceUserId
+  return !resourceUserId || String(model.resourceUserId) === resourceUserId
+}
+
+function modelFromSelection(
+  selection: ModelSelectionConfig | null | undefined
+): UnifiedModel | undefined {
+  if (!selection?.modelName || !selection.modelType) return undefined
+  const namespace = selection.options?.weworkCloudModelNamespace
+  const resourceUserIdValue = selection.options?.weworkCloudModelResourceUserId
+  const resourceUserId = resourceUserIdValue === undefined ? undefined : Number(resourceUserIdValue)
+  if (resourceUserId !== undefined && (!Number.isInteger(resourceUserId) || resourceUserId < 0)) {
+    return undefined
+  }
+  return {
+    name: selection.modelName,
+    type: selection.modelType,
+    ...(namespace ? { namespace } : {}),
+    ...(resourceUserId !== undefined ? { resourceUserId } : {}),
+  }
+}
+
+function formatCheckTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function formatCountdown(durationMs: number): string {
+  const totalSeconds = Math.ceil(durationMs / 1_000)
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  const parts = [minutes, seconds]
+  if (hours > 0) parts.unshift(hours)
+  return parts.map(part => String(part).padStart(2, '0')).join(':')
 }
 
 interface SupervisorSuggestionCardsProps {

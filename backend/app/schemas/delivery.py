@@ -78,6 +78,7 @@ class LoopItemResponse(BaseModel):
     execution_state: str | None = None
     can_approve: bool = False
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
+    status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
@@ -122,6 +123,15 @@ class LoopItemResponse(BaseModel):
                     else []
                 )
             )
+            status_history = (
+                value.get("status_history")
+                if value.get("status_history") is not None
+                else (
+                    metadata.get("status_history")
+                    if isinstance(metadata.get("status_history"), list)
+                    else []
+                )
+            )
             approval = (
                 value.get("approval")
                 if value.get("approval") is not None
@@ -148,6 +158,7 @@ class LoopItemResponse(BaseModel):
                     else metadata.get("execution_state")
                 ),
                 "assignment_history": assignment_history,
+                "status_history": status_history,
                 "approval": approval,
                 "queued_at": queued_at,
                 "execution_note": (

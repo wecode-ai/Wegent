@@ -1,11 +1,11 @@
 import { Check, Circle } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimePlanEventPayload, RuntimePlanStep } from '@/types/api'
 
-export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | null }) {
-  const { t } = useTranslation('common')
+const COMPLETED_PLAN_NOTICE_DURATION_MS = 2200
 
+export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | null }) {
   useEffect(() => {
     if (import.meta.env.DEV) {
       console.warn('[Wework] Runtime task plan progress rendered', {
@@ -16,9 +16,34 @@ export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | nu
 
   if (!plan?.plan.length) return null
 
+  const allCompleted = plan.plan.every(step => step.status === 'completed')
+  if (allCompleted) {
+    return <CompletedTaskPlanProgress key={runtimePlanIdentity(plan)} plan={plan} />
+  }
+  return <TaskPlanProgressContent plan={plan} allCompleted={false} />
+}
+
+function CompletedTaskPlanProgress({ plan }: { plan: RuntimePlanEventPayload }) {
+  const [visible, setVisible] = useState(true)
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setVisible(false), COMPLETED_PLAN_NOTICE_DURATION_MS)
+    return () => window.clearTimeout(timeout)
+  }, [])
+
+  return visible ? <TaskPlanProgressContent plan={plan} allCompleted /> : null
+}
+
+function TaskPlanProgressContent({
+  plan,
+  allCompleted,
+}: {
+  plan: RuntimePlanEventPayload
+  allCompleted: boolean
+}) {
+  const { t } = useTranslation('common')
   const currentIndex = currentPlanStepIndex(plan.plan)
   const activeStep = plan.plan[currentIndex]
-  const allCompleted = plan.plan.every(step => step.status === 'completed')
 
   return (
     <div data-testid="runtime-plan-progress" className="relative z-0 mb-2 flex justify-center">
@@ -66,6 +91,16 @@ export function TaskPlanProgress({ plan }: { plan?: RuntimePlanEventPayload | nu
       </div>
     </div>
   )
+}
+
+function runtimePlanIdentity(plan: RuntimePlanEventPayload): string {
+  return JSON.stringify({
+    taskId: plan.taskId ?? null,
+    subtaskId: plan.subtaskId ?? null,
+    threadId: plan.threadId ?? null,
+    turnId: plan.turnId ?? null,
+    plan: plan.plan,
+  })
 }
 
 function currentPlanStepIndex(plan: RuntimePlanStep[]): number {

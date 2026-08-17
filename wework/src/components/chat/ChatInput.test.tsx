@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
@@ -38,7 +38,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ChatInput } from './ChatInput'
-import type { ChatSubmitOptions } from './ChatInput'
+import type { ChatInputHandle, ChatSubmitOptions } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
@@ -315,6 +315,46 @@ describe('ChatInput', () => {
       expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
       expect(window.getSelection()?.anchorOffset).toBe(5)
     })
+  })
+
+  test('moves the caret and editor viewport to the end after selecting a quick phrase', async () => {
+    function Harness() {
+      const [value, setValue] = useState('existing prompt')
+      return (
+        <ChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input')
+    const textNode = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT).nextNode()
+    const range = document.createRange()
+    range.setStart(textNode!, 0)
+    range.collapse(true)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+
+    await userEvent.click(screen.getByTestId('quick-phrase-button'))
+    await userEvent.click(screen.getByTestId('quick-phrase-option-default-summary-progress'))
+
+    await waitFor(() => {
+      expect(editor).toHaveFocus()
+      expect((editor as HTMLElement & { value: string }).value).toBe(
+        'existing prompt\n总结目前完成的工作和下一步建议'
+      )
+    })
+    const paragraphs = editor.querySelectorAll('p')
+    const trailingText = paragraphs.item(paragraphs.length - 1).lastChild
+    expect(window.getSelection()?.anchorNode).toBe(trailingText)
+    expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })
 
   test('opens plugin picker from its toolbar button without a separate slash action', async () => {
@@ -765,6 +805,11 @@ describe('ChatInput', () => {
     await waitFor(() =>
       expect(screen.getByTestId('chat-message-input')).toHaveTextContent('先检查引导条里的文本')
     )
+
+    const editor = screen.getByTestId('chat-message-input')
+    expect(editor).toHaveFocus()
+    await userEvent.type(editor, '，继续')
+    expect(editor).toHaveTextContent('先检查引导条里的文本，继续')
   })
 
   test('shows lightweight interrupt action while guidance is sending', async () => {
@@ -905,6 +950,7 @@ describe('ChatInput', () => {
   })
 
   test('asks whether to preserve a paused queue before sending a new message', async () => {
+    const inputRef = createRef<ChatInputHandle>()
     const onSubmit = vi.fn()
     const onResumeQueue = vi.fn()
     const onChange = vi.fn()
@@ -912,6 +958,7 @@ describe('ChatInput', () => {
 
     render(
       <ChatInput
+        ref={inputRef}
         value="发送新消息"
         onChange={onChange}
         onSubmit={onSubmit}
@@ -941,6 +988,7 @@ describe('ChatInput', () => {
     expect(onSubmit).not.toHaveBeenCalled()
     expect(onResumeQueueWithInput).toHaveBeenCalled()
     expect(onChange).toHaveBeenCalledWith('')
+    expect(inputRef.current?.getValue()).toBe('')
   })
 
   test('hides drag handles when fewer than two messages are queued', () => {

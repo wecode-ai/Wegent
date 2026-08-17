@@ -4,6 +4,7 @@ const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
 const FIRST_PROMPT = 'SPLIT LEFT TASK'
 const SECOND_PROMPT = 'SPLIT RIGHT TASK'
+const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
 const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
 
 function sse(events) {
@@ -147,6 +148,83 @@ async function createTask(control, prompt, timeoutMs) {
     timeoutMs,
   })
   return waitForNewTaskRow(control, knownRows, prompt, timeoutMs)
+}
+
+async function verifyMultilineComposerCaret(control, captureScreenshot) {
+  assert.match(
+    await control.command('getAttribute', COMPOSER, { value: 'class' }),
+    /\bcomposer-prosemirror-editor\b/,
+    'The split workbench did not render the ProseMirror composer'
+  )
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('click', COMPOSER)
+  const [singleLineCaretMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
+  )
+  assert.ok(singleLineCaretMetrics, 'The empty composer did not render its caret')
+  for (let line = 1; line < 12; line += 1) {
+    await control.command('press', COMPOSER, { key: 'Shift+Enter' })
+  }
+
+  await captureScreenshot(control, '00-composer-multiline-caret-stable.png', 'body')
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    12,
+    'Repeated line breaks did not create one composer paragraph per line'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} .composer-empty-caret`)),
+    1,
+    'The multiline composer did not render exactly one caret'
+  )
+
+  const [composerMetrics] = JSON.parse(await control.command('getElementMetrics', COMPOSER))
+  const [caretMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
+  )
+  assert.ok(
+    composerMetrics.scrollHeight > composerMetrics.clientHeight,
+    'The multiline composer did not reach its scrollable height'
+  )
+  assert.ok(
+    composerMetrics.scrollTop > 0,
+    'The multiline composer caret was not scrolled into view'
+  )
+  assert.equal(
+    caretMetrics.height,
+    singleLineCaretMetrics.height,
+    `The composer caret height changed from ${singleLineCaretMetrics.height}px to ${caretMetrics.height}px`
+  )
+  assert.equal(
+    caretMetrics.width,
+    singleLineCaretMetrics.width,
+    `The composer caret width changed from ${singleLineCaretMetrics.width}px to ${caretMetrics.width}px`
+  )
+  assert.ok(
+    caretMetrics.top >= composerMetrics.top && caretMetrics.bottom <= composerMetrics.bottom,
+    'The multiline composer caret was clipped outside the visible editor'
+  )
+
+  await control.command('press', COMPOSER, { key: 'Backspace' })
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    11,
+    'Backspace did not remove the trailing empty composer line'
+  )
+
+  await control.command('press', COMPOSER, { key: 'Meta+a' })
+  await control.command('press', COMPOSER, { key: 'Backspace' })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    '',
+    'Backspace did not clear the fully selected multiline composer'
+  )
+  await control.command('fill', COMPOSER, { value: '' })
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    1,
+    'Clearing the multiline composer did not restore a single empty paragraph'
+  )
 }
 
 async function expandProject(control, timeoutMs) {
@@ -293,7 +371,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           ? SECOND_PROMPT
           : input.includes(FIRST_PROMPT)
             ? FIRST_PROMPT
-            : null
+            : input.includes(THIRD_PROMPT)
+              ? THIRD_PROMPT
+              : null
         if (!prompt) return false
         const responseId = `wework-split-${Date.now()}`
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -314,6 +394,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const taskTimeoutMs = Math.max(uiTimeoutMs, 30_000)
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+      await verifyMultilineComposerCaret(control, captureScreenshot)
       const firstTaskRow = await createTask(control, FIRST_PROMPT, taskTimeoutMs)
 
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -620,9 +701,71 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const restoredSecondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
       await assertPaneConversation(control, restoredFirstPane, `${FIRST_PROMPT}_COMPLETE`)
       await assertPaneConversation(control, restoredSecondPane, `${SECOND_PROMPT}_COMPLETE`)
+      const firstGroupBadge = `${firstRow} [data-testid="runtime-local-task-split-group-${firstTaskId}"]`
+      const secondGroupBadge = `${secondRow} [data-testid="runtime-local-task-split-group-${secondTaskId}"]`
+      await control.command('waitFor', firstGroupBadge, {
+        text: '1',
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', secondGroupBadge, {
+        text: '1',
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getAttribute', firstGroupBadge, {
+          value: 'data-split-group',
+        }),
+        await control.command('getAttribute', secondGroupBadge, {
+          value: 'data-split-group',
+        }),
+        'Split members do not share one group identifier'
+      )
       await captureScreenshot(control, '10-split-restored-after-reload.png', 'body')
 
-      await control.command('click', `${restoredFirstPane} [data-testid^="workbench-close-pane-"]`)
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER, { stableMs: 500, timeoutMs: uiTimeoutMs })
+      const thirdTaskRow = await createTask(control, THIRD_PROMPT, taskTimeoutMs)
+      await assertPaneConversation(control, PANE_SELECTOR, `${THIRD_PROMPT}_COMPLETE`)
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        1,
+        'Opening an unrelated conversation must leave the split group intact and show one pane'
+      )
+      assert.notEqual(
+        await control.command('getAttribute', firstGroupBadge, {
+          value: 'data-split-group-active',
+        }),
+        'true',
+        'Inactive split members must not remain selected'
+      )
+
+      await control.command('click', firstRow)
+      await control.command('waitFor', '[role="separator"][data-separator]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      const restoredGroupFirstPane = await paneSelectorForTitle(control, FIRST_PROMPT)
+      const restoredGroupSecondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
+      await assertPaneConversation(control, restoredGroupFirstPane, `${FIRST_PROMPT}_COMPLETE`)
+      await assertPaneConversation(control, restoredGroupSecondPane, `${SECOND_PROMPT}_COMPLETE`)
+      assert.equal(
+        await control.command('getAttribute', firstGroupBadge, {
+          value: 'data-split-group-active',
+        }),
+        'true',
+        'Clicking a split member did not restore its complete group'
+      )
+      await captureScreenshot(control, '11-split-group-restored-from-sidebar.png', 'body')
+
+      await control.command(
+        'click',
+        `${restoredGroupFirstPane} [data-testid^="workbench-close-pane-"]`
+      )
       await control.command('waitFor', PANE_SELECTOR, {
         text: SECOND_PROMPT,
         stableMs: 300,
@@ -643,9 +786,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         0,
         'Returning to single-task mode retained split title chrome'
       )
-      await captureScreenshot(control, '11-split-return-single.png', 'body')
+      await waitForElementCount(control, firstGroupBadge, 0, uiTimeoutMs)
+      await waitForElementCount(control, secondGroupBadge, 0, uiTimeoutMs)
+      await captureScreenshot(control, '12-split-return-single.png', 'body')
 
-      assert.ok(firstTaskId && secondTaskId)
+      assert.ok(firstTaskId && secondTaskId && thirdTaskRow)
     },
   }
 }

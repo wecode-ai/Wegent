@@ -21,7 +21,15 @@ import {
   GitImportResponse,
   addSkillToGroups,
   updateSkillFromGitRepository,
+  type SkillSource,
 } from '@/apis/skills'
+import {
+  downloadSkill as downloadMarketSkill,
+  listSkillMarketProviders,
+  searchSkills as searchMarketSkills,
+  type MarketSkill,
+  type SkillMarketProvider,
+} from '@/apis/skillMarketplace'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
@@ -57,6 +65,7 @@ import {
   XCircle,
   AlertTriangle,
   Loader2,
+  Store,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Group } from '@/types/group'
@@ -114,9 +123,12 @@ function getSkillSource(skill: Skill | UnifiedSkill | null | undefined) {
   return skill.source
 }
 
-function getInitialUpdateTab(skill: Skill | UnifiedSkill | null | undefined): 'upload' | 'git' {
+function getInitialUpdateTab(
+  skill: Skill | UnifiedSkill | null | undefined
+): 'upload' | 'git' | 'market' {
   const sourceType = getSkillSource(skill)?.type
   if (sourceType === 'git') return 'git'
+  if (sourceType === 'marketplace') return 'market'
   return 'upload'
 }
 
@@ -134,7 +146,7 @@ export default function SkillUploadModal({
   onCreateOptionsChange,
 }: SkillUploadModalProps) {
   const { t } = useTranslation('common')
-  const [activeTab, setActiveTab] = useState<'upload' | 'git'>('upload')
+  const [activeTab, setActiveTab] = useState<'upload' | 'git' | 'market'>('upload')
   const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
 
   // Upload tab state
@@ -160,6 +172,8 @@ export default function SkillUploadModal({
   const [selectedOverwrites, setSelectedOverwrites] = useState<Set<string>>(new Set())
   const [importResult, setImportResult] = useState<GitImportResponse | null>(null)
   const [showResult, setShowResult] = useState(false)
+  const [marketProviders, setMarketProviders] = useState<SkillMarketProvider[]>([])
+  const [loadingMarketProviders, setLoadingMarketProviders] = useState(false)
   const [updatingFromOriginalGit, setUpdatingFromOriginalGit] = useState(false)
 
   const isEditMode = !!skill
@@ -193,6 +207,12 @@ export default function SkillUploadModal({
     setScannedSkills([])
     setSelectedSkillPaths(new Set())
     setGitError(null)
+
+    setLoadingMarketProviders(true)
+    listSkillMarketProviders()
+      .then(setMarketProviders)
+      .catch(() => setMarketProviders([]))
+      .finally(() => setLoadingMarketProviders(false))
   }, [isEditMode, open, skill])
 
   const addSavedSkillsToGroups = async (skillIds: number[]): Promise<void> => {
@@ -608,6 +628,29 @@ export default function SkillUploadModal({
     }
   }
 
+  const handleUpdateFromMarket = async (
+    provider: SkillMarketProvider,
+    marketSkill: MarketSkill
+  ) => {
+    if (!skill) return
+
+    const blob = await downloadMarketSkill(provider.key, marketSkill.skillKey)
+    const file = new File([blob], `${skillName}.zip`, { type: 'application/zip' })
+    const skillId = getSkillId(skill)
+    const source = {
+      type: 'marketplace' as const,
+      provider_key: provider.key,
+      skill_key: marketSkill.skillKey,
+      original_skill_key: marketSkill.originalSkillKey,
+    }
+    if (isPublic) {
+      await updatePublicSkillWithUpload(skillId, file, undefined, source)
+    } else {
+      await updateSkill(skillId, file, undefined, source)
+    }
+    onClose(true, skillId)
+  }
+
   return (
     <>
       <Dialog open={open} onOpenChange={open => !open && handleClose()}>
@@ -628,10 +671,16 @@ export default function SkillUploadModal({
 
           <Tabs
             value={activeTab}
-            onValueChange={v => setActiveTab(v as 'upload' | 'git')}
+            onValueChange={v => setActiveTab(v as 'upload' | 'git' | 'market')}
             className="min-w-0 max-w-full overflow-hidden"
           >
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList
+              className={`grid w-full ${
+                isEditMode && (loadingMarketProviders || marketProviders.length > 0)
+                  ? 'grid-cols-3'
+                  : 'grid-cols-2'
+              }`}
+            >
               <TabsTrigger
                 value="upload"
                 className="flex items-center gap-2"
@@ -649,6 +698,16 @@ export default function SkillUploadModal({
                 <GitBranch className="w-4 h-4" />
                 {isEditMode ? t('skills.update_from_git') : t('skills.git_import_tab')}
               </TabsTrigger>
+              {isEditMode && (loadingMarketProviders || marketProviders.length > 0) && (
+                <TabsTrigger
+                  value="market"
+                  className="flex items-center gap-2"
+                  data-testid="skill-update-market-tab"
+                >
+                  <Store className="w-4 h-4" />
+                  {t('skills.update_from_skill_market')}
+                </TabsTrigger>
+              )}
             </TabsList>
 
             <TabsContent value="upload" className="mt-4">
@@ -742,6 +801,20 @@ export default function SkillUploadModal({
                 />
               )}
             </TabsContent>
+
+            {isEditMode && (
+              <TabsContent value="market" className="mt-4 min-w-0 max-w-full overflow-hidden">
+                <SkillMarketUpdateForm
+                  providers={marketProviders}
+                  loadingProviders={loadingMarketProviders}
+                  skillName={skillName}
+                  skillSource={getSkillSource(skill)}
+                  onUpdate={handleUpdateFromMarket}
+                  onClose={handleClose}
+                  t={t}
+                />
+              </TabsContent>
+            )}
           </Tabs>
         </DialogContent>
       </Dialog>
@@ -1182,6 +1255,224 @@ function OriginalGitUpdateForm({
         >
           {updating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {t('skills.update_from_git')}
+        </Button>
+      </DialogFooter>
+    </div>
+  )
+}
+
+interface SkillMarketUpdateFormProps {
+  providers: SkillMarketProvider[]
+  loadingProviders: boolean
+  skillName: string
+  skillSource?: SkillSource
+  onUpdate: (provider: SkillMarketProvider, skill: MarketSkill) => Promise<void>
+  onClose: () => void
+  t: (key: string, options?: Record<string, unknown>) => string
+}
+
+function SkillMarketUpdateForm({
+  providers,
+  loadingProviders,
+  skillName,
+  skillSource,
+  onUpdate,
+  onClose,
+  t,
+}: SkillMarketUpdateFormProps) {
+  const [providerKey, setProviderKey] = useState(skillSource?.provider_key || '')
+  const [skills, setSkills] = useState<MarketSkill[]>([])
+  const [searching, setSearching] = useState(false)
+  const [updatingKey, setUpdatingKey] = useState('')
+  const [marketError, setMarketError] = useState<string | null>(null)
+  const [showingAll, setShowingAll] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
+  const activeProvider = providers.find(provider => provider.key === providerKey) || providers[0]
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [searchQuery])
+
+  useEffect(() => {
+    if (!activeProvider) return
+    let cancelled = false
+    const sourceSkillName = skillSource?.original_skill_key || skillName
+    const sourceSearchKeyword = skillSource?.skill_key || sourceSkillName
+    setProviderKey(activeProvider.key)
+    setSearching(true)
+    setMarketError(null)
+    setShowingAll(false)
+
+    const searchPromise = debouncedSearchQuery
+      ? searchMarketSkills(activeProvider.key, {
+          keyword: debouncedSearchQuery,
+          page: 1,
+          pageSize: 100,
+        }).then(result => result.skills)
+      : searchMarketSkills(activeProvider.key, {
+          keyword: sourceSearchKeyword,
+          page: 1,
+          pageSize: 20,
+        }).then(async result => {
+          const matchingSkills = result.skills.filter(
+            item =>
+              item.skillKey === skillSource?.skill_key || item.originalSkillKey === sourceSkillName
+          )
+          if (matchingSkills.length > 0) return matchingSkills
+
+          const allSkills = await searchMarketSkills(activeProvider.key, {
+            page: 1,
+            pageSize: 100,
+          })
+          const matchingAllSkills = allSkills.skills.filter(
+            item =>
+              item.skillKey === skillSource?.skill_key || item.originalSkillKey === sourceSkillName
+          )
+          if (!cancelled) setShowingAll(matchingAllSkills.length === 0)
+          return matchingAllSkills.length > 0 ? matchingAllSkills : allSkills.skills
+        })
+
+    searchPromise
+      .then(result => {
+        if (!cancelled) setSkills(result)
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setSkills([])
+          setMarketError(
+            err instanceof Error ? err.message : t('skills.skill_market_search_failed')
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSearching(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeProvider, debouncedSearchQuery, skillName, skillSource, t])
+
+  const handleUpdate = async (marketSkill: MarketSkill) => {
+    if (!activeProvider) return
+    setUpdatingKey(marketSkill.skillKey)
+    setMarketError(null)
+    try {
+      await onUpdate(activeProvider, marketSkill)
+    } catch (err) {
+      setMarketError(err instanceof Error ? err.message : t('skills.skill_market_update_failed'))
+    } finally {
+      setUpdatingKey('')
+    }
+  }
+
+  if (loadingProviders) {
+    return (
+      <div className="flex min-h-48 items-center justify-center text-text-muted">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        {t('actions.loading')}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-[min(60vh,560px)] min-h-[360px] min-w-0 max-w-full flex-col gap-3 overflow-hidden">
+      {providers.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {providers.map(provider => (
+            <Button
+              key={provider.key}
+              variant={activeProvider?.key === provider.key ? 'primary' : 'outline'}
+              size="sm"
+              onClick={() => setProviderKey(provider.key)}
+              data-testid={`select-skill-market-provider-${provider.key}`}
+            >
+              {provider.name}
+            </Button>
+          ))}
+        </div>
+      )}
+      <div className="flex min-w-0 max-w-full flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <Input
+            value={searchQuery}
+            onChange={event => setSearchQuery(event.target.value)}
+            placeholder={t('skills.skill_market_search_placeholder')}
+            className="pl-9"
+            data-testid="skill-market-update-search"
+          />
+        </div>
+        <div className="shrink-0 text-xs text-text-muted">
+          {t('skills.skill_market_result_count', { count: skills.length })}
+        </div>
+      </div>
+      {!debouncedSearchQuery && (
+        <div className="max-w-full break-words rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+          {t(
+            showingAll
+              ? 'skills.skill_market_no_match_showing_all'
+              : 'skills.skill_market_filter_hint',
+            { skillName }
+          )}
+        </div>
+      )}
+      {marketError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{marketError}</AlertDescription>
+        </Alert>
+      )}
+      {searching ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-text-muted">
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+          {t('skills.skill_market_searching')}
+        </div>
+      ) : skills.length === 0 ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center text-text-muted">
+          {t(
+            debouncedSearchQuery
+              ? 'skills.skill_market_search_no_results'
+              : 'skills.skill_market_empty'
+          )}
+        </div>
+      ) : (
+        <div className="min-h-0 min-w-0 max-w-full flex-1 space-y-2 overflow-x-hidden overflow-y-auto pr-1">
+          {skills.map(marketSkill => (
+            <div
+              key={marketSkill.skillKey}
+              className="flex w-full min-w-0 max-w-full items-center gap-3 overflow-hidden rounded-lg border border-border px-3 py-2.5"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{marketSkill.name}</p>
+                <p className="truncate text-xs text-text-muted">
+                  {marketSkill.author}
+                  {marketSkill.version ? ` · v${marketSkill.version}` : ''}
+                </p>
+                <p className="truncate text-xs text-text-muted">{marketSkill.originalSkillKey}</p>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                className="shrink-0"
+                onClick={() => handleUpdate(marketSkill)}
+                disabled={Boolean(updatingKey)}
+                data-testid={`update-skill-from-market-${marketSkill.skillKey}`}
+              >
+                {updatingKey === marketSkill.skillKey && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                {t('skills.update_skill')}
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <DialogFooter className="border-t border-border pt-3">
+        <Button variant="outline" onClick={onClose} disabled={Boolean(updatingKey)}>
+          {t('actions.cancel')}
         </Button>
       </DialogFooter>
     </div>

@@ -28,7 +28,11 @@ New tables are `plugins`, `plugin_releases`, `plugin_upstreams`, `plugin_submiss
 
 ## Lifecycle
 
-Installation upserts account intent, creates pending device rows, sends a short-lived signed package URL, verifies SHA256 and the Codex manifest, installs atomically, and records each device result. Existing installs update manually. Local creations never call the cloud upload API. Publishing uses a presigned PUT, server-side scanning, and human review before a Release becomes searchable.
+Installation upserts account intent, creates pending device rows, sends a short-lived signed package URL, verifies SHA256 and the Codex manifest, installs atomically, and records each device result. Marketplace installs update automatically by default, and users can opt out in plugin details. Local creations never call the cloud upload API. Publishing uses a presigned PUT, server-side scanning, and human review before a Release becomes searchable.
+
+Automatic updates can advance only to immutable Releases whose status is `ready` and whose security scan is `passed`. Opening the plugin marketplace advances account desired versions in bounded batches and synchronizes the current device. A failed update does not replace `actual_release_id`, so the device keeps using its last confirmed release.
+
+`kinds/InstalledPlugin.spec.updatePolicy` stores the user preference: `auto` is the default and `manual` disables automatic updates. `plugin_device_installations.attempt_count` tracks consecutive failures per device, plugin, and desired Release. Wework retries on the next marketplace open while the count is below three. After three failures it pauses automatic retries and requires a manual update, which resets the count and bypasses that circuit break. A new desired Release also resets the count. Full device synchronization must continue sending the preserved `actual_release_id` for a paused update so an unrelated plugin sync cannot bypass old-version protection.
 
 Wework sends the local Executor's stable `device_id` to catalog and mutation APIs. A catalog item is installed only when that device reports `state=installed` with `actual_release_id` equal to the desired Release. A mutation returns `502` only when the requesting device fails; failures on other devices remain visible for reconnect reconciliation. WebSocket reconnect sync writes per-plugin results back and clears completed uninstall or stale failure rows.
 

@@ -553,6 +553,10 @@ recipe closely:
   Short threads therefore fill the viewport while long and virtualized threads
   grow naturally. Keep bottom following stable across delayed virtual
   measurements, but stop following immediately after an explicit user scroll.
+- When guidance or another runtime event inserts, removes, or reorders messages
+  inside a virtualized thread, remeasure mounted rows from the first changed
+  index. The virtual container must include every rendered row so no message can
+  appear below or behind the sticky composer.
 
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
@@ -699,6 +703,11 @@ semantics for all three.
   active task and unsent composer input.
 - Opening the bottom workspace panel starts or restores its Terminal directly;
   it must not show an IDE launcher or require an intermediate tool choice.
+- 底部工作区面板可缩小到仅显示一行终端；最小高度必须根据当前代码
+  字号、面板控件高度和终端内边距计算，不得使用较大的固定像素下限。
+- The bottom workspace panel may be resized down to one visible terminal row.
+  Its minimum height must derive from the current code font size plus the panel
+  chrome and terminal padding instead of using a fixed large pixel minimum.
 - Terminal sessions may remain mounted while the bottom panel is hidden so the
   shell session and scrollback survive panel restoration. Only the active
   terminal should be fitted and resized; after activation, window focus, or

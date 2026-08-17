@@ -23,7 +23,7 @@ The knowledge MCP server uses a decorator-based auto-registration system:
 
 import contextvars
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from inspect import isawaitable, iscoroutinefunction
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
@@ -73,6 +73,8 @@ IMAGE_MCP_MOUNT_PATH = "/mcp/image"
 IMAGE_MCP_TRANSPORT_PATH = "/sse"
 VIDEO_MCP_MOUNT_PATH = "/mcp/video"
 VIDEO_MCP_TRANSPORT_PATH = "/sse"
+WEWORK_SPACE_MCP_MOUNT_PATH = "/mcp/wework-space"
+WEWORK_SPACE_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,7 @@ class CustomMcpAppSpec:
     name: str
     mount_path: str
     transport_path: str
+    server: FastMCP
     build_app: Callable[[str], Starlette]
 
 
@@ -104,6 +107,11 @@ _custom_mcp_app_specs: dict[str, CustomMcpAppSpec] = {}
 def register_custom_mcp_app(spec: CustomMcpAppSpec) -> None:
     """Register or replace a deployment-specific MCP app before startup."""
     _custom_mcp_app_specs[spec.name] = spec
+
+
+def get_custom_mcp_lifespan_servers() -> tuple[tuple[str, FastMCP], ...]:
+    """Return custom MCP servers that must run with the main application."""
+    return tuple((spec.name, spec.server) for spec in _custom_mcp_app_specs.values())
 
 
 @dataclass(frozen=True)
@@ -561,6 +569,32 @@ media_understanding_mcp_server = FastMCP(
     transport_security=_build_transport_security_settings(),
 )
 
+
+wework_space_mcp_server = FastMCP(
+    "wegent-wework-space-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+_wework_space_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_wework_space_request_token_info", default=None)
+)
+_wework_space_tools_registered = False
+
+
+def ensure_wework_space_tools_registered() -> None:
+    global _wework_space_tools_registered
+    if _wework_space_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import wework_space  # noqa: F401
+
+    count = register_tools_to_server(wework_space_mcp_server, "wework_space")
+    logger.info("[MCP:WeworkSpace] Registered %s tools", count)
+    _wework_space_tools_registered = True
+
+
 # ============== Generation MCP Servers ==============
 
 image_mcp_server = FastMCP(
@@ -729,6 +763,17 @@ _VIDEO_MCP_SPEC = McpAppSpec(
     log_prefix="Video",
 )
 
+_WEWORK_SPACE_MCP_SPEC = McpAppSpec(
+    name="wework_space",
+    service_name="wegent-wework-space-mcp",
+    mount_path=WEWORK_SPACE_MCP_MOUNT_PATH,
+    transport_path=WEWORK_SPACE_MCP_TRANSPORT_PATH,
+    server=wework_space_mcp_server,
+    token_context=_wework_space_request_token_info,
+    log_prefix="WeworkSpace",
+    allow_user_token=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
@@ -738,6 +783,7 @@ MCP_APP_SPECS = (
     _MEDIA_UNDERSTANDING_MCP_SPEC,
     _IMAGE_MCP_SPEC,
     _VIDEO_MCP_SPEC,
+    _WEWORK_SPACE_MCP_SPEC,
 )
 
 MCP_CONTEXT_SERVER_NAMES = frozenset(
@@ -749,8 +795,37 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
         "media",
         "image",
         "video",
+        "wework_space",
     }
 )
+
+
+def get_mcp_lifespan_servers() -> tuple[tuple[str, FastMCP], ...]:
+    """Return every MCP server whose transport is mounted by the backend.
+
+    Mounted Starlette applications do not receive lifespan events from their
+    parent application.  The backend lifespan therefore owns the shared
+    FastMCP session managers.  Deriving this list from ``MCP_APP_SPECS`` keeps
+    transport registration and lifecycle ownership on the same source of
+    truth.
+    """
+
+    servers = [(spec.log_prefix, spec.server) for spec in MCP_APP_SPECS]
+    servers.extend(get_custom_mcp_lifespan_servers())
+    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
+        servers.append(("ExternalKnowledge", external_knowledge_mcp_server))
+    return tuple(servers)
+
+
+@asynccontextmanager
+async def mcp_session_managers_lifespan() -> AsyncIterator[None]:
+    """Run all mounted MCP session managers for one backend lifespan."""
+
+    async with AsyncExitStack() as stack:
+        for server_name, mcp_server in get_mcp_lifespan_servers():
+            await stack.enter_async_context(mcp_server.session_manager.run())
+            logger.info("[MCP:%s] Session manager started", server_name)
+        yield
 
 
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
@@ -790,6 +865,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_image_tools_registered()
     elif spec.name == "video":
         ensure_video_tools_registered()
+    elif spec.name == "wework_space":
+        ensure_wework_space_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -1107,4 +1184,18 @@ def get_mcp_media_understanding_config(
         ),
         auth_token=auth_token,
         timeout=180,
+    )
+
+
+def get_mcp_wework_space_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Build the authenticated project-space MCP configuration."""
+
+    return _build_streamable_http_config(
+        name="wegent-wework-space",
+        url=(
+            f"{backend_url}{WEWORK_SPACE_MCP_MOUNT_PATH}"
+            f"{WEWORK_SPACE_MCP_TRANSPORT_PATH}"
+        ),
+        auth_token=auth_token,
+        timeout=60,
     )

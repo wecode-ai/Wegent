@@ -1,4 +1,5 @@
 import { normalizeRuntimeWorkspacePath, runtimeProjectWorkKey } from '@/lib/runtime-project'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type {
   ModelOptions,
   RuntimeGoalCreateInput,
@@ -51,6 +52,8 @@ export interface AutomationProjectOption {
   key: string
   name: string
   workspacePath: string
+  workspaceKind: RuntimeProjectWork['deviceWorkspaces'][number]['workspaceKind']
+  workspaceLabel: string | null
 }
 
 export interface AutomationTaskOption {
@@ -77,15 +80,33 @@ export function buildAutomationProjectOptions(
             normalizeRuntimeWorkspacePath(primaryRoot)
         )
       : null
-    const workspace = primaryWorkspace ?? workspaces[0]
-    return [
-      {
-        key: runtimeProjectWorkKey(project),
-        name: project.project.name,
-        workspacePath: workspace.workspacePath,
-      },
+    const primary =
+      primaryWorkspace ??
+      workspaces.find(workspace => !isWorktreeWorkspace(workspace)) ??
+      workspaces[0]
+    const selectableWorkspaces = [
+      primary,
+      ...workspaces.filter(
+        workspace =>
+          workspace !== primary &&
+          isWorktreeWorkspace(workspace) &&
+          normalizeRuntimeWorkspacePath(workspace.workspacePath) !==
+            normalizeRuntimeWorkspacePath(primary.workspacePath)
+      ),
     ]
+
+    return selectableWorkspaces.map(workspace => ({
+      key: `${runtimeProjectWorkKey(project)}\u0000${normalizeRuntimeWorkspacePath(workspace.workspacePath)}`,
+      name: project.project.name,
+      workspacePath: workspace.workspacePath,
+      workspaceKind: workspace.workspaceKind,
+      workspaceLabel: workspace.label?.trim() || null,
+    }))
   })
+}
+
+function isWorktreeWorkspace(workspace: RuntimeProjectWork['deviceWorkspaces'][number]): boolean {
+  return workspace.workspaceKind === 'worktree' || Boolean(workspace.worktreeId)
 }
 
 export function buildAutomationTaskOptions(
@@ -160,6 +181,7 @@ export function emptyAutomationDraft(
   selectedModel: UnifiedModel | null = null,
   selectedModelOptions: ModelOptions = {}
 ): AutomationDraft {
+  const modelFields = automationModelFields(selectedModel, selectedModelOptions)
   return {
     name: '',
     prompt: '',
@@ -182,9 +204,22 @@ export function emptyAutomationDraft(
     continuationAddress: null,
     goalEnabled: false,
     notificationPolicy: 'all_runs',
-    modelId: selectedModel?.modelId ?? selectedModel?.name ?? '',
-    modelType: selectedModel?.type ?? '',
-    modelOptions: { ...selectedModelOptions },
+    ...modelFields,
+  }
+}
+
+export function automationModelFields(
+  selectedModel: UnifiedModel | null,
+  selectedModelOptions: ModelOptions = {}
+): Pick<AutomationDraft, 'modelId' | 'modelType' | 'modelOptions'> {
+  if (!selectedModel) {
+    return { modelId: '', modelType: '', modelOptions: {} }
+  }
+  const execution = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+  return {
+    modelId: execution.modelId ?? '',
+    modelType: execution.modelType ?? '',
+    modelOptions: execution.modelOptions ?? {},
   }
 }
 

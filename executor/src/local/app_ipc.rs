@@ -90,6 +90,73 @@ if target.exists() and target.is_file():
 
 print(json.dumps(result, ensure_ascii=False))
 "#;
+const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
+import json
+import re
+import shutil
+import subprocess
+import sys
+
+tool = sys.argv[1]
+timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
+executable = shutil.which(tool)
+if not executable:
+    print(json.dumps({
+        "tool": tool,
+        "installed": False,
+        "authenticated": False,
+        "executablePath": None,
+        "version": None,
+        "detectionError": None,
+    }))
+    raise SystemExit(0)
+
+def run(*args):
+    return subprocess.run(
+        [executable, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+
+def is_authenticated(auth_result):
+    if auth_result.returncode == 0:
+        return True
+    if tool != "glab":
+        return False
+
+    output = "\n".join((auth_result.stdout, auth_result.stderr))
+    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
+
+try:
+    version_result = run("--version")
+    version = next(
+        (line.strip() for line in version_result.stdout.splitlines() if line.strip()),
+        None,
+    )
+    auth_result = run("auth", "status")
+except subprocess.TimeoutExpired:
+    print(json.dumps({
+        "tool": tool,
+        "installed": True,
+        "authenticated": False,
+        "executablePath": executable,
+        "version": None,
+        "detectionError": "timeout",
+    }))
+    raise SystemExit(0)
+
+print(json.dumps({
+    "tool": tool,
+    "installed": True,
+    "authenticated": is_authenticated(auth_result),
+    "executablePath": executable,
+    "version": version,
+    "detectionError": None,
+}))
+"#;
 const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
 const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
@@ -214,6 +281,7 @@ pub trait RuntimeWorkHandler: Send + Sync {
 
 pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -382,6 +450,16 @@ impl AppIpcServer {
                 ));
             };
             return handler.configure_backend(params).await;
+        }
+
+        if method == "executor.backend.status" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.backend_status().await;
         }
 
         if method == "device.execute_command" {
@@ -1632,14 +1710,15 @@ fn git_is_worktree(path: &str) -> bool {
 
 #[cfg(windows)]
 fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    command
         .arg("-C")
         .arg(path)
         .args(args)
         .env_clear()
-        .envs(build_env(&HashMap::new()))
-        .output()
-        .ok()?;
+        .envs(build_env(&HashMap::new()));
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1862,6 +1941,51 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "git remote get-url origin",
             &["git", "remote", "get-url", "origin"],
             None,
+        )),
+        "git_github_cli_status" => Some(command_definition(
+            "python3 -c <git_hosting_cli_status> gh",
+            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_cli_status" => Some(command_definition(
+            "python3 -c <git_hosting_cli_status> glab",
+            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_requests" => Some(command_definition(
+            "gh pr list --state all --head <branch>",
+            &[
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "20",
+                "--json",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
+                "--head",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_requests" => Some(command_definition(
+            "glab mr list --all --source-branch <branch>",
+            &[
+                "glab",
+                "mr",
+                "list",
+                "--all",
+                "--per-page",
+                "20",
+                "--order",
+                "updated_at",
+                "--sort",
+                "desc",
+                "--output",
+                "json",
+                "--source-branch",
+            ],
+            Some(PostProcessor::Json),
         )),
         "git_is_worktree" => Some(command_definition(
             "sh -c <git_is_worktree>",

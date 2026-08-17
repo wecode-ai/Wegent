@@ -45,11 +45,11 @@ import {
   selectShellToolCommand,
   selectTool,
   selectToolSearch,
+  toolSearchResponseEvents,
   selectViewImageTool,
   streamingMarkdownReport,
   streamingTextEvents,
   telemetryEvents,
-  toolSearchCall,
 } from './response-protocol.mjs'
 
 import {
@@ -130,6 +130,10 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+  MESSAGE_EDIT_ORIGINAL_PROMPT,
+  MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+  MESSAGE_EDIT_UPDATED_PROMPT,
   MODEL_API_KEY,
   NODE_REPL_TOOL_BLOCK_ID,
   NODE_REPL_TOOL_SEARCH_ID,
@@ -256,6 +260,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
+    this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
@@ -588,6 +593,7 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
+        'message_edit',
         'file_panel_anchor',
         'fresh_chat',
         'attachment_only',
@@ -896,6 +902,39 @@ class DesktopE2EServer {
         id: 9001,
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/im/private-sessions') {
+      json(response, 200, {
+        total: 1,
+        items: [
+          {
+            session_key: 'desktop-e2e-im-session',
+            channel_type: 'dingtalk',
+            channel_label: 'DingTalk',
+            channel_id: 77,
+            conversation_id: 'desktop-e2e-conversation',
+            sender_id: 'desktop-e2e-user',
+            display_name: 'Desktop E2E',
+            mode: 'task',
+            state: 'idle',
+            active_task_id: null,
+            last_seen_at: '2026-08-12T00:00:00.000Z',
+          },
+        ],
+      })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/runtime-work/im-sessions') {
+      const body = await readRequestBody(request)
+      this.runtimeImBindingRequests.push(body)
+      json(response, 200, {
+        address: body.address,
+        boundSessionKeys: body.sessionKeys,
+        notifiedCount: 1,
       })
       return
     }
@@ -1277,8 +1316,9 @@ class DesktopE2EServer {
       return
     }
 
+    const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
     const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses'
+      url.pathname === '/v1/responses' || url.pathname === '/responses' || cloudResponsesProxy
         ? 'responses'
         : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
           ? 'chat'
@@ -1286,7 +1326,28 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     if (request.method === 'POST' && modelProtocol) {
-      await this.handleModelResponse(request, response, modelProtocol)
+      if (cloudResponsesProxy) {
+        assert.equal(
+          request.headers['x-wegent-model-type'],
+          'public',
+          'The automation cloud model type was not forwarded to the Backend proxy'
+        )
+        assert.equal(
+          request.headers['x-wegent-model-namespace'],
+          'default',
+          'The automation cloud model namespace was not forwarded to the Backend proxy'
+        )
+        assert.equal(
+          request.headers['x-wegent-model-user-id'],
+          '0',
+          'The automation cloud model owner was not forwarded to the Backend proxy'
+        )
+      }
+      await this.handleModelResponse(request, response, modelProtocol, {
+        acceptedAuthorization: cloudResponsesProxy
+          ? 'Bearer wework-desktop-e2e-cloud-token'
+          : undefined,
+      })
       return
     }
 
@@ -1399,13 +1460,15 @@ class DesktopE2EServer {
     return false
   }
 
-  async handleModelResponse(request, response, protocol) {
+  async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
     const modelRequest = { authorization, body, scenario: this.scenario }
     this.modelRequests.push(modelRequest)
     const authenticated =
-      authorization === `Bearer ${MODEL_API_KEY}` || request.headers['x-api-key'] === MODEL_API_KEY
+      authorization === `Bearer ${MODEL_API_KEY}` ||
+      authorization === options.acceptedAuthorization ||
+      request.headers['x-api-key'] === MODEL_API_KEY
     if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
@@ -1699,10 +1762,10 @@ class DesktopE2EServer {
           true,
           'The earlier command output did not return through the real Codex tool loop'
         )
-        const argumentsValue = selectToolSearch(body, 'node_repl js')
+        const search = selectToolSearch(body, 'node_repl js')
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(NODE_REPL_TOOL_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(NODE_REPL_TOOL_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -1737,10 +1800,10 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
-        const argumentsValue = selectToolSearch(body, 'github issue details')
+        const search = selectToolSearch(body, 'github issue details')
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(GENERIC_MCP_TOOL_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -2607,13 +2670,13 @@ class DesktopE2EServer {
       }
 
       if (requestNumber === 3) {
-        const argumentsValue = selectToolSearch(
+        const search = selectToolSearch(
           body,
           `${OFFICIAL_PLUGIN_DISPLAY_NAME} ${OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION}`
         )
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(OFFICIAL_PLUGIN_MCP_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(OFFICIAL_PLUGIN_MCP_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -2692,6 +2755,41 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'message_edit') {
+      this.recordScenarioRequest('message_edit', modelRequest)
+      const latestInput = latestModelInputText(body)
+      const requestNumber = this.scenarioRequests.get('message_edit').length
+      if (requestNumber === 1) {
+        assert.ok(
+          latestInput.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+          'The message-edit setup request lost its original prompt'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 2, `Unexpected message-edit request ${requestNumber}`)
+      assert.ok(
+        latestInput.includes(MESSAGE_EDIT_UPDATED_PROMPT),
+        'Editing the last user message resent stale content instead of the updated prompt'
+      )
+      assert.equal(
+        latestInput.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+        false,
+        'The edited turn retained the original prompt in the latest model input'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MESSAGE_EDIT_UPDATED_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -3511,9 +3609,9 @@ class DesktopE2EServer {
         excludes: [followUpPrompt],
       })
       this.assertLocalApplyPatchTool(model, body)
-      const argumentsValue = selectToolSearch(body, 'Wework browser open')
+      const search = selectToolSearch(body, 'Wework browser open')
       state.stage = 'awaiting_browser_search_output'
-      this.writeLocalToolSearchCall(response, model, argumentsValue)
+      this.writeLocalToolSearchCall(response, model, search)
       return
     }
     if (state.stage === 'awaiting_browser_search_output') {
@@ -3999,22 +4097,22 @@ class DesktopE2EServer {
     this.writeAnthropicToolCall(response, patch)
   }
 
-  writeLocalToolSearchCall(response, model, argumentsValue) {
+  writeLocalToolSearchCall(response, model, search) {
     const callId = `${model.protocol}-local-browser-search`
     if (model.protocol === 'responses') {
       const id = `local-${model.protocol}-browser-search`
       this.writeSse(response, [
         responseCreated(id),
-        ...functionCall(callId, 'tool_search', argumentsValue),
+        ...toolSearchResponseEvents(callId, search),
         responseCompleted(id),
       ])
       return
     }
     if (model.protocol === 'chat') {
-      this.writeChatToolCall(response, argumentsValue, callId, 'tool_search')
+      this.writeChatToolCall(response, search.arguments, callId, search.name)
       return
     }
-    this.writeAnthropicToolCall(response, argumentsValue, callId, 'tool_search')
+    this.writeAnthropicToolCall(response, search.arguments, callId, search.name)
   }
 
   writeLocalNamespaceToolCall(response, model, tool) {

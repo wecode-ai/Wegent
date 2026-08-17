@@ -227,6 +227,26 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## Wework 单元测试
+
+从仓库根目录运行全部 Wework 单元测试：
+
+```bash
+pnpm --dir wework test
+```
+
+调试单个测试文件时，将文件路径或文件名传给测试脚本。以下两种形式等价，都会只
+收集匹配的 Vitest 测试文件：
+
+```bash
+pnpm --dir wework test runtimePaneMessages.test.ts
+pnpm --dir wework test -- runtimePaneMessages.test.ts
+```
+
+测试脚本会兼容性地移除参数开头的一个独立 `--`，再把其余文件过滤条件和 Vitest
+选项原样传递给测试运行器。运行聚焦测试时，应确认输出中的 `Test Files` 数量符合
+预期，避免误跑全量测试。
+
 ## Wework 桌面云设备测试
 
 从仓库根目录运行云设备功能 E2E：

@@ -27,6 +27,7 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     runtime: Literal["codex"] = "codex"
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str = Field(default="", max_length=20_000)
+    capability_description: str = Field(default="", max_length=2_000)
     visibility: BotVisibility = "creator_admin"
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
@@ -39,6 +40,7 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     system_prompt: str | None = Field(default=None, max_length=20_000)
+    capability_description: str | None = Field(default=None, max_length=2_000)
     status: Literal["active", "archived"] | None = None
     visibility: BotVisibility | None = None
     execution_environment: BotExecutionEnvironment | None = None
@@ -54,6 +56,7 @@ class ProjectChatAgentView(ProjectChatSchema):
     runtime: Literal["codex"]
     model: str | None
     system_prompt: str
+    capability_description: str
     status: Literal["active", "archived"]
     visibility: BotVisibility
     execution_environment: BotExecutionEnvironment
@@ -145,7 +148,8 @@ class LoopItemExecutionView(ProjectChatSchema):
     task_title: str
     task_status: str | None
     task_priority: str | None
-    agent_id: str
+    executor_type: str = "project_robot"
+    agent_id: str | None = None
     assigner_user_id: int
     execution_environment: str
     execution_device_id: str | None
@@ -164,7 +168,9 @@ class LoopItemExecutionView(ProjectChatSchema):
     rejected_reason: str | None = None
     runtime_device_id: str | None = None
     runtime_task_id: str | None = None
-    execution_payload: Any | None = None
+    # Materialized only for an authenticated device claim. It is never stored
+    # on the execution row because model credentials are resolved just in time.
+    runtime_payload: Any | None = None
     version: int = 1
     created_at: Any
     updated_at: Any

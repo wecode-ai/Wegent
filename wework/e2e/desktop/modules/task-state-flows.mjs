@@ -1,4 +1,9 @@
-import { countTextOccurrences, waitForNewTaskRow, waitForSnapshot } from './conversation-layout.mjs'
+import {
+  countTextOccurrences,
+  createCheckpointTaskFixture,
+  waitForNewTaskRow,
+  waitForSnapshot,
+} from './conversation-layout.mjs'
 
 import { assertConversationTextOrder, ensurePlanMode } from './conversation-navigation.mjs'
 
@@ -59,6 +64,13 @@ async function verifyPriorityFilter({ composerSelector, control }) {
   await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `[data-testid="runtime-local-task-running-${requestInputTaskId}"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
 
   try {
     await control.command('click', '[data-testid="new-chat-button"]')
@@ -119,6 +131,13 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === requestInputTaskId &&
+        snapshot.pane?.status?.isBusy === false,
+      'The handled priority task did not settle before reopening the filter'
+    )
     await control.command(
       'waitFor',
       `[data-testid="runtime-priority-list"] [data-testid="${requestInputTaskRowTestId}"]`,
@@ -182,6 +201,198 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     }
   }
   await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+}
+
+async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const candidateTestIds = snapshot.testIds.filter(
+    testId =>
+      testId === 'runtime-chat-task-sortable-list' ||
+      testId.startsWith('project-runtime-task-sortable-')
+  )
+  for (const testId of candidateTestIds) {
+    const selector = `[data-testid="${testId}"]`
+    const containsEveryTask = await Promise.all(
+      taskRowTestIds.map(
+        async taskRowTestId =>
+          Number(
+            await control.command('getElementCount', `${selector} [data-testid="${taskRowTestId}"]`)
+          ) === 1
+      )
+    )
+    if (containsEveryTask.every(Boolean)) return selector
+  }
+  throw new Error('The runtime tasks did not share a sortable sidebar list')
+}
+
+async function waitForRuntimeTaskOrder(control, listSelector, expectedTaskRowTestIds) {
+  const expectedOrder = expectedTaskRowTestIds.join(',')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const testIdOrder = JSON.parse(await control.command('getTestIdOrder', listSelector))
+    const actualOrder = testIdOrder.filter(testId => expectedTaskRowTestIds.includes(testId))
+    if (actualOrder.join(',') === expectedOrder) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The runtime chat task order did not become ${expectedOrder}`)
+}
+
+function findRuntimeWorkTask(runtimeWork, taskId) {
+  const workspaces = Array.isArray(runtimeWork.workspaces)
+    ? runtimeWork.workspaces
+    : Object.values(runtimeWork.workspaces ?? {})
+  return workspaces
+    .flatMap(workspace => (Array.isArray(workspace.tasks) ? workspace.tasks : []))
+    .find(task => task.taskId === taskId || task.task_id === taskId)
+}
+
+async function verifyRuntimeTaskOrderAndUnreadVisibility({
+  composerSelector,
+  control,
+  executorHome,
+}) {
+  const standaloneNewTaskButtonSelector = '[data-testid="runtime-chat-section-new-chat-button"]'
+  const firstTaskRowTestId = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    standaloneNewTaskButtonSelector
+  )
+  const secondTaskRowTestId = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    standaloneNewTaskButtonSelector
+  )
+  const taskRows = [firstTaskRowTestId, secondTaskRowTestId]
+  const sortableListSelector = await findRuntimeTaskSortableListSelector(control, taskRows)
+  const sortableTestIdOrder = JSON.parse(
+    await control.command('getTestIdOrder', sortableListSelector)
+  )
+  const initialOrder = sortableTestIdOrder.filter(testId => taskRows.includes(testId))
+  assert.deepEqual(
+    initialOrder.toSorted(),
+    taskRows.toSorted(),
+    'The task-order fixture did not expose both standalone tasks'
+  )
+
+  const sourceTaskRowTestId = initialOrder[1]
+  const targetTaskRowTestId = initialOrder[0]
+  await ensureTaskRowVisible(control, sourceTaskRowTestId)
+  await ensureTaskRowVisible(control, targetTaskRowTestId)
+  const reorderedTaskRows = [sourceTaskRowTestId, targetTaskRowTestId]
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const targetTaskId = targetTaskRowTestId.replace('runtime-local-task-row-', '')
+  const runtimeIndex = JSON.parse(
+    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
+  )
+  const sourceTask = runtimeIndex.tasks[sourceTaskId]
+  const targetTask = runtimeIndex.tasks[targetTaskId]
+  assert.ok(sourceTask?.thread_id, 'The reordered task had no persisted thread ID')
+  assert.ok(targetTask?.thread_id, 'The target task had no persisted thread ID')
+  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
+  const sourceTaskDebug = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).workbench
+  await control.command('click', `[data-testid="${targetTaskRowTestId}"]`)
+  const targetTaskDebug = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).workbench
+  assert.ok(sourceTaskDebug?.activeTaskProjectKey, 'The reordered task had no sidebar project key')
+  assert.equal(
+    sourceTaskDebug.activeTaskProjectKey,
+    targetTaskDebug?.activeTaskProjectKey,
+    'The task-order fixture placed its tasks in different sidebar groups'
+  )
+  await control.command('reorderRuntimeProjectTasks', 'body', {
+    value: JSON.stringify({
+      deviceId: 'local-device',
+      projectKey: sourceTaskDebug.activeTaskProjectKey,
+      threadId: sourceTask.thread_id,
+      beforeThreadId: targetTask.thread_id,
+      insertAtEnd: false,
+    }),
+  })
+  const reorderedRuntimeWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+  const reorderedSourceTask = findRuntimeWorkTask(reorderedRuntimeWork, sourceTaskId)
+  const reorderedTargetTask = findRuntimeWorkTask(reorderedRuntimeWork, targetTaskId)
+  const sourceSidebarOrder = reorderedSourceTask?.sidebarOrder ?? reorderedSourceTask?.sidebar_order
+  const targetSidebarOrder = reorderedTargetTask?.sidebarOrder ?? reorderedTargetTask?.sidebar_order
+  assert.equal(
+    typeof sourceSidebarOrder,
+    'number',
+    'The executor did not return a sidebar order for the reordered task'
+  )
+  assert.equal(
+    typeof targetSidebarOrder,
+    'number',
+    'The executor did not return a sidebar order for the target task'
+  )
+  assert.ok(
+    sourceSidebarOrder < targetSidebarOrder,
+    `The executor did not persist the requested runtime task order (${sourceSidebarOrder} !< ${targetSidebarOrder})`
+  )
+
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The task-order reload did not reconnect to the desktop controller'
+  )
+  for (const taskRowTestId of reorderedTaskRows) {
+    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  const reloadedSortableListSelector = await findRuntimeTaskSortableListSelector(
+    control,
+    reorderedTaskRows
+  )
+  await control.command('waitFor', reloadedSortableListSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForRuntimeTaskOrder(control, reloadedSortableListSelector, reorderedTaskRows)
+
+  const unreadBefore = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  ).workbench
+  assert.ok(unreadBefore, 'The unread-visibility fixture did not expose workbench diagnostics')
+  const staleAddress = {
+    deviceId: 'e2e-stale-device',
+    taskId: `e2e-stale-unread-${Date.now()}`,
+    runtime: 'codex',
+    workspacePath: '/tmp/wework-e2e-stale-unread',
+  }
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: staleAddress,
+      type: 'transcript_received',
+      transcript: {
+        taskId: staleAddress.taskId,
+        messages: [],
+        running: true,
+        turns: [{ id: 'stale-unread-turn', items: [], status: 'streaming' }],
+      },
+    }),
+  })
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: staleAddress,
+      type: 'transcript_received',
+      transcript: {
+        taskId: staleAddress.taskId,
+        messages: [],
+        running: false,
+        turns: [],
+      },
+    }),
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.lifecycleUnreadTaskCount === unreadBefore.lifecycleUnreadTaskCount + 1 &&
+      snapshot.workbench?.visibleUnreadTaskCount === unreadBefore.visibleUnreadTaskCount,
+    'A stale lifecycle task increased the visible unread task count'
+  )
 }
 
 async function verifyBackgroundCompletionRestore({
@@ -583,6 +794,7 @@ async function verifyCompletedTurnFork({
 
 export {
   verifyPriorityFilter,
+  verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyBackgroundCompletionRestore,
   waitForTaskRowByText,
   verifyRunningFollowUpFork,

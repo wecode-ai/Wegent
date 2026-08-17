@@ -164,7 +164,7 @@ class InstalledPluginSpec(BaseModel):
     pluginId: Optional[int] = None
     releaseId: Optional[int] = None
     desiredVersion: Optional[str] = None
-    updatePolicy: Literal["manual"] = "manual"
+    updatePolicy: Literal["manual", "auto"] = "manual"
     sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
     sourceLabel: str = "Wegent 官方"
     visibility: Literal["personal", "workspace", "public"] = "workspace"
@@ -222,6 +222,7 @@ class InstalledPluginUpdateRequest(BaseModel):
     displayName: Optional[str] = None
     description: Optional[str] = None
     releaseId: Optional[int] = None
+    updatePolicy: Optional[Literal["manual", "auto"]] = None
 
 
 class PluginUploadInfo(BaseModel):
@@ -319,6 +320,24 @@ class PluginDeviceSyncResponse(BaseModel):
     deviceId: str
     pendingCount: int = 0
     sync: DeviceCapabilitySyncResponse
+
+
+class PluginAutoUpdateItem(BaseModel):
+    """One account installation advanced to a newer marketplace release."""
+
+    installedPluginId: int
+    pluginId: int
+    fromReleaseId: int
+    toReleaseId: int
+    version: str
+
+
+class PluginAutoUpdateBatchResponse(BaseModel):
+    """One bounded batch of automatic marketplace plugin updates."""
+
+    updated: List[PluginAutoUpdateItem] = Field(default_factory=list)
+    updatedCount: int = 0
+    remainingCount: int = 0
 
 
 class PluginMarketplaceCapabilities(BaseModel):
@@ -423,6 +442,23 @@ class PluginAccessResponse(BaseModel):
     targets: List[PluginAccessTarget] = Field(default_factory=list)
     allowCopy: bool = False
     revocationPendingCount: int = 0
+
+
+class PluginDeleteImpactResponse(BaseModel):
+    pluginId: int
+    affectedUserCount: int = 0
+    installedDeviceCount: int = 0
+    sharedTargetCount: int = 0
+    impactRevision: str
+
+
+class PluginDeleteRequest(BaseModel):
+    impactRevision: str = Field(..., min_length=1)
+    revokeAndDelete: bool = False
+
+
+class PluginDeleteResponse(BaseModel):
+    pendingDeviceCount: int = 0
 
 
 class PluginCopyResponse(BaseModel):

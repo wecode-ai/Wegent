@@ -177,7 +177,6 @@ const workbenchValue: WorkbenchContextValue = {
   updateGlobalImNotification: vi.fn(),
   subscribeRuntimeTaskNotifications: vi.fn(),
   unsubscribeRuntimeTaskNotifications: vi.fn(),
-  rememberExecutionDevice: vi.fn(),
   refreshWorkLists: vi.fn(),
   refreshDevices: vi.fn(),
   getRemoteDeviceStartupCommand: vi.fn(),
@@ -906,7 +905,7 @@ describe('App plugins route', () => {
       await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
     ).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {

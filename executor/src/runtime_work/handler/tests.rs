@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
+use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
 #[test]
@@ -12,6 +12,40 @@ fn defaults_to_ten_parallel_runtime_tasks() {
         DEFAULT_MAX_CONCURRENT_TASKS
     );
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
+}
+
+#[test]
+fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut turn = SpawnTurnRequest {
+        local_task_id: "task-1".to_owned(),
+        runtime: "codex".to_owned(),
+        request: ExecutionRequest::default(),
+        direct_thread_id: None,
+        fork_thread_id: None,
+        fork_thread_path: None,
+        resume_thread_id: None,
+        initial_thread_name: None,
+        initial_thread_goal: None,
+    };
+    turn.request.extra.insert(
+        "deferred_worktree_source_path".to_owned(),
+        Value::String("/tmp/source".to_owned()),
+    );
+
+    handler.reserve_worktree_preparation(&turn);
+
+    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+    assert_eq!(
+        handler
+            .preparing_worktree_turns
+            .lock()
+            .expect("preparing worktree turn map lock should not be poisoned")
+            .get("task-1"),
+        Some(&PreparingWorktreeTurn {
+            cancellation_requested: true
+        })
+    );
 }
 
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
@@ -278,6 +312,34 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
 }
 
 #[test]
+fn forked_task_inherits_project_routing_metadata() {
+    let mut source = RuntimeTaskLink::new_pending_with_runtime(
+        "task-1".to_owned(),
+        "/tmp/project/worktree".to_owned(),
+        "Source".to_owned(),
+        "codex",
+    );
+    source.runtime_project_key = Some("project-1".to_owned());
+    source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+
+    let forked = forked_task_link(
+        &source,
+        "task-2".to_owned(),
+        "thread-2".to_owned(),
+        "Forked".to_owned(),
+        json!({"taskId": "task-1", "lastTurnId": "turn-1"}),
+    );
+
+    assert_eq!(forked.runtime_project_key, source.runtime_project_key);
+    assert_eq!(
+        forked.runtime_workspace_roots,
+        source.runtime_workspace_roots
+    );
+    assert_eq!(forked.workspace_path, source.workspace_path);
+    assert_eq!(forked.runtime, source.runtime);
+}
+
+#[test]
 fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -296,7 +358,7 @@ fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state(
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
@@ -342,7 +404,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("complete"));
     assert!(!handler.is_active_local_task("task-1"));
@@ -375,6 +437,8 @@ fn stale_execution_cannot_finish_its_replacement() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(handler.is_active_local_task("task-1"));
+    assert_eq!(task.status, "running");
+    assert!(task.running);
     assert_eq!(task.thread_id, None);
     assert_eq!(task.completed_at, None);
 
@@ -389,10 +453,80 @@ fn stale_execution_cannot_finish_its_replacement() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(!handler.is_active_local_task("task-1"));
+    assert_eq!(task.status, "done");
+    assert!(!task.running);
     assert_eq!(task.thread_id.as_deref(), Some("current-thread"));
     assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn claude_execution_persists_running_and_settled_state() {
+    let index_path = temp_runtime_work_index_path("claude-execution-state");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending_with_runtime(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+        "claude_code",
+    ));
+
+    let execution_id = start_test_execution(&handler, "task-1");
+    let running_task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(running_task.status, "running");
+    assert!(running_task.running);
+    assert_eq!(running_task.thread_status, "active");
+    assert_eq!(running_task.turn_status.as_deref(), Some("inProgress"));
+
+    handler.finish_local_task(
+        "task-1",
+        execution_id,
+        Some("claude-session-1".to_owned()),
+        "done",
+    );
+
+    let settled_task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(settled_task.status, "done");
+    assert!(!settled_task.running);
+    assert_eq!(settled_task.thread_status, "idle");
+    assert_eq!(settled_task.turn_status.as_deref(), Some("completed"));
+    assert_eq!(settled_task.thread_id.as_deref(), Some("claude-session-1"));
+    assert!(settled_task.completed_at.is_some());
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn settled_task_projection_normalizes_every_terminal_outcome() {
+    for (status, thread_status, turn_status, expected) in [
+        ("active", "idle", "completed", "done"),
+        ("active", "failed", "failed", "failed"),
+        ("active", "cancelled", "cancelled", "cancelled"),
+    ] {
+        let mut link = RuntimeTaskLink::new_pending_with_runtime(
+            format!("task-{expected}"),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+            "claude_code",
+        );
+        link.status = status.to_owned();
+        link.running = false;
+        link.thread_status = thread_status.to_owned();
+        link.turn_status = Some(turn_status.to_owned());
+        link.completed_at = Some(1_780_000_000_000);
+
+        apply_local_execution_state(&mut link, false, None);
+
+        assert_eq!(link.status, expected);
+        assert!(!link.running);
+        assert!(link.completed_at.is_some());
+    }
 }
 
 #[test]

@@ -520,6 +520,20 @@ class TeamMember(BaseModel):
     )
 
 
+class LocalizedInputPlaceholder(BaseModel):
+    """Localized input placeholder text."""
+
+    en: Optional[str] = None
+    zh: Optional[str] = None
+
+
+class TeamInputPlaceholder(LocalizedInputPlaceholder):
+    """Team input placeholder text with device-specific overrides."""
+
+    mobile: Optional[LocalizedInputPlaceholder] = None
+    desktop: Optional[LocalizedInputPlaceholder] = None
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
@@ -539,6 +553,7 @@ class TeamSpec(QuickPhraseMixin):
         default=None,
         description="Capability Center publication metadata.",
     )
+    inputPlaceholder: Optional[TeamInputPlaceholder] = None
 
     @field_serializer("displayConfig")
     def serialize_display_config(
@@ -818,17 +833,26 @@ class BatchResponse(BaseModel):
 
 # Skill CRD schemas
 class SkillSource(BaseModel):
-    """Source information for skills imported from Git repositories"""
+    """Source information for imported skills."""
 
     type: str = Field(
         "upload",
-        description="Source type: 'upload' (manual upload) or 'git' (imported from Git repository)",
+        description="Source type: 'upload', 'git', or 'marketplace'",
     )
     repo_url: Optional[str] = Field(
         None, description="Git repository URL (for git source type)"
     )
     skill_path: Optional[str] = Field(
         None, description="Path to skill in the repository (for git source type)"
+    )
+    provider_key: Optional[str] = Field(
+        None, description="Marketplace provider key (for marketplace source type)"
+    )
+    skill_key: Optional[str] = Field(
+        None, description="Provider-specific marketplace skill key"
+    )
+    original_skill_key: Optional[str] = Field(
+        None, description="Provider-agnostic marketplace skill key"
     )
     imported_at: Optional[str] = Field(
         None, description="Timestamp when the skill was imported (ISO format)"

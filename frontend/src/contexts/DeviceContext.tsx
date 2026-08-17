@@ -139,23 +139,16 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
   }, [])
 
   // Delete a device registration
-  const deleteDevice = useCallback(
-    async (deviceId: string) => {
-      try {
-        await deviceApis.deleteDevice(deviceId)
-        // Update local state
-        setDevices(prev => prev.filter(d => d.device_id !== deviceId))
-        // Clear selection if deleted device was selected
-        if (selectedDeviceId === deviceId) {
-          setSelectedDeviceId(null)
-        }
-      } catch (err) {
-        console.error('[DeviceContext] Failed to delete device:', err)
-        throw err
-      }
-    },
-    [selectedDeviceId]
-  )
+  const deleteDevice = useCallback(async (deviceId: string) => {
+    try {
+      await deviceApis.deleteDevice(deviceId)
+      // Update local state
+      setDevices(prev => prev.filter(d => d.device_id !== deviceId))
+    } catch (err) {
+      console.error('[DeviceContext] Failed to delete device:', err)
+      throw err
+    }
+  }, [])
 
   // Load devices on mount
   useEffect(() => {
@@ -192,10 +185,6 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       setDevices(prev =>
         prev.map(d => (d.device_id === data.device_id ? { ...d, status: 'offline' } : d))
       )
-      // Clear selection if selected device went offline
-      if (selectedDeviceId === data.device_id) {
-        setSelectedDeviceId(null)
-      }
     }
 
     // Device status changed (online/busy)
@@ -263,7 +252,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       socket.off(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
       socket.off(ServerEvents.DEVICE_UPGRADE_STATUS, handleDeviceUpgradeStatus)
     }
-  }, [socket, isConnected, selectedDeviceId, refreshDevices])
+  }, [socket, isConnected, refreshDevices])
 
   const value: DeviceContextType = {
     devices,

@@ -1,7 +1,9 @@
 import {
   Check,
   ChevronDown,
+  CircleCheck,
   CircleDot,
+  CircleX,
   Cloud,
   Copy,
   FolderOpen,
@@ -12,7 +14,9 @@ import {
   Link2,
   Laptop,
   LoaderCircle,
+  Clock3,
   Square,
+  TriangleAlert,
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
@@ -30,6 +34,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import { navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getExecutorOfflineDeviceId,
@@ -61,6 +66,7 @@ interface EnvironmentInfoPopoverProps {
   onManageTodo?: () => void
   supervisor?: RuntimeSupervisorState | null
   onConfigureSupervisor?: () => void
+  onRunSupervisorNow?: () => Promise<RuntimeSupervisorState | null>
 }
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
@@ -95,6 +101,7 @@ export function EnvironmentInfoPopover({
   onManageTodo,
   supervisor,
   onConfigureSupervisor,
+  onRunSupervisorNow,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
@@ -147,11 +154,41 @@ export function EnvironmentInfoPopover({
       : info.workspacePath
         ? [info.workspacePath]
         : []
+  const changeRequest = info.changeRequest?.changeRequest
+  const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
+  const changeRequestStateLabel = changeRequest
+    ? changeRequest.draft
+      ? t('workbench.environment_change_request_draft', '草稿')
+      : t(`workbench.environment_change_request_${changeRequest.state}`, changeRequest.state)
+    : ''
+  const changeRequestChecksLabel =
+    changeRequest && changeRequest.checks !== 'unknown'
+      ? t(
+          `workbench.environment_change_request_checks_${changeRequest.checks}`,
+          changeRequest.checks
+        )
+      : ''
+  const changeRequestConflictLabel =
+    changeRequest?.mergeability === 'conflicting'
+      ? t('workbench.environment_change_request_conflicting', '存在冲突')
+      : ''
+  const changeRequestStatusLabel = [
+    changeRequestStateLabel,
+    changeRequestConflictLabel || changeRequestChecksLabel,
+  ]
+    .filter(Boolean)
+    .join('，')
+
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
     }
     void openExternalUrl(info.createPullRequestUrl)
+  }
+
+  function handleOpenChangeRequest() {
+    if (!changeRequest?.url) return
+    void openExternalUrl(changeRequest.url)
   }
 
   function handleOpenChangesReview() {
@@ -487,20 +524,123 @@ export function EnvironmentInfoPopover({
                           )}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        data-testid="create-pull-request-button"
-                        disabled={!info.createPullRequestUrl}
-                        onClick={handleCreatePullRequest}
-                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                      >
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                          <GitPullRequest className="h-[18px] w-[18px]" />
-                        </span>
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                          {t('workbench.environment_create_pr', '创建拉取请求')}
-                        </span>
-                      </button>
+                      {changeRequest ? (
+                        <button
+                          type="button"
+                          data-testid="change-request-button"
+                          onClick={handleOpenChangeRequest}
+                          title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
+                          aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
+                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                        >
+                          <span
+                            className={cn(
+                              'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary',
+                              changeRequest.state === 'open' &&
+                                !changeRequest.draft &&
+                                'text-green-500',
+                              changeRequest.state === 'merged' && 'text-green-500',
+                              changeRequest.state === 'closed' && 'text-red-500',
+                              changeRequest.mergeability === 'conflicting' && 'text-red-500'
+                            )}
+                            aria-hidden="true"
+                          >
+                            <GitPullRequest className="h-[18px] w-[18px]" />
+                            {changeRequest.mergeability === 'conflicting' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
+                                <TriangleAlert className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'success' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-green-500">
+                                <CircleCheck className="h-3.5 w-3.5 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'failure' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
+                                <CircleX className="h-3.5 w-3.5 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'pending' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-text-muted">
+                                <Clock3 className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span
+                              data-testid="change-request-number"
+                              className="shrink-0 font-medium"
+                            >
+                              {changeRequestPrefix}
+                              {changeRequest.number}
+                            </span>
+                            <span
+                              data-testid="change-request-title"
+                              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                            >
+                              {changeRequest.title}
+                            </span>
+                            <span data-testid="change-request-state" className="sr-only">
+                              {changeRequestStateLabel}
+                            </span>
+                            {changeRequest.checks !== 'unknown' && (
+                              <span data-testid="change-request-checks" className="sr-only">
+                                {changeRequestChecksLabel}
+                              </span>
+                            )}
+                            {changeRequest.mergeability === 'conflicting' && (
+                              <span data-testid="change-request-conflict" className="sr-only">
+                                {changeRequestConflictLabel}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid="create-pull-request-button"
+                          disabled={!info.createPullRequestUrl}
+                          onClick={handleCreatePullRequest}
+                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+                        >
+                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                            <GitPullRequest className="h-[18px] w-[18px]" />
+                          </span>
+                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                            {info.changeRequest?.provider === 'gitlab'
+                              ? t('workbench.environment_create_mr', '创建合并请求')
+                              : t('workbench.environment_create_pr', '创建拉取请求')}
+                          </span>
+                        </button>
+                      )}
+                      {info.changeRequest &&
+                        ['unavailable', 'unauthenticated', 'error'].includes(
+                          info.changeRequest.state
+                        ) && (
+                          <div className="px-7 pb-1">
+                            <p
+                              data-testid="change-request-lookup-hint"
+                              className="text-xs leading-4 text-text-muted"
+                            >
+                              {t(
+                                `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
+                                ''
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              data-testid="change-request-open-settings"
+                              onClick={() => {
+                                onOpenChange(false)
+                                navigateTo('/settings/git-hosting')
+                              }}
+                              className="mt-1 text-xs text-blue-500 hover:underline"
+                            >
+                              {t(
+                                'workbench.environment_change_request_configure',
+                                '配置代码托管工具'
+                              )}
+                            </button>
+                          </div>
+                        )}
                     </>
                   )}
                 </section>
@@ -543,6 +683,7 @@ export function EnvironmentInfoPopover({
                   <TaskSupervisorStatusButton
                     supervisor={supervisor}
                     onClick={onConfigureSupervisor}
+                    onRunNow={onRunSupervisorNow}
                   />
                 </section>
               )}

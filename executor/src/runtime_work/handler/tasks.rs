@@ -225,14 +225,16 @@ impl RuntimeWorkRpcHandler {
         })?;
         let local_task_id = thread_id.clone();
         let title = string_field(&payload, "title").unwrap_or_else(|| source.title.clone());
-        let mut link = RuntimeTaskLink::new_pending(
+        let link = forked_task_link(
+            &source,
             local_task_id.clone(),
-            source.workspace_path.clone(),
+            thread_id,
             title,
-        );
-        link.thread_id = Some(thread_id);
-        link.parent = Some(
-            json!({"taskId": source.local_task_id, "threadId": source_thread_id, "lastTurnId": last_turn_id}),
+            json!({
+                "taskId": source.local_task_id,
+                "threadId": source_thread_id,
+                "lastTurnId": last_turn_id,
+            }),
         );
         self.upsert_local_task(link);
         log_executor_event(
@@ -291,7 +293,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let payload_has_workspace_path = payload_workspace_path.is_some();
-        let workspace_path = payload_workspace_path
+        let source_workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
                 id_field(&payload, "local_project_id")
@@ -325,7 +327,37 @@ impl RuntimeWorkRpcHandler {
                 );
                 AppIpcError::new("bad_request", "workspacePath is required")
             })?;
-        if request.project_workspace_path.is_none() {
+        let workspace_path = if request.workspace_source.as_deref() == Some("git_worktree") {
+            let planned_path = self
+                .worktrees
+                .planned_path(Path::new(&source_workspace_path), &local_task_id)
+                .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+            request.extra.insert(
+                "deferred_worktree_source_path".to_owned(),
+                Value::String(source_workspace_path.clone()),
+            );
+            request.extra.insert(
+                "deferred_worktree_path".to_owned(),
+                Value::String(planned_path.display().to_string()),
+            );
+            if let Some(branch) = payload
+                .get("execution")
+                .and_then(|execution| execution.get("workspace"))
+                .and_then(|workspace| workspace.get("branch"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|branch| !branch.is_empty())
+            {
+                request.extra.insert(
+                    "deferred_worktree_ref".to_owned(),
+                    Value::String(branch.to_owned()),
+                );
+            }
+            planned_path.display().to_string()
+        } else {
+            source_workspace_path
+        };
+        if request.project_workspace_path.as_deref() != Some(workspace_path.as_str()) {
             request.project_workspace_path = Some(workspace_path.clone());
         }
         self.apply_project_workspace_roots(&mut request);
@@ -394,7 +426,9 @@ impl RuntimeWorkRpcHandler {
                 .get("initialSupervisor")
                 .or_else(|| payload.get("initial_supervisor"))
             {
-                link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+                let configured = super::supervisor::configured_supervisor(supervisor, None)?;
+                self.configure_supervisor_model(&local_task_id, &configured, supervisor)?;
+                link.supervisor = Some(configured);
             }
         }
         let mut runtime_handle = runtime_handle_json(&link);
@@ -402,8 +436,10 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         if is_claude_runtime(&runtime) {
             self.prepare_claude_goal(&local_task_id, &mut request, &payload);
-            self.spawn_claude_turn(local_task_id.clone(), request)
-                .await?;
+            if let Err(error) = self.spawn_claude_turn(local_task_id.clone(), request).await {
+                self.store.delete_task(&local_task_id);
+                return Err(error);
+            }
         } else {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
             let mut side_source = side_source_thread(&payload);
@@ -412,18 +448,27 @@ impl RuntimeWorkRpcHandler {
                     source.thread_path = self.thread_path_for_id(&source.thread_id).await;
                 }
             }
-            self.spawn_turn(SpawnTurnRequest {
-                local_task_id: local_task_id.clone(),
-                runtime: "codex".to_owned(),
-                request,
-                direct_thread_id: None,
-                fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
-                fork_thread_path: side_source.and_then(|source| source.thread_path),
-                resume_thread_id: None,
-                initial_thread_name: Some(title.clone()),
-                initial_thread_goal,
-            })
-            .await?;
+            if let Err(error) = self
+                .spawn_turn(SpawnTurnRequest {
+                    local_task_id: local_task_id.clone(),
+                    runtime: "codex".to_owned(),
+                    request,
+                    direct_thread_id: None,
+                    fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
+                    fork_thread_path: side_source.and_then(|source| source.thread_path),
+                    resume_thread_id: None,
+                    initial_thread_name: Some(title.clone()),
+                    initial_thread_goal,
+                })
+                .await
+            {
+                self.store.delete_task(&local_task_id);
+                self.supervisor_model_configs
+                    .lock()
+                    .expect("supervisor model config map lock should not be poisoned")
+                    .remove(&local_task_id);
+                return Err(error);
+            }
         }
         let queue_position = self
             .queued_local_task_position(&local_task_id)
@@ -599,6 +644,7 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
+            restore_origin(&mut request, &link.runtime_handle);
         }
         request.new_session = false;
         if request.runtime_project_key.is_none() {
@@ -878,6 +924,7 @@ impl RuntimeWorkRpcHandler {
         apply_runtime_payload_metadata(&mut request, &payload);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
+        restore_origin(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -897,20 +944,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(cwd) = request.cwd() {
             fields.push(("cwd", cwd.to_owned()));
         }
-        log_executor_event("runtime work rollback prepared", &fields);
-
-        if let Err(error) = self
-            .call_codex_thread_method(
-                "thread/rollback",
-                json!({
-                    "threadId": thread_id,
-                    "numTurns": 1,
-                }),
-            )
-            .await
-        {
-            return Ok(task_action_failure(&existing_link, error));
-        }
+        log_executor_event("runtime work message edit prepared", &fields);
 
         self.mark_task_running_for_send(
             &local_task_id,
@@ -919,14 +953,17 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        if let Some(turn_id) = retry_source_turn_id(&payload) {
+            self.record_superseded_runtime_transcript_turn(&local_task_id, &turn_id);
+        }
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
             runtime: "codex".to_owned(),
             request,
-            direct_thread_id: Some(thread_id),
+            direct_thread_id: None,
             fork_thread_id: None,
             fork_thread_path: None,
-            resume_thread_id: None,
+            resume_thread_id: Some(thread_id),
             initial_thread_name: None,
             initial_thread_goal: None,
         })
@@ -1205,6 +1242,17 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
+        if self.cancel_preparing_worktree_turn(&local_task_id) {
+            return Ok(match link {
+                Some(link) => task_action_success(&link),
+                None => json!({
+                    "success": true,
+                    "accepted": true,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }),
+            });
+        }
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -1264,12 +1312,21 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
+        self.reserve_worktree_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
             &[("local_task_id", local_task_id.clone())],
         );
-        self.start_turn(queued_turn);
+        if queued_turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path")
+        {
+            self.prepare_and_start_reserved_turn(queued_turn).await?;
+        } else {
+            self.start_turn(queued_turn);
+        }
         Ok(json!({
             "success": true,
             "accepted": true,
@@ -1406,6 +1463,26 @@ impl RuntimeWorkRpcHandler {
         }
         self.upsert_local_task(link);
     }
+}
+
+pub(super) fn forked_task_link(
+    source: &RuntimeTaskLink,
+    local_task_id: String,
+    thread_id: String,
+    title: String,
+    parent: Value,
+) -> RuntimeTaskLink {
+    let mut link = RuntimeTaskLink::new_pending_with_runtime(
+        local_task_id,
+        source.workspace_path.clone(),
+        title,
+        source.runtime.clone(),
+    );
+    link.thread_id = Some(thread_id);
+    link.parent = Some(parent);
+    link.runtime_project_key = source.runtime_project_key.clone();
+    link.runtime_workspace_roots = source.runtime_workspace_roots.clone();
+    link
 }
 
 fn normalize_friendly_title(value: &str) -> Option<String> {

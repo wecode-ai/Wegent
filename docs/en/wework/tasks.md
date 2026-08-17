@@ -72,12 +72,14 @@ Interrupting stops the current response but does not roll back completed file ed
 
 ## Use the personal supervisor
 
-Enable **Experimental features** under **Settings → General**, then use **Personal supervisor** above the composer in a Codex task. While the main AI is working, the executor periodically reads its recent progress in the background and evaluates goal drift, missed constraints, destructive actions, and obvious blocked loops with a lightweight read-only call. It does not fork the original task, and checks continue without keeping the task view open.
+Open the composer's **+** menu in a new Codex conversation or an existing Codex task and select **Personal supervisor**. While the main AI is working, the executor periodically reads its recent progress in the background and evaluates goal drift, missed constraints, destructive actions, and obvious blocked loops with a lightweight read-only call. Supervision is a regular feature and does not require **Experimental features**. It does not fork the original task, and checks continue without keeping the task view open.
 
 - **Suggest** shows a correction above the composer for you to approve or dismiss.
 - **Auto-correct** steers an active response when a clear deviation is found, or starts a normal follow-up just as if you had sent the instruction from the composer.
 
-Supervision settings belong to the current task. The review model can follow the current task or be selected independently, and the review frequency can be 10 seconds, 30 seconds, 1 minute, or 5 minutes. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task.
+Supervision settings belong to the current task. Select an independent review model and a review frequency of 10 seconds, 30 seconds, 1 minute, or 5 minutes. Wework remembers the most recently saved review model and frequency on the current device and restores them when supervision is configured for a new task. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task.
+
+After supervision starts, the right-side **Environment** panel shows its status and the next scheduled review time. Select **Review now** to inspect the current progress immediately. The action is temporarily disabled while a review is already running so the task cannot start concurrent supervisor checks.
 
 ## Review the processing timeline
 

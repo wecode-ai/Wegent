@@ -169,6 +169,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          activeHandle?.focus()
+        },
         getValue: () => {
           const activeHandle = fullscreenInputOpen
             ? fullscreenComposerRef.current
@@ -229,7 +235,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       if (phrase.mode === 'goal') onSetGoal?.()
       const currentValue = getLiveValue()
       const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
-      handleComposerChange(phraseValue)
+      const activeComposer = fullscreenInputOpen
+        ? fullscreenComposerRef.current
+        : composerRef.current
+      activeComposer?.setValue(phraseValue, phraseValue.length)
       if (phrase.attachmentPaths?.length && onFileSelect) {
         void resolveStoredWorkspacePaths(
           phrase.attachmentPaths,
@@ -238,7 +247,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
         )
       }
-      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      window.requestAnimationFrame(() => {
+        activeComposer?.setValue(phraseValue, phraseValue.length)
+        ;(fullscreenInputOpen ? fullscreenInputRef.current : textareaRef.current)?.focus()
+      })
     }
 
     const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {

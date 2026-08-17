@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.schemas.kind import Bot, Ghost, Task, Team
+from app.services.chat.selected_knowledge import get_provider_skill_name
 from app.services.kind_ref_resolver import (
     batch_load_kinds_by_refs as _batch_load_kinds_by_refs,
 )
@@ -75,24 +76,23 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
             team_namespace,
             team_name,
         )
-        fallback_skills = list(user_selected_skills)
+        fallback_skill_names = set(user_selected_skills)
         fallback_skill_refs: Dict[str, Dict[str, Any]] = {}
         fallback_preload_skill_refs: Dict[str, Dict[str, Any]] = {}
-        fallback_preload_skills = set(fallback_skills)
+        fallback_preload_skills = set(fallback_skill_names)
         _merge_user_default_skill_refs(
             db,
             user_id=user_id,
-            skills=set(fallback_skills),
+            skills=fallback_skill_names,
             skill_refs=fallback_skill_refs,
             preload_skills=fallback_preload_skills,
             preload_skill_refs=fallback_preload_skill_refs,
             context=binding_context,
         )
-        fallback_skills = list(fallback_skill_refs.keys() | set(fallback_skills))
+        fallback_skill_names.update(fallback_skill_refs)
         for requested_ref in requested_skill_refs:
             skill_name = requested_ref["name"]
-            if skill_name not in fallback_skills:
-                fallback_skills.append(skill_name)
+            fallback_skill_names.add(skill_name)
             skill = find_skill_by_ref(
                 db,
                 skill_name=skill_name,
@@ -106,11 +106,21 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                 fallback_skill_refs[skill_name] = ref_meta
                 fallback_preload_skills.add(skill_name)
                 fallback_preload_skill_refs[skill_name] = ref_meta
+        _merge_provider_skill_refs(
+            db,
+            task_crd=task_crd,
+            user_id=team_owner_id,
+            team_namespace=team_namespace or "default",
+            skills=fallback_skill_names,
+            skill_refs=fallback_skill_refs,
+            preload_skills=fallback_preload_skills,
+            preload_skill_refs=fallback_preload_skill_refs,
+        )
         return {
             "task_id": task_id,
             "team_id": None,
             "team_namespace": team_namespace,
-            "skills": fallback_skills,
+            "skills": sorted(fallback_skill_names),
             "preload_skills": sorted(fallback_preload_skills),
             "skill_refs": fallback_skill_refs,
             "preload_skill_refs": fallback_preload_skill_refs,
@@ -279,6 +289,17 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         for skill_name, ref_meta in resolved_user_refs.items():
             preload_skill_refs[skill_name] = ref_meta
 
+    _merge_provider_skill_refs(
+        db,
+        task_crd=task_crd,
+        user_id=team_owner_id,
+        team_namespace=team.namespace or "default",
+        skills=all_skills,
+        skill_refs=skill_refs,
+        preload_skills=all_preload_skills,
+        preload_skill_refs=preload_skill_refs,
+    )
+
     for skill_name in list(all_preload_skills):
         if skill_name not in preload_skill_refs and skill_name in skill_refs:
             preload_skill_refs[skill_name] = skill_refs[skill_name]
@@ -331,6 +352,47 @@ def _merge_user_default_skill_refs(
         if ref.get("force_preload"):
             preload_skills.add(skill_name)
             preload_skill_refs[skill_name] = skill_refs[skill_name]
+
+
+def _merge_provider_skill_refs(
+    db: Session,
+    *,
+    task_crd: Task,
+    user_id: int,
+    team_namespace: str,
+    skills: set[str],
+    skill_refs: Dict[str, Dict[str, Any]],
+    preload_skills: set[str],
+    preload_skill_refs: Dict[str, Dict[str, Any]],
+) -> None:
+    """Merge Skills derived from the task's persisted knowledge Providers."""
+    external_refs = getattr(task_crd.spec, "externalKnowledgeRefs", None) or []
+    providers = {ref.provider for ref in external_refs}
+    for provider_id in sorted(providers):
+        skill_name = get_provider_skill_name(provider_id)
+        if not skill_name:
+            continue
+        skill = find_skill_by_ref(
+            db,
+            skill_name=skill_name,
+            namespace="default",
+            is_public=True,
+            user_id=user_id,
+            team_namespace=team_namespace,
+        )
+        if not skill:
+            logger.warning(
+                "[get_task_skills] Provider Skill could not be resolved: "
+                "provider=%s skill=%s",
+                provider_id,
+                skill_name,
+            )
+            continue
+        ref_meta = build_skill_ref_meta(skill)
+        skills.add(skill_name)
+        preload_skills.add(skill_name)
+        skill_refs[skill_name] = ref_meta
+        preload_skill_refs[skill_name] = ref_meta
 
 
 def _derive_task_mode(task_crd: Task) -> str:

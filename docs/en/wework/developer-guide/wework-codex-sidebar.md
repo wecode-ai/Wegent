@@ -40,6 +40,8 @@ When Codex App is not running, Executor writes a same-directory temporary file, 
 
 Local projects are mutated by the local Executor in the local `CODEX_HOME`. Remote projects are mutated by the Executor on the owning device. Backend does not persist sidebar state.
 
+When Wework synchronizes remote-project descriptors into the local Executor, each non-empty batch is authoritative for the remote hosts represented in that batch. Executor updates the listed projects and removes stale projects for those hosts, including their order, pin, appearance, and task-assignment metadata. Hosts absent from the batch remain unchanged, and an empty batch does not clear remote projects, preventing a temporarily incomplete local view from deleting offline-device state.
+
 ## Offline remote task recovery
 
 After a cloud or remote task-list sync succeeds, Wework stores a per-user, allowlisted summary in local `localStorage`. It includes task IDs, titles, update times, workspace paths, repository and branch hints, and sidebar ordering metadata. The cache excludes conversation bodies, tool calls, runtime handles, model configuration, and parent or child task trees. Full details remain only on the remote device.

@@ -2258,6 +2258,119 @@ async fn concurrent_runtime_task_sends_start_only_one_turn() {
 }
 
 #[tokio::test]
+async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-queued-worktree-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-queued-worktree-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let source = temp_path("runtime-queued-worktree-source", "dir");
+    fs::create_dir_all(&source).unwrap();
+    let log_path = temp_path("runtime-queued-worktree-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.settings.update",
+            "payload": {"maxConcurrentTasks": 1}
+        }))
+        .await
+        .expect("runtime concurrency setting should update");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "active-task",
+                "workspacePath": "/tmp/project",
+                "message": "hold the only slot",
+                "executionRequest": codex_execution_request(
+                    "hold the only slot",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("active task should be accepted");
+
+    let source_path = source.display().to_string();
+    let queued = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "queued-worktree-task",
+                "workspacePath": source_path,
+                "message": "wait for a slot",
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree"
+                    }
+                },
+                "executionRequest": {
+                    "task_id": 1002,
+                    "subtask_id": 2002,
+                    "prompt": "wait for a slot",
+                    "project_workspace_path": source.display().to_string(),
+                    "workspace_source": "git_worktree",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses",
+                        "protocol": "openai-responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("worktree task should be queued");
+
+    let planned_path = PathBuf::from(
+        queued["workspacePath"]
+            .as_str()
+            .expect("queued task should return its planned worktree path"),
+    );
+    assert_eq!(queued["status"], "queued");
+    assert_eq!(queued["queuePosition"], 1);
+    assert_eq!(
+        planned_path,
+        executor_home
+            .join("workspace/worktrees/queued-worktree-task")
+            .join(source.file_name().unwrap())
+    );
+    assert!(
+        !planned_path.exists(),
+        "queued task must not create a worktree before acquiring a slot"
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": planned_path.display().to_string(),
+                "taskId": "queued-worktree-task"
+            }
+        }))
+        .await
+        .expect("queued task cleanup should succeed");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "active-task"
+            }
+        }))
+        .await
+        .expect("active task cleanup should succeed");
+}
+
+#[tokio::test]
 async fn runtime_tasks_guidance_steers_running_codex_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2985,7 +3098,7 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
 }
 
 #[tokio::test]
-async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local_index() {
+async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollback() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -3017,6 +3130,7 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
                 },
                 "message": "edited from address handle",
                 "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
                 "executionRequest": codex_execution_request(
                     "edited from address handle",
                     "/tmp/project",
@@ -3028,16 +3142,23 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
         .expect("rollback should be accepted");
     assert_eq!(rollback["accepted"], true);
 
-    wait_for_method_count(&log_path, "thread/rollback", 1).await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
     wait_for_thread_mapping(&handler, "local-visible-task", "thread-1").await;
     let calls = read_json_lines(&log_path);
-    let rollback = calls
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/rollback"),
+        "message editing must not use the deprecated provider rollback"
+    );
+    let resume = calls
         .iter()
-        .find(|call| call["method"] == "thread/rollback")
-        .expect("rollback should use the nested runtime handle");
-    assert_eq!(rollback["params"]["threadId"], "thread-1");
-    assert_eq!(rollback["params"]["numTurns"], 1);
+        .find(|call| call["method"] == "thread/resume")
+        .expect("editing should resume and subscribe to the persistent thread");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+    let turn_start = calls
+        .iter()
+        .find(|call| call["method"] == "turn/start")
+        .expect("editing should start a replacement turn");
+    assert_eq!(turn_start["params"]["threadId"], "thread-1");
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
@@ -3806,6 +3927,7 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       if printf '%s\n' "$line" | grep -q '"turnId":""'; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
         printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'

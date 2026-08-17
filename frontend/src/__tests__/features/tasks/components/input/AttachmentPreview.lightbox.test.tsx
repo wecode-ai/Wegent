@@ -22,8 +22,11 @@ jest.mock('@/apis/attachments', () => ({
   formatFileSize: () => '12 KB',
   getFileIcon: () => 'file',
   downloadAttachment: jest.fn(),
+  createAttachmentDownloadUrl: jest.fn(),
+  getAttachmentDownloadUrl: jest.fn(),
   isImageExtension: (extension: string) =>
     ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(extension),
+  isAudioExtension: () => false,
   isHtmlExtension: () => false,
   isVideoExtension: () => false,
 }))

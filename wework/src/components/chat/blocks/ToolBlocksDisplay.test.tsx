@@ -1639,7 +1639,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('秒')
   })
 
-  test('shows a subtle one-line reconnecting status only while it is active', () => {
+  test('shows a subtle one-line reconnecting status for non-ChatGPT models only while active', () => {
     const reconnectingBlock: ProcessingBlock = {
       id: 'reconnecting-1',
       subtaskId: 1,
@@ -1662,6 +1662,29 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay blocks={[{ ...reconnectingBlock, status: 'done' }]} isStreaming={true} />
     )
     expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+  })
+
+  test('explains the ChatGPT network failure and opens proxy settings', () => {
+    window.history.replaceState({}, '', '/')
+    const reconnectingBlock: ProcessingBlock = {
+      id: 'reconnecting-chatgpt',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'runtime_reconnecting',
+      toolInput: { model_kind: 'codex-official' },
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    render(<ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />)
+
+    expect(screen.getByTestId('runtime-reconnecting-chatgpt-status')).toHaveTextContent(
+      '当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？'
+    )
+
+    fireEvent.click(screen.getByTestId('runtime-reconnecting-open-proxy-settings'))
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/settings/personal/proxy')
   })
 
   test('shows the current reasoning summary in the trailing tool thinking row', () => {

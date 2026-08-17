@@ -196,6 +196,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => composerRef.current?.focus(),
         getValue: () => composerRef.current?.getValue() ?? value,
         setValue: (nextValue, selectionOffset) =>
           composerRef.current?.setValue(nextValue, selectionOffset),
@@ -265,7 +266,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       if (phrase.mode === 'goal') onSetGoal?.()
       const currentValue = getLiveValue()
       const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
-      handleComposerChange(phraseValue)
+      composerRef.current?.setValue(phraseValue, phraseValue.length)
       if (phrase.attachmentPaths?.length) {
         void resolveStoredWorkspacePaths(
           phrase.attachmentPaths,
@@ -274,7 +275,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
         )
       }
-      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      window.requestAnimationFrame(() => {
+        composerRef.current?.setValue(phraseValue, phraseValue.length)
+        textareaRef.current?.focus()
+      })
     }
 
     return (

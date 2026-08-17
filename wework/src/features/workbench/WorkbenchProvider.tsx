@@ -10,13 +10,13 @@ import {
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
@@ -103,6 +103,7 @@ import {
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import {
+  createRuntimeTaskLifecycleOwnershipView,
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycleStoreSnapshot,
@@ -135,7 +136,7 @@ import {
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import { defaultNewChatModelSelection } from './runtimeModelSelection'
+import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -218,8 +219,11 @@ export function WorkbenchProvider({
   children,
   user,
   services,
+  lifecycleStore: providedLifecycleStore,
   onStartupReadyChange,
   workspaceTabId,
+  syncRemoteProjects = true,
+  syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -266,8 +270,17 @@ export function WorkbenchProvider({
     if (!resolvedServices.localLoopItemExecutionApi) return
     return startLocalRobotQueueDispatcher(resolvedServices)
   }, [resolvedServices])
-  const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
-  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
+  const sharedLifecycleStore = useMemo(
+    () => providedLifecycleStore ?? new RuntimeTaskLifecycleStore(user.id),
+    [providedLifecycleStore, user.id]
+  )
+  const canSyncRuntimeTaskLifecycle = useStableEvent(() => syncRuntimeTaskLifecycle)
+  const lifecycleStore = useMemo(
+    () =>
+      createRuntimeTaskLifecycleOwnershipView(sharedLifecycleStore, canSyncRuntimeTaskLifecycle),
+    [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
+  )
+  const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
@@ -282,6 +295,8 @@ export function WorkbenchProvider({
     }
   }, [dispatch, state.user?.id, workbenchIdentity])
   const remoteProjectSyncSignatureRef = useRef('')
+  const remoteProjectSyncRevisionRef = useRef(0)
+  const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
@@ -312,10 +327,10 @@ export function WorkbenchProvider({
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
-  }, [lifecycleStore, state.runtimeWork])
+  }, [lifecycleStore, state.runtimeWork, syncRuntimeTaskLifecycle])
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
-  }, [lifecycleStore, state.currentRuntimeTask])
+  }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
   useEffect(() => {
     const trackingApis = [
       resolvedServices.projectSpaceApis?.local,
@@ -710,9 +725,15 @@ export function WorkbenchProvider({
         }
       )
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
-        dispatch({ type: 'error_set', error: '启动模式保存失败' })
-      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: {
+            wework_project_work_preferences: preferences.wework_project_work_preferences,
+          },
+        })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动模式保存失败' })
+        })
     },
     [currentUser.preferences, projectWorktreeBranch, resolvedServices.userApi, state.currentProject]
   )
@@ -749,9 +770,15 @@ export function WorkbenchProvider({
         }
       )
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
-        dispatch({ type: 'error_set', error: '启动分支保存失败' })
-      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: {
+            wework_project_work_preferences: preferences.wework_project_work_preferences,
+          },
+        })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动分支保存失败' })
+        })
     },
     [currentUser.preferences, projectExecutionMode, resolvedServices.userApi, state.currentProject]
   )
@@ -776,9 +803,13 @@ export function WorkbenchProvider({
         wework_new_chat_model_selection: selection,
       }
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi?.updateCurrentUser({ preferences }).catch(() => {
-        dispatch({ type: 'error_set', error: '模型配置保存失败' })
-      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: { wework_new_chat_model_selection: selection },
+        })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '模型配置保存失败' })
+        })
     },
     [currentUser.preferences, resolvedServices.userApi]
   )
@@ -844,11 +875,9 @@ export function WorkbenchProvider({
     cloudWorkStatus,
     markRuntimeTasksArchived,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
     refreshWorkLists,
     refreshRuntimeTask,
     refreshDevices,
-    updateLocalRuntimeTaskExecution,
     updateLocalRuntimeTaskSupervisor,
     updateLocalRuntimeTaskSnapshot,
     updateLocalRuntimeTaskTitle,
@@ -878,11 +907,33 @@ export function WorkbenchProvider({
     []
   )
 
+  const invalidateRemoteProjectSync = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.add(normalizeRuntimeWorkspacePath(workspacePath))
+    remoteProjectSyncRevisionRef.current += 1
+  }, [])
+
+  const clearRemoteProjectSyncRemoval = useCallback((workspacePath: string) => {
+    removedRemoteProjectPathsRef.current.delete(normalizeRuntimeWorkspacePath(workspacePath))
+    remoteProjectSyncSignatureRef.current = ''
+  }, [])
+
   useEffect(() => {
+    if (!syncRemoteProjects) {
+      remoteProjectSyncRevisionRef.current += 1
+      remoteProjectSyncSignatureRef.current = ''
+      return
+    }
     const projects = getRuntimeRemoteProjectRegistrations(
       state.runtimeWork,
       localRuntimeStateDeviceId
-    ).sort((left, right) => left.id.localeCompare(right.id))
+    )
+      .filter(
+        project =>
+          !removedRemoteProjectPathsRef.current.has(
+            normalizeRuntimeWorkspacePath(project.remotePath)
+          )
+      )
+      .sort((left, right) => left.id.localeCompare(right.id))
     if (!localRuntimeStateDeviceId || projects.length === 0) {
       remoteProjectSyncSignatureRef.current = ''
       return
@@ -890,10 +941,14 @@ export function WorkbenchProvider({
     const signature = JSON.stringify({ deviceId: localRuntimeStateDeviceId, projects })
     if (remoteProjectSyncSignatureRef.current === signature) return
     remoteProjectSyncSignatureRef.current = signature
+    const revision = remoteProjectSyncRevisionRef.current
     void enqueueRemoteProjectStateMutation(() =>
-      executorClient.runtime
-        .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
-        .then(() => refreshWorkLists())
+      revision !== remoteProjectSyncRevisionRef.current ||
+      remoteProjectSyncSignatureRef.current !== signature
+        ? Promise.resolve()
+        : executorClient.runtime
+            .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+            .then(() => refreshWorkLists())
     ).catch(error => {
       if (remoteProjectSyncSignatureRef.current === signature) {
         remoteProjectSyncSignatureRef.current = ''
@@ -906,6 +961,7 @@ export function WorkbenchProvider({
     localRuntimeStateDeviceId,
     refreshWorkLists,
     state.runtimeWork,
+    syncRemoteProjects,
   ])
 
   useEffect(() => {
@@ -969,6 +1025,7 @@ export function WorkbenchProvider({
         updateWorkbenchDebugSnapshot({
           state,
           lifecycle: lifecycleSnapshot,
+          taskReminders: runtimeTaskReminders,
           cloudWorkStatus,
           composer: {
             scopeKey: projectChatScopeKey,
@@ -1001,6 +1058,7 @@ export function WorkbenchProvider({
     draftInputByScope,
     modelSelection.models,
     projectChatScopeKey,
+    runtimeTaskReminders,
     state,
   ])
 
@@ -1011,26 +1069,6 @@ export function WorkbenchProvider({
     services: resolvedServices,
     refreshDevices,
   })
-
-  const rememberExecutionDevice = useCallback(
-    (deviceId: string) => {
-      dispatch({
-        type: 'standalone_device_preference_changed',
-        standaloneDeviceId: getPreferredStandaloneDeviceId(state.devices, deviceId) ?? deviceId,
-      })
-      void resolvedServices.userApi
-        ?.updateCurrentUser({
-          preferences: {
-            ...(currentUser.preferences ?? {}),
-            default_execution_target: deviceId,
-          },
-        })
-        .catch(() => {
-          // Keep the in-session selection even if preference persistence fails.
-        })
-    },
-    [currentUser.preferences, resolvedServices.userApi, state.devices]
-  )
 
   const selectProject = useCallback(
     (projectId: number | null) => {
@@ -1083,9 +1121,6 @@ export function WorkbenchProvider({
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
       )
-      if (standaloneDeviceId) {
-        rememberExecutionDevice(standaloneDeviceId)
-      }
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId,
@@ -1094,13 +1129,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [
-      rememberExecutionDevice,
-      state.devices,
-      state.standaloneDeviceId,
-      user.id,
-      user.preferences?.default_execution_target,
-    ]
+    [state.devices, state.standaloneDeviceId, user.id, user.preferences?.default_execution_target]
   )
 
   const openStandaloneWorkspace = useCallback(
@@ -1151,10 +1180,7 @@ export function WorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to register local project')
         }
-        response.roots.forEach(workspacePath =>
-          clearRuntimeProjectRemoval({ deviceId: response.deviceId, workspacePath })
-        )
-        rememberExecutionDevice(response.deviceId)
+        response.roots.forEach(clearRemoteProjectSyncRemoval)
         await refreshWorkLists()
         dispatch({
           type: 'runtime_workspace_opened',
@@ -1176,6 +1202,7 @@ export function WorkbenchProvider({
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
       const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
+      clearRemoteProjectSyncRemoval(openedWorkspacePath)
       const openedDeviceId =
         resolveLocalWorkbenchDeviceId(
           devicesForResolution,
@@ -1184,12 +1211,7 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
-      clearRuntimeProjectRemoval({
-        deviceId: openedDeviceId,
-        workspacePath: openedWorkspacePath,
-      })
       writeLastProjectId(user.id, null)
-      rememberExecutionDevice(openedDeviceId)
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
@@ -1198,14 +1220,7 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [
-      clearRuntimeProjectRemoval,
-      executorClient,
-      refreshWorkLists,
-      rememberExecutionDevice,
-      state.devices,
-      user.id,
-    ]
+    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists, state.devices, user.id]
   )
 
   const startNewChat = useCallback(() => {
@@ -1427,12 +1442,29 @@ export function WorkbenchProvider({
       if (!resolvedServices.runtimeWorkApi) {
         return Promise.reject(new Error('Runtime work API is unavailable'))
       }
+      let taskModelSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const taskModel = findModelForSelection(modelSelection.models, taskModelSelection)
+      if (taskModelSelection && taskModel) {
+        const executionModel = selectedModelExecutionFields(
+          taskModel,
+          taskModelSelection.options ?? {}
+        )
+        taskModelSelection = {
+          modelName: executionModel.modelId ?? taskModelSelection.modelName,
+          modelType: executionModel.modelType ?? taskModelSelection.modelType,
+          options: executionModel.modelOptions ?? {},
+        }
+      }
       return resolvedServices.runtimeWorkApi.bindRuntimeTaskImSessions({
         address,
         sessionKeys,
+        ...(taskModelSelection ? { modelSelection: taskModelSelection } : {}),
       })
     },
-    [resolvedServices]
+    [modelSelection.models, resolvedServices, state.runtimeWork]
   )
 
   const getImNotificationSettings = useCallback(() => {
@@ -1480,8 +1512,8 @@ export function WorkbenchProvider({
     services: resolvedServices,
     refreshWorkLists,
     markRuntimeProjectRemoved,
-    clearRuntimeProjectRemoval,
-    rememberExecutionDevice,
+    invalidateRemoteProjectSync,
+    clearRemoteProjectSyncRemoval,
     enqueueRemoteProjectStateMutation,
   })
   const runtimeMessaging = useWorkbenchRuntimeMessaging({
@@ -1498,7 +1530,6 @@ export function WorkbenchProvider({
     modelSelection,
     skillSelection,
     refreshWorkLists,
-    rememberExecutionDevice,
   })
   const stableSelectProject = useStableEvent(selectProject)
   const stableSetProjectExecutionMode = useStableEvent(selectProjectExecutionMode)
@@ -1713,13 +1744,6 @@ export function WorkbenchProvider({
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
-            updateLocalRuntimeTaskExecution(address, true, 'active')
-            dispatch({
-              type: 'runtime_task_execution_updated',
-              address,
-              running: true,
-              status: 'active',
-            })
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -1730,25 +1754,7 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            // Runtime providers may replace the provisional subtask ID with their canonical
-            // turn ID while streaming. A terminal event is already scoped to one task, so it
-            // must settle that task even when the provider-facing ID changed.
-            lifecycleStore.turnSettled(address, null, outcome)
-            const running = lifecycleStore.getTask(address)?.derived.isRunning ?? false
-            const status = running
-              ? 'active'
-              : outcome === 'succeeded'
-                ? 'done'
-                : outcome === 'failed'
-                  ? 'failed'
-                  : 'cancelled'
-            updateLocalRuntimeTaskExecution(address, running, status)
-            dispatch({
-              type: 'runtime_task_execution_updated',
-              address,
-              running,
-              status,
-            })
+            lifecycleStore.turnSettled(address, turnId, outcome)
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
@@ -1800,7 +1806,6 @@ export function WorkbenchProvider({
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskTitle,
       updateCanonicalRuntimeContextUsage,
-      updateLocalRuntimeTaskExecution,
       updateLocalRuntimeTaskSnapshot,
       updateLocalRuntimeTaskSupervisor,
       updateLocalRuntimeTaskTitle,
@@ -1863,7 +1868,6 @@ export function WorkbenchProvider({
   const stableUnsubscribeRuntimeTaskNotifications = useStableEvent(
     unsubscribeRuntimeTaskNotifications
   )
-  const stableRememberExecutionDevice = useStableEvent(rememberExecutionDevice)
   const stableRefreshDevices = useStableEvent(refreshDevices)
   const stableGetRemoteDeviceStartupCommand = useStableEvent(getRemoteDeviceStartupCommand)
   const stableUpgradeDevice = useStableEvent(upgradeDevice)
@@ -2412,7 +2416,6 @@ export function WorkbenchProvider({
     updateGlobalImNotification,
     subscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications,
-    rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,
@@ -2502,7 +2505,6 @@ export function WorkbenchProvider({
       updateGlobalImNotification: stableUpdateGlobalImNotification,
       subscribeRuntimeTaskNotifications: stableSubscribeRuntimeTaskNotifications,
       unsubscribeRuntimeTaskNotifications: stableUnsubscribeRuntimeTaskNotifications,
-      rememberExecutionDevice: stableRememberExecutionDevice,
       refreshWorkLists: stableRefreshWorkLists,
       refreshDevices: stableRefreshDevices,
       getRemoteDeviceStartupCommand: stableGetRemoteDeviceStartupCommand,
@@ -2600,7 +2602,6 @@ export function WorkbenchProvider({
       stablePrepareDeviceWorkspace,
       stableRefreshDevices,
       stableRefreshWorkLists,
-      stableRememberExecutionDevice,
       stableRemoveProject,
       stableReorderRuntimeProjects,
       stableReorderRuntimeProjectTasks,
@@ -2640,12 +2641,9 @@ export function WorkbenchProvider({
   )
 
   return (
-    <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+    <RuntimeTaskLifecycleProvider store={sharedLifecycleStore} writerStore={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
-        <WorkbenchPaneContext.Provider value={paneValue}>
-          <CloudModelCatalogSyncDialogHost />
-          {children}
-        </WorkbenchPaneContext.Provider>
+        <WorkbenchPaneContext.Provider value={paneValue}>{children}</WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>
     </RuntimeTaskLifecycleProvider>
   )

@@ -20,18 +20,11 @@ import {
   UserGroupIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
-import {
-  fetchTeamsList,
-  deleteTeam,
-  shareTeam,
-  checkTeamRunningTasks,
-  copyTeam,
-} from '../services/teams'
+import { fetchTeamsList, deleteTeam, shareTeam, copyTeam } from '../services/teams'
 import { teamApis } from '@/apis/team'
-import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
-import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
+import { TeamIdentityConfirmDialog } from './TeamIdentityConfirmDialog'
 import TeamShareModal from './TeamShareModal'
 import { TeamChildNamespaceAuthorizationDialog } from './TeamChildNamespaceAuthorizationDialog'
 import { TeamCardActionsMenu } from './TeamCardActionsMenu'
@@ -182,7 +175,7 @@ export default function TeamList({
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
-  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
   const [isUnbindingSharedTeam, setIsUnbindingSharedTeam] = useState(false)
   const [pendingMarketUnbind, setPendingMarketUnbind] = useState<{
@@ -190,8 +183,6 @@ export default function TeamList({
     targetNamespace: string
   } | null>(null)
   const [isUnbindingMarketTeam, setIsUnbindingMarketTeam] = useState(false)
-  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null)
-  const [isCheckingTasks, setIsCheckingTasks] = useState(false)
   const [shareModalVisible, setShareModalVisible] = useState(false)
   const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null)
   const [sharingId, setSharingId] = useState<number | null>(null)
@@ -559,39 +550,14 @@ export default function TeamList({
 
   const handleDelete = async (teamId: number) => {
     setTeamToDelete(teamId)
-    setIsCheckingTasks(true)
+    setDeleteConfirmation('')
 
     // Check if this is a shared team
     const team = teams.find(t => t.id === teamId)
     const isShared = team?.share_status === 2
     setIsUnbindingSharedTeam(isShared)
 
-    // For shared teams, skip running tasks check and show unbind confirmation directly
-    if (isShared) {
-      setIsCheckingTasks(false)
-      setDeleteConfirmVisible(true)
-      return
-    }
-
-    try {
-      // Check if team has running tasks
-      const result = await checkTeamRunningTasks(teamId)
-      setRunningTasksInfo(result)
-
-      if (result.has_running_tasks) {
-        // Show force delete confirmation dialog
-        setForceDeleteConfirmVisible(true)
-      } else {
-        // Show normal delete confirmation dialog
-        setDeleteConfirmVisible(true)
-      }
-    } catch (e) {
-      // If check fails, show normal delete dialog
-      console.error('Failed to check running tasks:', e)
-      setDeleteConfirmVisible(true)
-    } finally {
-      setIsCheckingTasks(false)
-    }
+    setDeleteConfirmVisible(true)
   }
 
   const handleConfirmDelete = async () => {
@@ -599,11 +565,12 @@ export default function TeamList({
 
     setIsDeleting(true)
     try {
-      await deleteTeam(teamToDelete)
+      const team = teams.find(item => item.id === teamToDelete)
+      await deleteTeam(teamToDelete, isUnbindingSharedTeam ? undefined : team?.name)
       setTeams(prev => prev.filter(team => team.id !== teamToDelete))
       setDeleteConfirmVisible(false)
       setTeamToDelete(null)
-      setRunningTasksInfo(null)
+      setDeleteConfirmation('')
     } catch {
       toast({
         variant: 'destructive',
@@ -637,31 +604,10 @@ export default function TeamList({
     }
   }
 
-  const handleForceDelete = async () => {
-    if (!teamToDelete) return
-
-    setIsDeleting(true)
-    try {
-      await deleteTeam(teamToDelete, true)
-      setTeams(prev => prev.filter(team => team.id !== teamToDelete))
-      setForceDeleteConfirmVisible(false)
-      setTeamToDelete(null)
-      setRunningTasksInfo(null)
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: t('teams.delete'),
-      })
-    } finally {
-      setIsDeleting(false)
-    }
-  }
-
   const handleCancelDelete = () => {
     setDeleteConfirmVisible(false)
-    setForceDeleteConfirmVisible(false)
     setTeamToDelete(null)
-    setRunningTasksInfo(null)
+    setDeleteConfirmation('')
     setIsUnbindingSharedTeam(false)
   }
 
@@ -863,6 +809,7 @@ export default function TeamList({
     (compact && !hideCreateActions && createActions)
       ? filters
       : undefined
+  const teamPendingDeletion = teams.find(team => team.id === teamToDelete) || null
 
   return (
     <>
@@ -1061,7 +1008,7 @@ export default function TeamList({
                                 team={team}
                                 writableGroups={writableGroups}
                                 copying={copyingTeamId === team.id}
-                                checkingTasks={isCheckingTasks}
+                                checkingTasks={false}
                                 canEdit={false}
                                 canAuthorizeChildren={shouldShowChildAuthorization(team)}
                                 canCopy={shouldShowCopy(team)}
@@ -1201,7 +1148,6 @@ export default function TeamList({
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => handleDelete(team.id)}
-                                  disabled={isCheckingTasks}
                                   title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
                                   className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
                                 >
@@ -1286,21 +1232,13 @@ export default function TeamList({
 
       {/* Delete/Unbind confirmation dialog */}
       <Dialog
-        open={deleteConfirmVisible}
+        open={deleteConfirmVisible && isUnbindingSharedTeam}
         onOpenChange={open => !open && !isDeleting && setDeleteConfirmVisible(false)}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              {isUnbindingSharedTeam
-                ? t('teams.unbind_confirm_title')
-                : t('teams.delete_confirm_title')}
-            </DialogTitle>
-            <DialogDescription>
-              {isUnbindingSharedTeam
-                ? t('teams.unbind_confirm_message')
-                : t('teams.delete_confirm_message')}
-            </DialogDescription>
+            <DialogTitle>{t('teams.unbind_confirm_title')}</DialogTitle>
+            <DialogDescription>{t('teams.unbind_confirm_message')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
@@ -1339,6 +1277,27 @@ export default function TeamList({
         </DialogContent>
       </Dialog>
 
+      <TeamIdentityConfirmDialog
+        open={deleteConfirmVisible && !isUnbindingSharedTeam}
+        title={t('teams.delete_confirm_title')}
+        description={t('teams.destructive_delete_warning')}
+        currentName={teamPendingDeletion?.name || ''}
+        confirmation={deleteConfirmation}
+        confirmationLabel={t('teams.confirm_name_label', {
+          name: teamPendingDeletion?.name || '',
+        })}
+        cancelLabel={t('common.cancel')}
+        confirmLabel={t('teams.delete')}
+        busy={isDeleting}
+        destructive
+        highlightDescription
+        onConfirmationChange={setDeleteConfirmation}
+        onOpenChange={open => {
+          if (!open) handleCancelDelete()
+        }}
+        onConfirm={() => void handleConfirmDelete()}
+      />
+
       <Dialog
         open={pendingMarketUnbind !== null}
         onOpenChange={open => {
@@ -1371,69 +1330,6 @@ export default function TeamList({
               data-testid="confirm-remove-market-agent"
             >
               {t('resource-library:actions.remove_from_team')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Force delete confirmation dialog for running tasks */}
-      <Dialog
-        open={forceDeleteConfirmVisible}
-        onOpenChange={open => !open && !isDeleting && setForceDeleteConfirmVisible(false)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('teams.force_delete_confirm_title')}</DialogTitle>
-            <DialogDescription>
-              {t('teams.force_delete_confirm_message', {
-                count: runningTasksInfo?.running_tasks_count || 0,
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          <ForceDeleteTaskSummary
-            runningTasks={runningTasksInfo?.running_tasks || []}
-            runningTasksTitle={t('teams.running_tasks_list')}
-            warning={t('teams.force_delete_warning')}
-            andMoreLabel={
-              runningTasksInfo && runningTasksInfo.running_tasks.length > 5
-                ? `... ${t('teams.and_more_tasks', {
-                    count: runningTasksInfo.running_tasks.length - 5,
-                  })}`
-                : undefined
-            }
-          />
-          <DialogFooter>
-            <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
-              {isDeleting ? (
-                <div className="flex items-center">
-                  <svg
-                    className="animate-spin -ml-1 mr-2 h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
-                  {t('actions.deleting')}
-                </div>
-              ) : (
-                t('teams.force_delete')
-              )}
             </Button>
           </DialogFooter>
         </DialogContent>

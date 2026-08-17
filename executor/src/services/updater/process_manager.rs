@@ -153,6 +153,7 @@ impl ProcessManager {
             return false;
         };
         let mut command = Command::new(program);
+        crate::process::hide_windows_console(&mut command);
         command.args(plan.command.iter().skip(1));
         command.stdin(Stdio::null());
 

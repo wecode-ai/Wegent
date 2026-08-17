@@ -29,6 +29,11 @@ interface PluginDetailViewProps {
   backLabel?: string
   onToggle: () => void
   onComponentToggle: (componentKey: string, enabled: boolean) => void
+  autoUpdateEnabled?: boolean
+  autoUpdateSaving?: boolean
+  autoUpdatePaused?: boolean
+  autoUpdateFailureCount?: number
+  onAutoUpdateChange?: (enabled: boolean) => void
   onUninstall: () => void
   primaryActionLabel?: string
   showUninstall?: boolean
@@ -67,7 +72,9 @@ interface PluginDetailViewProps {
   onSkillRun?: (skillName: string) => void
   shareRecipient?: boolean
   primaryActionIcon?: 'try' | 'install' | 'none'
-  actionMenuBeforePrimary?: boolean
+  deleteActionLabel?: string
+  deleteActionDisabled?: boolean
+  onDeleteAction?: () => void
 }
 
 interface DetailComponentItem {
@@ -424,6 +431,11 @@ export function PluginDetailView({
   backLabel,
   onToggle,
   onComponentToggle,
+  autoUpdateEnabled = false,
+  autoUpdateSaving = false,
+  autoUpdatePaused = false,
+  autoUpdateFailureCount = 0,
+  onAutoUpdateChange,
   onUninstall,
   primaryActionLabel,
   showUninstall = true,
@@ -455,7 +467,9 @@ export function PluginDetailView({
   onSkillRun,
   shareRecipient = false,
   primaryActionIcon = 'try',
-  actionMenuBeforePrimary = true,
+  deleteActionLabel,
+  deleteActionDisabled = false,
+  onDeleteAction,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
@@ -475,6 +489,9 @@ export function PluginDetailView({
   }, [isActionMenuOpen])
   const raw = plugin.raw
   const isInstalled = raw.spec.installState === 'installed'
+  const hasMaterializedOutdatedRelease =
+    raw.spec.installState === 'update_available' &&
+    Boolean(raw.status.devices?.some(device => Boolean(device.actualReleaseId)))
   const distributionLabel =
     plugin.distribution === 'official'
       ? t('workbench.plugins_distribution_official', 'OpenAI官方')
@@ -550,6 +567,59 @@ export function PluginDetailView({
       </div>
     </section>
   )
+  const autoUpdateSection = (isInstalled || hasMaterializedOutdatedRelease) &&
+    onAutoUpdateChange && (
+      <section className="mt-7 space-y-3" data-testid="plugin-detail-update-policy">
+        <h2 className="text-base font-medium leading-5 text-text-primary">
+          {t('workbench.plugin_detail_updates', '更新设置')}
+        </h2>
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-border/30 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium leading-5 text-text-primary">
+              {t('workbench.plugin_detail_auto_update', '自动更新')}
+            </p>
+            <p className="text-xs leading-4 text-text-muted">
+              {t(
+                'workbench.plugin_detail_auto_update_hint',
+                '启用后，将自动下载并安装通过安全扫描的新版本。'
+              )}
+            </p>
+            {autoUpdatePaused && (
+              <p
+                className="mt-1 text-xs leading-4 text-warning"
+                data-testid={`plugin-auto-update-paused-${plugin.id}`}
+              >
+                {t(
+                  'workbench.plugin_detail_auto_update_paused',
+                  '自动更新已暂停：连续失败 {{count}} 次。请手动更新后恢复自动重试。',
+                  { count: autoUpdateFailureCount }
+                )}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoUpdateEnabled}
+            aria-label={t('workbench.plugin_detail_auto_update', '自动更新')}
+            disabled={autoUpdateSaving}
+            data-testid={`plugin-auto-update-toggle-${plugin.id}`}
+            className={[
+              'relative h-6 w-10 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-not-allowed disabled:opacity-40',
+              autoUpdateEnabled ? 'bg-text-primary' : 'bg-border',
+            ].join(' ')}
+            onClick={() => onAutoUpdateChange(!autoUpdateEnabled)}
+          >
+            <span
+              className={[
+                'absolute left-1 top-1 h-4 w-4 rounded-full bg-background shadow-sm transition-transform',
+                autoUpdateEnabled ? 'translate-x-4' : 'translate-x-0',
+              ].join(' ')}
+            />
+          </button>
+        </div>
+      </section>
+    )
   const logo = installedPluginLogo(plugin, appearanceMode)
   const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
@@ -559,7 +629,11 @@ export function PluginDetailView({
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
   const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
   const showActionMenu =
-    showUninstall || Boolean(onEditAction) || Boolean(onMenuPublish) || showMenuCopy
+    showUninstall ||
+    Boolean(onEditAction) ||
+    Boolean(onMenuPublish) ||
+    showMenuCopy ||
+    Boolean(onDeleteAction)
 
   const actionMenu = showActionMenu ? (
     <div ref={actionMenuRef} className="relative">
@@ -631,6 +705,23 @@ export function PluginDetailView({
             >
               {t('workbench.plugins_uninstall', '卸载')}
             </button>
+          )}
+          {onDeleteAction && (
+            <>
+              <div className="my-1 border-t border-border/30" />
+              <button
+                type="button"
+                disabled={deleteActionDisabled}
+                data-testid={`plugin-detail-delete-${plugin.id}`}
+                className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40"
+                onClick={() => {
+                  setIsActionMenuOpen(false)
+                  onDeleteAction()
+                }}
+              >
+                {deleteActionLabel || t('workbench.plugins_delete_plugin', '删除插件')}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -804,19 +895,9 @@ export function PluginDetailView({
           </div>
 
           <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
-            {actionMenuBeforePrimary ? (
-              <>
-                {secondaryActionButton}
-                {actionMenu}
-                {primaryActionButton}
-              </>
-            ) : (
-              <>
-                {primaryActionButton}
-                {secondaryActionButton}
-                {actionMenu}
-              </>
-            )}
+            {secondaryActionButton}
+            {actionMenu}
+            {primaryActionButton}
           </div>
         </header>
 
@@ -837,6 +918,8 @@ export function PluginDetailView({
         {guideTemplateSection}
 
         {accessScopeSection}
+
+        {autoUpdateSection}
 
         {connectorItems.length > 0 && (
           <section className="mt-7 space-y-3">

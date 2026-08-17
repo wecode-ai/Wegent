@@ -7,7 +7,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { rust } from '@codemirror/lang-rust'
 import { bracketMatching, defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import {
   drawSelection,
@@ -22,6 +22,7 @@ import { useEffect, useRef } from 'react'
 interface WorkspaceTextFileEditorProps {
   path: string
   value: string
+  themeType: 'light' | 'dark'
   onChange: (value: string) => void
   onSave: () => void
 }
@@ -40,14 +41,51 @@ function languageForPath(path: string) {
   return []
 }
 
+function editorTheme(themeType: 'light' | 'dark') {
+  return EditorView.theme(
+    {
+      '&': {
+        height: '100%',
+        fontSize: 'var(--text-code)',
+        color: 'rgb(var(--color-text-primary))',
+        backgroundColor: 'rgb(var(--color-bg-base))',
+      },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: 'var(--font-code)',
+      },
+      '.cm-content, .cm-line': {
+        caretColor: 'rgb(var(--color-text-primary))',
+      },
+      '.cm-gutters': {
+        backgroundColor: 'rgb(var(--color-bg-surface))',
+        borderRight: '1px solid rgb(var(--color-border))',
+        color: 'rgb(var(--color-text-muted))',
+      },
+      '.cm-activeLine, .cm-activeLineGutter': {
+        backgroundColor: 'rgb(var(--color-muted))',
+      },
+      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+        backgroundColor: 'rgb(var(--color-primary) / 0.24) !important',
+      },
+      '&.cm-focused': { outline: 'none' },
+    },
+    { dark: themeType === 'dark' }
+  )
+}
+
 export function WorkspaceTextFileEditor({
   path,
   value,
+  themeType,
   onChange,
   onSave,
 }: WorkspaceTextFileEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  const themeCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
+  const initialThemeRef = useRef(themeType)
   const onChangeRef = useRef(onChange)
   const onSaveRef = useRef(onSave)
 
@@ -92,30 +130,30 @@ export function WorkspaceTextFileEditor({
           EditorView.updateListener.of(update => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())
           }),
-          EditorView.theme({
-            '&': {
-              height: '100%',
-              fontSize: 'var(--text-code)',
-              backgroundColor: 'rgb(255 255 255)',
-            },
-            '.cm-scroller': {
-              overflow: 'auto',
-              fontFamily: 'var(--font-code)',
-            },
-            '.cm-gutters': {
-              backgroundColor: 'rgb(247 247 248)',
-              borderRight: '1px solid rgb(224 224 224)',
-              color: 'rgb(140 140 140)',
-            },
-            '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgb(247 247 248)' },
-            '&.cm-focused': { outline: 'none' },
-          }),
+          themeCompartmentRef.current.of(editorTheme(initialThemeRef.current)),
         ],
       }),
     })
+    viewRef.current = view
     view.focus()
-    return () => view.destroy()
+    return () => {
+      viewRef.current = null
+      view.destroy()
+    }
   }, [path])
 
-  return <div ref={hostRef} data-testid="workspace-file-editor" className="min-h-0 flex-1" />
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: themeCompartmentRef.current.reconfigure(editorTheme(themeType)),
+    })
+  }, [themeType])
+
+  return (
+    <div
+      ref={hostRef}
+      data-testid="workspace-file-editor"
+      data-theme={themeType}
+      className="min-h-0 flex-1 bg-background"
+    />
+  )
 }

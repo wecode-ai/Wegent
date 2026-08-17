@@ -377,8 +377,15 @@ export function useWorkbenchPaneEnvironment({
       }
       await commitAndPushEnvironmentChanges(workspaceProject, message, activeWorkspaceTarget)
       setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
+      await loadCurrentEnvironmentInfo({ force: true, showLoading: false })
     },
-    [activeWorkspaceTarget, commitAndPushEnvironmentChanges, workspaceProject, workspaceTargetError]
+    [
+      activeWorkspaceTarget,
+      commitAndPushEnvironmentChanges,
+      loadCurrentEnvironmentInfo,
+      workspaceProject,
+      workspaceTargetError,
+    ]
   )
 
   const pushPaneEnvironmentChanges = useCallback(async () => {
@@ -386,7 +393,14 @@ export function useWorkbenchPaneEnvironment({
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
     await pushEnvironmentChanges(workspaceProject, activeWorkspaceTarget)
-  }, [activeWorkspaceTarget, pushEnvironmentChanges, workspaceProject, workspaceTargetError])
+    await loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+  }, [
+    activeWorkspaceTarget,
+    loadCurrentEnvironmentInfo,
+    pushEnvironmentChanges,
+    workspaceProject,
+    workspaceTargetError,
+  ])
 
   const listPaneEnvironmentBranches = useCallback(() => {
     const {

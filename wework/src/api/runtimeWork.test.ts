@@ -313,6 +313,11 @@ describe('createRuntimeWorkApi', () => {
           taskId: 'runtime-1',
         },
         sessionKeys: ['session-a', 'session-b'],
+        modelSelection: {
+          modelName: 'gpt-5.6-luna',
+          modelType: 'public',
+          options: { reasoningEffort: 'low' },
+        },
       })
     ).resolves.toEqual({
       address: {
@@ -331,6 +336,11 @@ describe('createRuntimeWorkApi', () => {
         taskId: 'runtime-1',
       },
       sessionKeys: ['session-a', 'session-b'],
+      modelSelection: {
+        modelName: 'gpt-5.6-luna',
+        modelType: 'public',
+        options: { reasoningEffort: 'low' },
+      },
     })
   })
 

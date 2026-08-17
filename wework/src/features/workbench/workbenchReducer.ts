@@ -27,6 +27,10 @@ import {
   updateRuntimeWorkTask,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
+import {
+  normalizeRuntimeTaskSummary,
+  shouldReplaceRuntimeTaskProjection,
+} from './runtimeTaskLifecycle/projection'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
@@ -112,7 +116,6 @@ export type WorkbenchAction =
       startFreshChat?: boolean
     }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
-  | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | { type: 'blank_chat_committed' }
   | {
       type: 'runtime_task_opened'
@@ -133,12 +136,6 @@ export type WorkbenchAction =
       type: 'runtime_task_title_updated'
       address: RuntimeTaskAddress
       title: string
-    }
-  | {
-      type: 'runtime_task_execution_updated'
-      address: RuntimeTaskAddress
-      running: boolean
-      status: string
     }
   | {
       type: 'runtime_task_supervisor_updated'
@@ -202,21 +199,27 @@ function mergeRuntimeWorkPreservingTaskOrder(
   current: RuntimeWorkListResponse | null | undefined,
   next: RuntimeWorkListResponse | null
 ): RuntimeWorkListResponse | null {
-  if (!current || !next) return next
+  const normalizedCurrent = current ? normalizeRuntimeWorkTasks(current) : null
+  const normalizedNext = next ? normalizeRuntimeWorkTasks(next) : null
+  if (!normalizedCurrent || !normalizedNext) return normalizedNext
 
   const nextProjectTaskKeys = new Map(
-    next.projects.map(projectWork => [
+    normalizedNext.projects.map(projectWork => [
       runtimeProjectUiId(projectWork.project),
       collectRuntimeTaskKeys(projectWork.deviceWorkspaces),
     ])
   )
-  const nextChatTaskKeys = collectRuntimeTaskKeys(next.chats)
+  const nextChatTaskKeys = collectRuntimeTaskKeys(normalizedNext.chats)
 
   const mergeProjectWorkspace = (
     projectWork: RuntimeProjectWork,
     workspace: RuntimeDeviceWorkspace
   ): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingProjectRuntimeWorkspace(current, projectWork, workspace)
+    const currentWorkspace = findMatchingProjectRuntimeWorkspace(
+      normalizedCurrent,
+      projectWork,
+      workspace
+    )
     if (!currentWorkspace) return workspace
     const resolvedTaskKeys =
       nextProjectTaskKeys.get(runtimeProjectUiId(projectWork.project)) ?? new Set<string>()
@@ -232,7 +235,7 @@ function mergeRuntimeWorkPreservingTaskOrder(
   }
 
   const mergeChatWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    const currentWorkspace = findMatchingChatRuntimeWorkspace(current, workspace)
+    const currentWorkspace = findMatchingChatRuntimeWorkspace(normalizedCurrent, workspace)
     if (!currentWorkspace) return workspace
     return {
       ...workspace,
@@ -246,8 +249,8 @@ function mergeRuntimeWorkPreservingTaskOrder(
   }
 
   const projects = preserveMissingOptimisticProjects(
-    current.projects,
-    next.projects.map(project => ({
+    normalizedCurrent.projects,
+    normalizedNext.projects.map(project => ({
       ...project,
       deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
         mergeProjectWorkspace(project, workspace)
@@ -256,12 +259,12 @@ function mergeRuntimeWorkPreservingTaskOrder(
     nextProjectTaskKeys
   )
   const chats = preserveMissingOptimisticWorkspaces(
-    current.chats,
-    next.chats.map(mergeChatWorkspace),
+    normalizedCurrent.chats,
+    normalizedNext.chats.map(mergeChatWorkspace),
     nextChatTaskKeys
   )
   const merged = {
-    ...next,
+    ...normalizedNext,
     projects,
     chats,
   }
@@ -269,6 +272,21 @@ function mergeRuntimeWorkPreservingTaskOrder(
   return {
     ...merged,
     totalTasks: countRuntimeWorkTasks(merged),
+  }
+}
+
+function normalizeRuntimeWorkTasks(runtimeWork: RuntimeWorkListResponse): RuntimeWorkListResponse {
+  const normalizeWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.map(normalizeRuntimeTaskSummary),
+  })
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
+    })),
+    chats: runtimeWork.chats.map(normalizeWorkspace),
   }
 }
 
@@ -332,17 +350,7 @@ function mergeRuntimeTasks(
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) {
-        if (
-          isFreshOptimisticRuntimeTask(task) &&
-          isActiveOptimisticRuntimeTask(task) &&
-          nextTask.running === false &&
-          nextTask.status !== 'queued'
-        ) {
-          return task
-        }
-        return nextTask
-      }
+      if (nextTask) return shouldReplaceRuntimeTaskProjection(task, nextTask) ? nextTask : task
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
@@ -353,7 +361,7 @@ function mergeRuntimeTasks(
     })
     .filter((task): task is RuntimeDeviceWorkspace['tasks'][number] => Boolean(task))
   const mergedIds = new Set(merged.map(task => task.taskId))
-  nextTasks.forEach(task => {
+  nextById.forEach(task => {
     if (!mergedIds.has(task.taskId)) {
       merged.push(task)
     }
@@ -363,10 +371,6 @@ function mergeRuntimeTasks(
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
   return task.status === 'creating' || task.optimistic === true
-}
-
-function isActiveOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating' || task.status === 'queued' || task.status === 'running'
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -1181,12 +1185,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             }
           : state.user,
       }
-    case 'standalone_device_preference_changed':
-      return {
-        ...state,
-        standaloneDeviceId: action.standaloneDeviceId,
-        standaloneWorkspacePath: null,
-      }
     case 'blank_chat_committed':
       return {
         ...state,
@@ -1217,15 +1215,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
-      }
-    case 'runtime_task_execution_updated':
-      return {
-        ...state,
-        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
-          running: action.running,
-          status: action.status,
-          optimistic: true,
-        }),
       }
     case 'runtime_task_supervisor_updated':
       return {

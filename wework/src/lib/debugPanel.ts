@@ -15,6 +15,7 @@ import type {
 } from '@/types/workbench'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
+import type { RuntimeTaskReminderState } from '@/features/workbench/runtimeTaskReminders'
 
 type ConsoleDebug = (...args: unknown[]) => void
 
@@ -35,7 +36,10 @@ export interface WorkbenchDebugSnapshot {
     runningState: RuntimeTaskRunningDebugState
     activeTask: RuntimeTaskSummaryDebug | null
     activeWorkspace: RuntimeDeviceWorkspaceDebug | null
+    activeTaskProjectKey: string | null
     runtimeWorkSummary: RuntimeWorkSummary
+    lifecycleUnreadTaskCount: number
+    visibleUnreadTaskCount: number
     devices: WorkbenchState['devices']
     standaloneDeviceId: string | null
     standaloneWorkspacePath: string | null
@@ -137,6 +141,7 @@ interface RuntimeTaskAddressDebug {
 
 interface RuntimeTaskSummaryDebug {
   taskId: string
+  threadId?: string | null
   workspacePath: string
   workspaceKind?: string | null
   worktreeId?: string | null
@@ -264,11 +269,13 @@ export function installDebugPanelLogCapture() {
 export function updateWorkbenchDebugSnapshot({
   state,
   lifecycle,
+  taskReminders,
   cloudWorkStatus,
   composer = null,
 }: {
   state: WorkbenchState
   lifecycle: RuntimeTaskLifecycleStoreSnapshot
+  taskReminders: Pick<RuntimeTaskReminderState, 'unreadCount'>
   cloudWorkStatus: CloudWorkStatus
   composer?: WorkbenchComposerDebugSnapshot | null
 }) {
@@ -292,7 +299,10 @@ export function updateWorkbenchDebugSnapshot({
     },
     activeTask: sanitizeRuntimeTaskSummary(activeTask),
     activeWorkspace: sanitizeRuntimeWorkspace(activeWorkspace),
+    activeTaskProjectKey: findRuntimeTaskProjectKey(state.runtimeWork, state.currentRuntimeTask),
     runtimeWorkSummary: summarizeRuntimeWork(state.runtimeWork, lifecycle),
+    lifecycleUnreadTaskCount: lifecycle.unreadTaskKeys.size,
+    visibleUnreadTaskCount: taskReminders.unreadCount,
     devices: state.devices,
     standaloneDeviceId: state.standaloneDeviceId,
     standaloneWorkspacePath: state.standaloneWorkspacePath,
@@ -305,8 +315,11 @@ export function updateWorkbenchDebugSnapshot({
 export function updateRuntimePaneDebugSnapshot(
   snapshot: Omit<RuntimePaneDebugSnapshot, 'updatedAt' | 'currentRuntimeTask'> & {
     currentRuntimeTask: RuntimeTaskAddress | null
-  }
+  },
+  options?: { enabled?: boolean }
 ) {
+  if (options?.enabled === false) return
+
   paneSnapshot = {
     ...snapshot,
     currentRuntimeTask: sanitizeRuntimeTaskAddress(snapshot.currentRuntimeTask),
@@ -506,8 +519,14 @@ function sanitizeRuntimeTaskSummary(
 ): RuntimeTaskSummaryDebug | null {
   if (!task) return null
   const runtimeHandleEstimate = estimateApproxChars(task.runtimeHandle)
+  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
+    value => typeof value === 'string' && value.trim()
+  )
   return {
     taskId: task.taskId,
+    threadId:
+      task.threadId ??
+      (typeof runtimeHandleThreadId === 'string' ? runtimeHandleThreadId.trim() : null),
     workspacePath: task.workspacePath,
     workspaceKind: task.workspaceKind ?? null,
     worktreeId: task.worktreeId ?? null,
@@ -870,6 +889,27 @@ function findRuntimeTask(
   const workspace = findRuntimeWorkspace(runtimeWork, address)
   if (!workspace || !address) return null
   return workspace.tasks.find(task => task.taskId === address.taskId) ?? null
+}
+
+function findRuntimeTaskProjectKey(
+  runtimeWork: RuntimeWorkListResponse | null,
+  address: RuntimeTaskAddress | null
+): string | null {
+  if (!runtimeWork || !address) return null
+  for (const project of runtimeWork.projects) {
+    const containsTask = project.deviceWorkspaces.some(
+      workspace =>
+        workspace.deviceId === address.deviceId &&
+        workspace.tasks.some(task => task.taskId === address.taskId)
+    )
+    if (containsTask) return project.project.key
+  }
+  const isStandaloneChat = runtimeWork.chats.some(
+    workspace =>
+      workspace.deviceId === address.deviceId &&
+      workspace.tasks.some(task => task.taskId === address.taskId)
+  )
+  return isStandaloneChat ? 'chats' : null
 }
 
 function findRuntimeWorkspace(

@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -33,6 +34,7 @@ import { paths } from '@/config/paths'
 import { agentUsageApi, UsageAgent, UsageResult } from '@wecode/api/agent-usage'
 import { UsageDatePicker } from './UsageDatePicker'
 import { AgentMultiSelect, agentUsageKey } from './AgentMultiSelect'
+import { DailyUsageChart } from './DailyUsageChart'
 import { ApiError } from '@/apis/client'
 
 function formatLocalDate(date: Date): string {
@@ -49,10 +51,6 @@ const latestDataDate = formatLocalDate(latestDataDateValue)
 const defaultStartDateValue = new Date(latestDataDateValue)
 defaultStartDateValue.setDate(defaultStartDateValue.getDate() - 6)
 const defaultStartDate = formatLocalDate(defaultStartDateValue)
-
-function csvCell(value: string | number): string {
-  return `"${String(value).replace(/"/g, '""')}"`
-}
 
 function MetricLabel({ label, tip }: { label: string; tip?: string }) {
   if (!tip) return <>{label}</>
@@ -213,44 +211,76 @@ export function AgentUsagePage() {
     }
   }
 
-  const downloadCsv = () => {
+  const downloadExcel = async () => {
     if (!result) return
-    const header = ['agent_name', 'group_name', 'author', 'PV', 'UV']
+    const XLSX = await import('xlsx')
+    const summaryHeader = [
+      t('agent_usage.agent'),
+      t('agent_usage.group_name'),
+      t('agent_usage.author'),
+      'PV',
+      'UV',
+    ]
     if (showAiMetrics) {
-      header.push('ai_rounds', 'completed_ai_rounds')
+      summaryHeader.push(t('agent_usage.ai_rounds'), t('agent_usage.completed_ai_rounds'))
     }
-    const lines = result.rows.map(row =>
-      [
-        row.agent_name,
-        row.agent_namespace,
-        row.author_name,
-        row.pv,
-        row.uv,
-        ...(showAiMetrics ? [row.ai_rounds ?? 0, row.completed_ai_rounds ?? 0] : []),
-      ]
-        .map(csvCell)
-        .join(',')
-    )
-    lines.push(
-      [
-        'TOTAL',
-        '',
-        '',
-        result.pv,
-        result.uv,
-        ...(showAiMetrics ? [result.ai_rounds ?? 0, result.completed_ai_rounds ?? 0] : []),
-      ]
-        .map(csvCell)
-        .join(',')
-    )
-    const blob = new Blob([`\uFEFF${header.join(',')}\n${lines.join('\n')}`], {
-      type: 'text/csv;charset=utf-8',
-    })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `agent-usage-${startDate}-${endDate}.csv`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    const summaryRows = result.rows.map(row => [
+      row.agent_name,
+      row.agent_namespace,
+      row.author_name,
+      row.pv,
+      row.uv,
+      ...(showAiMetrics ? [row.ai_rounds ?? 0, row.completed_ai_rounds ?? 0] : []),
+    ])
+    summaryRows.push([
+      t('agent_usage.total'),
+      '',
+      '',
+      result.pv,
+      result.uv,
+      ...(showAiMetrics ? [result.ai_rounds ?? 0, result.completed_ai_rounds ?? 0] : []),
+    ])
+    const detailHeader = [
+      t('agent_usage.agent'),
+      t('agent_usage.group_name'),
+      t('agent_usage.date'),
+      'PV',
+      'UV',
+    ]
+    if (showAiMetrics) {
+      detailHeader.push(t('agent_usage.ai_rounds'), t('agent_usage.completed_ai_rounds'))
+    }
+    const detailRows = result.daily_rows.map(row => [
+      row.agent_name,
+      row.agent_namespace,
+      row.date,
+      row.pv,
+      row.uv,
+      ...(showAiMetrics ? [row.ai_rounds ?? 0, row.completed_ai_rounds ?? 0] : []),
+    ])
+
+    const summarySheet = XLSX.utils.aoa_to_sheet([summaryHeader, ...summaryRows])
+    summarySheet['!cols'] = [
+      { wch: 24 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 12 },
+      ...(showAiMetrics ? [{ wch: 16 }, { wch: 18 }] : []),
+    ]
+    const detailSheet = XLSX.utils.aoa_to_sheet([detailHeader, ...detailRows])
+    detailSheet['!cols'] = [
+      { wch: 24 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 12 },
+      ...(showAiMetrics ? [{ wch: 16 }, { wch: 18 }] : []),
+    ]
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, summarySheet, t('agent_usage.summary_sheet'))
+    XLSX.utils.book_append_sheet(workbook, detailSheet, t('agent_usage.detail_sheet'))
+    XLSX.writeFile(workbook, `agent-usage-${startDate}-${endDate}.xlsx`)
   }
 
   return (
@@ -364,109 +394,226 @@ export function AgentUsagePage() {
             )}
             {result && (
               <Card className="overflow-hidden">
-                <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-text-primary">
-                      {t('agent_usage.results')}
-                    </h3>
-                    <p className="mt-1 text-xs text-text-muted">
+                <Tabs defaultValue="summary">
+                  <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-text-primary">
+                        {t('agent_usage.results')}
+                      </h3>
+                      <TabsList className="mt-3 min-h-11 border border-border-strong bg-muted p-1 md:min-h-9">
+                        <TabsTrigger
+                          value="summary"
+                          data-testid="agent-usage-summary-tab"
+                          className="min-h-9 px-4 data-[state=active]:bg-surface data-[state=active]:shadow-sm md:min-h-7"
+                        >
+                          {t('agent_usage.summary_tab')}
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="daily"
+                          data-testid="agent-usage-daily-tab"
+                          className="min-h-9 px-4 data-[state=active]:bg-surface data-[state=active]:shadow-sm md:min-h-7"
+                        >
+                          {t('agent_usage.daily_details')}
+                        </TabsTrigger>
+                      </TabsList>
+                    </div>
+                    <Button
+                      data-testid="agent-usage-download"
+                      variant="outline"
+                      onClick={downloadExcel}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      {t('agent_usage.export_excel')}
+                    </Button>
+                  </div>
+                  <TabsContent value="summary" className="mt-0">
+                    <p className="border-b border-border px-5 py-3 text-xs text-text-muted">
                       {t('agent_usage.result_count', { count: result.rows.length })}
                     </p>
-                  </div>
-                  <Button
-                    data-testid="agent-usage-download"
-                    variant="outline"
-                    onClick={downloadCsv}
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    {t('agent_usage.export_csv')}
-                  </Button>
-                </div>
-                <div className="overflow-x-auto">
-                  <Table className="text-left">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="px-4 text-left">{t('agent_usage.agent')}</TableHead>
-                        <TableHead className="px-4 text-left">
-                          {t('agent_usage.group_name')}
-                        </TableHead>
-                        <TableHead className="px-4 text-left">{t('agent_usage.author')}</TableHead>
-                        <TableHead className="px-4 text-left">
-                          <MetricLabel label="PV" tip={t('agent_usage.pv_tip')} />
-                        </TableHead>
-                        <TableHead className="px-4 text-left">
-                          <MetricLabel label="UV" tip={t('agent_usage.uv_tip')} />
-                        </TableHead>
-                        {showAiMetrics && (
-                          <>
+                    <div className="overflow-x-auto">
+                      <Table className="text-left">
+                        <TableHeader>
+                          <TableRow>
                             <TableHead className="px-4 text-left">
-                              {t('agent_usage.ai_rounds')}
+                              {t('agent_usage.agent')}
                             </TableHead>
                             <TableHead className="px-4 text-left">
-                              {t('agent_usage.completed_ai_rounds')}
+                              {t('agent_usage.group_name')}
                             </TableHead>
-                          </>
-                        )}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {result.rows.length === 0 ? (
-                        <TableRow>
-                          <TableCell
-                            colSpan={showAiMetrics ? 7 : 5}
-                            className="h-32 text-center text-text-muted"
-                          >
-                            {t('agent_usage.no_data')}
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        result.rows.map((row, index) => (
-                          <TableRow
-                            key={`${row.author_name}-${row.agent_namespace}-${row.agent_name}-${index}`}
-                          >
-                            <TableCell className="text-left">{row.agent_name}</TableCell>
-                            <TableCell className="text-left">{row.agent_namespace}</TableCell>
-                            <TableCell className="text-left">{row.author_name}</TableCell>
-                            <TableCell className="text-left tabular-nums">{row.pv}</TableCell>
-                            <TableCell className="text-left tabular-nums">{row.uv}</TableCell>
+                            <TableHead className="px-4 text-left">
+                              {t('agent_usage.author')}
+                            </TableHead>
+                            <TableHead className="px-4 text-left">
+                              <MetricLabel label="PV" tip={t('agent_usage.pv_tip')} />
+                            </TableHead>
+                            <TableHead className="px-4 text-left">
+                              <MetricLabel label="UV" tip={t('agent_usage.uv_tip')} />
+                            </TableHead>
                             {showAiMetrics && (
                               <>
-                                <TableCell className="text-left tabular-nums">
-                                  {row.ai_rounds}
-                                </TableCell>
-                                <TableCell className="text-left tabular-nums">
-                                  {row.completed_ai_rounds}
-                                </TableCell>
+                                <TableHead className="px-4 text-left">
+                                  {t('agent_usage.ai_rounds')}
+                                </TableHead>
+                                <TableHead className="px-4 text-left">
+                                  {t('agent_usage.completed_ai_rounds')}
+                                </TableHead>
                               </>
                             )}
                           </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                    {result.rows.length > 0 && (
-                      <TableFooter>
-                        <TableRow>
-                          <TableCell className="font-semibold">{t('agent_usage.total')}</TableCell>
-                          <TableCell colSpan={2} className="text-xs text-text-muted">
-                            {t('agent_usage.uv_deduplicated')}
-                          </TableCell>
-                          <TableCell className="font-semibold tabular-nums">{result.pv}</TableCell>
-                          <TableCell className="font-semibold tabular-nums">{result.uv}</TableCell>
-                          {showAiMetrics && (
-                            <>
-                              <TableCell className="font-semibold tabular-nums">
-                                {result.ai_rounds}
+                        </TableHeader>
+                        <TableBody>
+                          {result.rows.length === 0 ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={showAiMetrics ? 7 : 5}
+                                className="h-32 text-center text-text-muted"
+                              >
+                                {t('agent_usage.no_data')}
                               </TableCell>
-                              <TableCell className="font-semibold tabular-nums">
-                                {result.completed_ai_rounds}
-                              </TableCell>
-                            </>
+                            </TableRow>
+                          ) : (
+                            result.rows.map((row, index) => (
+                              <TableRow
+                                key={`${row.author_name}-${row.agent_namespace}-${row.agent_name}-${index}`}
+                              >
+                                <TableCell className="text-left">{row.agent_name}</TableCell>
+                                <TableCell className="text-left">{row.agent_namespace}</TableCell>
+                                <TableCell className="text-left">{row.author_name}</TableCell>
+                                <TableCell className="text-left tabular-nums">{row.pv}</TableCell>
+                                <TableCell className="text-left tabular-nums">{row.uv}</TableCell>
+                                {showAiMetrics && (
+                                  <>
+                                    <TableCell className="text-left tabular-nums">
+                                      {row.ai_rounds}
+                                    </TableCell>
+                                    <TableCell className="text-left tabular-nums">
+                                      {row.completed_ai_rounds}
+                                    </TableCell>
+                                  </>
+                                )}
+                              </TableRow>
+                            ))
                           )}
-                        </TableRow>
-                      </TableFooter>
-                    )}
-                  </Table>
-                </div>
+                        </TableBody>
+                        {result.rows.length > 0 && (
+                          <TableFooter>
+                            <TableRow>
+                              <TableCell className="font-semibold">
+                                {t('agent_usage.total')}
+                              </TableCell>
+                              <TableCell colSpan={2} className="text-xs text-text-muted">
+                                {t('agent_usage.uv_deduplicated')}
+                              </TableCell>
+                              <TableCell className="font-semibold tabular-nums">
+                                {result.pv}
+                              </TableCell>
+                              <TableCell className="font-semibold tabular-nums">
+                                {result.uv}
+                              </TableCell>
+                              {showAiMetrics && (
+                                <>
+                                  <TableCell className="font-semibold tabular-nums">
+                                    {result.ai_rounds}
+                                  </TableCell>
+                                  <TableCell className="font-semibold tabular-nums">
+                                    {result.completed_ai_rounds}
+                                  </TableCell>
+                                </>
+                              )}
+                            </TableRow>
+                          </TableFooter>
+                        )}
+                      </Table>
+                    </div>
+                  </TabsContent>
+                  <TabsContent value="daily" className="mt-0">
+                    <p className="border-b border-border px-5 py-3 text-xs text-text-muted">
+                      {t('agent_usage.daily_detail_count', {
+                        count: result.daily_rows.length,
+                      })}
+                    </p>
+                    <DailyUsageChart
+                      rows={result.daily_rows}
+                      showAiMetrics={showAiMetrics}
+                      labels={{
+                        usageTrend: t('agent_usage.usage_trend'),
+                        aiTrend: t('agent_usage.ai_trend'),
+                        pv: 'PV',
+                        uv: 'UV',
+                        aiRounds: t('agent_usage.ai_rounds'),
+                        completedAiRounds: t('agent_usage.completed_ai_rounds'),
+                        selectAgents: t('agent_usage.chart_select_agents'),
+                        shownAgents: t('agent_usage.chart_shown_agents'),
+                        topAgents: t('agent_usage.chart_top_agents'),
+                        selectAll: t('agent_usage.chart_select_all'),
+                        clearAll: t('agent_usage.chart_clear_all'),
+                      }}
+                    />
+                    <div className="overflow-x-auto border-t border-border">
+                      <Table className="text-left">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="px-4 text-left">
+                              {t('agent_usage.agent')}
+                            </TableHead>
+                            <TableHead className="px-4 text-left">
+                              {t('agent_usage.date')}
+                            </TableHead>
+                            <TableHead className="px-4 text-left">
+                              <MetricLabel label="PV" tip={t('agent_usage.pv_tip')} />
+                            </TableHead>
+                            <TableHead className="px-4 text-left">
+                              <MetricLabel label="UV" tip={t('agent_usage.daily_uv_tip')} />
+                            </TableHead>
+                            {showAiMetrics && (
+                              <>
+                                <TableHead className="px-4 text-left">
+                                  {t('agent_usage.ai_rounds')}
+                                </TableHead>
+                                <TableHead className="px-4 text-left">
+                                  {t('agent_usage.completed_ai_rounds')}
+                                </TableHead>
+                              </>
+                            )}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {result.daily_rows.length === 0 ? (
+                            <TableRow>
+                              <TableCell
+                                colSpan={showAiMetrics ? 6 : 4}
+                                className="h-24 text-center text-text-muted"
+                              >
+                                {t('agent_usage.no_data')}
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            result.daily_rows.map(row => (
+                              <TableRow
+                                key={`${row.agent_namespace}-${row.agent_name}-${row.date}`}
+                              >
+                                <TableCell className="text-left">{row.agent_name}</TableCell>
+                                <TableCell className="text-left">{row.date}</TableCell>
+                                <TableCell className="text-left tabular-nums">{row.pv}</TableCell>
+                                <TableCell className="text-left tabular-nums">{row.uv}</TableCell>
+                                {showAiMetrics && (
+                                  <>
+                                    <TableCell className="text-left tabular-nums">
+                                      {row.ai_rounds}
+                                    </TableCell>
+                                    <TableCell className="text-left tabular-nums">
+                                      {row.completed_ai_rounds}
+                                    </TableCell>
+                                  </>
+                                )}
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </Card>
             )}
           </div>

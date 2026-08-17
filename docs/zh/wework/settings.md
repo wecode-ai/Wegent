@@ -11,7 +11,7 @@ sidebar_position: 9
 - **模型**：本机 Codex 登录、本地兼容模型，以及由 Wegent 云端配置并同步到 Wework 的模型。
 - **代理**：分别配置本机和云端设备的模型访问代理。
 - **运行工具**：检测并配置可从桌面工作台直接启动的 OpenCode、Claude Code 和 Kimi Code。
-- **上下文**：管理任务上下文偏好、Codex 个性，以及开启实验性功能后可用的默认分身监督原则。
+- **上下文**：管理任务上下文偏好、Codex 个性和默认分身监督原则。
 - **快捷短语**：保存经常使用的任务说明。
 - **键盘快捷键**：查看、修改或清除本机快捷键。
 - **工作树**：设置 Worktree 根目录、自动清理和保留数量。
@@ -125,6 +125,8 @@ Wework 不会改用其他目录启动会话，而会明确提示原工作区不�
 ## 自定义 Codex 模型
 
 在“设置 → 模型”中点击“添加模型”后，先选择提供商。Wework 内置 Kimi Coding、Kimi 开放平台、DeepSeek、GLM 和 MiniMax profile；填写对应平台的 API Key 后，可以从提供商的模型列表接口读取可用模型。连接地址、接口协议、工具模式和已知模型的上下文长度由 profile 自动填写，其中 Kimi 开放平台使用中国区 `api.moonshot.cn` 端点。MiniMax 分为“中国大陆”和“Global”两个入口，必须选择与 Token Plan Key 签发平台一致的区域；两者都使用官方 Anthropic 兼容接口，并通过 `X-Api-Key` 读取模型列表。Kimi Coding 的 K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
+
+同一个提供商可以配置多个模型。模型列表中的每一项分别维护模型、显示名称、视觉代理、启用状态和连接测试，共用提供商级的 API Key、分组和技术配置。点击“增加模型”时，Wework 会自动刷新该提供商的可用模型并新增一项，不需要先点击“获取模型”；“获取模型”只用于手动刷新列表。每个模型项的“测试”按钮只测试该项选择的模型，保存后各模型会作为独立选项出现在模型选择器中。
 
 DeepSeek profile 使用原生 Responses API，展示当前可用于 Codex 的 `deepseek-v4-flash` 和 `deepseek-v4-pro`。两者均使用 1,048,576 tokens 上下文、默认 `high` 推理等级、实时 Web Search 和 freeform `apply_patch`；连接测试也会要求模型真实返回 `apply_patch` custom tool call。旧版由 Wework 管理的 DeepSeek Chat Completions 配置会自动迁移到 Responses API。当前模型目录声明文本输入且关闭图片生成，因此图片生成和图片理解不会在该 profile 下显示为可用能力。
 
