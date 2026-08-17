@@ -59,6 +59,10 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
     WORKBENCH_READY_TIMEOUT_MS,
     'The reloaded Wework WebView did not reconnect during response recovery'
   )
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    stableMs: 300,
+  })
 
   await withTimeout(
     control.awaitScenarioRequestCount('reconnect', 2),
