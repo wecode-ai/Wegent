@@ -305,7 +305,7 @@ describe('mergeMarketplaceCatalog', () => {
       ...localInstalledPlugin(),
       spec: {
         ...localInstalledPlugin().spec,
-        origin: 'marketplace',
+        origin: 'market',
         source: {
           type: 'marketplace',
           providerKey: 'wegent',

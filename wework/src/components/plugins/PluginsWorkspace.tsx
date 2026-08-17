@@ -3977,7 +3977,11 @@ export function PluginsWorkspace({
         })
         markAutoSyncInventoryReady()
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!isCurrent) return
+        liveMembershipSettled = true
+        markAutoSyncInventoryReady()
+      })
 
     void Promise.allSettled([cloudPromise, installedPromise, capabilitiesPromise]).then(
       ([cloudResult, installedResult, capabilitiesResult]) => {
@@ -4294,6 +4298,7 @@ export function PluginsWorkspace({
         .reportInstalledPluginsOnDevice(deviceId, reportIds)
         .catch(() => undefined)
         .then(refreshCatalog)
+        .catch(() => undefined)
         .finally(finishDeviceSync)
       return
     }
