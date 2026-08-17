@@ -96,7 +96,7 @@ async def dispatch_board_robot_execution(
         return None
     if execution.status != "queued" or execution.backend_task_id:
         return execution
-    if not execution.agent_id or execution.team_id is None:
+    if not execution.agent_id or not execution.team_id:
         raise RuntimeError("Board robot execution has no Wegent runtime target")
 
     item = db.get(LoopItem, execution.loop_item_id)
@@ -158,7 +158,7 @@ def schedule_board_robot_execution(
     if (
         execution.status != "queued"
         or not execution.agent_id
-        or execution.team_id is None
+        or not execution.team_id
         or execution.backend_task_id
     ):
         return
@@ -200,8 +200,8 @@ def request_execution_cancellations(
 
     for execution in executions:
         if (
-            execution.team_id is not None
-            and execution.backend_task_id is not None
+            execution.team_id
+            and execution.backend_task_id
             and execution.executor_owner_user_id
         ):
             cancel_managed_board_team_execution.delay(

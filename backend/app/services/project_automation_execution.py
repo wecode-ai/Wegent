@@ -241,7 +241,7 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
-        if execution.team_id is not None:
+        if execution.team_id:
             from app.services.board_team_execution import (
                 schedule_board_robot_execution,
             )

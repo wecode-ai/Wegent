@@ -59,6 +59,6 @@ sequenceDiagram
 | Runtime 事件 → 终态      | `board_team_completion.py`、Executor 状态更新                         |
 | 评论 → 精确续聊          | `board_team_continuation.py`、`project_automation_tasks.py`           |
 
-不变量：所有入口共用指派与激活器；激活只能发生在提交后；`loop_item_executions` 是看板执行唯一真值；Wegent 绑定使用精确 execution/task/subtask/team ID；MySQL `loop_items.assignee_team_id=0` 只表示未分配，服务和 API 必须将其归一化为 `null`，不得把 `0` 当作 Team ID；该哨兵规则不适用于 `loop_item_executions.team_id`；取消先写意图，只有 Runtime ACK 写终态；消息和 UI 不能反向覆盖执行状态。
+不变量：所有入口共用指派与激活器；激活只能发生在提交后；`loop_item_executions` 是看板执行唯一真值；Wegent 绑定使用精确 execution/task/subtask/team ID；MySQL `loop_items.assignee_team_id=0` 只表示未分配，服务和 API 必须将其归一化为 `null`，不得把 `0` 当作 Team ID；`loop_item_executions` 的可选 Team/Task ID 使用独立但一致的 `0 ↔ null` 边界；取消先写意图，只有 Runtime ACK 写终态；消息和 UI 不能反向覆盖执行状态。
 
 详细领域、API 与交付说明见 [云项目协作开发指南](../wegent/developer-guide/cloud-project-collaboration.md)。

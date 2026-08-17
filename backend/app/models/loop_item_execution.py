@@ -15,11 +15,11 @@ from sqlalchemy import (
     BigInteger,
     Column,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
     Text,
+    event,
     func,
 )
 
@@ -43,21 +43,17 @@ class LoopItemExecution(Base):
     agent_id = Column(String(64), nullable=False, default="", server_default="")
     team_id = Column(
         Integer,
-        ForeignKey(
-            "kinds.id",
-            name="fk_loop_item_executions_team_id_kinds",
-            ondelete="SET NULL",
-        ),
-        nullable=True,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Executing Wegent Team id; 0 means none",
     )
     backend_task_id = Column(
         big_integer_id_type(),
-        ForeignKey(
-            "tasks.id",
-            name="fk_loop_item_executions_backend_task_id_tasks",
-            ondelete="SET NULL",
-        ),
-        nullable=True,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Managed backend task id; 0 means none",
     )
     automation_run_id = Column(
         String(64), nullable=False, default="", server_default=""
@@ -215,3 +211,28 @@ class LoopItemExecution(Base):
         if self.agent_id:
             return "project_robot"
         return "wegent_team" if self.team_id else "automation_manager"
+
+    @property
+    def optional_team_id(self) -> int | None:
+        """Expose the nullable domain value for the persisted team sentinel."""
+
+        return self.team_id or None
+
+    @property
+    def optional_backend_task_id(self) -> int | None:
+        """Expose the nullable domain value for the persisted task sentinel."""
+
+        return self.backend_task_id or None
+
+
+@event.listens_for(LoopItemExecution, "before_insert")
+@event.listens_for(LoopItemExecution, "before_update")
+def _adapt_optional_execution_ids(
+    _mapper: object, _connection: object, target: LoopItemExecution
+) -> None:
+    """Persist optional execution identifiers with the table's zero sentinel."""
+
+    if target.team_id is None:
+        target.team_id = 0
+    if target.backend_task_id is None:
+        target.backend_task_id = 0

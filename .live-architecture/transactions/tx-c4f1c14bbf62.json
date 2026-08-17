@@ -1,0 +1,113 @@
+{
+  "actor": {
+    "id": "codex",
+    "kind": "ai"
+  },
+  "authority": "ai",
+  "base_revision": "A00000003",
+  "changes": [
+    {
+      "action": "create",
+      "change_id": "chg-4db003e48219",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/project-execution-state.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "Board execution identity uses positive identifiers in the domain while persisted optional identifiers use sentinels",
+      "subject": "arch://wegent/domain/project-execution-truth",
+      "timestamp": "2026-08-17T10:41:32Z"
+    },
+    {
+      "action": "create",
+      "change_id": "chg-2c81c3827ba6",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/project-execution-state.md"
+      ],
+      "object": null,
+      "plane": "model",
+      "predicate": null,
+      "reason": "The execution table preserves its original NOT NULL contract with zero sentinels for optional Team and backend task identifiers",
+      "subject": "arch://wegent/storage/mysql-execution-identity-sentinels",
+      "timestamp": "2026-08-17T10:41:32Z"
+    },
+    {
+      "action": "add-edge",
+      "change_id": "chg-308b4e0d4ce4",
+      "confidence": 1.0,
+      "evidence": [
+        "docs/zh/architecture/project-execution-state.md"
+      ],
+      "object": "arch://wegent/domain/project-execution-truth",
+      "plane": "model",
+      "predicate": "normalizes-to",
+      "reason": "Storage zero values are normalized to null before API and UI projection",
+      "relationship_id": "rel://a7e73d94ac0f040bb4940923db228d69ddd3473d75f369b96eaf20d9d0d70e60",
+      "subject": "arch://wegent/storage/mysql-execution-identity-sentinels",
+      "timestamp": "2026-08-17T10:41:32Z"
+    },
+    {
+      "action": "observe",
+      "change_id": "chg-5ab094981b16",
+      "confidence": 1.0,
+      "evidence": [
+        "2026-08-17 preview traceback: loop_item_executions.team_id cannot be null during custom manager enqueue"
+      ],
+      "object": null,
+      "plane": "runtime",
+      "predicate": null,
+      "reason": "Production runtime confirmed schema drift between the NOT NULL execution table and nullable application writes",
+      "subject": "arch://wegent/storage/mysql-execution-identity-sentinels",
+      "timestamp": "2026-08-17T10:41:44Z"
+    },
+    {
+      "action": "assert",
+      "change_id": "chg-0ddaf6b3064f",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/app/models/loop_item_execution.py,backend/alembic/versions/20260817_a3b4c5d6e7f8_restore_execution_sentinel_contract.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Model and migration restore NOT NULL zero-sentinel storage and remove incompatible SET NULL foreign keys",
+      "subject": "arch://wegent/storage/mysql-execution-identity-sentinels",
+      "timestamp": "2026-08-17T10:41:44Z"
+    },
+    {
+      "action": "verify",
+      "change_id": "chg-42084fae519e",
+      "confidence": 1.0,
+      "evidence": [
+        "backend/tests/models/test_execution_optional_id_sentinels.py,backend/tests/services/test_loop_item_executions.py,backend/tests/services/test_project_automation_managed_execution.py"
+      ],
+      "object": null,
+      "plane": "implementation",
+      "predicate": null,
+      "reason": "Regression coverage verifies custom manager, Team execution, cancellation, retry, migration, and API normalization behavior",
+      "subject": "arch://wegent/domain/project-execution-truth",
+      "timestamp": "2026-08-17T10:41:45Z"
+    }
+  ],
+  "created_at": "2026-08-17T10:35:15Z",
+  "id": "tx-c4f1c14bbf62",
+  "intent": "Eliminate production NOT NULL failures by centralizing sentinel compatibility for optional board execution identifiers while preserving nullable domain and API semantics",
+  "merged_revision": "A00000004",
+  "read_set": [
+    "arch://wegent/domain/board-assignment-truth",
+    "arch://wegent/domain/project-execution-truth",
+    "arch://wegent/storage/mysql-execution-identity-sentinels",
+    "arch://wegent/storage/mysql-optional-assignee-sentinel"
+  ],
+  "resolutions": [],
+  "status": "merged",
+  "updated_at": "2026-08-17T10:42:16Z",
+  "write_set": [
+    "arch://wegent/domain/project-execution-truth",
+    "arch://wegent/storage/mysql-execution-identity-sentinels",
+    "rel://a7e73d94ac0f040bb4940923db228d69ddd3473d75f369b96eaf20d9d0d70e60"
+  ]
+}
