@@ -149,7 +149,27 @@ function referencePathsMatch(left: string, right: string): boolean {
 }
 
 function normalizeReferencePath(path: string): string {
-  return path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
+  const normalized = path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
+  const drive = normalized.match(/^[a-zA-Z]:\//)?.[0]
+  const absolute = normalized.startsWith('/') || Boolean(drive)
+  const segments: string[] = []
+
+  for (const segment of normalized.slice(drive?.length ?? (absolute ? 1 : 0)).split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (segments.length > 0 && segments[segments.length - 1] !== '..') {
+        segments.pop()
+      } else if (!absolute) {
+        segments.push(segment)
+      }
+      continue
+    }
+    segments.push(segment)
+  }
+
+  if (drive) return `${drive}${segments.join('/')}`
+  if (absolute) return `/${segments.join('/')}`
+  return segments.join('/') || '.'
 }
 
 function filterCodexDocumentReferences(references: CodexReference[]): CodexReference[] {

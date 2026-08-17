@@ -2923,7 +2923,13 @@ describe('MessageList', () => {
               '已保存为设计文档：[Excel 行感知分块设计](/workspace/project/260817_1436_Excel行感知分块设计.md)',
             status: 'done',
             createdAt: '2026-08-17T08:00:01.000Z',
-            references: [{ path: '260817_1436_Excel行感知分块设计.md' }],
+            references: [
+              {
+                path: 'docs/../260817_1436_Excel行感知分块设计.md',
+                lineStart: 12,
+                lineEnd: 18,
+              },
+            ],
           },
         ]}
       />
@@ -2932,7 +2938,11 @@ describe('MessageList', () => {
     await userEvent.click(screen.getByTestId('codex-reference-card'))
 
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-      '/workspace/project/260817_1436_Excel行感知分块设计.md'
+      '/workspace/project/260817_1436_Excel行感知分块设计.md',
+      {
+        lineStart: 12,
+        lineEnd: 18,
+      }
     )
   })
 
