@@ -91,7 +91,7 @@ function AvailabilityTooltip({ label, testId }: { label: string; testId: string 
               id={tooltipId}
               role="tooltip"
               data-testid={`${testId}-tooltip`}
-              className="pointer-events-none fixed z-system-popover -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-[#2b2c2f]/95 px-2.5 py-1.5 text-xs font-medium text-white shadow-[0_8px_24px_rgba(0,0,0,0.24)] ring-1 ring-black/10 backdrop-blur-md"
+              className="pointer-events-none fixed z-system-popover -translate-y-1/2 whitespace-nowrap rounded-lg border border-border bg-popover/95 px-2.5 py-1.5 text-xs font-medium text-text-primary shadow-[0_8px_24px_rgba(0,0,0,0.24)] ring-1 ring-border backdrop-blur-md"
               style={{ left: position.left, top: position.top }}
             >
               {label}

@@ -9,7 +9,7 @@ import dynamic from 'next/dynamic'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
-import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
+import { TaskParamSync } from '@/features/tasks/components/params'
 import { TeamShareHandler } from '@/features/tasks/components/share'
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
 import '@/app/tasks/tasks.css'
@@ -47,7 +47,6 @@ function TasksPageContent() {
       <OidcTokenHandler />
       <Suspense>
         <TaskParamSync />
-        <DeviceTaskSync />
       </Suspense>
       <Suspense>
         <TeamShareHandler teams={teams} onRefreshTeams={handleRefreshTeams} />

@@ -14,6 +14,7 @@ import {
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
@@ -38,6 +39,7 @@ const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
+const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -322,6 +324,9 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
     text.includes('\n')
   if (isBlock) {
     const lang = match ? match[1] || '' : ''
+    if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
+      return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
+    }
     return (
       <MarkdownCodeBlock lang={lang} compact={compact}>
         {text || children}
@@ -514,7 +519,7 @@ function AssistantMarkdownLink({
         ) : null}
         <span
           data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-left text-sm font-normal leading-5 text-white shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
+          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-left text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
         >
           {tooltip}
         </span>

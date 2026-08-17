@@ -180,9 +180,9 @@ def assign_loop_item(
         response = external_loop_item_provider.assign(
             db, item_id, current_user.id, values
         )
-        from app.tasks.robot_queue_tasks import dispatch_queues_background
+        from app.tasks.robot_queue_tasks import consume_queues_background
 
-        background_tasks.add_task(dispatch_queues_background)
+        background_tasks.add_task(consume_queues_background)
         return LoopItemResponse.model_validate(response)
     item = loop_item_service.assign(
         db,
@@ -191,9 +191,9 @@ def assign_loop_item(
         user_id=current_user.id,
         values=values,
     )
-    from app.tasks.robot_queue_tasks import dispatch_queues_background
+    from app.tasks.robot_queue_tasks import consume_queues_background
 
-    background_tasks.add_task(dispatch_queues_background)
+    background_tasks.add_task(consume_queues_background)
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)
@@ -222,9 +222,9 @@ def approve_loop_item_run(
             user_id=current_user.id,
             values=values,
         )
-        from app.tasks.robot_queue_tasks import dispatch_queues_background
+        from app.tasks.robot_queue_tasks import consume_queues_background
 
-        background_tasks.add_task(dispatch_queues_background)
+        background_tasks.add_task(consume_queues_background)
         return LoopItemResponse.model_validate(response)
     item = loop_item_service.approve_run(
         db,
@@ -233,9 +233,9 @@ def approve_loop_item_run(
         user_id=current_user.id,
         values=values,
     )
-    from app.tasks.robot_queue_tasks import dispatch_queues_background
+    from app.tasks.robot_queue_tasks import consume_queues_background
 
-    background_tasks.add_task(dispatch_queues_background)
+    background_tasks.add_task(consume_queues_background)
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)
@@ -272,9 +272,6 @@ def reject_loop_item_run(
         user_id=current_user.id,
         values=values,
     )
-    from app.tasks.robot_queue_tasks import dispatch_queues_background
-
-    background_tasks.add_task(dispatch_queues_background)
     access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)

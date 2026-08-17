@@ -137,7 +137,7 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     expect(screen.getByTestId('environment-supervisor-section')).toHaveTextContent('监督')
-    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
+    expect(screen.getByTestId('task-supervisor-status-icon')).toHaveAccessibleName(
       '已检查，无需纠正'
     )
     await userEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
@@ -282,6 +282,7 @@ describe('EnvironmentInfoPopover', () => {
               state: 'open',
               draft: false,
               checks: 'success',
+              mergeability: 'mergeable',
             },
           },
         }}
@@ -298,6 +299,49 @@ describe('EnvironmentInfoPopover', () => {
     )
     expect(screen.getByTestId('change-request-state')).toHaveTextContent('进行中')
     expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+    expect(
+      screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
+    ).toHaveClass('text-green-500')
+  })
+
+  test('shows merge conflicts on the pull request icon without adding a second row', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+2',
+          deletions: '-1',
+          executionTarget: 'local',
+          branchName: 'fix/conflicts',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2692,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2692',
+              title: 'fix(wework): treat split view',
+              state: 'open',
+              draft: false,
+              checks: 'success',
+              mergeability: 'conflicting',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    const button = screen.getByTestId('change-request-button')
+    expect(button).toHaveClass('h-9')
+    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在冲突')
+    expect(button).toHaveAccessibleName(/存在冲突/)
+    expect(button.querySelector('[aria-hidden="true"]')).toHaveClass('text-red-500')
   })
 
   test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {

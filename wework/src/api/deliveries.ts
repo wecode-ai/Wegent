@@ -297,6 +297,7 @@ export interface CloudProjectMember {
   user_name: string
   email: string | null
   role: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
+  capability_description?: string
 }
 
 export interface CloudLoopItemCollaborator {
@@ -777,9 +778,12 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProjectMember(
       projectId: CloudProjectIdInput,
       userId: number,
-      role: Exclude<CloudProjectMember['role'], 'Owner'>
+      values: {
+        role?: Exclude<CloudProjectMember['role'], 'Owner'>
+        capability_description?: string
+      }
     ): Promise<CloudProjectMember> {
-      return client.patch(`/v1/cloud-projects/${projectId}/members/${userId}`, { role })
+      return client.patch(`/v1/cloud-projects/${projectId}/members/${userId}`, values)
     },
     removeCloudProjectMember(projectId: CloudProjectIdInput, userId: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}/members/${userId}`)

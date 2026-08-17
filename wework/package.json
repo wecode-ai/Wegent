@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.1.17-beta.1",
+  "version": "0.1.18-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -98,6 +98,8 @@
     "jszip": "3.10.1",
     "lucide-react": "^1.16.0",
     "lz-string": "1.5.0",
+    "mermaid": "11.15.0",
+    "plantuml-encoder": "1.4.0",
     "posthog-js": "^1.409.5",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.5.0",
@@ -131,7 +133,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",
     "autoprefixer": "^10.5.0",
-    "dingtalk-workspace-cli": "1.0.54",
+    "dingtalk-workspace-cli": "1.0.58",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",

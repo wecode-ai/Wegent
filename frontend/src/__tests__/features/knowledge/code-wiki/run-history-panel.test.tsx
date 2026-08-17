@@ -65,12 +65,33 @@ describe('restoring a past version', () => {
   })
 
   it('restores once confirmed', async () => {
-    const button = await openHistory()
+    const onRepublished = jest.fn()
+    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+    const button = await screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`)
     fireEvent.click(button)
 
     fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
 
     await waitFor(() => expect(codeWikiApi.republish).toHaveBeenCalledWith(1, 42))
+    await waitFor(() => expect(onRepublished).toHaveBeenCalled())
+    const { toast } = jest.requireMock('sonner')
+    expect(toast.success).toHaveBeenCalledWith('codeWiki.history.republished', {
+      description: 'codeWiki.history.republishedDescription',
+    })
+  })
+
+  it('does not report success when the reader fails to reload restored pages', async () => {
+    const onRepublished = jest.fn().mockRejectedValue(new Error('Page reload failed'))
+    render(<RunHistory knowledgeBaseId={1} status={null} onRepublished={onRepublished} />)
+    fireEvent.click(screen.getByTestId('code-wiki-history-trigger'))
+    fireEvent.click(await screen.findByTestId(`code-wiki-republish-${RESTORABLE.generation_id}`))
+    fireEvent.click(await screen.findByTestId(`code-wiki-republish-confirm-${42}`))
+
+    const { toast } = jest.requireMock('sonner')
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Page reload failed'))
+    expect(onRepublished).toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
   })
 })
 

@@ -1,6 +1,7 @@
 export type ChangeRequestProvider = 'github' | 'gitlab'
 export type ChangeRequestState = 'open' | 'closed' | 'merged'
 export type ChangeRequestChecksState = 'unknown' | 'pending' | 'success' | 'failure'
+export type ChangeRequestMergeability = 'unknown' | 'mergeable' | 'conflicting'
 export type ChangeRequestLookupState =
   | 'found'
   | 'not_found'
@@ -16,6 +17,7 @@ export interface ChangeRequest {
   state: ChangeRequestState
   draft: boolean
   checks: ChangeRequestChecksState
+  mergeability: ChangeRequestMergeability
 }
 
 export interface ChangeRequestLookup {

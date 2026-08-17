@@ -950,7 +950,7 @@ class SessionManager:
             # Upsert by block id so callback retries do not duplicate tool blocks.
             await self.add_block(subtask_id, block)
 
-            logger.info(
+            logger.debug(
                 f"[SessionManager] Upserted tool block for subtask {subtask_id}: "
                 f"id={block['id']}, tool_name={tool_name}"
             )
@@ -1101,7 +1101,7 @@ class SessionManager:
                         pipe.rpush(blocks_key, json.dumps(block))
                         pipe.expire(blocks_key, STREAMING_TTL)
                         await pipe.execute()
-                    logger.info(
+                    logger.debug(
                         f"[SessionManager] Added block for subtask {subtask_id}: "
                         f"id={block_id}, type={block.get('type')}"
                     )
@@ -1173,7 +1173,7 @@ class SessionManager:
                         pipe.expire(content_key, STREAMING_TTL)
                         pipe.expire(blocks_key, STREAMING_TTL)
                         await pipe.execute()
-                    logger.info(
+                    logger.debug(
                         f"[SessionManager] Created text block for subtask {subtask_id}: "
                         f"id={block['id']}"
                     )
@@ -1227,7 +1227,7 @@ class SessionManager:
                         pipe.expire(content_key, STREAMING_TTL)
                         pipe.expire(blocks_key, STREAMING_TTL)
                         await pipe.execute()
-                    logger.info(
+                    logger.debug(
                         f"[SessionManager] Created thinking block for subtask {subtask_id}: "
                         f"id={block['id']}"
                     )
@@ -1375,7 +1375,7 @@ class SessionManager:
                     termination_reason=termination_reason,
                     terminal_status=terminal_status,
                 )
-                logger.info(
+                logger.debug(
                     f"[SessionManager] Finalized blocks for subtask {subtask_id}: "
                     f"count={len(blocks)}"
                 )

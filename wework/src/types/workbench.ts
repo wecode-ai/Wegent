@@ -71,6 +71,7 @@ export type WorkbenchMessage = Omit<
   'blocks'
 > & {
   blocks?: ProcessingBlock[]
+  runtimeDisplayItems?: RuntimeAssistantDisplayItem[]
   runtimeMessageIndex?: number | null
   turnId?: string | null
   runtimeStatus?: RuntimeWorkbenchMessageStatus | null
@@ -84,6 +85,17 @@ export type WorkbenchMessage = Omit<
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
 }
+
+export type RuntimeAssistantDisplayItem =
+  | {
+      id: string
+      type: 'assistant_text'
+      content: string
+    }
+  | {
+      id: string
+      type: 'block'
+    }
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
 export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'

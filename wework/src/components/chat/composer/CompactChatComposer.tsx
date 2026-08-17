@@ -169,6 +169,12 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          activeHandle?.focus()
+        },
         getValue: () => {
           const activeHandle = fullscreenInputOpen
             ? fullscreenComposerRef.current
@@ -416,17 +422,17 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 type="button"
                 data-testid="pause-response-button"
                 onClick={onPause}
-                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white hover:bg-[#333]"
+                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background hover:bg-text-primary/90"
                 aria-label={t('workbench.pause_response', '暂停回复')}
               >
                 <Square className="h-4 w-4 fill-current" />
               </button>
             ) : isStreaming && canSend ? (
-              <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-[#242424] text-white">
+              <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
                 <button
                   type="submit"
                   data-testid={submitButtonTestId}
-                  className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-[#333]"
+                  className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
                   aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
                 >
                   <ArrowUp className="h-5 w-5" />
@@ -435,7 +441,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
                   testId="send-mode-menu-button"
                   icon={ChevronDown}
-                  triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-white/20 hover:bg-[#333]"
+                  triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
                   items={[
                     {
                       label: t('workbench.send_after_turn', '当前回复结束后发送'),
@@ -484,7 +490,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 type="submit"
                 data-testid={submitButtonTestId}
                 disabled={!canSend}
-                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
+                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background disabled:bg-text-muted"
                 aria-label={t('workbench.send_message', '发送消息')}
               >
                 <ArrowUp className="h-5 w-5" />

@@ -505,6 +505,25 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
 
   await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-import-plugin-option"]')
+  await control.command('waitFor', '[data-testid="plugin-import-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const importSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    importSnapshot.testIds.includes('plugin-import-select') &&
+      importSnapshot.testIds.includes('plugin-import-download-example'),
+    'The plugin import dialog did not expose package selection and the example download'
+  )
+  assert.ok(
+    importSnapshot.text.includes('.codex-plugin/plugin.json') &&
+      importSnapshot.text.includes('skills/<slug>/SKILL.md'),
+    'The plugin import dialog did not explain the standard Wework plugin package structure'
+  )
+  await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
+  await control.command('click', '[data-testid="plugin-import-close"]')
+
+  await control.command('click', '[data-testid="plugins-create-button"]')
   await control.command('click', '[data-testid="plugins-create-plugin-option"]')
   await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -672,6 +691,15 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', actionsSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`) &&
+      snapshot.testIds.some(
+        testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
+      ),
+    'The installed marketplace card and installed strip became inconsistent'
+  )
   await control.command('click', actionsSelector)
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   await control.command('waitFor', trySelector, {
@@ -695,6 +723,25 @@ async function verifyMarketplacePluginLifecycle({
     manageOpenedDetail.testIds.includes('plugin-management-page-content'),
     false,
     'Marketplace manage opened the management list instead of the plugin detail'
+  )
+  const detailActionMenuSelector =
+    '[data-testid^="plugin-detail-actions-"]:not([data-testid="plugin-detail-actions-bar"])'
+  const detailPrimaryActionSelector = '[data-testid^="plugin-detail-toggle-"]'
+  await control.command('waitFor', detailActionMenuSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', detailPrimaryActionSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const [detailActionMenuMetrics] = JSON.parse(
+    await control.command('getElementMetrics', detailActionMenuSelector)
+  )
+  const [detailPrimaryActionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', detailPrimaryActionSelector)
+  )
+  assert.ok(
+    detailActionMenuMetrics.right <= detailPrimaryActionMetrics.left,
+    'The plugin detail overflow menu was not placed before the primary action'
   )
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', actionsSelector, {

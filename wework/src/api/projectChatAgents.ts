@@ -7,6 +7,7 @@ export interface ProjectChatAgent {
   runtime: 'codex'
   model: string | null
   systemPrompt: string
+  capabilityDescription?: string
   status: 'active' | 'archived'
   visibility: 'private' | 'creator_admin' | 'public'
   executionEnvironment: 'local' | 'cloud'
@@ -27,6 +28,7 @@ export type ProjectChatAgentInput = Pick<
   | 'runtime'
   | 'model'
   | 'systemPrompt'
+  | 'capabilityDescription'
   | 'visibility'
   | 'executionEnvironment'
   | 'executionMode'
@@ -51,6 +53,7 @@ export function createProjectChatAgentApi(client: HttpClient) {
           | 'name'
           | 'model'
           | 'systemPrompt'
+          | 'capabilityDescription'
           | 'status'
           | 'visibility'
           | 'executionEnvironment'

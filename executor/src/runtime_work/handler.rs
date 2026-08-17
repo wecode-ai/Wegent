@@ -78,7 +78,7 @@ use super::{
         CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
-    events::{emit_response_event, CodexNotificationEventMapper},
+    events::{emit_response_event, is_context_compaction_request, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
@@ -98,9 +98,10 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
-        infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, restore_cloud_project_id, runtime_task_id, string_field, timestamp_ms_field,
-        workspace_group_path, workspace_path,
+        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
+        item_type, normalize_device_id, normalize_workspace_path, now_ms, prompt_text,
+        restore_cloud_project_id, restore_origin, runtime_task_id, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -113,6 +114,8 @@ const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
+const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
+const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
@@ -419,6 +422,7 @@ pub struct RuntimeWorkRpcHandler {
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
+    supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
@@ -551,6 +555,7 @@ impl RuntimeWorkRpcHandler {
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
+            supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,

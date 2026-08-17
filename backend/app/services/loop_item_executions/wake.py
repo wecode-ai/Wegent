@@ -24,6 +24,12 @@ def bind_socketio_loop(loop: asyncio.AbstractEventLoop) -> None:
     _socketio_loop = loop
 
 
+def get_socketio_loop() -> asyncio.AbstractEventLoop | None:
+    """Return the app Socket.IO loop for other best-effort server pushes."""
+
+    return _socketio_loop
+
+
 def wake_robot_creator(*, user_id: int, project_id: str, agent_id: str) -> None:
     """Ask the robot creator's App to pull its local queue immediately."""
 

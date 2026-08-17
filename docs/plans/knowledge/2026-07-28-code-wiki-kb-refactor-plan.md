@@ -213,9 +213,12 @@ sidebar_position: 1
 - **归属**:`Kind.user_id` = **创建者**,namespace 默认创建者个人空间,可在弹层里选。code_wiki 就是一个普通知识库,只是绑了仓库
 - **读权限**:**标准 KB ACL**,和任何知识库一样。仓库只在**创建时**校验一次,之后不再查。`code_wiki/read_access.py` 已删除
 - **排重**:`wiki_projects` 复合唯一 `(source_url, kind_id)` —— 一个仓库可以有多个 wiki,一人一个。迁移 `c3d4e5f6a7b8` 取代了 `2b5791acc5fa` 的单列唯一
-- **列表**:**不做隔离**。code_wiki 出现在普通知识库列表里,图标区分。`content_scope` 里只剩一段注释说明为什么没有 `exclude_code_wikis`
+- **列表**:**不做隔离**。code_wiki 出现在普通知识库列表里,图标区分。列表可在同一列表
+  上增加「全部 / 文档 / 代码」本地过滤签,不拆 workspace。`content_scope` 里只剩一段注释说明
+  为什么没有 `exclude_code_wikis`
 - **创建**:走**普通知识库创建弹层**,整包透传;`GET /knowledge-bases/code-wikis` 保留,只因它的列表项带仓库字段
-- **触发权限**:仓库**写**权限。**执行身份始终是 KB owner**,不是触发者——共享成员触发一次会把 clone 凭据、版本归属和页面归属全换成他自己
+- **触发权限**:标准 KB ACL 的 manage 能力。**执行身份与生成页面 owner 始终是 KB owner**,
+  不是触发者;仓库权限只在创建时校验可读性
 
 **测试**:归属落在创建者;同一人对同一仓库二次创建返回已有,不同人各自建各自的;共享成员触发时执行身份仍是 owner。
 
@@ -223,13 +226,19 @@ sidebar_position: 1
 
 ## 步骤 5:前端阅读壳(PR5)
 
-- 视图由 `kb_type` 驱动:`code_wiki` → 只读阅读壳;`notebook` → 现有编辑壳。
+- 视图由知识库类别驱动:文档知识库 →「工作台 / 文档管理」;`code_wiki` →「Wiki /
+  文档管理」,默认进入 Wiki。
 - 复用 KB 原语(文件夹树、`DocumentContentViewer`、权限、路由);`WikiSidebarList` / `WikiContent` / `WikiDetailSidebar` / `useWikiDetail` / `wikiLinkResolver` 重构入壳,而非另起一套。
 - wiki 特有:多级导航、交叉链接、概览页、生成状态、重新生成入口、源仓库链接、版本浏览。
-- 生成内容**只读**,不暴露编辑入口。
+- 生成内容**只读**,普通文档 API 在服务端拒绝正文更新、改名、删除与跨 origin 移动;
+  user 内容可编辑并进入 RAG,但本期不进入 Wiki 导航。
+- 文档管理按 `origin` 渲染「生成内容 / 用户内容」虚拟根节点,不改写真实路径;权限管理复用
+  标准 KB 能力。
 - **Mermaid 优雅降级**:已完成,渲染失败回落到可复制的原始源码。
 
-**已定**:一个知识库只有一个 URL。`knowledge/[namespace]/[kbName]` 按 `kb_type` 决定渲染阅读壳还是文档工作台;曾经的 `/knowledge/code-wiki/[id]` 独立路由已删除。中间试过「独立路由 + 重定向」,行不通——这个页面自己用 `history.pushState` 改 URL,重定向抢不过它。
+**已定**:一个知识库只有一个 URL。`knowledge/[namespace]/[kbName]` 按知识库类别决定可用
+视图;曾经的 `/knowledge/code-wiki/[id]` 独立路由已删除。中间试过「独立路由 + 重定向」,
+行不通——这个页面自己用 `history.pushState` 改 URL,重定向抢不过它。
 
 **已做**:**版本回退入口**。运行历史里「已完成且不是当前版本」的那些带恢复按钮,服务端 `republish_generation` 强制同一条规则,客户端 `canRepublish` 与之同名同义。走的是和任何一次发布同一条投影路径。注意回退**恢复不了 document id**:路径对不上的按新页面插入,引用它们的东西不会因为内容回来而修好——按钮上写了这句。
 **测试**:E2E 覆盖「创建 → 生成 → 浏览多级页 → 跳转交叉链接」;新交互元素补 `data-testid`;E2E 必须被 CI 套件调用。

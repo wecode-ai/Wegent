@@ -698,6 +698,10 @@ export interface RequestUserInputResponse {
 export interface RuntimeSendResponse {
   accepted: boolean
   taskId: string
+  turnId?: string
+  turn_id?: string
+  compactionItemId?: string
+  compaction_item_id?: string
   error?: string | null
 }
 
@@ -795,6 +799,7 @@ export interface RuntimeSupervisorSetRequest {
   mode: RuntimeSupervisorMode
   instructions?: string
   modelSelection?: ModelSelectionConfig | null
+  modelConfig?: Record<string, unknown> | null
   intervalSeconds: number
 }
 
@@ -1222,10 +1227,11 @@ export interface RuntimeTaskCreateRequest {
   deliveryId?: string
   cloudProjectId?: string
   origin?: {
-    type: 'board_comment' | 'board_task'
+    type: 'board_comment' | 'board_task' | 'project_automation'
     cloudProjectId: string
     loopItemId: string
     rootCommentId?: string
+    [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
 }
@@ -2144,6 +2150,10 @@ export interface PluginMarketplaceItem {
   origin?: 'market'
   sourceProvider?: 'wegent' | 'codex' | 'user'
   sourceLabel?: string
+  localPersonalSource?: {
+    marketplacePath: string
+    pluginName: string
+  } | null
   updateAvailable?: boolean
   currentDeviceInstallation?: {
     deviceId: string
@@ -2289,6 +2299,23 @@ export interface PluginAccessUpdateRequest {
 export interface PluginAccessResponse extends PluginAccessUpdateRequest {
   pluginId: number
   revocationPendingCount: number
+}
+
+export interface PluginDeleteImpactResponse {
+  pluginId: number
+  affectedUserCount: number
+  installedDeviceCount: number
+  sharedTargetCount: number
+  impactRevision: string
+}
+
+export interface PluginDeleteRequest {
+  impactRevision: string
+  revokeAndDelete: boolean
+}
+
+export interface PluginDeleteResponse {
+  pendingDeviceCount: number
 }
 
 export interface PluginCopyResponse {

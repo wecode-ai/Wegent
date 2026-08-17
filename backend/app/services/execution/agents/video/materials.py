@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.subtask_context import SubtaskContext
 from app.services.attachment.public_link import generate_public_attachment_token
+from app.services.execution.agents.video.extensions import resolve_external_material
 
 
 def _capabilities(model_config: dict[str, Any]) -> dict[str, Any]:
@@ -241,7 +242,10 @@ def resolve_uploaded_media(
             if attachment.user_id != user_id:
                 continue
             descriptor = {
-                "url": _public_attachment_url(attachment.id),
+                "attachment_id": attachment.id,
+                "storage_backend": attachment.storage_backend,
+                "storage_key": attachment.storage_key,
+                "updated_at": attachment.updated_at.isoformat(),
                 "filename": attachment.original_filename,
                 "file_extension": attachment.file_extension,
                 "file_size": attachment.file_size,
@@ -251,9 +255,31 @@ def resolve_uploaded_media(
             if mime_type.startswith("image/"):
                 images.append(descriptor)
             elif mime_type.startswith("video/"):
-                videos.append(descriptor)
+                external = resolve_external_material(
+                    attachment.type_data or {},
+                    "video",
+                )
+                videos.append(
+                    {**descriptor, **external}
+                    if external is not None
+                    else {
+                        **descriptor,
+                        "url": _public_attachment_url(attachment.id),
+                    }
+                )
             elif mime_type.startswith("audio/"):
-                audios.append(descriptor)
+                external = resolve_external_material(
+                    attachment.type_data or {},
+                    "audio",
+                )
+                audios.append(
+                    {**descriptor, **external}
+                    if external is not None
+                    else {
+                        **descriptor,
+                        "url": _public_attachment_url(attachment.id),
+                    }
+                )
         return images, videos, audios
     finally:
         db.close()
@@ -293,15 +319,25 @@ def normalize_reference_materials(
         mime_type = attachment.mime_type or ""
         if not mime_type.startswith(f"{material_type}/"):
             raise ValueError(f"Attachment {value} is not a {material_type} attachment")
-        descriptors.append(
-            {
-                "url": _public_attachment_url(attachment.id),
-                "filename": attachment.original_filename,
-                "file_extension": attachment.file_extension,
-                "file_size": attachment.file_size,
-                "mime_type": mime_type,
-            }
+        descriptor = {
+            "attachment_id": attachment.id,
+            "storage_backend": attachment.storage_backend,
+            "storage_key": attachment.storage_key,
+            "updated_at": attachment.updated_at.isoformat(),
+            "filename": attachment.original_filename,
+            "file_extension": attachment.file_extension,
+            "file_size": attachment.file_size,
+            "mime_type": mime_type,
+        }
+        external = resolve_external_material(
+            attachment.type_data or {},
+            material_type,
         )
+        if external is not None:
+            descriptor.update(external)
+        elif material_type != "image":
+            descriptor["url"] = _public_attachment_url(attachment.id)
+        descriptors.append(descriptor)
     return descriptors
 
 
@@ -310,7 +346,7 @@ def _public_attachment_url(attachment_id: int) -> str:
     if not public_base_url:
         raise ValueError(
             "ATTACHMENT_PUBLIC_BASE_URL must be configured to send local "
-            "attachments to a remote video provider"
+            "video or audio attachments to a remote video provider"
         )
     token = generate_public_attachment_token(
         attachment_id,
