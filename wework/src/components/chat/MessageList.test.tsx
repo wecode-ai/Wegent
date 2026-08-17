@@ -2910,6 +2910,42 @@ describe('MessageList', () => {
     })
   })
 
+  test('opens a deduped reference card with the absolute path from the assistant link', async () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-reference-path',
+            role: 'assistant',
+            content:
+              '已保存为设计文档：[Excel 行感知分块设计](/workspace/project/260817_1436_Excel行感知分块设计.md)',
+            status: 'done',
+            createdAt: '2026-08-17T08:00:01.000Z',
+            references: [
+              {
+                path: 'docs/../260817_1436_Excel行感知分块设计.md',
+                lineStart: 12,
+                lineEnd: 18,
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('codex-reference-card'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/workspace/project/260817_1436_Excel行感知分块设计.md',
+      {
+        lineStart: 12,
+        lineEnd: 18,
+      }
+    )
+  })
+
   test('waits until streaming finishes before rendering final answer artifacts', () => {
     render(
       <MessageList

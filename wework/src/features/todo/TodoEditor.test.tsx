@@ -210,9 +210,67 @@ describe('TodoEditor external item sync', () => {
         version: 2,
         assignee_user_id: null,
         assignee_agent_id: null,
+        assignee_team_id: null,
       })
     })
     expect(clearApi.assignLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('assigns an accessible Wegent agent as a Team target', async () => {
+    const user = userEvent.setup()
+    const teamApi = {
+      listTeams: vi.fn(async () => [
+        {
+          id: 42,
+          name: 'review-team',
+          namespace: 'default',
+          displayName: '评审智能体',
+          is_active: true,
+        },
+      ]),
+    } as never
+    const assignApi = {
+      listDeliveries: vi.fn(async () => ({ items: [] })),
+      listTaskBindings: vi.fn(async () => []),
+      listLoopItemAttachments: vi.fn(async () => []),
+      listLoopItemCollaborators: vi.fn(async () => []),
+      listCloudProjectMembers: vi.fn(async () => []),
+      updateLoopItem: vi.fn(async () => ({ ...baseItem, version: 2 })),
+      assignLoopItem: vi.fn(async () => ({
+        ...baseItem,
+        version: 2,
+        assignee_agent_id: null,
+        assignee_team_id: 42,
+        assignee_team_name: '评审智能体',
+      })),
+    } as never
+    const ownerProject = { ...project, access_role: 'Owner' } as unknown as CloudProject
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={ownerProject}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onAddChild={vi.fn()}
+        onClose={vi.fn()}
+        api={assignApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+
+    await screen.findByRole('option', { name: '评审智能体' })
+    await user.selectOptions(screen.getByTestId('cloud-todo-detail-assignee'), 'team:42')
+    await user.click(screen.getByTestId('cloud-todo-save'))
+
+    await vi.waitFor(() => {
+      expect(assignApi.assignLoopItem).toHaveBeenCalledWith('11', 'WEG-1', {
+        version: 2,
+        assigneeType: 'team',
+        assigneeId: '42',
+      })
+    })
   })
 })
 
@@ -420,6 +478,42 @@ describe('TodoEditor status history', () => {
 })
 
 describe('TodoEditor create parent resolution', () => {
+  it('keeps Wegent Teams available when the member directory fails', async () => {
+    const createApi = {
+      listCloudProjectMembers: vi.fn(async () => {
+        throw new Error('member directory unavailable')
+      }),
+    } as never
+    const teamApi = {
+      listTeams: vi.fn(async () => [
+        {
+          id: 42,
+          name: 'review-team',
+          namespace: 'default',
+          displayName: '评审智能体',
+          is_active: true,
+        },
+      ]),
+    } as never
+
+    render(
+      <TodoEditor
+        mode="create"
+        project={project}
+        initialParent={null}
+        initialStatus="inbox"
+        allItems={[]}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+        api={createApi}
+        teamApi={teamApi}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByRole('option', { name: '评审智能体' })).toHaveValue('team:42')
+  })
+
   it('drops a parent that no longer exists and creates a top-level task', async () => {
     const user = userEvent.setup()
     const createApi = {

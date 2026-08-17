@@ -559,8 +559,11 @@ impl RuntimeWorkRpcHandler {
         let queue_position = local_link
             .as_ref()
             .and_then(|link| self.queued_local_task_position(&link.local_task_id));
-        let workspace_path = string_field(thread, "cwd")
-            .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
+        let workspace_path = local_link
+            .as_ref()
+            .map(|link| link.workspace_path.clone())
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| string_field(thread, "cwd"))
             .unwrap_or_else(|| "~/.codex".to_owned());
         let mut link =
             RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);

@@ -619,12 +619,11 @@ impl RuntimeWorkRpcHandler {
                 "code": "bad_request",
             }));
         }
-        let workspace_path = workspace_path(&payload)
-            .or_else(|| {
-                existing_link
-                    .as_ref()
-                    .map(|link| link.workspace_path.clone())
-            })
+        let workspace_path = existing_link
+            .as_ref()
+            .map(|link| link.workspace_path.clone())
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| workspace_path(&payload))
             .unwrap_or_default();
         if let Err(error) = self.worktrees.restore_if_known(Path::new(&workspace_path)) {
             return Ok(json!({
@@ -658,7 +657,7 @@ impl RuntimeWorkRpcHandler {
                 .map(|link| link.runtime_workspace_roots.clone())
                 .unwrap_or_default();
         }
-        if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
+        if !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
         self.apply_project_workspace_roots(&mut request);
@@ -919,14 +918,16 @@ impl RuntimeWorkRpcHandler {
 
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        let workspace_path =
-            workspace_path(&payload).unwrap_or_else(|| existing_link.workspace_path.clone());
+        let workspace_path = (!existing_link.workspace_path.trim().is_empty())
+            .then(|| existing_link.workspace_path.clone())
+            .or_else(|| workspace_path(&payload))
+            .unwrap_or_default();
         apply_runtime_payload_metadata(&mut request, &payload);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
-        if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
+        if !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
         let Some(thread_id) = runtime_session_id_from_payload(&payload)
@@ -1341,9 +1342,7 @@ impl RuntimeWorkRpcHandler {
                 }));
             }
             let previous = scheduler.clone();
-            let turn = scheduler.force_start(&local_task_id).ok_or_else(|| {
-                AppIpcError::new("runtime_queue_failed", "queued runtime task disappeared")
-            })?;
+            let turn = scheduler.force_start(&local_task_id);
             (previous, turn, scheduler.queued_turns.clone())
         };
         if let Err(error) = self.persist_turn_queue(remaining_turns).await {
@@ -1353,6 +1352,21 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
+        let Some(queued_turn) = queued_turn else {
+            drop(_operation);
+            log_executor_event(
+                "runtime work queued turn moved to front",
+                &[("local_task_id", local_task_id.clone())],
+            );
+            return Ok(json!({
+                "success": true,
+                "accepted": true,
+                "started": false,
+                "queued": true,
+                "taskId": local_task_id,
+                "runtime": runtime,
+            }));
+        };
         self.reserve_worktree_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
@@ -1371,6 +1385,8 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "success": true,
             "accepted": true,
+            "started": true,
+            "queued": false,
             "taskId": local_task_id,
             "runtime": runtime,
         }))

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import contextmanager
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -9,7 +11,11 @@ import pytest
 from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 from app.api.ws.events import ServerEvents
-from app.models.subtask import SubtaskStatus
+from app.models.delivery import LoopItem
+from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 
 
 @pytest.mark.asyncio
@@ -107,13 +113,15 @@ async def test_wework_task_join_joins_wework_task_room() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_cancel_cleans_cached_streaming_state() -> None:
-    """Cancelling a stream should remove refresh recovery cache immediately."""
+async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state() -> (
+    None
+):
+    """The request path records intent; Runtime callback owns terminal state."""
 
     namespace = ChatNamespace()
     namespace.get_session = AsyncMock(return_value={"user_id": 1})
     namespace._check_token_expiry = AsyncMock(return_value=False)
-    mark_cancelled_calls = []
+    mark_cancelling_calls = []
 
     async def run_sync_side_effect(func, *args):
         if func.__name__ == "_get_subtask_for_cancel":
@@ -122,8 +130,8 @@ async def test_chat_cancel_cleans_cached_streaming_state() -> None:
                 "status": SubtaskStatus.RUNNING,
                 "executor_name": "device-local-device",
             }
-        if func.__name__ == "_mark_subtask_and_task_cancelled":
-            mark_cancelled_calls.append(args)
+        if func.__name__ == "_mark_task_and_board_cancelling":
+            mark_cancelling_calls.append(args)
             return None
         raise AssertionError(f"Unexpected sync function: {func.__name__}")
 
@@ -136,19 +144,6 @@ async def test_chat_cancel_cleans_cached_streaming_state() -> None:
             "app.services.execution.dispatcher.execution_dispatcher.cancel",
             AsyncMock(return_value=True),
         ),
-        patch(
-            "app.services.chat.trigger.lifecycle.collect_completed_result",
-            AsyncMock(
-                return_value={
-                    "value": "collected output",
-                    "blocks": [{"type": "thinking", "content": "collected thought"}],
-                }
-            ),
-        ) as collect_completed_result,
-        patch(
-            "app.api.ws.chat_namespace.session_manager.cleanup_streaming_state",
-            AsyncMock(),
-        ) as cleanup_streaming_state,
     ):
         result = await namespace.on_chat_cancel(
             "sid-1",
@@ -160,17 +155,153 @@ async def test_chat_cancel_cleans_cached_streaming_state() -> None:
         )
 
     assert result == {"success": True}
-    collect_completed_result.assert_awaited_once_with(55, status="CANCELLED")
-    assert mark_cancelled_calls == [
-        (
-            55,
-            {
-                "value": "collected output",
-                "blocks": [{"type": "thinking", "content": "collected thought"}],
-            },
+    assert mark_cancelling_calls == [(55,)]
+
+
+@pytest.mark.asyncio
+async def test_chat_cancel_reports_runtime_rejection() -> None:
+    """A failed Runtime delivery must not be reported as a successful stop."""
+
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    async def run_sync_side_effect(func, *args):
+        if func.__name__ == "_get_subtask_for_cancel":
+            return {
+                "task_id": 101,
+                "status": SubtaskStatus.RUNNING,
+                "executor_name": None,
+            }
+        if func.__name__ == "_mark_task_and_board_cancelling":
+            return None
+        raise AssertionError(f"Unexpected sync function: {func.__name__}")
+
+    with (
+        patch(
+            "app.api.ws.chat_namespace.run_sync_in_executor",
+            AsyncMock(side_effect=run_sync_side_effect),
+        ),
+        patch(
+            "app.services.execution.dispatcher.execution_dispatcher.cancel",
+            AsyncMock(return_value=False),
+        ),
+    ):
+        result = await namespace.on_chat_cancel(
+            "sid-1",
+            {"subtask_id": 55, "shell_type": "ClaudeCode"},
         )
-    ]
-    cleanup_streaming_state.assert_awaited_once_with(55, task_id=101)
+
+    assert result == {"error": "Runtime did not acknowledge cancellation"}
+
+
+def test_native_cancel_atomically_records_linked_board_intent(
+    test_db,
+    test_user,
+    monkeypatch,
+) -> None:
+    """The direct Wegent stop path records intent without inventing a terminal."""
+
+    team = Kind(
+        kind="Team",
+        name="native-cancel-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    task = TaskResource(
+        user_id=test_user.id,
+        kind="Task",
+        name="native-cancel-task",
+        namespace="default",
+        json={},
+    )
+    item = LoopItem(
+        id="native-cancel-board-item",
+        cloud_project_id="project-1",
+        title="Native cancellation",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    test_db.add_all([team, task, item])
+    test_db.flush()
+    subtask = Subtask(
+        user_id=test_user.id,
+        task_id=task.id,
+        team_id=team.id,
+        title="assistant",
+        bot_ids=[],
+        role=SubtaskRole.ASSISTANT,
+        status=SubtaskStatus.RUNNING,
+        message_id=2,
+        completed_at=datetime(1970, 1, 1),
+    )
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=item.cloud_project_id,
+        executor_owner_user_id=test_user.id,
+        team_id=team.id,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="running",
+        observed_state="running",
+        sync_state="in_sync",
+    )
+    test_db.add_all([subtask, execution])
+    test_db.flush()
+    execution.backend_task_id = task.id
+    task.json = {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Task",
+        "metadata": {
+            "name": task.name,
+            "namespace": task.namespace,
+            "labels": {
+                "source": "board_team_assignment",
+                "boardTeamExecutionId": str(execution.id),
+                "boardTeamSubtaskId": str(subtask.id),
+                "boardTeamTeamId": str(team.id),
+                "weworkSpaceProjectId": item.cloud_project_id,
+                "weworkSpaceTaskId": item.id,
+            },
+        },
+        "spec": {
+            "title": "Native cancellation",
+            "prompt": "Stop me",
+            "teamRef": {"name": team.name, "namespace": team.namespace},
+            "workspaceRef": {
+                "name": "native-cancel-workspace",
+                "namespace": "default",
+            },
+        },
+        "status": {"status": "RUNNING", "progress": 50},
+    }
+    test_db.commit()
+
+    @contextmanager
+    def session():
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    monkeypatch.setattr(chat_namespace, "get_db_session", session)
+
+    chat_namespace._mark_task_and_board_cancelling(subtask.id)
+
+    test_db.refresh(task)
+    test_db.refresh(subtask)
+    test_db.refresh(execution)
+    assert task.json["status"]["status"] == "CANCELLING"
+    assert task.json["status"]["completedAt"] is None
+    assert subtask.status == SubtaskStatus.RUNNING
+    assert execution.status == "cancel_requested"
+    assert execution.observed_state == "running"
+    assert execution.sync_state == "pending"
 
 
 @pytest.mark.asyncio

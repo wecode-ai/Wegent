@@ -199,6 +199,10 @@ export function ResourceLibraryPage() {
   const fallbackSource: MineSource = supportsCreatedByMeSource ? 'mine' : 'personal'
   const effectiveSource = isUnsupportedSource ? fallbackSource : source
   const keywordParam = searchParams.get('keyword') || ''
+  const isMarketplaceSearch =
+    !isMineView &&
+    (resourceType === 'agent' || resourceType === 'skill') &&
+    Boolean(keywordParam.trim())
   const selectedGroupName = searchParams.get('group')
   const teamGroupState = useTeamCapabilityGroups({
     enabled: isMineView && effectiveSource === 'group',
@@ -276,7 +280,7 @@ export function ResourceLibraryPage() {
   }, [keywordParam])
 
   useEffect(() => {
-    if (isMineView || resourceType !== 'skill') {
+    if (isMineView || resourceType !== 'skill' || isMarketplaceSearch) {
       setSkillMarketProviders([])
       setSkillMarketProvidersError('')
       setActiveSkillMarketProviderKey(null)
@@ -300,7 +304,7 @@ export function ResourceLibraryPage() {
     return () => {
       isMounted = false
     }
-  }, [isMineView, resourceType, skillMarketProvidersLoadFailedLabel])
+  }, [isMarketplaceSearch, isMineView, resourceType, skillMarketProvidersLoadFailedLabel])
 
   const retrySkillMarketProviders = () => {
     setSkillMarketProvidersError('')
@@ -337,6 +341,15 @@ export function ResourceLibraryPage() {
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (!isMineView) {
+      const nextKeyword = searchInput.trim()
+      setActiveSkillMarketProviderKey(null)
+      replaceParams({
+        keyword: nextKeyword || null,
+        tag: nextKeyword ? null : undefined,
+      })
+      return
+    }
     replaceParams({ keyword: searchInput.trim() || null })
   }
 
@@ -418,6 +431,9 @@ export function ResourceLibraryPage() {
   const renderContent = () => {
     if (!isMineView) {
       if (resourceType === 'mcp') return <McpMarketplace />
+      if (isMarketplaceSearch) {
+        return <DiscoverResources resourceType={resourceType} hideSearch />
+      }
       return (
         <>
           {resourceType === 'agent' && <FeaturedScenarios />}
@@ -584,6 +600,11 @@ export function ResourceLibraryPage() {
   ]
   const pageTitle = isMineView ? t('mine.title') : t('title')
   const pageDescription = isMineView ? t('mine.description') : t('description')
+  const headerSearchPlaceholderKey = isMineView
+    ? getResourceSearchPlaceholderKey(managedResourceType)
+    : resourceType === 'agent' || resourceType === 'skill'
+      ? getResourceSearchPlaceholderKey(resourceType)
+      : 'search.placeholder'
 
   return (
     <main className="h-full overflow-y-auto bg-base text-text-primary">
@@ -673,27 +694,27 @@ export function ResourceLibraryPage() {
                   filters={availableTypes}
                   marketLabels={!isMineView}
                 />
-                {isMineView && (
+                {(isMineView || resourceType === 'agent' || resourceType === 'skill') && (
                   <form
-                    className="relative min-w-0 flex-1 pb-3 sm:w-[320px] sm:max-w-[360px] sm:pb-0"
+                    className="relative min-w-0 flex-1 pb-3 sm:w-[320px] sm:max-w-[360px]"
                     onSubmit={handleSearch}
                     data-testid="resource-library-header-search"
                   >
                     <Search
-                      className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-text-muted sm:top-1/2"
+                      className="pointer-events-none absolute left-3 top-[22px] h-4 w-4 -translate-y-1/2 text-text-muted"
                       aria-hidden
                     />
                     <Input
                       value={searchInput}
                       onChange={event => setSearchInput(event.target.value)}
-                      placeholder={t(getResourceSearchPlaceholderKey(managedResourceType))}
+                      placeholder={t(headerSearchPlaceholderKey)}
                       className="h-11 rounded-xl border-border bg-surface pl-9 pr-12"
                       data-testid="resource-library-header-search-input"
                     />
                     {searchInput && (
                       <button
                         type="button"
-                        className="absolute right-0 top-[22px] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary sm:top-1/2"
+                        className="absolute right-0 top-[22px] flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary"
                         aria-label={t('actions.clear_search')}
                         onClick={() => {
                           setSearchInput('')

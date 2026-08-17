@@ -94,16 +94,48 @@ function uniqueCodexReferences(references: CodexReference[]): CodexReference[] {
     const normalizedReference = normalizeCodexReference(reference)
     if (!normalizedReference) continue
 
-    if (
-      uniqueReferences.some(existingReference =>
-        referencePathsMatch(existingReference.path, normalizedReference.path)
+    const existingIndex = uniqueReferences.findIndex(existingReference =>
+      referencePathsMatch(existingReference.path, normalizedReference.path)
+    )
+    if (existingIndex >= 0) {
+      uniqueReferences[existingIndex] = mergeCodexReferences(
+        uniqueReferences[existingIndex],
+        normalizedReference
       )
-    ) {
       continue
     }
     uniqueReferences.push(normalizedReference)
   }
   return uniqueReferences
+}
+
+function mergeCodexReferences(
+  existingReference: CodexReference,
+  candidateReference: CodexReference
+): CodexReference {
+  const path = isMoreSpecificReferencePath(candidateReference.path, existingReference.path)
+    ? candidateReference.path
+    : existingReference.path
+  return {
+    ...existingReference,
+    path,
+    title: existingReference.title ?? candidateReference.title,
+    lineStart: existingReference.lineStart ?? candidateReference.lineStart,
+    lineEnd: existingReference.lineEnd ?? candidateReference.lineEnd,
+  }
+}
+
+function isMoreSpecificReferencePath(candidatePath: string, currentPath: string): boolean {
+  const candidate = normalizeReferencePath(candidatePath)
+  const current = normalizeReferencePath(currentPath)
+  const candidateAbsolute = isAbsoluteReferencePath(candidate)
+  const currentAbsolute = isAbsoluteReferencePath(current)
+  if (candidateAbsolute !== currentAbsolute) return candidateAbsolute
+  return candidate.length > current.length
+}
+
+function isAbsoluteReferencePath(path: string): boolean {
+  return path.startsWith('/') || /^[a-zA-Z]:\//.test(path)
 }
 
 function referencePathsMatch(left: string, right: string): boolean {
@@ -117,7 +149,27 @@ function referencePathsMatch(left: string, right: string): boolean {
 }
 
 function normalizeReferencePath(path: string): string {
-  return path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
+  const normalized = path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
+  const drive = normalized.match(/^[a-zA-Z]:\//)?.[0]
+  const absolute = normalized.startsWith('/') || Boolean(drive)
+  const segments: string[] = []
+
+  for (const segment of normalized.slice(drive?.length ?? (absolute ? 1 : 0)).split('/')) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') {
+      if (segments.length > 0 && segments[segments.length - 1] !== '..') {
+        segments.pop()
+      } else if (!absolute) {
+        segments.push(segment)
+      }
+      continue
+    }
+    segments.push(segment)
+  }
+
+  if (drive) return `${drive}${segments.join('/')}`
+  if (absolute) return `/${segments.join('/')}`
+  return segments.join('/') || '.'
 }
 
 function filterCodexDocumentReferences(references: CodexReference[]): CodexReference[] {

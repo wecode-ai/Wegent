@@ -45,6 +45,8 @@ def _make_bot(
     *,
     mode: str = "auto",
     visibility: str = "public",
+    runtime: str = "codex",
+    wegent_team_id: int | None = None,
 ) -> ProjectChatAgent:
     device_id = f"local-{uuid.uuid4().hex[:10]}"
     db.add(
@@ -64,9 +66,10 @@ def _make_bot(
         name="Queue Bot",
         status="active",
         created_by_user_id=user.id,
-        device_id=device_id,
+        device_id=device_id if runtime == "codex" else None,
         metadata_json={
-            "runtime": "codex",
+            "runtime": runtime,
+            "wegent_team_id": wegent_team_id,
             "execution_mode": mode,
             "execution_environment": "local",
             "visibility": visibility,
@@ -159,6 +162,58 @@ def test_assign_to_robot_enters_queue_with_history(
     assert execution.status == "queued"
     assert execution.agent_id == bot.id
     assert execution.assigner_user_id == test_user.id
+
+
+def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"board-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    bot = _make_bot(
+        test_db,
+        project,
+        test_user,
+        runtime="wegent",
+        wegent_team_id=team.id,
+    )
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+
+    assert updated.assignee_team_id is None
+    assert updated.assignee_user_id is None
+    assert updated.assignee_agent_id == bot.id
+    history = (updated.metadata_json or {})["assignment_history"]
+    assert history[-1]["to_type"] == "agent"
+    assert history[-1]["to_id"] == bot.id
+    execution = _active_execution(test_db, updated)
+    assert execution is not None
+    assert execution.executor_type == "project_robot"
+    assert execution.team_id == team.id
+    assert execution.agent_id == bot.id
+    assert execution.execution_environment == "wegent"
+    assert execution.status == "queued"
 
 
 def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> None:
@@ -438,3 +493,43 @@ def test_queue_listing_is_a_projection_of_assigned_tasks(
         assignee_id=str(member.id),
     )
     assert [item.id for item in member_queue] == [completed_item.id]
+
+
+def test_my_work_uses_latest_execution_truth_instead_of_task_binding(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+    execution = _active_execution(test_db, item)
+    assert execution is not None
+    execution.status = "claimed"
+    execution.sync_state = "stale"
+    execution.observed_state = "unconfirmed"
+    execution.attempt_no = 2
+    execution.last_event_seq = 17
+    test_db.commit()
+
+    row = next(
+        value
+        for value in loop_item_service.list_my_work(test_db, test_user.id)
+        if value["id"] == item.id
+    )
+    assert row["execution_state"] == "unknown"
+    assert row["execution_control_state"] == "claimed"
+    assert row["execution_observed_state"] == "unconfirmed"
+    assert row["execution_sync_state"] == "stale"
+    assert row["execution_attempt_no"] == 2
+    assert row["execution_last_event_seq"] == 17
+    assert row["ai_state"]["status"] == "unknown"

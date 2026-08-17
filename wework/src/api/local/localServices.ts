@@ -441,7 +441,25 @@ async function reconcilePendingLocalModelCatalog(
     const restart = await request<{
       restarted?: boolean
     }>('runtime.codex.app_server.restart', { ifIdle: true })
-    if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
+    if (restart.restarted) {
+      markLocalModelCatalogReady(pendingCatalogModels)
+      return
+    }
+    const models = await request<{
+      data?: Array<{ id?: string }>
+    }>('runtime.codex.models.list', { includeHidden: true })
+    const loadedModelIds = new Set(
+      (models.data ?? []).flatMap(model => (typeof model.id === 'string' ? [model.id] : []))
+    )
+    const loadedPendingModels = pendingCatalogModels.filter(model => {
+      const catalogModelId =
+        model.codexCatalogModelId ??
+        (typeof model.catalogEntry?.slug === 'string' ? model.catalogEntry.slug : null)
+      return Boolean(catalogModelId && loadedModelIds.has(catalogModelId))
+    })
+    if (loadedPendingModels.length > 0) {
+      markLocalModelCatalogReady(loadedPendingModels)
+    }
   })()
   tracker.inFlight = reconciliation
   try {
@@ -3087,6 +3105,24 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           deviceId: localDeviceIdFromStatus(lastStatus),
         }
         return [localDeviceFromStatus(fallback)]
+      }
+    },
+    async getRuntimeSettings(deviceId: string) {
+      const settings = await runtimeWorkApi.getRuntimeSettings()
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
+    async updateRuntimeSettings(deviceId: string, maxConcurrentTasks: number) {
+      const settings = await runtimeWorkApi.updateRuntimeSettings({ maxConcurrentTasks })
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
       }
     },
     async getHomeDirectory(deviceId: string) {

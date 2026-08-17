@@ -8,6 +8,7 @@ const SEND_EVENT = 'wework:project_chat:message:send'
 const CREATED_EVENT = 'wework:project_chat:message:created'
 const AGENT_START_EVENT = 'wework:project_chat:agent:start'
 const AGENT_FAILED_EVENT = 'wework:project_chat:agent:failed'
+const WEGENT_CONTINUE_EVENT = 'wework:project_chat:wegent:continue'
 const AGENT_CHUNK_EVENT = 'wework:project_chat:agent:chunk'
 const ACK_TIMEOUT_MS = 15_000
 
@@ -78,6 +79,13 @@ export interface ProjectChatClient {
     taskId?: string
     messageId: string
     error?: string
+  }) => Promise<ProjectChatMessage>
+  continueWegentTask?: (input: {
+    projectId: string
+    taskId: string
+    triggerMessageId: string
+    agentId: string
+    attachmentIds?: number[]
   }) => Promise<ProjectChatMessage>
   dispose: () => void
 }
@@ -204,6 +212,9 @@ export function createProjectChatClient(options: ProjectChatClientOptions): Proj
     },
     failAgentResponse(input) {
       return emitWithAck<ProjectChatMessage>(client, AGENT_FAILED_EVENT, input)
+    },
+    continueWegentTask(input) {
+      return emitWithAck<ProjectChatMessage>(client, WEGENT_CONTINUE_EVENT, input)
     },
     dispose() {
       client.dispose()

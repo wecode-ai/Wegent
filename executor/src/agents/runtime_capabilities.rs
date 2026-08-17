@@ -492,10 +492,7 @@ async fn deploy_request_skills(
     let report = deploy_skills(&plan, &api_base_url).await?;
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
-        return Err(format!(
-            "required Skill deployment failed: {}",
-            missing_required.join(", ")
-        ));
+        return Err(required_skill_failure_message(&missing_required, &report));
     }
     Ok(())
 }
@@ -535,10 +532,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
     let report = deploy_skills(&plan, &api_base_url).await?;
     let missing_required = missing_required_skills(&required_skills, &plan, &report);
     if !missing_required.is_empty() {
-        return Err(format!(
-            "required Skill deployment failed: {}",
-            missing_required.join(", ")
-        ));
+        return Err(required_skill_failure_message(&missing_required, &report));
     }
 
     Ok(json!({
@@ -547,6 +541,7 @@ pub async fn sync_skills_for_request(request: ExecutionRequest) -> Result<Value,
         "success_count": report.success_skills.len(),
         "success_skills": report.success_skills,
         "failed_skills": report.failed_skills,
+        "failed_skill_reasons": report.failed_skill_reasons,
         "required_skills": required_skills,
         "skills_dir": plan.skills_dir,
     }))
@@ -583,6 +578,23 @@ fn missing_required_skills(
         })
         .cloned()
         .collect()
+}
+
+fn required_skill_failure_message(
+    missing_required: &[String],
+    report: &SkillDeploymentReport,
+) -> String {
+    let details = missing_required
+        .iter()
+        .map(|skill| {
+            report
+                .failed_skill_reasons
+                .get(skill)
+                .map(|reason| format!("{skill} ({reason})"))
+                .unwrap_or_else(|| skill.clone())
+        })
+        .collect::<Vec<_>>();
+    format!("required Skill deployment failed: {}", details.join(", "))
 }
 
 struct AttachmentDownloadOutcome {
@@ -900,13 +912,15 @@ async fn deploy_skills(
                     match skill_cache_miss_reason(&plan.skills_dir, &skill, skill_ref) {
                         Ok(reason) => reason,
                         Err(error) => {
+                            let reason = format!("Skill cache validation failed: {error}");
                             let mut fields = vec![("skill", skill.clone())];
-                            push_error_fields(&mut fields, error);
+                            fields.push(("reason", reason.clone()));
                             log_executor_event("skill cache validation failed", &fields);
                             return SkillDeploymentResult {
                                 skill_name: skill,
                                 success: false,
                                 installed: None,
+                                failure_reason: Some(reason),
                             };
                         }
                     };
@@ -915,6 +929,7 @@ async fn deploy_skills(
                         skill_name: skill.clone(),
                         success: true,
                         installed: None,
+                        failure_reason: None,
                     };
                 };
                 let mut fields = vec![
@@ -941,13 +956,15 @@ async fn deploy_skills(
                 match download_skill(client, plan, &skill, skill_ref, api_base_url).await {
                     Ok(result) => result,
                     Err(error) => {
+                        let reason = safe_skill_deployment_reason(&error);
                         let mut fields = vec![("skill", skill.clone())];
-                        push_error_fields(&mut fields, error);
+                        fields.push(("reason", reason.clone()));
                         log_executor_event("skill deployment item skipped after error", &fields);
                         SkillDeploymentResult {
                             skill_name: skill,
                             success: false,
                             installed: None,
+                            failure_reason: Some(reason),
                         }
                     }
                 }
@@ -968,6 +985,15 @@ async fn deploy_skills(
         .filter(|result| !result.success)
         .map(|result| result.skill_name.clone())
         .collect::<Vec<_>>();
+    let failed_skill_reasons = results
+        .iter()
+        .filter_map(|result| {
+            result
+                .failure_reason
+                .as_ref()
+                .map(|reason| (result.skill_name.clone(), reason.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
     for installed in results.into_iter().filter_map(|result| result.installed) {
         record_installed_skill(
             &plan.skills_dir,
@@ -990,6 +1016,7 @@ async fn deploy_skills(
         skill_count: plan.skills.len(),
         success_skills,
         failed_skills,
+        failed_skill_reasons,
     })
 }
 
@@ -998,12 +1025,14 @@ struct SkillDeploymentReport {
     skill_count: usize,
     success_skills: Vec<String>,
     failed_skills: Vec<String>,
+    failed_skill_reasons: BTreeMap<String, String>,
 }
 
 struct SkillDeploymentResult {
     skill_name: String,
     success: bool,
     installed: Option<DownloadedSkillRecord>,
+    failure_reason: Option<String>,
 }
 
 struct DownloadedSkillRecord {
@@ -1134,6 +1163,7 @@ async fn download_skill(
             skill_name: skill_name.to_owned(),
             success: false,
             installed: None,
+            failure_reason: Some("Skill reference could not be resolved".to_owned()),
         });
     };
     let mut path = format!("/api/v1/kinds/skills/{skill_id}/download?namespace={namespace}");
@@ -1155,6 +1185,7 @@ async fn download_skill(
             skill_name: skill_name.to_owned(),
             success: true,
             installed: None,
+            failure_reason: None,
         }),
         SkillArchiveResponse::Archive {
             bytes,
@@ -1173,9 +1204,46 @@ async fn download_skill(
                 skill_name: skill_name.to_owned(),
                 success: extracted,
                 installed,
+                failure_reason: None,
             })
         }
     }
+}
+
+fn safe_skill_deployment_reason(error: &str) -> String {
+    if error.starts_with("downloaded Skill ZIP is missing expected entry ")
+        || error.starts_with("downloaded Skill ZIP contains entries outside expected root ")
+    {
+        return error.to_owned();
+    }
+    if let Some(status) = error.strip_prefix("backend download failed with HTTP ") {
+        if let Some(code) = status
+            .split_whitespace()
+            .next()
+            .filter(|value| value.chars().all(|character| character.is_ascii_digit()))
+        {
+            return format!("backend download failed with HTTP {code}");
+        }
+    }
+    if error.starts_with("invalid ZIP for skill ") {
+        return "downloaded Skill archive is not a valid ZIP".to_owned();
+    }
+    if error.starts_with("unsafe ZIP path for skill ") {
+        return "downloaded Skill archive contains an unsafe path".to_owned();
+    }
+    if error.starts_with("backend download timed out") {
+        return "backend download timed out".to_owned();
+    }
+    if error.starts_with("backend download connection failed") {
+        return "backend download connection failed".to_owned();
+    }
+    if error.starts_with("backend download") {
+        return "backend download request failed".to_owned();
+    }
+    if error.contains("ZIP entry") || error.contains("extract skill") {
+        return "downloaded Skill archive extraction failed".to_owned();
+    }
+    "Skill deployment failed".to_owned()
 }
 
 enum SkillArchiveResponse {
@@ -1201,10 +1269,15 @@ async fn get_skill_archive(
     if let Some(local_hash) = local_hash.map(str::trim).filter(|value| !value.is_empty()) {
         request = request.header(IF_NONE_MATCH, quote_etag(local_hash));
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("backend download failed: {error}"))?;
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            "backend download timed out".to_owned()
+        } else if error.is_connect() {
+            "backend download connection failed".to_owned()
+        } else {
+            "backend download request failed".to_owned()
+        }
+    })?;
     if response.status() == StatusCode::NOT_MODIFIED {
         return Ok(SkillArchiveResponse::NotModified);
     }
@@ -1223,7 +1296,7 @@ async fn get_skill_archive(
         .bytes()
         .await
         .map(|bytes| bytes.to_vec())
-        .map_err(|error| format!("backend download body read failed: {error}"))?;
+        .map_err(|_| "backend download body read failed".to_owned())?;
     Ok(SkillArchiveResponse::Archive {
         bytes,
         content_hash,
@@ -1306,6 +1379,7 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
     let cursor = Cursor::new(content);
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|error| format!("invalid ZIP for skill {skill_name}: {error}"))?;
+    validate_skill_zip_entries(skill_name, &mut archive)?;
     for index in 0..archive.len() {
         let mut file = archive
             .by_index(index)
@@ -1336,6 +1410,40 @@ fn extract_skill_zip(skill_name: &str, content: &[u8], skills_dir: &Path) -> Res
             .map_err(|error| format!("failed to extract skill file: {error}"))?;
     }
     Ok(skills_dir.join(skill_name).is_dir())
+}
+
+fn validate_skill_zip_entries<R: std::io::Read + std::io::Seek>(
+    skill_name: &str,
+    archive: &mut zip::ZipArchive<R>,
+) -> Result<(), String> {
+    let skill_root = Path::new(skill_name);
+    let expected_entry = skill_root.join("SKILL.md");
+    let mut has_expected_entry = false;
+    let mut has_outside_root = false;
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("failed to read ZIP entry: {error}"))?;
+        let Some(enclosed) = file.enclosed_name() else {
+            return Err(format!("unsafe ZIP path for skill {skill_name}"));
+        };
+        if !enclosed.starts_with(skill_root) {
+            has_outside_root = true;
+        }
+        has_expected_entry |= enclosed == expected_entry;
+    }
+    if !has_expected_entry {
+        return Err(format!(
+            "downloaded Skill ZIP is missing expected entry {}",
+            expected_entry.display()
+        ));
+    }
+    if has_outside_root {
+        return Err(format!(
+            "downloaded Skill ZIP contains entries outside expected root {skill_name}/"
+        ));
+    }
+    Ok(())
 }
 
 fn setup_coordinate_subagents(request: &ExecutionRequest, task_dir: &Path) {
@@ -2671,14 +2779,69 @@ mod tests {
     }
 
     fn skill_zip_bytes(skill_name: &str) -> Vec<u8> {
+        let entry = format!("{skill_name}/SKILL.md");
+        skill_zip_entries(&[(&entry, "# Skill")])
+    }
+
+    fn skill_zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
         let cursor = Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(cursor);
         let options = zip::write::FileOptions::default();
-        writer
-            .start_file(format!("{skill_name}/SKILL.md"), options)
-            .unwrap();
-        writer.write_all(b"# Skill").unwrap();
+        for (path, content) in entries {
+            writer.start_file(*path, options).unwrap();
+            writer.write_all(content.as_bytes()).unwrap();
+        }
         writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn extract_skill_zip_reports_expected_entry_without_extracting_wrong_root() {
+        let temp = env::temp_dir().join(format!("skill-wrong-root-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+
+        let error = extract_skill_zip(
+            "requested-skill",
+            &skill_zip_bytes("unexpected-root"),
+            &skills_dir,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "downloaded Skill ZIP is missing expected entry requested-skill/SKILL.md"
+        );
+        assert!(!skills_dir.join("unexpected-root").exists());
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn extract_skill_zip_rejects_entries_outside_requested_root_before_writing() {
+        let temp = env::temp_dir().join(format!("skill-extra-root-{}", std::process::id()));
+        let skills_dir = temp.join("skills");
+        let archive = skill_zip_entries(&[
+            ("requested-skill/SKILL.md", "# Requested Skill"),
+            ("other-skill/SKILL.md", "# Other Skill"),
+        ]);
+
+        let error = extract_skill_zip("requested-skill", &archive, &skills_dir).unwrap_err();
+
+        assert_eq!(
+            error,
+            "downloaded Skill ZIP contains entries outside expected root requested-skill/"
+        );
+        assert!(!skills_dir.join("requested-skill").exists());
+        assert!(!skills_dir.join("other-skill").exists());
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn safe_skill_deployment_reason_does_not_expose_untrusted_error_details() {
+        let reason = safe_skill_deployment_reason(
+            "backend download failed: bearer secret-task-token at https://backend.example",
+        );
+
+        assert_eq!(reason, "backend download request failed");
+        assert!(!reason.contains("secret-task-token"));
     }
 
     #[test]

@@ -6,7 +6,13 @@
 
 from datetime import datetime
 
-from app.models.delivery import adapt_loop_node_values_for_dialect
+from sqlalchemy import event
+
+from app.models.delivery import (
+    LoopNode,
+    _adapt_mysql_non_null_defaults,
+    adapt_loop_node_values_for_dialect,
+)
 from app.schemas.delivery import LoopItemResponse
 
 
@@ -70,3 +76,11 @@ def test_loop_item_update_preserves_nullable_mysql_columns() -> None:
         "due_at": None,
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }
+
+
+def test_loop_node_adapts_mysql_non_null_defaults_before_updates() -> None:
+    assert event.contains(
+        LoopNode,
+        "before_update",
+        _adapt_mysql_non_null_defaults,
+    )

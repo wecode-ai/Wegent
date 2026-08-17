@@ -4,7 +4,7 @@ import type { CloudMyWorkItem } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { CloudMyWorkCalendar } from './CloudMyWorkCalendar'
-import { myWorkGroupOf, type MyWorkGroupKey } from './cloudMyWorkModel'
+import { isMyWorkExecutionActive, myWorkGroupOf, type MyWorkGroupKey } from './cloudMyWorkModel'
 
 export type MyWorkView = 'group' | 'list' | 'calendar' | 'timeline'
 
@@ -49,12 +49,12 @@ const GROUP_META: Record<MyWorkGroupKey, { dotClass: string; labelKey: string; f
 // item may appear in more than one group (e.g. in-review without an active
 // task shows under both "需要我处理" and "等待确认").
 const GROUP_FILTERS: Record<MyWorkGroupKey, (item: CloudMyWorkItem) => boolean> = {
-  approval: item => item.execution_state === 'pending_approval' && item.can_approve === true,
+  approval: item => item.execution_state === 'waiting_approval' && item.can_approve === true,
   action: item =>
-    !item.has_active_task &&
+    !isMyWorkExecutionActive(item) &&
     item.status !== 'completed' &&
-    !(item.execution_state === 'pending_approval' && item.can_approve === true),
-  running: item => item.has_active_task && item.status === 'in_progress',
+    !(item.execution_state === 'waiting_approval' && item.can_approve === true),
+  running: item => isMyWorkExecutionActive(item),
   review: item => item.status === 'in_review',
   done: item => item.status === 'completed',
 }

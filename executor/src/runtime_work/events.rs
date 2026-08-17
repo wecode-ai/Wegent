@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
@@ -33,6 +37,28 @@ use super::{
 
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
+static LAST_RUNTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn next_runtime_event_sequence() -> u64 {
+    let wall_clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64;
+    let mut previous = LAST_RUNTIME_EVENT_SEQUENCE.load(Ordering::Relaxed);
+    loop {
+        let next = wall_clock.max(previous.saturating_add(1));
+        match LAST_RUNTIME_EVENT_SEQUENCE.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(current) => previous = current,
+        }
+    }
+}
 
 fn codex_error_will_retry(params: &Value) -> bool {
     params
@@ -97,6 +123,7 @@ pub(crate) fn emit_response_event(
             "data": data,
             "deviceId": device_id,
             "runtime": "codex",
+            "eventSeq": next_runtime_event_sequence(),
         },
     });
     if let Some(client_user_message_id) = request
@@ -2091,6 +2118,7 @@ mod tests {
         let event = event_rx.try_recv().expect("response event");
         assert_eq!(event["payload"]["subtaskId"], "codex-turn-1");
         assert_eq!(event["payload"]["clientUserMessageId"], "client-user-1");
+        assert!(event["payload"]["eventSeq"].as_u64().unwrap_or_default() > 0);
     }
 
     #[test]

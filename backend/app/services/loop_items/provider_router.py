@@ -49,7 +49,12 @@ class LoopItemProviderRouter:
                     automation_context=automation_context,
                     instruction=instruction,
                 )
-            return RoutedLoopItem(values=created, internal_item=None)
+            internal_item = (
+                db.get(LoopItem, str(created["id"]))
+                if values.assignee_agent_id or values.assignee_team_id
+                else None
+            )
+            return RoutedLoopItem(values=created, internal_item=internal_item)
 
         item = loop_item_service.create(
             db,
