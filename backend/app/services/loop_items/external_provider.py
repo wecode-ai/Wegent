@@ -641,9 +641,7 @@ class ExternalLoopItemProvider:
                 cancelled.status == "cancel_requested"
                 and cancelled.runtime_device_id
                 and cancelled.runtime_task_id
-            ) or (
-                cancelled.team_id is not None and cancelled.backend_task_id is not None
-            ):
+            ) or (cancelled.team_id and cancelled.backend_task_id):
                 cancelled_runs.append(cancelled)
         return cancelled_runs
 

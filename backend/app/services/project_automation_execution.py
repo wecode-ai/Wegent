@@ -241,7 +241,7 @@ class ProjectAutomationExecution:
         run.status = "queued"
         run.version += 1
         db.commit()
-        if execution.team_id is not None:
+        if execution.team_id:
             from app.services.board_team_execution import (
                 schedule_board_robot_execution,
             )
@@ -597,11 +597,6 @@ class ProjectAutomationExecution:
                 "selected_assignee_type": assignee_type,
                 "selected_assignee_id": assignee_id,
             }
-            if assignee_type == "agent":
-                selected_agent = project_agent(db, project_id, assignee_id)
-                activity.sender_name = (
-                    selected_agent.title or selected_agent.name or "AI"
-                )
             db.commit()
         return self._task_values(
             db, project_id=project_id, task_id=task_id, user_id=user_id
@@ -759,6 +754,7 @@ class ProjectAutomationExecution:
         activity_metadata.update(
             {
                 "execution_id": execution.id,
+                "executor_type": execution.executor_type,
                 "run_status": "queued",
                 "execution_device_id": execution.execution_device_id,
             }

@@ -620,13 +620,17 @@ class RealCloudEnvironment {
   async waitForDevice(deviceId, logPath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const response = await fetch(`${this.backendUrl}/api/devices`, {
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      })
-      if (response.ok) {
-        const devices = await response.json()
-        const device = devices.items?.find(item => item.device_id === deviceId)
-        if (device?.status === 'online') return
+      try {
+        const response = await fetch(`${this.backendUrl}/api/devices`, {
+          headers: { Authorization: `Bearer ${this.authToken}` },
+        })
+        if (response.ok) {
+          const devices = await response.json()
+          const device = devices.items?.find(item => item.device_id === deviceId)
+          if (device?.status === 'online') return
+        }
+      } catch {
+        // The backend may briefly reset a readiness connection while executors register.
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     }

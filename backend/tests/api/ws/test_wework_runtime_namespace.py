@@ -372,3 +372,45 @@ async def test_project_chat_wegent_continue_dispatches_native_turn(monkeypatch):
         message,
         room="wework-project-chat:task:project-1:task-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_project_chat_manager_continue_opens_custom_manager_reply(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    assert (
+        namespace._event_handlers["wework:project_chat:manager:continue"]
+        == "on_project_chat_manager_continue"
+    )
+    message = {
+        "sequenceNumber": 8,
+        "messageId": "manager-continuation-8",
+        "projectId": "project-1",
+        "taskId": "task-1",
+        "status": "streaming",
+    }
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "user_name": "Ada"}),
+    )
+    monkeypatch.setattr(namespace, "emit", AsyncMock())
+    start = AsyncMock(return_value=message)
+    monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", start)
+
+    response = await namespace.on_project_chat_manager_continue(
+        "browser-sid",
+        {
+            "projectId": "project-1",
+            "taskId": "task-1",
+            "triggerMessageId": "user-message-7",
+            "managerMessageId": "manager-message-1",
+        },
+    )
+
+    assert response == {"ok": True, "result": message}
+    start.assert_awaited_once()
+    namespace.emit.assert_awaited_once_with(
+        "wework:project_chat:message:created",
+        message,
+        room="wework-project-chat:task:project-1:task-1",
+    )
