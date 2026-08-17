@@ -2749,6 +2749,7 @@
   "todo": {
     "mr_integration_section_title": "GitLab MR 接入",
     "mr_integration_section_desc": "MR 评审意见或 CI 失败会自动在看板生成修复任务。",
+    "mr_integration_checkbox": "接入该仓库的 MR（评审意见或 CI 失败自动在看板建修复任务）",
     "mr_integration_enable": "接入 MR",
     "mr_integration_disable": "关闭接入",
     "mr_integration_enabled": "已接入",

@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.cloud_project import CloudProject
 from app.models.gitlab_mr import MRIntegration
 from app.models.user import User
@@ -59,6 +60,11 @@ def _auth(test_token: str) -> dict[str, str]:
 @pytest.fixture
 def fake_hooks(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     state: dict[str, Any] = {"hooks": [{"id": 123, "url": "https://gitlab.internal/x"}]}
+    # CI has no .env, so the default loopback URL would make enable() refuse to
+    # install the webhook; pin a non-loopback test URL.
+    monkeypatch.setattr(
+        settings, "WEGENT_BACKEND_PUBLIC_URL", "https://wegent.example.com"
+    )
 
     def fake_request(
         self,

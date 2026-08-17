@@ -18,7 +18,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
+from app.models.delivery import (
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
+)
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -130,7 +135,7 @@ class ExternalLoopItemProvider:
         query = db.query(LoopItem).filter(
             LoopItem.cloud_project_id == str(project.id),
             LoopItem.source == "gitlab",
-            LoopItem.deleted_at.is_(None),
+            loop_datetime_is_unset(LoopItem.deleted_at),
         )
         if assignee_type == "user" and assignee_id:
             try:

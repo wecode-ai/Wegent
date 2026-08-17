@@ -2752,6 +2752,7 @@
   "todo": {
     "mr_integration_section_title": "GitLab MR Integration",
     "mr_integration_section_desc": "MR review comments or CI failures create fix-task cards on the board automatically.",
+    "mr_integration_checkbox": "Enable MR integration for this repository (review comments or CI failures create fix-task cards on the board)",
     "mr_integration_enable": "Enable MR integration",
     "mr_integration_disable": "Disable MR integration",
     "mr_integration_enabled": "Enabled",

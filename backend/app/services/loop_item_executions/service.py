@@ -593,7 +593,9 @@ class LoopItemExecutionService:
         The run reads the board card at dispatch, so comments arriving after this
         point are pending feedback the running AI never saw; they must re-pull the
         card when the run ends instead of being treated as addressed. Best-effort:
-        only applies to MR fix-task cards.
+        only applies to MR fix-task cards. No explicit flush: the caller commits
+        the run row and this marker together, so a failure here cannot poison the
+        session after the run was already enqueued.
         """
         try:
             from app.models.gitlab_mr import MRRecord
@@ -606,7 +608,7 @@ class LoopItemExecutionService:
             if record is None:
                 return
             rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
-            ids = sorted(
+            record.seen_note_ids = sorted(
                 {
                     int(n.get("id") or 0)
                     for item in rounds
@@ -614,8 +616,6 @@ class LoopItemExecutionService:
                     if isinstance(n, dict)
                 }
             )
-            record.seen_note_ids = ids
-            db.flush()
         except Exception:
             logger.exception(
                 "[RobotQueue] MR seen-note snapshot failed loop_item=%s", loop_item_id
@@ -2790,6 +2790,9 @@ class LoopItemExecutionService:
                 record,
                 seen_through=execution.started_at,
             )
+            # The terminal execution write already committed before the settle
+            # ran; persist the settle's card/record/retrigger changes explicitly.
+            db.commit()
         except Exception:
             logger.exception(
                 "[RobotQueue] MR pending-feedback settle failed execution=%s",

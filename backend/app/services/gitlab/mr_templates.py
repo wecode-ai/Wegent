@@ -37,7 +37,7 @@ def _board_statuses(project: CloudProject) -> list[dict[str, Any]]:
 
 
 def resolve_status_id(project: CloudProject, logical: str) -> str:
-    """Map a logical status (in_progress/in_review/completed) to a board column id.
+    """Map a logical status (inbox/in_progress/in_review/completed) to a board column id.
 
     Matches the project's ``board_config.statuses`` by exact id, then by a name
     keyword, then falls back to the first (or last, for completed) configured
@@ -45,6 +45,7 @@ def resolve_status_id(project: CloudProject, logical: str) -> str:
     the project has no board config.
     """
     fallback_defaults = {
+        "inbox": "inbox",
         "in_progress": "in_progress",
         "in_review": "in_review",
         "completed": "completed",
@@ -58,6 +59,7 @@ def resolve_status_id(project: CloudProject, logical: str) -> str:
     if exact is not None:
         return exact
     keywords = {
+        "inbox": ("收集箱", "收件箱", "inbox"),
         "in_progress": ("进行中", "进行", "in progress", "todo"),
         "in_review": ("待确认", "待验证", "确认", "review"),
         "completed": ("已完成", "完成", "done", "completed"),

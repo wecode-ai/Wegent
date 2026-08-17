@@ -20,7 +20,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, ProjectChatAgent
+from app.models.delivery import (
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
+)
 from app.models.gitlab_mr import EPOCH_TIME, MRIntegration, MRRecord
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -729,7 +734,7 @@ class MrService:
             .filter(
                 LoopItem.source_task_binding_id == binding_id,
                 LoopItem.cloud_project_id == str(project.id),
-                LoopItem.deleted_at.is_(None),
+                loop_datetime_is_unset(LoopItem.deleted_at),
             )
             # Locking read: two concurrent note events for the same MR must not
             # both see "no card" and race to INSERT (REPEATABLE READ snapshots
@@ -822,7 +827,11 @@ class MrService:
         if not record.current_loop_item_id:
             return
         card = db.get(LoopItem, record.current_loop_item_id)
-        if card is None or card.deleted_at is not None or not card.assignee_agent_id:
+        if (
+            card is None
+            or not loop_datetime_value_is_unset(card.deleted_at)
+            or not card.assignee_agent_id
+        ):
             return
         if record.auto_retrigger_count >= max_retry_count(project):
             return
@@ -882,7 +891,7 @@ class MrService:
         record.version += 1
         if record.current_loop_item_id:
             card = db.get(LoopItem, record.current_loop_item_id)
-            if card is not None and card.deleted_at is None:
+            if card is not None and loop_datetime_value_is_unset(card.deleted_at):
                 # Content first so the card shows the closed state under the new
                 # completed status, and the merge is recorded in history.
                 self._apply_card_content(card, project, record)
@@ -1110,7 +1119,7 @@ class MrService:
         if not record.current_loop_item_id:
             return
         card = db.get(LoopItem, record.current_loop_item_id)
-        if card is None or card.deleted_at is not None:
+        if card is None or not loop_datetime_value_is_unset(card.deleted_at):
             return
         if to_logical == "in_review" and not self._card_ready_for_review(db, record):
             to_logical = "in_progress"
@@ -1179,7 +1188,7 @@ class MrService:
         if not record.current_loop_item_id:
             return
         card = db.get(LoopItem, record.current_loop_item_id)
-        if card is None or card.deleted_at is not None:
+        if card is None or not loop_datetime_value_is_unset(card.deleted_at):
             return
         self._apply_card_content(card, project, record)
         card.version += 1

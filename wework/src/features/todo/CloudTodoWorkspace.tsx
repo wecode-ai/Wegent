@@ -649,7 +649,7 @@ function ProjectDialog({
                   onChange={event => setMrEnabled(event.target.checked)}
                   className="mt-0.5 h-4 w-4 accent-black"
                 />
-                <span>接入该仓库的 MR（评审意见或 CI 失败自动在看板建修复任务）</span>
+                <span>{t('todo.mr_integration_checkbox')}</span>
               </label>
             )}
           </section>
