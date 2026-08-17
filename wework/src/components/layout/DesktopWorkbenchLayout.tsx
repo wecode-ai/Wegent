@@ -159,6 +159,19 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
+  // Stable identity for the active board project ref: boardRouteProjectRef
+  // builds a fresh object each call, so without the memo any parent re-render
+  // changes activeProjectRef and CloudTodoWorkspace resets its sub-view back
+  // to the board.
+  const activeTabKind = workspaceTabs?.activeTab.kind
+  const activeTabContentRoute = workspaceTabs?.activeTab.contentRoute
+  const activeBoardProjectRef = useMemo(
+    () =>
+      activeTabKind === 'board' && activeTabContentRoute
+        ? boardRouteProjectRef(activeTabContentRoute)
+        : undefined,
+    [activeTabKind, activeTabContentRoute]
+  )
   const activePane = useMemo<WorkbenchPaneIdentity>(
     () => ({
       currentRuntimeTask: state.currentRuntimeTask,
@@ -931,11 +944,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 runtimeWork={state.runtimeWork}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                activeProjectRef={
-                  workspaceTabs?.activeTab.kind === 'board'
-                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
-                    : undefined
-                }
+                activeProjectRef={activeBoardProjectRef}
                 focusedItemId={
                   workspaceTabs?.activeTab.kind === 'board'
                     ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'itemId')
