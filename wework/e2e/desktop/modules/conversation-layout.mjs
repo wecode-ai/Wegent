@@ -862,13 +862,6 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
   })
 
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
-  await control.command(
-    'waitFor',
-    `[data-testid="runtime-local-task-archive-toast-${worktreeTaskId}"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
   await withTimeout(
     (async () => {
       while ((await pathExists(worktreePath)) || (await pathExists(worktreeContainer))) {

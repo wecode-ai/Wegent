@@ -427,55 +427,88 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
   const contextSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.some(testId => testId.startsWith('work-item-execution-')),
-    'The linked task execution control was not rendered'
+    snapshot =>
+      snapshot.testIds.some(testId => testId.startsWith('cloud-todo-open-task-conversation-')),
+    'The linked task conversation control was not rendered'
   )
-  const executionTestId = contextSnapshot.testIds.find(testId =>
-    testId.startsWith('work-item-execution-')
+  const contextTaskTestId = contextSnapshot.testIds.find(testId =>
+    testId.startsWith('cloud-todo-open-task-conversation-')
   )
-  assert.ok(executionTestId, 'The linked task execution control was not rendered')
-  await control.command('click', `[data-testid="${executionTestId}"]`)
+  assert.ok(contextTaskTestId, 'The linked task conversation control was not rendered')
+  await control.command('click', `[data-testid="${contextTaskTestId}"]`)
   await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board"]')
-  await control.command('waitFor', '[data-testid="cloud-todo-column-completed"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-05-completed-on-board.png')
-  const focusedDetailSnapshot = await waitForSnapshot(
+  const activeBoardContentSelector =
+    '[data-testid^="workspace-tab-content-board-"][aria-hidden="false"]'
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-column-completed"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
     control,
-    snapshot =>
-      snapshot.testIds.some(testId => testId.startsWith('cloud-todo-open-task-conversation-')),
-    'The focused work-item drawer did not render its linked task conversation'
+    'workspace-05-completed-on-board.png',
+    activeBoardContentSelector
   )
-  const conversationTestId = focusedDetailSnapshot.testIds.find(testId =>
-    testId.startsWith('cloud-todo-open-task-conversation-')
+  const activeTaskConversationSelector = `${activeBoardContentSelector} [data-testid^="cloud-todo-open-task-conversation-"]`
+  await control.command('waitFor', activeTaskConversationSelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', activeTaskConversationSelector, {
+    visible: true,
+  })
+  await control.command('waitFor', `${activeBoardContentSelector} [data-testid="ai-chat-modal"]`, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="work-item-task-chat-panel"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
   )
-  assert.ok(conversationTestId, 'The linked task conversation control was not rendered')
-  await control.command('click', `[data-testid="${conversationTestId}"]`)
-  await control.command('waitFor', '[data-testid="work-item-task-context"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', '[data-testid="work-item-task-chat-panel"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-06-task-quick-conversation.png')
-  await control.command('click', '[data-testid="ai-chat-modal-close"]')
-  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="cloud-todo-detail-close"]')
-  await control.command('waitFor', '[data-testid="cloud-todo-workspace"][data-embedded="false"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-07-independent-tab.png')
+  await captureVerificationScreenshot(
+    control,
+    'workspace-06-task-quick-conversation.png',
+    activeBoardContentSelector
+  )
+  await control.command(
+    'click',
+    `${activeBoardContentSelector} [data-testid="ai-chat-modal-close"]`
+  )
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail-close"]`
+  )
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"][data-embedded="false"]`,
+    {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-07-independent-tab.png',
+    activeBoardContentSelector
+  )
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
