@@ -423,6 +423,10 @@ export function createDeliveryApi(client: HttpClient) {
           status_mapping?: Record<string, CloudLoopItem['status']>
           custom_statuses?: string[]
         }
+        ai_automation?: {
+          auto_retry_on_failure?: boolean
+          max_retry_count?: number
+        }
         version: number
       }
     ): Promise<CloudProject> {
