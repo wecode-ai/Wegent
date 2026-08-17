@@ -94,7 +94,8 @@ describe('PublicSkillList', () => {
   it('shows the skill update time', async () => {
     render(<PublicSkillList />)
 
-    expect(await screen.findByText(/admin:public_skills\.columns\.updated_at:/)).toBeInTheDocument()
+    const updatedAt = await screen.findByText(/admin:public_skills\.columns\.updated_at:/)
+    expect(updatedAt).toHaveTextContent('2026')
     expect(screen.queryByText(/admin:public_skills\.columns\.created_at:/)).not.toBeInTheDocument()
   })
 
