@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
-import type { TeamBot, Team, PaginationParams, TaskType } from '@/types/api'
+import type { TeamBot, Team, PaginationParams, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
 
 // Team Request/Response Types
@@ -17,6 +17,7 @@ export interface CreateTeamRequest {
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library
+  inputPlaceholder?: TeamInputPlaceholder | null
   quick_phrases?: string[]
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
 }

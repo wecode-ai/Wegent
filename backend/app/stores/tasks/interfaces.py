@@ -933,6 +933,20 @@ class SubtaskStore(Protocol):
         self, db: Session, *, subtask: Subtask, **fields: Any
     ) -> Subtask: ...
 
+    def transition_status(
+        self,
+        db: Session,
+        *,
+        subtask_id: int,
+        task_id: int,
+        owner_user_id: int,
+        role: SubtaskRole,
+        from_status: SubtaskStatus,
+        to_status: SubtaskStatus,
+        progress: Optional[int] = None,
+        completed_at: Optional[datetime] = None,
+    ) -> bool: ...
+
     def has_running_assistant(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> bool: ...

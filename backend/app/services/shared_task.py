@@ -895,6 +895,22 @@ class SharedTaskService:
                 )
             )
 
+        from app.services.execution.agents.video.extensions import (
+            refresh_extended_video_result_urls,
+        )
+
+        result_wrapper = {
+            "subtasks": [
+                {"result": public_subtask.result} for public_subtask in public_subtasks
+            ]
+        }
+        refresh_extended_video_result_urls(result_wrapper, user_id)
+        for public_subtask, refreshed in zip(
+            public_subtasks,
+            result_wrapper["subtasks"],
+        ):
+            public_subtask.result = refreshed["result"]
+
         return PublicSharedTaskResponse(
             task_title=task.name or "Untitled Task",
             sharer_name=share_info.user_name,

@@ -1,4 +1,4 @@
-import { AtSign, ChevronDown, Circle, Plus } from 'lucide-react'
+import { AtSign, ChevronDown, Circle, Plus, Upload } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -7,6 +7,7 @@ export function PluginCreateMenu({
   isOpen,
   onToggle,
   onCreatePlugin,
+  onImportPlugin,
   onAddMarket,
   onRecordSkill,
   buttonTestId = 'plugins-create-button',
@@ -15,6 +16,7 @@ export function PluginCreateMenu({
   isOpen: boolean
   onToggle: () => void
   onCreatePlugin?: () => void
+  onImportPlugin?: () => void
   onAddMarket?: () => void
   onRecordSkill?: () => void
   buttonTestId?: string
@@ -79,6 +81,17 @@ export function PluginCreateMenu({
             >
               <AtSign className="h-4 w-4 text-text-secondary" />
               {t('workbench.plugins_create_plugin', '创建插件')}
+            </button>
+          )}
+          {onImportPlugin && (
+            <button
+              type="button"
+              data-testid="plugins-import-plugin-option"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+              onClick={onImportPlugin}
+            >
+              <Upload className="h-4 w-4 text-text-secondary" />
+              {t('workbench.plugins_import_plugin', '导入插件')}
             </button>
           )}
           {onAddMarket && (

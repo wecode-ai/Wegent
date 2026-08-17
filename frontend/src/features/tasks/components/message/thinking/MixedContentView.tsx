@@ -284,6 +284,7 @@ const MixedContentView = memo(function MixedContentView({
               isPlaceholder: block.is_placeholder ?? false,
               videoUrl: block.video_url || '',
               thumbnail: block.video_thumbnail,
+              coverUrl: block.cover_url,
               duration: block.video_duration,
               attachmentId: block.video_attachment_id,
               progress: block.video_progress ?? 0,
@@ -652,6 +653,7 @@ const MixedContentView = memo(function MixedContentView({
               <VideoPlayer
                 videoUrl={item.videoUrl}
                 thumbnail={item.thumbnail ?? undefined}
+                coverUrl={item.coverUrl ?? undefined}
                 duration={item.duration ?? undefined}
                 attachmentId={item.attachmentId ?? undefined}
                 isPlaceholder={item.isPlaceholder}

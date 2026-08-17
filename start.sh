@@ -2276,12 +2276,13 @@ start_services() {
         # BACKEND_INTERNAL_URL: URL passed into task runtime configs such as MCP
         # server URLs. Use TASK_API_DOMAIN so Docker executor containers can
         # reach the host backend instead of receiving localhost.
+        # WEGENT_BACKEND_PUBLIC_URL: URL embedded in runtime MCP configuration.
         # CHAT_SHELL_URL: URL for backend to call chat_shell service
         # LOG_LEVEL: Application log level (DEBUG enables debug logging)
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 

@@ -43,7 +43,7 @@ if [ "$state" = "pending" ]; then
   checks='[{"status":"IN_PROGRESS","conclusion":""}]'
   pr_state='OPEN'
 elif [ "$state" = "success" ]; then
-  checks='[{"status":"COMPLETED","conclusion":"SUCCESS"}]'
+  checks='[{"name":"Test Wework","workflowName":"Tests","startedAt":"2026-08-14T06:19:55Z","status":"COMPLETED","conclusion":"CANCELLED"},{"name":"Test Summary","workflowName":"Tests","startedAt":"2026-08-14T06:20:54Z","status":"COMPLETED","conclusion":"FAILURE"},{"name":"Test Wework","workflowName":"Tests","startedAt":"2026-08-14T06:21:16Z","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"Test Summary","workflowName":"Tests","startedAt":"2026-08-14T06:25:46Z","status":"COMPLETED","conclusion":"SUCCESS"}]'
   pr_state='OPEN'
 else
   checks='[{"status":"COMPLETED","conclusion":"SUCCESS"}]'

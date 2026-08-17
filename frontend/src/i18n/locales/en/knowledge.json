@@ -1185,6 +1185,7 @@
       "taskFailed": "The task failed",
       "republish": "Restore this version",
       "republished": "This version is published again",
+      "republishedDescription": "The page content has been refreshed.",
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
       "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",

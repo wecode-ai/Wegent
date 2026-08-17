@@ -13,6 +13,7 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { EditorView } from '@codemirror/view'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
@@ -365,7 +366,17 @@ export async function installWeworkAutomationBridge(
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>(selector))
+  const elements: HTMLElement[] = []
+  const visit = (root: Document | ShadowRoot) => {
+    elements.push(...root.querySelectorAll<HTMLElement>(selector))
+    root.querySelectorAll<HTMLElement>('*').forEach(element => {
+      if (element.shadowRoot) {
+        visit(element.shadowRoot)
+      }
+    })
+  }
+  visit(document)
+  return elements
 }
 
 function desktopControlElementText(selector: string, visible = false): string {
@@ -417,6 +428,20 @@ function desktopControlSnapshot(selector = 'body'): string {
     text: root.innerText,
     testIds: Array.from(new Set(testIds)).sort(),
   })
+}
+
+function desktopControlTestIdOrder(selector = 'body'): string {
+  const root = findDesktopControlElements(selector)[0]
+  if (!root) throw new Error(`Unable to find selector "${selector}"`)
+  const testIdElements = [
+    ...(root.dataset.testid ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>('[data-testid]')),
+  ]
+  const testIds = testIdElements
+    .map(element => element.dataset.testid)
+    .filter((testId): testId is string => Boolean(testId))
+
+  return JSON.stringify(Array.from(new Set(testIds)))
 }
 
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
@@ -629,6 +654,36 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+let activeDesktopControlPointer: {
+  element: HTMLElement
+  options: MouseEventInit & PointerEventInit
+} | null = null
+
+function startDesktopControlPointer(selector: string): string {
+  if (activeDesktopControlPointer) throw new Error('A desktop control pointer is already active')
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.scrollIntoView({ block: 'center', inline: 'center' })
+  const options = { ...desktopControlEventOptions(element), buttons: 1 }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
+  activeDesktopControlPointer = { element, options }
+  return element.textContent?.trim() ?? ''
+}
+
+function endDesktopControlPointer(): string {
+  const activePointer = activeDesktopControlPointer
+  if (!activePointer) throw new Error('No desktop control pointer is active')
+  try {
+    dispatchDesktopControlPointerEvent(activePointer.element, 'pointerup', {
+      ...activePointer.options,
+      buttons: 0,
+    })
+    return activePointer.element.textContent?.trim() ?? ''
+  } finally {
+    activeDesktopControlPointer = null
+  }
+}
+
 let activeDesktopControlDrag: {
   sourceText: string
   target: HTMLElement
@@ -725,6 +780,18 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 
 function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
+
+  const codeMirrorRoot = element.closest<HTMLElement>('.cm-editor')
+  const codeMirrorView = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null
+  if (codeMirrorView) {
+    codeMirrorView.dispatch({
+      changes: { from: 0, to: codeMirrorView.state.doc.length, insert: value },
+      selection: { anchor: value.length },
+      scrollIntoView: true,
+    })
+    codeMirrorView.focus()
+    return
+  }
 
   if (element instanceof HTMLSelectElement) {
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
@@ -907,6 +974,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'reloadMainWindow':
       return ''
+    case 'getTestIdOrder':
+      return desktopControlTestIdOrder(command.selector)
+    case 'reorderRuntimeProjectTasks':
+      return JSON.stringify(
+        await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+          method: 'runtime.sidebar.tasks.reorder',
+          params: JSON.parse(command.value ?? '{}'),
+        })
+      )
+    case 'getLocalRuntimeWork':
+      return JSON.stringify(
+        await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+          method: 'runtime.tasks.list',
+          params: {},
+        })
+      )
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
@@ -1376,7 +1459,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         }
         await waitForDesktopControlTick()
       }
-      throw new Error(`Unable to find selector "${command.selector}" containing "${text}"`)
+      const candidates = findDesktopControlElements(command.selector)
+        .slice(0, 20)
+        .map(candidate => ({
+          tagName: candidate.tagName.toLowerCase(),
+          testId: candidate.dataset.testid ?? null,
+        }))
+      throw new Error(
+        `Unable to find selector "${command.selector}" containing the requested text; candidateCount=${findDesktopControlElements(command.selector).length}; candidates=${JSON.stringify(candidates)}`
+      )
     }
     case 'fill': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -1408,6 +1499,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'pointerDownOnly':
+      return startDesktopControlPointer(command.selector)
+    case 'pointerUp':
+      return endDesktopControlPointer()
     case 'navigate': {
       const appPath = normalizeAppPath(command.value ?? '/')
       window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))

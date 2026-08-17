@@ -82,6 +82,7 @@ const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
 const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
+const RUNTIME_EVENT_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -320,27 +321,38 @@ where
         let client = self.client.clone();
         self.runtime_event_forwarder = Some(tokio::spawn(async move {
             loop {
-                match events.recv().await {
-                    Ok(event) => {
-                        if let Err(error) = client.emit_raw_event(RUNTIME_EVENT_EVENT, event).await
-                        {
-                            write_executor_error_line(&format_executor_log(
-                                "runtime event relay failed",
-                                &[("error", error)],
-                            ));
-                        }
-                    }
+                let event = match events.recv().await {
+                    Ok(event) => event,
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        let payload = json!({
+                        json!({
                             "type": "event",
                             "event": "executor.event_lagged",
                             "payload": {
                                 "skipped": skipped,
                             },
-                        });
-                        let _ = client.emit_raw_event(RUNTIME_EVENT_EVENT, payload).await;
+                        })
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
+                };
+
+                let mut failure_logged = false;
+                loop {
+                    match client
+                        .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
+                        .await
+                    {
+                        Ok(()) => break,
+                        Err(error) => {
+                            if !failure_logged {
+                                write_executor_error_line(&format_executor_log(
+                                    "runtime event relay failed; delivery will retry",
+                                    &[("error", error)],
+                                ));
+                                failure_logged = true;
+                            }
+                            sleep(RUNTIME_EVENT_RETRY_INTERVAL).await;
+                        }
+                    }
                 }
             }
         }));

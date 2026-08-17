@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -41,6 +41,7 @@ use super::codex_log_db::configure_codex_log_db_filter;
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
+const CODEX_MCP_INVENTORY_TIMEOUT_SECONDS: u64 = 10;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
@@ -88,6 +89,11 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
+- "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
+- Project-space MCP tools are discovered on demand. Use the available deferred-tool discovery function with the requested project-space capability before concluding that a tool is unavailable. It is normally named `tool_search`; compatibility providers may expose it as `search_deferred_tools`. Do not use MCP resource listing as a substitute for tool discovery.
+- Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
+- For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
@@ -1113,8 +1119,60 @@ async fn read_persistent_codex_app_server_stdout(
             }
         }
 
+        log_codex_mcp_startup_status(&message);
+
         let _ = notifications.send(message);
     }
+}
+
+fn log_codex_mcp_startup_status(message: &Value) {
+    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
+        return;
+    }
+    let params = message.get("params").unwrap_or(message);
+    log_executor_event(
+        "codex MCP startup status",
+        &[
+            (
+                "thread_id",
+                params
+                    .get("threadId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "server_name",
+                params
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "status",
+                params
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error_present",
+                params
+                    .get("error")
+                    .is_some_and(|value| !value.is_null())
+                    .to_string(),
+            ),
+            (
+                "failure_reason_present",
+                params
+                    .get("failureReason")
+                    .is_some_and(|value| !value.is_null())
+                    .to_string(),
+            ),
+        ],
+    );
 }
 
 fn notify_shared_process_closed(notifications: &broadcast::Sender<Value>, message: &str) {
@@ -1318,6 +1376,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             CodexThreadStart::Request { operation, params } => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
                 thread_fields.push(("operation", operation.to_owned()));
+                thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
                 let response = client.request(operation, params).await?;
                 let thread_id = thread_id_from_response(
@@ -1412,6 +1471,19 @@ async fn run_codex_app_server_turn_on_shared_client(
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
             }
+            if !request.mcp_servers.is_empty() {
+                let inventory_client = client.clone();
+                let inventory_request = request.clone();
+                let inventory_thread_id = thread_id.clone();
+                tokio::spawn(async move {
+                    log_codex_mcp_inventory(
+                        &inventory_client,
+                        &inventory_request,
+                        &inventory_thread_id,
+                    )
+                    .await;
+                });
+            }
             log_executor_event(
                 "codex shared active turn resolved",
                 &[
@@ -1460,7 +1532,9 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     if let Some(thread_id) = subscribed_thread_id {
         if let Some(generation) = client.mark_thread_idle(&thread_id).await {
-            if result.is_ok() {
+            // Ephemeral threads cannot be resumed after app-server unloads them, so keep the
+            // owner subscription alive while the temporary chat may still send direct turns.
+            if result.is_ok() && !prepared.request.ephemeral {
                 client.unsubscribe_thread_in_background(thread_id, generation);
             } else {
                 client
@@ -1478,6 +1552,155 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     cleanup_generated_files(&prepared.generated_files);
     result
+}
+
+async fn log_codex_mcp_inventory(
+    client: &CodexAppServerClient,
+    request: &ExecutionRequest,
+    thread_id: &str,
+) {
+    let response = timeout(
+        Duration::from_secs(CODEX_MCP_INVENTORY_TIMEOUT_SECONDS),
+        client.request(
+            "mcpServerStatus/list",
+            json!({"threadId": thread_id, "detail": "full"}),
+        ),
+    )
+    .await;
+    match response {
+        Ok(Ok(response)) => {
+            let inventories = mcp_inventory_diagnostic_fields(&response);
+            if inventories.is_empty() {
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                fields.extend([
+                    ("thread_id", thread_id.to_owned()),
+                    ("server_count", "0".to_owned()),
+                ]);
+                log_executor_event("codex MCP inventory", &fields);
+                return;
+            }
+            for inventory in inventories {
+                let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                fields.push(("thread_id", thread_id.to_owned()));
+                fields.extend(inventory);
+                log_executor_event("codex MCP inventory", &fields);
+            }
+        }
+        Ok(Err(error)) => {
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([("thread_id", thread_id.to_owned()), ("error", error)]);
+            log_executor_event("codex MCP inventory failed", &fields);
+        }
+        Err(_) => {
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([
+                ("thread_id", thread_id.to_owned()),
+                (
+                    "timeout_seconds",
+                    CODEX_MCP_INVENTORY_TIMEOUT_SECONDS.to_string(),
+                ),
+            ]);
+            log_executor_event("codex MCP inventory timed out", &fields);
+        }
+    }
+}
+
+fn mcp_inventory_diagnostic_fields(response: &Value) -> Vec<Vec<(&'static str, String)>> {
+    response
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|server| {
+            let tools = server
+                .get("tools")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let tool_names = tools
+                .iter()
+                .map(|(key, tool)| {
+                    tool.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(key)
+                        .to_owned()
+                })
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(",");
+            vec![
+                (
+                    "server_name",
+                    server
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+                ("tool_count", tools.len().to_string()),
+                ("tool_names", tool_names),
+                (
+                    "resource_count",
+                    server
+                        .get("resources")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                        .to_string(),
+                ),
+                (
+                    "resource_template_count",
+                    server
+                        .get("resourceTemplates")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                        .to_string(),
+                ),
+            ]
+        })
+        .collect()
+}
+
+fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
+    let space_routing_instructions = params
+        .get("developerInstructions")
+        .and_then(Value::as_str)
+        .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:"));
+    let Some(config) = params.get("config").and_then(Value::as_object) else {
+        return vec![
+            ("mcp_config_key_count", "0".to_owned()),
+            ("mcp_server_names", String::new()),
+            (
+                "space_routing_instructions",
+                space_routing_instructions.to_string(),
+            ),
+        ];
+    };
+    let mcp_keys = config
+        .keys()
+        .filter(|key| key.starts_with("mcp_servers."))
+        .collect::<Vec<_>>();
+    let server_names = mcp_keys
+        .iter()
+        .filter_map(|key| {
+            key.strip_prefix("mcp_servers.")?
+                .split('.')
+                .next()
+                .map(|name| name.trim_matches('"').to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(",");
+    vec![
+        ("mcp_config_key_count", mcp_keys.len().to_string()),
+        ("mcp_server_names", server_names),
+        (
+            "space_routing_instructions",
+            space_routing_instructions.to_string(),
+        ),
+    ]
 }
 
 pub async fn run_codex_app_server_turn_with_cancel(
@@ -1722,6 +1945,7 @@ async fn read_shared_turn_notifications(
         .take()
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
+    let mut cancellation_requested = false;
     loop {
         let receive_notification = async {
             if let Some(cancel_rx) = options.cancellation.as_mut() {
@@ -1754,6 +1978,7 @@ async fn read_shared_turn_notifications(
         };
         let Some(received) = received else {
             options.cancellation = None;
+            cancellation_requested = true;
             let interrupt_turn_id = if waiting_for_initial_progress {
                 Some("")
             } else {
@@ -1771,12 +1996,17 @@ async fn read_shared_turn_notifications(
                     );
                 }
             }
-            return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+            continue;
         };
         let notification = shared_notification_result(received, last_outcome.clone())?;
         let message = match notification {
             SharedNotification::Message(message) => message,
-            SharedNotification::Completed(outcome) => return Ok(outcome),
+            SharedNotification::Completed(outcome) => {
+                if cancellation_requested {
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+                }
+                return Ok(outcome);
+            }
         };
         if message.get("method").and_then(Value::as_str) == Some("codex/app-server/exited") {
             if let Some(outcome) = last_outcome {
@@ -1892,6 +2122,9 @@ async fn read_shared_turn_notifications(
             options.active_turn_id = None;
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
+            }
+            if cancellation_requested {
+                return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
             }
             if !should_wait_for_goal_continuation(
                 &outcome,
@@ -2353,16 +2586,24 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
-    [
+fn codex_thread_developer_instructions(
+    user_instructions: &str,
+    task_instructions: &str,
+    include_space_instructions: bool,
+) -> String {
+    let mut instructions = vec![
         user_instructions.trim(),
         task_instructions.trim(),
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
-    ]
-    .into_iter()
-    .filter(|instructions| !instructions.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n\n")
+    ];
+    if include_space_instructions {
+        instructions.push(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS);
+    }
+    instructions
+        .into_iter()
+        .filter(|instructions| !instructions.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
@@ -4311,11 +4552,21 @@ fn insert_codex_developer_instructions(
     let instructions = codex_thread_developer_instructions(
         &launch_config.user_developer_instructions,
         &request.system_prompt,
+        request_has_mcp_server(request, "wework_space"),
     );
     params.insert(
         "developerInstructions".to_owned(),
         Value::String(instructions),
     );
+}
+
+fn request_has_mcp_server(request: &ExecutionRequest, name: &str) -> bool {
+    request.mcp_servers.iter().any(|server| {
+        server
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|server_name| server_name == name)
+    })
 }
 
 fn append_thread_launch_params(

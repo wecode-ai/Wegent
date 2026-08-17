@@ -20,7 +20,7 @@ import signal
 import sys
 import time
 import uuid
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 
 import redis
 import socketio
@@ -93,31 +93,20 @@ def _format_forwarded_headers_for_log(headers) -> str:
     return f" headers={{{', '.join(forwarded_headers)}}}"
 
 
-def _get_mcp_lifespan_servers():
-    from app.mcp_server.server import (
-        image_mcp_server,
-        interactive_form_question_mcp_server,
-        knowledge_mcp_server,
-        prompt_optimization_mcp_server,
-        subscription_mcp_server,
-        system_mcp_server,
-        video_mcp_server,
+def _request_context_fields(request_body: str) -> tuple[object, object, object]:
+    """Extract trace context only from JSON object request bodies."""
+
+    try:
+        body_json = json.loads(request_body)
+    except (json.JSONDecodeError, TypeError):
+        return None, None, None
+    if not isinstance(body_json, dict):
+        return None, None, None
+    return (
+        body_json.get("task_id"),
+        body_json.get("subtask_id"),
+        body_json.get("user_id"),
     )
-
-    servers = [
-        ("System", system_mcp_server),
-        ("Knowledge", knowledge_mcp_server),
-        ("interactive_form_question", interactive_form_question_mcp_server),
-        ("Prompt optimization", prompt_optimization_mcp_server),
-        ("Subscription", subscription_mcp_server),
-        ("Image", image_mcp_server),
-        ("Video", video_mcp_server),
-    ]
-    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
-        from app.mcp_server.server import external_knowledge_mcp_server
-
-        servers.append(("External knowledge", external_knowledge_mcp_server))
-    return tuple(servers)
 
 
 def _load_system_initialization_state(logger: logging.Logger) -> None:
@@ -384,6 +373,14 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
     logger.info("✓ IM channel task completion handler registered")
 
+    # Register the durable Wework board-automation projection handler.
+    from app.services.project_automation_completion import (
+        register_project_automation_task_completion_handler,
+    )
+
+    register_project_automation_task_completion_handler(event_bus)
+    logger.info("✓ Project automation task completion handler registered")
+
     # Register code wiki run completion handler. A version's outcome is normally
     # reported by the agent itself; this covers the agent never getting to speak,
     # where the version would otherwise stay RUNNING until the staleness sweep looks
@@ -456,12 +453,11 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # ==================== YIELD (app is running) ====================
-    # MCP servers need their session_manager.run() to be active during the app lifecycle
-    # This is required for the streamable HTTP transport to work properly
-    async with AsyncExitStack() as stack:
-        for server_name, mcp_server in _get_mcp_lifespan_servers():
-            await stack.enter_async_context(mcp_server.session_manager.run())
-            logger.info("✓ %s MCP server session manager started", server_name)
+    # Mounted ASGI applications do not receive parent lifespan events, so the
+    # backend lifespan explicitly owns every mounted MCP session manager.
+    from app.mcp_server.server import mcp_session_managers_lifespan
+
+    async with mcp_session_managers_lifespan():
         yield
 
         # ==================== SHUTDOWN ====================
@@ -683,20 +679,11 @@ def create_app():
             if is_telemetry_enabled():
                 # Extract task_id and subtask_id from request body for tracing
                 if request_body:
-                    try:
-                        import json
-
-                        body_json = json.loads(request_body)
-                        task_id = body_json.get("task_id")
-                        subtask_id = body_json.get("subtask_id")
-                        if task_id is not None or subtask_id is not None:
-                            set_task_context(task_id=task_id, subtask_id=subtask_id)
-                        # Extract user_id from request body if available
-                        user_id = body_json.get("user_id")
-                        if user_id is not None:
-                            set_user_context(user_id=str(user_id))
-                    except (json.JSONDecodeError, TypeError):
-                        pass  # Not JSON or invalid format, skip task context extraction
+                    task_id, subtask_id, user_id = _request_context_fields(request_body)
+                    if task_id is not None or subtask_id is not None:
+                        set_task_context(task_id=task_id, subtask_id=subtask_id)
+                    if user_id is not None:
+                        set_user_context(user_id=str(user_id))
 
                 # Add request body to current span
                 if request_body:

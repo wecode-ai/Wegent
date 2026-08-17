@@ -164,7 +164,7 @@ fn streaming_patch_overrides_enable_freeform_apply_patch() {
 }
 
 #[test]
-fn persistent_app_server_uses_direct_mcp_tools() {
+fn persistent_app_server_uses_codex_deferred_mcp_tools() {
     let request_config = CodexLaunchConfig::default();
 
     let config = persistent_codex_app_server_launch_config(&request_config);
@@ -178,6 +178,61 @@ fn persistent_app_server_uses_direct_mcp_tools() {
     assert!(config
         .config_overrides
         .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+}
+
+#[test]
+fn mcp_thread_diagnostics_report_names_without_config_values() {
+    let params = json!({
+        "config": {
+            "mcp_servers.wework_space.command": "/path/to/wegent-executor",
+            "mcp_servers.wework_space.args": ["space-mcp-server"],
+            "mcp_servers.wework_space.env.WEWORK_SPACE_AUTH_TOKEN": "secret-token",
+            "mcp_servers.example.url": "https://mcp.example.com",
+            "model": "test-model"
+        }
+    });
+
+    let fields = mcp_thread_config_fields(&params)
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(fields["mcp_config_key_count"], "4");
+    assert_eq!(fields["mcp_server_names"], "example,wework_space");
+    assert_eq!(fields["space_routing_instructions"], "false");
+    assert!(!fields.values().any(|value| value.contains("secret-token")));
+}
+
+#[test]
+fn mcp_inventory_diagnostics_report_accepted_tool_names() {
+    let response = json!({
+        "data": [{
+            "name": "wework_space",
+            "tools": {
+                "get_board_item": {
+                    "name": "get_board_item",
+                    "description": "sensitive-description",
+                    "inputSchema": {"type": "object"}
+                },
+                "assign_board_item": {
+                    "name": "assign_board_item",
+                    "inputSchema": {"type": "object"}
+                }
+            },
+            "resources": [],
+            "resourceTemplates": []
+        }]
+    });
+
+    let inventories = mcp_inventory_diagnostic_fields(&response);
+
+    assert_eq!(inventories.len(), 1);
+    let fields = inventories[0].iter().cloned().collect::<BTreeMap<_, _>>();
+    assert_eq!(fields["server_name"], "wework_space");
+    assert_eq!(fields["tool_count"], "2");
+    assert_eq!(fields["tool_names"], "assign_board_item,get_board_item");
+    assert!(!fields
+        .values()
+        .any(|value| value.contains("sensitive-description")));
 }
 
 #[test]
@@ -2031,6 +2086,35 @@ fn thread_launch_params_include_execution_system_prompt_as_developer_instruction
             .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
         assert!(instructions.contains("Wework 内置浏览器 routing:"));
         assert!(instructions.contains("browser_open"));
+        assert!(!instructions.contains("Wework 项目空间 routing:"));
+    }
+}
+
+#[test]
+fn thread_launch_params_include_space_routing_when_space_mcp_is_injected() {
+    let request = ExecutionRequest {
+        mcp_servers: vec![json!({
+            "name": "wework_space",
+            "type": "stdio",
+            "command": "/path/to/wegent-executor",
+            "args": ["space-mcp-server"]
+        })],
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+    ] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("developer instructions should be a string");
+        assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert!(instructions.contains("tool_search"));
+        assert!(instructions.contains("list_board_items"));
+        assert!(instructions.contains("get_assignment_candidates"));
     }
 }
 

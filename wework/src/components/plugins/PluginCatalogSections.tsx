@@ -58,8 +58,8 @@ export function CatalogSection({
 }) {
   return (
     <section>
-      <div className="border-b border-[#ececf0] pb-3">
-        <h2 className="text-lg font-semibold tracking-normal text-[#111114]">{title}</h2>
+      <div className="border-b border-border pb-3">
+        <h2 className="text-lg font-semibold tracking-normal text-text-primary">{title}</h2>
       </div>
       <div className="grid grid-cols-1 gap-x-16 sm:grid-cols-2">
         {items.map(item => (
@@ -536,7 +536,7 @@ export function ConfirmUninstallDialog({
           <button
             type="button"
             data-testid={confirmTestId}
-            className="h-9 rounded-xl bg-text-primary px-4 text-sm font-semibold text-white hover:opacity-90"
+            className="h-9 rounded-xl bg-text-primary px-4 text-sm font-semibold text-background hover:opacity-90"
             onClick={onConfirm}
           >
             {confirmLabel}

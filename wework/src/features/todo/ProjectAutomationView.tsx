@@ -16,6 +16,7 @@ export function ProjectAutomationView({
   executionApi,
   deviceApi,
   modelApi,
+  teamApi,
   localProjects,
   runtimeWork,
   currentUserId,
@@ -29,6 +30,7 @@ export function ProjectAutomationView({
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
+  teamApi?: WorkbenchServices['teamApi']
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
   currentUserId?: string | number
@@ -42,7 +44,7 @@ export function ProjectAutomationView({
       data-testid="project-automation-view"
     >
       <div className="px-6 pb-8 pt-4">
-        <header className="mb-4">
+        <header>
           <h2 className="text-heading-md font-semibold">{t('workbench.automation_title')}</h2>
           <p className="mt-1 text-sm text-text-muted">{t('workbench.automation_description')}</p>
         </header>
@@ -52,6 +54,9 @@ export function ProjectAutomationView({
           agentApi={projectChatAgentApi}
           canManage={canManageAgents}
           deviceApi={deviceApi}
+          modelApi={modelApi}
+          teamApi={teamApi}
+          projectTags={project.tags ?? []}
           onOpenTask={taskId => {
             void api.getLoopItem(taskId).then(item => onOpenTask?.(item))
           }}
@@ -65,22 +70,24 @@ export function ProjectAutomationView({
           runtimeWork={runtimeWork}
           canManage={canManageAgents}
         />
-        <section className="mt-8 border-t border-border pt-6">
-          <div className="mb-3 flex items-center gap-2">
+        <section className="mt-8 border-t border-border pt-8">
+          <div>
             <h3 className="text-heading-md font-semibold">
               {t('workbench.automation_queue_title')}
             </h3>
-            <span className="text-xs text-text-muted">{t('workbench.queue_description')}</span>
+            <p className="mt-1 text-sm text-text-muted">{t('workbench.queue_description')}</p>
           </div>
-          <ProjectQueueView
-            api={api}
-            project={project}
-            projectChatAgentApi={projectChatAgentApi}
-            executionApi={executionApi}
-            currentUserId={currentUserId}
-            onOpenTask={onOpenTask}
-            embedded
-          />
+          <div className="mt-5">
+            <ProjectQueueView
+              api={api}
+              project={project}
+              projectChatAgentApi={projectChatAgentApi}
+              executionApi={executionApi}
+              currentUserId={currentUserId}
+              onOpenTask={onOpenTask}
+              embedded
+            />
+          </div>
         </section>
       </div>
     </div>

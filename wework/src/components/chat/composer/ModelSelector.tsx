@@ -647,7 +647,7 @@ export function ModelSelector({
                   className={[
                     'flex h-11 min-w-[44px] shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium',
                     selected
-                      ? 'border-[#1f2933] bg-[#1f2933] text-white'
+                      ? 'border-text-primary bg-text-primary text-background'
                       : 'border-border bg-surface text-text-secondary',
                   ].join(' ')}
                 >
@@ -731,7 +731,9 @@ export function ModelSelector({
                       onClick={() => activateMobileFamily(group.config.id)}
                       className={[
                         'h-11 min-w-[44px] shrink-0 rounded-full px-4 text-sm font-medium',
-                        active ? 'bg-[#1f2933] text-white' : 'bg-surface text-text-secondary',
+                        active
+                          ? 'bg-text-primary text-background'
+                          : 'bg-surface text-text-secondary',
                       ].join(' ')}
                     >
                       {group.config.label}
@@ -781,7 +783,7 @@ export function ModelSelector({
                           'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left',
                           modelDisabled && 'cursor-not-allowed opacity-70',
                           selected
-                            ? 'border-[#b9d1ca] bg-[#e8f2ef]'
+                            ? 'border-primary/30 bg-primary/10'
                             : 'border-transparent bg-surface',
                         ].join(' ')}
                       >
@@ -842,7 +844,7 @@ export function ModelSelector({
               type="button"
               data-testid="model-selector-confirm-button"
               onClick={closeMenu}
-              className="h-11 flex-1 rounded-full bg-[#1f2933] text-sm font-semibold text-white"
+              className="h-11 flex-1 rounded-full bg-text-primary text-sm font-semibold text-background"
             >
               {t('workbench.use_current_model')}
             </button>

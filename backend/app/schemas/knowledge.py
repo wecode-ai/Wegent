@@ -614,9 +614,10 @@ class CodeWikiRunStatus(BaseModel):
 class CodeWikiRunCreate(BaseModel):
     """Request to regenerate a code wiki now.
 
-    Both fields are optional and describe the repository's current state. Supplying
-    neither is safe but expensive: with no commit to compare against, the run cannot
-    tell what changed and rebuilds the whole wiki rather than guessing.
+    The repository-state fields are optional. Supplying neither is safe but expensive:
+    with no commit to compare against, the run cannot tell what changed and rebuilds
+    the whole wiki rather than guessing. ``force_full`` gives explicit manual actions
+    the same result even when the commit has not moved.
     """
 
     head_commit: str = Field(
@@ -632,6 +633,13 @@ class CodeWikiRunCreate(BaseModel):
         description=(
             "Files changed since the published commit. Absent means unknown, which "
             "forces a full rebuild; an empty list means nothing changed."
+        ),
+    )
+    force_full: bool = Field(
+        False,
+        description=(
+            "Start a full rebuild even when the repository commit is unchanged. "
+            "Intended for an explicit manual regeneration, not scheduled runs."
         ),
     )
 

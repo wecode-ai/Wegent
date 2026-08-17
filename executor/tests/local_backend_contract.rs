@@ -533,6 +533,40 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     assert_eq!(emits[0].payload["event"], "runtime.task.completed");
 }
 
+#[tokio::test]
+async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
+    let transport = RecordingTransport::with_emit_results(vec![
+        Err("Socket.IO client is not connected".to_owned()),
+        Ok(()),
+    ]);
+    let (event_tx, _) = broadcast::channel(8);
+    let handler = Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        "/bin/false",
+        event_tx.clone(),
+    ));
+    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        handler,
+        event_tx.subscribe(),
+    );
+    let event = json!({
+        "type": "event",
+        "event": "runtime.task.completed",
+        "payload": {"task_id": "runtime-1"}
+    });
+
+    event_tx.send(event.clone()).unwrap();
+
+    let emits = transport.wait_for_emits(2).await;
+    assert_eq!(emits.len(), 2);
+    assert_eq!(emits[0].event, "runtime:event");
+    assert_eq!(emits[0].payload, event);
+    assert_eq!(emits[1].event, "runtime:event");
+    assert_eq!(emits[1].payload, event);
+}
+
 #[test]
 fn local_backend_config_uses_device_config_and_normalizes_token() {
     let mut device = DeviceConfig {
@@ -591,6 +625,7 @@ struct RecordedCall {
 struct RecordingTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     emits: Arc<Mutex<Vec<RecordedCall>>>,
+    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, wegent_executor::local::backend::EventHandler)>>>,
     disconnects: Arc<Mutex<usize>>,
@@ -601,6 +636,13 @@ impl RecordingTransport {
     fn with_responses(responses: Vec<Value>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(responses.into())),
+            ..Self::default()
+        }
+    }
+
+    fn with_emit_results(results: Vec<Result<(), String>>) -> Self {
+        Self {
+            emit_results: Arc::new(Mutex::new(results.into())),
             ..Self::default()
         }
     }
@@ -701,7 +743,11 @@ impl LocalBackendTransport for RecordingTransport {
                 payload,
             });
             self.notify.notify_waiters();
-            Ok(())
+            self.emit_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()))
         })
     }
 

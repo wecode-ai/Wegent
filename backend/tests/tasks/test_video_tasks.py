@@ -4,12 +4,14 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.services.execution.agents.video.extensions import PreparedVideoArtifact
 from app.services.execution.agents.video.providers.base import VideoJobResult
 from app.tasks.video_tasks import (
     POLL_INTERVAL_SECONDS,
     _estimate_polling_progress,
     _handle_completion,
     _merge_video_job_result,
+    dispatch_video_polling_task,
 )
 from app.tasks.video_websocket import emit_video_chunk, emit_video_error
 
@@ -36,6 +38,11 @@ def test_handle_completion_persists_standard_video_result() -> None:
             "upload_video_attachment",
             new=AsyncMock(return_value=456),
         ),
+        patch(
+            "app.services.execution.agents.video.extensions."
+            "prepare_extended_video_result",
+            return_value=None,
+        ),
         patch("app.tasks.video_tasks._update_subtask_status_sync") as update_subtask,
         patch("app.tasks.video_tasks._update_task_status_after_subtask"),
     ):
@@ -51,10 +58,60 @@ def test_handle_completion_persists_standard_video_result() -> None:
 
     result_data = emit_done.call_args.kwargs["result_data"]
     block = result_data["blocks"][0]
-    assert block["video_url"] == "https://example.com/generated.mp4"
+    assert block["video_url"] == "/api/attachments/456/download"
     assert block["video_attachment_id"] == 456
     assert block["video_progress"] == 100
     update_subtask.assert_called_once()
+
+
+def test_handle_completion_returns_external_playback_url_directly() -> None:
+    provider = MagicMock()
+    provider.get_result = AsyncMock(
+        return_value=VideoJobResult(
+            video_url="https://provider.example.com/temporary.mp4",
+            metadata={"asset_id": "asset-1"},
+        )
+    )
+    artifact = PreparedVideoArtifact(
+        video_url="https://cdn.example.com/raw.mp4",
+        websocket_video_url="https://cdn.example.com/signed.mp4?token=temporary",
+        attachment_id=789,
+        thumbnail="https://cdn.example.com/cover.jpg",
+        duration=5,
+        block_metadata={
+            "asset_id": "asset-1",
+            "cover_url": "https://cdn.example.com/cover.jpg",
+        },
+    )
+
+    with (
+        patch("app.tasks.video_websocket.emit_video_chunk"),
+        patch("app.tasks.video_websocket.emit_video_done") as emit_done,
+        patch(
+            "app.services.execution.agents.video.extensions."
+            "prepare_extended_video_result",
+            return_value=artifact,
+        ),
+        patch("app.tasks.video_tasks._update_subtask_status_sync") as update_subtask,
+        patch("app.tasks.video_tasks._update_task_status_after_subtask"),
+    ):
+        _handle_completion(
+            provider=provider,
+            job_id="job-1",
+            task_id=10,
+            subtask_id=20,
+            user_id=30,
+            message_id=None,
+            video_block_id="video-1",
+        )
+
+    websocket_block = emit_done.call_args.kwargs["result_data"]["blocks"][0]
+    persisted_block = update_subtask.call_args.kwargs["result"]["blocks"][0]
+    assert websocket_block["video_url"].endswith("?token=temporary")
+    assert persisted_block["video_url"] == "https://cdn.example.com/raw.mp4"
+    assert persisted_block["asset_id"] == "asset-1"
+    assert persisted_block["cover_url"] == "https://cdn.example.com/cover.jpg"
+    assert persisted_block["video_attachment_id"] == 789
 
 
 def test_emit_video_error_closes_placeholder_before_error_event() -> None:
@@ -107,6 +164,51 @@ def test_video_progress_prefers_provider_value_over_estimate() -> None:
     poll_count = 600 // POLL_INTERVAL_SECONDS
 
     assert _estimate_polling_progress(46, poll_count, 80) == 46
+
+
+def test_dispatch_video_polling_task_propagates_request_id() -> None:
+    with (
+        patch(
+            "app.tasks.video_tasks.get_request_id",
+            return_value="trace-123",
+        ),
+        patch("app.tasks.video_tasks.poll_video_job.apply_async") as apply_async,
+    ):
+        dispatch_video_polling_task(
+            subtask_id=20,
+            task_id=10,
+            user_id=30,
+            job_id="job-1",
+            provider_protocol="seedance",
+            video_block_id="video-1",
+            model_config={},
+            message_id=None,
+        )
+
+    assert apply_async.call_args.kwargs["kwargs"]["request_id"] == "trace-123"
+
+
+def test_dispatch_video_polling_task_generates_request_id() -> None:
+    with (
+        patch("app.tasks.video_tasks.get_request_id", return_value=None),
+        patch(
+            "app.tasks.video_tasks.init_request_context",
+            return_value="generated",
+        ),
+        patch("app.tasks.video_tasks.poll_video_job.apply_async") as apply_async,
+    ):
+        dispatch_video_polling_task(
+            subtask_id=20,
+            task_id=10,
+            user_id=30,
+            job_id="job-1",
+            provider_protocol="seedance",
+            video_block_id="video-1",
+            model_config={},
+            message_id=None,
+        )
+
+    assert apply_async.call_args.kwargs["kwargs"]["request_id"] == "generated"
 
 
 def test_merge_video_job_result_persists_refresh_placeholder() -> None:

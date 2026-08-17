@@ -1,6 +1,10 @@
 export { getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
+export {
+  createRuntimeTaskLifecycleOwnershipView,
+  RuntimeTaskLifecycleStore,
+} from './RuntimeTaskLifecycleStore'
 export { RuntimeTaskLifecycleProvider } from './RuntimeTaskLifecycleProvider'
-export { RuntimeTaskLifecycleStore, selectRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStore'
+export { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
 export {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,

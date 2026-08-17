@@ -108,6 +108,23 @@ def _git_project(test_db, user_id: int, name: str = "Wegent") -> Project:
     return project
 
 
+def test_local_task_summary_preserves_executor_status_values():
+    from app.schemas.runtime_work import LocalTaskSummary
+
+    for status in ("done", "cancelled", "waiting_for_approval"):
+        task = LocalTaskSummary.model_validate(
+            {
+                "taskId": f"task-{status}",
+                "workspacePath": "/repo/Wegent",
+                "title": status,
+                "runtime": "claude_code",
+                "status": status,
+            }
+        )
+
+        assert task.status == status
+
+
 def _git_status_command(
     statuses: dict[tuple[str, str], dict],
     *,
@@ -596,9 +613,22 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
                             "title": "Spike",
                             "runtime": "claude_code",
                             "workspaceKind": "workspace",
-                            "createdAt": "2026-06-20T03:00:00Z",
-                            "updatedAt": "2026-06-20T04:00:00Z",
-                            "running": True,
+                            "createdAt": 1781924400000,
+                            "updatedAt": 1781928000000,
+                            "completedAt": 1781928000000,
+                            "running": False,
+                            "continuable": True,
+                            "threadStatus": "idle",
+                            "turnStatus": "completed",
+                            "goalStatus": "complete",
+                            "supervisor": {
+                                "mode": "suggest",
+                                "status": "disabled",
+                            },
+                            "pinned": True,
+                            "pinnedOrder": 3,
+                            "sidebarOrder": 5,
+                            "status": "done",
                         }
                     ],
                 },
@@ -641,6 +671,23 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     assert response.projects[0].device_workspaces[0].project_id is None
     assert response.projects[0].device_workspaces[0].mapped is True
     assert response.projects[0].device_workspaces[0].tasks[0].local_task_id == "codex-1"
+    claude_task = response.projects[1].device_workspaces[0].tasks[0]
+    assert claude_task.created_at == 1781924400000
+    assert claude_task.updated_at == 1781928000000
+    assert claude_task.completed_at == 1781928000000
+    assert claude_task.running is False
+    assert claude_task.continuable is True
+    assert claude_task.thread_status == "idle"
+    assert claude_task.turn_status == "completed"
+    assert claude_task.goal_status == "complete"
+    assert claude_task.supervisor == {
+        "mode": "suggest",
+        "status": "disabled",
+    }
+    assert claude_task.pinned is True
+    assert claude_task.pinned_order == 3
+    assert claude_task.sidebar_order == 5
+    assert claude_task.status == "done"
     assert len(response.chats) == 1
     assert response.chats[0].workspace_kind == "chat"
     assert response.chats[0].tasks[0].local_task_id == "chat-1"

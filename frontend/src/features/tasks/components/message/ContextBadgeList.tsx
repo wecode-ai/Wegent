@@ -10,8 +10,6 @@ import AttachmentPreview from '../input/AttachmentPreview'
 import ImageGallery from './ImageGallery'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isImageExtension } from '@/apis/attachments'
-import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 import {
   getExternalKnowledgeSourceLabel,
   useExternalKnowledgeSources,
@@ -20,6 +18,8 @@ import {
   formatCompactKnowledgeScope,
   formatKnowledgeScopeSummary,
 } from '@/features/knowledge/knowledgeContextPresentation'
+import { isAudioExtension, isImageExtension, isVideoExtension } from '@/apis/attachments'
+import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -253,7 +253,11 @@ function AttachmentContextBadge({
   return (
     <AttachmentPreview
       attachment={attachment}
-      compact={isImageExtension(attachment.file_extension)}
+      compact={
+        isImageExtension(attachment.file_extension) ||
+        isVideoExtension(attachment.file_extension) ||
+        isAudioExtension(attachment.file_extension)
+      }
       showDownload={true}
       shareToken={shareToken}
     />

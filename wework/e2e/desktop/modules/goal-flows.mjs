@@ -607,9 +607,14 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     SUPERVISOR_MODEL_KEY,
     'The active supervisor did not retain its selected model'
   )
-  await control.command('click', '[data-testid="task-supervisor-run-now-button"]')
   await withTimeout(
     control.awaitScenarioRequestCount('supervisor', 4),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor did not inspect the completed auto-correction'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="task-supervisor-run-now-button"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 5),
     DEFAULT_STEP_TIMEOUT_MS,
     'The immediate supervisor review did not reach the evaluator'
   )

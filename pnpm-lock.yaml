@@ -651,6 +651,12 @@ importers:
       lz-string:
         specifier: 1.5.0
         version: 1.5.0
+      mermaid:
+        specifier: 11.15.0
+        version: 11.15.0
+      plantuml-encoder:
+        specifier: 1.4.0
+        version: 1.4.0
       posthog-js:
         specifier: ^1.409.5
         version: 1.413.2(preact-render-to-string@6.6.5(preact@11.0.0-beta.0))
@@ -746,8 +752,8 @@ importers:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.15)
       dingtalk-workspace-cli:
-        specifier: 1.0.54
-        version: 1.0.54
+        specifier: 1.0.58
+        version: 1.0.58
       eslint:
         specifier: ^10.3.0
         version: 10.4.1(jiti@1.21.7)
@@ -5061,8 +5067,8 @@ packages:
   dingbat-to-unicode@1.0.1:
     resolution: {integrity: sha512-98l0sW87ZT58pU4i61wa2OHwxbiYSbuxsCBozaVnYX2iCnr3bLM3fIes1/ej7h1YdOKuKt/MLs706TVnALA65w==}
 
-  dingtalk-workspace-cli@1.0.54:
-    resolution: {integrity: sha512-R1gNPwc7yVgU5VKbyI7FaYNjh2L2+/yBo7cdqEdrBP35Xcnm0yOjJcRbk/EEq31Sk60feSBoQ3RtKVhxwduW+Q==}
+  dingtalk-workspace-cli@1.0.58:
+    resolution: {integrity: sha512-9sYkNwfBuT/FM6IYgLEZCJZJItUq6/5dP7+rWXQt/Mbhxty8HPK7rxNepUbmhjfRPI34ZFMT6PSnetfvkTTO3g==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -13684,7 +13690,7 @@ snapshots:
 
   dingbat-to-unicode@1.0.1: {}
 
-  dingtalk-workspace-cli@1.0.54: {}
+  dingtalk-workspace-cli@1.0.58: {}
 
   direction@2.0.1: {}
 
@@ -15942,7 +15948,7 @@ snapshots:
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
       dayjs: 1.11.21
-      dompurify: 3.4.9
+      dompurify: 3.4.13
       es-toolkit: 1.47.0
       katex: 0.16.47
       khroma: 2.1.0

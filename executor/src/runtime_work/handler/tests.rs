@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
+use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
 #[test]
@@ -312,6 +312,34 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
 }
 
 #[test]
+fn forked_task_inherits_project_routing_metadata() {
+    let mut source = RuntimeTaskLink::new_pending_with_runtime(
+        "task-1".to_owned(),
+        "/tmp/project/worktree".to_owned(),
+        "Source".to_owned(),
+        "codex",
+    );
+    source.runtime_project_key = Some("project-1".to_owned());
+    source.runtime_workspace_roots = vec!["/tmp/project".to_owned(), "/tmp/project/api".to_owned()];
+
+    let forked = forked_task_link(
+        &source,
+        "task-2".to_owned(),
+        "thread-2".to_owned(),
+        "Forked".to_owned(),
+        json!({"taskId": "task-1", "lastTurnId": "turn-1"}),
+    );
+
+    assert_eq!(forked.runtime_project_key, source.runtime_project_key);
+    assert_eq!(
+        forked.runtime_workspace_roots,
+        source.runtime_workspace_roots
+    );
+    assert_eq!(forked.workspace_path, source.workspace_path);
+    assert_eq!(forked.runtime, source.runtime);
+}
+
+#[test]
 fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -330,7 +358,7 @@ fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state(
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
     assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
@@ -376,7 +404,7 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("complete"));
     assert!(!handler.is_active_local_task("task-1"));
@@ -425,7 +453,7 @@ fn stale_execution_cannot_finish_its_replacement() {
         .local_task_link("task-1")
         .expect("task should remain stored");
     assert!(!handler.is_active_local_task("task-1"));
-    assert_eq!(task.status, "active");
+    assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.thread_id.as_deref(), Some("current-thread"));
     assert!(task.completed_at.is_some());
@@ -464,7 +492,7 @@ fn claude_execution_persists_running_and_settled_state() {
     let settled_task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(settled_task.status, "active");
+    assert_eq!(settled_task.status, "done");
     assert!(!settled_task.running);
     assert_eq!(settled_task.thread_status, "idle");
     assert_eq!(settled_task.turn_status.as_deref(), Some("completed"));
@@ -472,6 +500,33 @@ fn claude_execution_persists_running_and_settled_state() {
     assert!(settled_task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn settled_task_projection_normalizes_every_terminal_outcome() {
+    for (status, thread_status, turn_status, expected) in [
+        ("active", "idle", "completed", "done"),
+        ("active", "failed", "failed", "failed"),
+        ("active", "cancelled", "cancelled", "cancelled"),
+    ] {
+        let mut link = RuntimeTaskLink::new_pending_with_runtime(
+            format!("task-{expected}"),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+            "claude_code",
+        );
+        link.status = status.to_owned();
+        link.running = false;
+        link.thread_status = thread_status.to_owned();
+        link.turn_status = Some(turn_status.to_owned());
+        link.completed_at = Some(1_780_000_000_000);
+
+        apply_local_execution_state(&mut link, false, None);
+
+        assert_eq!(link.status, expected);
+        assert!(!link.running);
+        assert!(link.completed_at.is_some());
+    }
 }
 
 #[test]
@@ -2239,6 +2294,71 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     assert_eq!(
         event["payload"]["data"]["block"]["process_item_id"],
         "msg-earlier"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
+    let (event_tx, mut event_rx) = broadcast::channel(4);
+    let index_path = temp_runtime_work_index_path("context-compaction-route");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: format!("{local_task_id}-context-compact"),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+
+    handler.route_codex_notification(json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "compact-turn-1",
+            "item": {
+                "id": "context-compaction-1",
+                "type": "contextCompaction"
+            }
+        }
+    }));
+
+    let event = event_rx
+        .try_recv()
+        .expect("compaction event should be emitted");
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(
+        event["payload"]["subtaskId"],
+        "runtime-task-1-context-compact"
+    );
+    assert_eq!(
+        event["payload"]["data"]["block"]["tool_name"],
+        "context_compaction"
+    );
+
+    handler.route_codex_notification(json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turn": {
+                "id": "compact-turn-1",
+                "status": "completed",
+                "items": []
+            }
+        }
+    }));
+    assert!(
+        event_rx.try_recv().is_err(),
+        "turn completion must not duplicate an emitted compaction block"
     );
 
     let _ = fs::remove_file(index_path);
