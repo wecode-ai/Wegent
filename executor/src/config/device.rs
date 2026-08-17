@@ -153,8 +153,6 @@ pub struct DeviceConfig {
     pub device_name: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
-    #[serde(default = "default_max_concurrent_tasks")]
-    pub max_concurrent_tasks: u32,
     #[serde(default)]
     pub connection: ConnectionConfig,
     #[serde(default)]
@@ -178,7 +176,6 @@ impl Default for DeviceConfig {
             runtime_instance_id: String::new(),
             device_name: String::new(),
             capabilities: Vec::new(),
-            max_concurrent_tasks: default_max_concurrent_tasks(),
             connection: ConnectionConfig::default(),
             logging: LoggingConfig::default(),
             update: UpdateConfig::default(),
@@ -391,9 +388,5 @@ fn default_log_max_size() -> u32 {
 }
 
 fn default_log_backup_count() -> u32 {
-    5
-}
-
-fn default_max_concurrent_tasks() -> u32 {
     5
 }

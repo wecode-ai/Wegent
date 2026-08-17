@@ -43,7 +43,7 @@ import {
 } from './taskAiExecution'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 import { CardCommentComposer, type CardCommentSendResult } from './CardCommentComposer'
-import { isExecutionFailed } from './executionStatus'
+import { executionDisplayStatus, isExecutionFailed } from './executionStatus'
 
 interface TaskActivityViewProps {
   client?: ProjectChatClient
@@ -463,9 +463,9 @@ export function TaskActivityView({
     ? String(assignedAgent.createdByUserId ?? '') === String(activeUserId ?? '')
     : false
   const canApproveCurrentRun = task.can_approve === true || isBotCreator
-  const awaitingApproval = task.execution_state === 'pending_approval'
-  const rawExecutionStatus = task.ai_state?.status ?? task.execution_state
-  const aiTerminalFailure = isExecutionFailed(task.ai_state?.status)
+  const awaitingApproval = task.execution_state === 'waiting_approval'
+  const rawExecutionStatus = task.execution_state ?? task.ai_state?.status
+  const aiTerminalFailure = isExecutionFailed(rawExecutionStatus)
   const commentCards = useMemo(() => {
     const ordered: { root: ProjectChatMessage; replies: ProjectChatMessage[] }[] = []
     const byRoot = new Map<string, { root: ProjectChatMessage; replies: ProjectChatMessage[] }>()
@@ -661,6 +661,37 @@ export function TaskActivityView({
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
       if (assignedAgent && !selfManagedExecution) {
+        if (assignedAgent.runtime === 'wegent') {
+          if (!client.continueWegentTask) {
+            setCardAiErrors(current => ({
+              ...current,
+              [rootId]: t('workbench.project_chat_agent_start_failed'),
+            }))
+          } else {
+            void client
+              .continueWegentTask({
+                projectId: project.id,
+                taskId: task.id,
+                triggerMessageId: message.messageId,
+                agentId: assignedAgent.id,
+                attachmentIds: attachments.map(attachment => attachment.id),
+              })
+              .then(incoming => {
+                setMessages(current => mergeProjectChatMessages(current, [incoming]))
+              })
+              .catch(cause => {
+                setCardAiErrors(current => ({
+                  ...current,
+                  [rootId]:
+                    cause instanceof Error
+                      ? cause.message
+                      : t('workbench.project_chat_agent_start_failed'),
+                }))
+              })
+          }
+          revealCardBottom(rootId)
+          return { ok: true }
+        }
         // The comment is already posted; keep the input cleared and let the
         // AI start settle in the background, surfacing failures in the card.
         void startTaskAiRun({
@@ -860,8 +891,8 @@ export function TaskActivityView({
             ) : null}
             {assignedAgent &&
             (task.execution_state === 'queued' ||
-              task.execution_state === 'claimed' ||
-              task.execution_state === 'assigned') &&
+              task.execution_state === 'starting' ||
+              task.execution_state === 'waiting_runtime') &&
             task.status !== 'in_review' ? (
               <button
                 type="button"
@@ -875,7 +906,8 @@ export function TaskActivityView({
                 <span className="sr-only">{t('workbench.task_activity_run_now')}</span>
               </button>
             ) : null}
-            {task.status === 'in_review' || task.ai_state?.status === 'completed' ? (
+            {task.status === 'in_review' ||
+            ['completed', 'succeeded'].includes(rawExecutionStatus ?? '') ? (
               <div
                 data-testid={`cloud-task-activity-review-actions-${task.id}`}
                 className="flex items-center gap-1.5"
@@ -1174,39 +1206,22 @@ function backendTaskExecution(message: ProjectChatMessage): {
 }
 
 type TaskExecutionStatusKind =
-  | 'waiting'
+  | 'waiting_approval'
+  | 'queued'
+  | 'starting'
+  | 'waiting_runtime'
   | 'running'
-  | 'success'
+  | 'cancelling'
+  | 'succeeded'
   | 'failed'
   | 'cancelled'
+  | 'skipped'
+  | 'unknown'
   | 'interrupted'
 
 function taskExecutionStatusKind(status: string): TaskExecutionStatusKind {
-  switch (status.toLowerCase()) {
-    case 'completed':
-    case 'done':
-    case 'success':
-    case 'succeeded':
-      return 'success'
-    case 'failed':
-    case 'failure':
-    case 'error':
-    case 'stalled':
-      return 'failed'
-    case 'cancelled':
-    case 'canceled':
-    case 'skipped':
-      return 'cancelled'
-    case 'interrupted':
-      return 'interrupted'
-    case 'assigned':
-    case 'pending':
-    case 'pending_approval':
-    case 'queued':
-      return 'waiting'
-    default:
-      return 'running'
-  }
+  if (status.toLowerCase() === 'interrupted') return 'interrupted'
+  return executionDisplayStatus(status) ?? 'unknown'
 }
 
 function TaskExecutionStatusControl({
@@ -1228,24 +1243,31 @@ function TaskExecutionStatusControl({
   const rootRef = useRef<HTMLSpanElement>(null)
   const kind = taskExecutionStatusKind(status)
   const labels: Record<TaskExecutionStatusKind, string> = {
-    waiting: approvalLabel ?? t('workbench.task_activity_status_waiting'),
-    running: t('workbench.project_chat_processing'),
-    success: t('workbench.task_activity_status_succeeded'),
+    waiting_approval: approvalLabel ?? t('workbench.queue_state_pending_approval'),
+    queued: t('workbench.queue_state_queued'),
+    starting: t('workbench.queue_state_starting'),
+    waiting_runtime: t('workbench.queue_state_waiting_runtime'),
+    running: t('workbench.queue_state_running'),
+    cancelling: t('workbench.queue_state_cancelling'),
+    succeeded: t('workbench.task_activity_status_succeeded'),
     failed: t('workbench.task_activity_status_failed'),
-    cancelled: t('workbench.task_activity_status_cancelled'),
+    cancelled: t('workbench.queue_state_cancelled'),
+    skipped: t('workbench.queue_state_skipped'),
+    unknown: t('workbench.queue_state_unknown'),
     interrupted: t('workbench.task_activity_status_interrupted'),
   }
   const label = labels[kind]
   const Icon =
-    kind === 'success'
+    kind === 'succeeded'
       ? CircleCheck
       : kind === 'failed'
         ? AlertCircle
-        : kind === 'cancelled' || kind === 'interrupted'
+        : kind === 'cancelled' || kind === 'skipped' || kind === 'interrupted'
           ? CircleSlash
-          : kind === 'waiting'
+          : ['waiting_approval', 'queued', 'waiting_runtime'].includes(kind)
             ? Clock3
             : LoaderCircle
+  const animated = ['starting', 'running', 'cancelling'].includes(kind)
 
   useEffect(() => {
     if (!open) return
@@ -1281,7 +1303,7 @@ function TaskExecutionStatusControl({
           onClick={() => setOpen(current => !current)}
           className="task-detail-execution-status-trigger"
         >
-          <Icon className={cn('h-4 w-4', kind === 'running' && 'animate-spin')} />
+          <Icon className={cn('h-4 w-4', animated && 'animate-spin')} />
         </button>
       </Tooltip>
       {open ? (
@@ -1293,7 +1315,7 @@ function TaskExecutionStatusControl({
         >
           <span className="task-detail-execution-status-popover-head">
             <span className="task-detail-execution-status-popover-title">
-              <Icon className={cn('h-4 w-4', kind === 'running' && 'animate-spin')} />
+              <Icon className={cn('h-4 w-4', animated && 'animate-spin')} />
               {label}
             </span>
             <button
@@ -1589,28 +1611,35 @@ function ExecutionStatusBadge({
 }) {
   const { t } = useTranslation('common')
   const kind = taskExecutionStatusKind(status)
-  const terminal = !['waiting', 'running'].includes(kind)
+  const terminal = ['succeeded', 'failed', 'cancelled', 'skipped', 'interrupted'].includes(kind)
   const labels: Record<TaskExecutionStatusKind, string> = {
-    waiting: t('workbench.task_activity_status_waiting'),
-    running: t('workbench.project_chat_processing'),
-    success: t('workbench.project_chat_completed'),
+    waiting_approval: t('workbench.queue_state_pending_approval'),
+    queued: t('workbench.queue_state_queued'),
+    starting: t('workbench.queue_state_starting'),
+    waiting_runtime: t('workbench.queue_state_waiting_runtime'),
+    running: t('workbench.queue_state_running'),
+    cancelling: t('workbench.queue_state_cancelling'),
+    succeeded: t('workbench.project_chat_completed'),
     failed: t('workbench.task_activity_status_failed'),
-    cancelled: t('workbench.task_activity_status_cancelled'),
+    cancelled: t('workbench.queue_state_cancelled'),
+    skipped: t('workbench.queue_state_skipped'),
+    unknown: t('workbench.queue_state_unknown'),
     interrupted: t('workbench.task_activity_status_interrupted'),
   }
   const StatusIcon =
-    kind === 'success'
+    kind === 'succeeded'
       ? Check
       : kind === 'failed'
         ? AlertCircle
-        : kind === 'cancelled' || kind === 'interrupted'
+        : kind === 'cancelled' || kind === 'skipped' || kind === 'interrupted'
           ? CircleSlash
-          : kind === 'waiting'
+          : ['waiting_approval', 'queued', 'waiting_runtime'].includes(kind)
             ? Clock3
             : LoaderCircle
+  const animated = ['starting', 'running', 'cancelling'].includes(kind)
   const statusContent = (
     <>
-      <StatusIcon className={cn('h-3 w-3', kind === 'running' && 'animate-spin')} />
+      <StatusIcon className={cn('h-3 w-3', animated && 'animate-spin')} />
       {labels[kind]}
     </>
   )

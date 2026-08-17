@@ -446,7 +446,7 @@ impl RuntimeWorkRpcHandler {
             }
             self.cleanup_cancelled_worktree(&turn).await;
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
-            self.finish_scheduled_turn().await;
+            self.finish_scheduled_turn(&turn.local_task_id).await;
             return Ok(());
         }
         let cancelled = {
@@ -460,12 +460,12 @@ impl RuntimeWorkRpcHandler {
         };
         if cancelled {
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
-            self.finish_scheduled_turn().await;
+            self.finish_scheduled_turn(&turn.local_task_id).await;
             return Ok(());
         }
         let error = preparation.expect_err("failed preparation should contain an error");
         self.mark_deferred_worktree_failed(&turn, &error);
-        self.finish_scheduled_turn().await;
+        self.finish_scheduled_turn(&turn.local_task_id).await;
         Err(error)
     }
 
@@ -544,7 +544,8 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
-            let _scheduled_turn_guard = ScheduledTurnGuard::new(handler.clone());
+            let _scheduled_turn_guard =
+                ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
@@ -630,6 +631,7 @@ impl RuntimeWorkRpcHandler {
             let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    active_turn_handler.start_queue_run(&active_turn_local_task_id);
                     *callback_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned") =
@@ -790,7 +792,7 @@ impl RuntimeWorkRpcHandler {
         Ok(true)
     }
 
-    pub(super) async fn finish_scheduled_turn(&self) {
+    pub(super) async fn finish_scheduled_turn(&self, local_task_id: &str) {
         let _operation = self.turn_queue_operation.lock().await;
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
@@ -798,7 +800,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
-            let turns = scheduler.finish();
+            let turns = scheduler.finish(local_task_id);
             let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
             (previous, turns, remaining_turns)
         };
@@ -809,7 +811,8 @@ impl RuntimeWorkRpcHandler {
                     .lock()
                     .expect("runtime turn scheduler lock should not be poisoned");
                 *scheduler = previous;
-                scheduler.active_tasks = scheduler.active_tasks.saturating_sub(1);
+                scheduler.active_task_ids.remove(local_task_id);
+                scheduler.active_tasks = scheduler.active_task_ids.len();
                 log_executor_event(
                     "runtime turn queue drain persistence failed",
                     &[("error", error.message)],
@@ -1163,7 +1166,7 @@ mod tests {
 
         assert_eq!(
             scheduler
-                .finish()
+                .finish("task-1")
                 .into_iter()
                 .map(|turn| turn.local_task_id)
                 .collect::<Vec<_>>(),
@@ -1171,7 +1174,7 @@ mod tests {
         );
         assert_eq!(
             scheduler
-                .finish()
+                .finish("task-2")
                 .into_iter()
                 .map(|turn| turn.local_task_id)
                 .collect::<Vec<_>>(),
@@ -1182,30 +1185,31 @@ mod tests {
     }
 
     #[test]
-    fn forced_turn_overcommits_without_releasing_more_queued_work() {
+    fn forced_turn_moves_to_front_without_exceeding_the_limit() {
         let mut scheduler = RuntimeTurnScheduler::new(1, VecDeque::new());
         assert!(scheduler.enqueue(scheduled_turn("running")).is_some());
         assert!(scheduler.enqueue(scheduled_turn("forced")).is_none());
         assert!(scheduler.enqueue(scheduled_turn("waiting")).is_none());
 
-        assert_eq!(
-            scheduler
-                .force_start("forced")
-                .map(|turn| turn.local_task_id),
-            Some("forced".to_owned())
-        );
-        assert_eq!(scheduler.active_tasks, 2);
-        assert!(scheduler.finish().is_empty());
+        assert!(scheduler.force_start("forced").is_none());
         assert_eq!(scheduler.active_tasks, 1);
         assert_eq!(
             scheduler
-                .finish()
+                .finish("running")
+                .into_iter()
+                .map(|turn| turn.local_task_id)
+                .collect::<Vec<_>>(),
+            vec!["forced"]
+        );
+        assert_eq!(scheduler.active_tasks, 1);
+        assert_eq!(
+            scheduler
+                .finish("forced")
                 .into_iter()
                 .map(|turn| turn.local_task_id)
                 .collect::<Vec<_>>(),
             vec!["waiting"]
         );
-        assert_eq!(scheduler.active_tasks, 1);
     }
 
     #[test]

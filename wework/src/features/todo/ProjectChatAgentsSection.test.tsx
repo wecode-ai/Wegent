@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
@@ -31,6 +31,7 @@ function agent(overrides: Partial<ProjectChatAgent> = {}): ProjectChatAgent {
     executionMode: 'auto',
     executionDeviceId: 'local-device',
     localProjectId: null,
+    maxConcurrentExecutions: 1,
     createdByUserId: 1,
     createdByUserName: 'local',
     version: 1,
@@ -68,8 +69,19 @@ function services(initialAgents: ProjectChatAgent[] = []) {
     listDevices: vi.fn(async () => [
       { device_id: 'local-device', device_type: 'local', status: 'online' },
     ]),
+    executeCommand: vi.fn(async () => ({ success: true, stdout: 'true' })),
   }
-  return { projectChatAgentApi, modelApi, deviceApi, list, create, update }
+  const teamApi = {
+    listTeams: vi.fn(async () => [
+      {
+        id: 42,
+        name: 'development-team',
+        displayName: 'Development Team',
+        is_active: true,
+      },
+    ]),
+  }
+  return { projectChatAgentApi, modelApi, deviceApi, teamApi, list, create, update }
 }
 
 function renderSection(mock: ReturnType<typeof services>) {
@@ -79,6 +91,7 @@ function renderSection(mock: ReturnType<typeof services>) {
       projectChatAgentApi={mock.projectChatAgentApi}
       deviceApi={mock.deviceApi}
       modelApi={mock.modelApi}
+      teamApi={mock.teamApi}
       localProjects={[]}
       canManage
     />
@@ -86,6 +99,37 @@ function renderSection(mock: ReturnType<typeof services>) {
 }
 
 describe('ProjectChatAgentsSection', () => {
+  it('binds a Wegent Agent inside the board robot runtime configuration', async () => {
+    const mock = services()
+    renderSection(mock)
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-environment'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-environment-option-wegent')
+    )
+
+    expect(screen.queryByTestId('cloud-project-chat-agent-device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-chat-agent-model')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-wegent-team'))
+    await userEvent.click(
+      await screen.findByTestId('cloud-project-chat-agent-wegent-team-option-42')
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(mock.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          runtime: 'wegent',
+          wegentTeamId: 42,
+          executionDeviceId: null,
+          localProjectId: null,
+        })
+      )
+    )
+  })
+
   it('offers three templates with breathing room when no robots have been added', async () => {
     const mock = services()
     renderSection(mock)
@@ -147,7 +191,11 @@ describe('ProjectChatAgentsSection', () => {
       Array.from(executionGroup.querySelectorAll<HTMLElement>('[data-testid]')).map(
         element => element.dataset.testid
       )
-    ).toEqual(['cloud-project-chat-agent-model', 'cloud-project-chat-agent-mode'])
+    ).toEqual([
+      'cloud-project-chat-agent-model',
+      'cloud-project-chat-agent-mode',
+      'cloud-project-chat-agent-max-concurrent-executions',
+    ])
 
     const accessGroup = screen.getByTestId('cloud-project-chat-agent-access-group')
     expect(within(accessGroup).getByText('访问权限')).toBeInTheDocument()
@@ -386,5 +434,95 @@ describe('ProjectChatAgentsSection', () => {
     expect(
       screen.queryByTestId('cloud-project-chat-agent-execution-project-option-7')
     ).not.toBeInTheDocument()
+  })
+
+  it('verifies a bound Git workspace before enabling robot concurrency above one', async () => {
+    const mock = services([
+      agent({ model: MODEL_NAME, localProjectId: 7, maxConcurrentExecutions: 1 }),
+    ])
+    const runtimeWork = {
+      projects: [
+        {
+          project: { key: 'p-7', id: 7, name: '桌面项目' },
+          deviceWorkspaces: [
+            { deviceId: 'local-device', available: true, workspacePath: '/repo/project' },
+          ],
+          tasks: [],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    } as unknown as RuntimeWorkListResponse
+    render(
+      <ProjectChatAgentsSection
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        deviceApi={mock.deviceApi}
+        modelApi={mock.modelApi}
+        localProjects={[{ id: 7, name: '桌面项目', tasks: [] } as never]}
+        runtimeWork={runtimeWork}
+        canManage
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-agent-1'))
+    const concurrency = screen.getByTestId('cloud-project-chat-agent-max-concurrent-executions')
+    fireEvent.change(concurrency, { target: { value: '2' } })
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    await waitFor(() =>
+      expect(mock.deviceApi.executeCommand).toHaveBeenCalledWith('local-device', {
+        command_key: 'git_is_worktree',
+        args: ['/repo/project'],
+        timeout_seconds: 15,
+        max_output_bytes: 4096,
+      })
+    )
+    expect(mock.update).toHaveBeenCalledWith(
+      project.id,
+      'agent-1',
+      expect.objectContaining({ maxConcurrentExecutions: 2 })
+    )
+  })
+
+  it('rejects robot concurrency above one for a bound non-Git workspace', async () => {
+    const mock = services([
+      agent({ model: MODEL_NAME, localProjectId: 7, maxConcurrentExecutions: 1 }),
+    ])
+    mock.deviceApi.executeCommand.mockResolvedValue({ success: true, stdout: '' } as never)
+    const runtimeWork = {
+      projects: [
+        {
+          project: { key: 'p-7', id: 7, name: '普通目录' },
+          deviceWorkspaces: [
+            { deviceId: 'local-device', available: true, workspacePath: '/plain/project' },
+          ],
+          tasks: [],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    } as unknown as RuntimeWorkListResponse
+    render(
+      <ProjectChatAgentsSection
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        deviceApi={mock.deviceApi}
+        modelApi={mock.modelApi}
+        localProjects={[{ id: 7, name: '普通目录', tasks: [] } as never]}
+        runtimeWork={runtimeWork}
+        canManage
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-agent-1'))
+    const concurrency = screen.getByTestId('cloud-project-chat-agent-max-concurrent-executions')
+    fireEvent.change(concurrency, { target: { value: '2' } })
+    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+
+    expect(await screen.findByTestId('cloud-project-chat-agent-error')).toHaveTextContent(
+      '绑定代码项目只有在所选设备上是可用的 Git 工作区时'
+    )
+    expect(mock.update).not.toHaveBeenCalled()
   })
 })

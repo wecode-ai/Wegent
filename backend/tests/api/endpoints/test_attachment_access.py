@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.api.endpoints.adapter import attachments
 from app.models.subtask_context import ContextType
-from app.services.attachment.public_link import generate_public_attachment_token
+from app.services.attachment.public_link import build_public_attachment_download_url
 from app.services.context import context_service
 
 
@@ -46,12 +46,12 @@ def test_signed_public_download_does_not_require_login(
         filename="reference.mp4",
         binary_data=b"video-content",
     )
-    token = generate_public_attachment_token(context.id, timedelta(minutes=1))
-
-    response = test_client.get(
-        "/api/attachments/download/shared",
-        params={"token": token},
+    download_url = build_public_attachment_download_url(
+        context.id,
+        timedelta(hours=1),
     )
+
+    response = test_client.get(download_url)
 
     assert response.status_code == 200
     assert response.content == b"video-content"

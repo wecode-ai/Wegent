@@ -9700,7 +9700,7 @@ describe('DesktopWorkbenchLayout', () => {
           'embedded_browser_open',
           expect.objectContaining({
             label: 'workspace-browser-runtime-a',
-            url: 'https://example.com/',
+            url: 'about:blank',
           }),
           undefined
         )
@@ -9722,7 +9722,7 @@ describe('DesktopWorkbenchLayout', () => {
           'embedded_browser_open',
           expect.objectContaining({
             label: 'workspace-browser-runtime-b',
-            url: 'https://example.org/',
+            url: 'about:blank',
           }),
           undefined
         )

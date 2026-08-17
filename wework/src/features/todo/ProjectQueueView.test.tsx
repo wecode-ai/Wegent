@@ -82,6 +82,7 @@ describe('ProjectQueueView', () => {
         agent_id: 'bot-1',
         assigner_user_id: 1,
         status: 'queued',
+        display_state: 'queued',
         queued_at: null,
         started_at: null,
         completed_at: null,
@@ -119,6 +120,7 @@ describe('ProjectQueueView', () => {
         agent_id: 'bot-1',
         assigner_user_id: 1,
         status: 'running',
+        display_state: 'running',
         queued_at: null,
         started_at: null,
         completed_at: null,
@@ -272,7 +274,7 @@ describe('ProjectQueueView', () => {
             cloud_project_id: '11',
             title: 'Paperwork review',
             status: 'pending',
-            execution_state: 'pending_approval',
+            execution_state: 'waiting_approval',
             can_approve: true,
             assignment_history: [
               {

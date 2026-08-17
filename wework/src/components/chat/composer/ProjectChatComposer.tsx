@@ -51,6 +51,7 @@ interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
@@ -125,6 +126,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       disabled,
@@ -429,6 +431,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             value={value}
             onChange={handleComposerChange}
             onBlur={onBlur}
+            onCompositionStart={onCompositionStart}
             onCompositionEnd={onCompositionEnd}
             onSubmit={onSubmit}
             canSend={canSend}

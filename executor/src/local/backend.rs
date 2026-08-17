@@ -845,7 +845,24 @@ where
             .register_device(self.client.config.registration_timeout)
             .await
         {
-            Ok(true) => Ok(()),
+            Ok(true) => {
+                self.refresh_runtime_capacity().await;
+                match self
+                    .client
+                    .send_heartbeat(self.client.config.heartbeat_timeout)
+                    .await
+                {
+                    Ok(true) => Ok(()),
+                    Ok(false) => {
+                        let _ = self.client.disconnect().await;
+                        Err("initial device heartbeat was rejected by backend".to_owned())
+                    }
+                    Err(error) => {
+                        let _ = self.client.disconnect().await;
+                        Err(error)
+                    }
+                }
+            }
             Ok(false) => {
                 let _ = self.client.disconnect().await;
                 Err("device registration was rejected by backend".to_owned())
@@ -868,6 +885,7 @@ where
                     continue;
                 }
             }
+            self.refresh_runtime_capacity().await;
             let failure = match self
                 .client
                 .send_heartbeat(self.client.config.heartbeat_timeout)
@@ -893,6 +911,20 @@ where
             }
             next_heartbeat_at = Instant::now() + self.client.config.heartbeat_timeout;
         }
+    }
+
+    async fn refresh_runtime_capacity(&self) {
+        let capacity = match &self.runtime_work_handler {
+            Some(handler) => handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.capacity.get",
+                    "payload": {},
+                }))
+                .await
+                .ok(),
+            None => None,
+        };
+        self.client.set_runtime_capacity(capacity);
     }
 
     async fn forward_terminal_events(&self) {
@@ -1186,5 +1218,28 @@ mod tests {
         assert_eq!(request.auth_token.as_deref(), Some("token"));
         assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
         assert_eq!(request.device_id.as_deref(), Some("local-device"));
+    }
+
+    #[test]
+    fn heartbeat_reports_runtime_capacity_and_installation_identity() {
+        let client =
+            LocalBackendClient::new(backend_config("local-device"), SocketIoTransport::default());
+        client.set_runtime_capacity(Some(json!({
+            "limit": 4,
+            "active": 2,
+            "active_task_ids": ["task-1", "task-2"],
+            "queued": 1,
+        })));
+
+        let payload = client.heartbeat_payload();
+
+        assert_eq!(payload["runtime_instance_id"], "runtime-1");
+        assert_eq!(payload["runtime_capacity"]["limit"], 4);
+        assert_eq!(payload["runtime_capacity"]["active"], 2);
+        assert_eq!(
+            payload["runtime_capacity"]["active_task_ids"],
+            json!(["task-1", "task-2"])
+        );
+        assert_eq!(payload["runtime_capacity"]["queued"], 1);
     }
 }

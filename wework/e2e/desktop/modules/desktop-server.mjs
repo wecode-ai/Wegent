@@ -1877,7 +1877,7 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
-        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
+        ...functionCall('wework-e2e-view-image', image.name, image.arguments, 1),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])

@@ -289,6 +289,62 @@ describe('BufferedChatInput', () => {
     expect(onChange).toHaveBeenLastCalledWith('draft')
   })
 
+  test('does not flush transient composition text after the debounce window', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.compositionStart(input)
+    await userEvent.type(input, 'nihao')
+    await new Promise(resolve => window.setTimeout(resolve, 350))
+
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(input)
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('nihao'))
+  })
+
+  test('cancels a queued frame flush when composition starts', async () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame'] })
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'draft')
+    fireEvent.blur(input)
+    fireEvent.compositionStart(input)
+    vi.advanceTimersByTime(20)
+
+    expect(onChange).not.toHaveBeenCalled()
+
+    fireEvent.compositionEnd(input)
+    vi.advanceTimersByTime(20)
+
+    expect(onChange).toHaveBeenLastCalledWith('draft')
+  })
+
+  test('preserves caller composition callbacks', () => {
+    const onCompositionStart = vi.fn()
+    const onCompositionEnd = vi.fn()
+    render(
+      <BufferedChatInput
+        value=""
+        onChange={vi.fn()}
+        onCompositionStart={onCompositionStart}
+        onCompositionEnd={onCompositionEnd}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.compositionStart(input)
+    fireEvent.compositionEnd(input)
+
+    expect(onCompositionStart).toHaveBeenCalledOnce()
+    expect(onCompositionEnd).toHaveBeenCalledOnce()
+  })
+
   test('restores a buffered draft after switching chat scopes', async () => {
     const drafts = new Map<string, string>()
     const onBlankChange = vi.fn((value: string) => drafts.set('blank', value))

@@ -3,50 +3,64 @@
 // module so the same execution never renders different states in different
 // places.
 
-export type ExecutionDisplayStatus = 'running' | 'completed'
+export type ExecutionDisplayStatus =
+  | 'waiting_approval'
+  | 'queued'
+  | 'starting'
+  | 'waiting_runtime'
+  | 'running'
+  | 'cancelling'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'skipped'
+  | 'unknown'
 
-// Non-terminal states. `pending_approval` is still in flight (it waits for a
-// human decision before the run can finish).
-const EXECUTION_RUNNING_STATUSES = new Set([
-  'assigned',
-  'claimed',
-  'in_progress',
-  'pending',
-  'pending_approval',
+const STATUS_ALIASES: Readonly<Record<string, ExecutionDisplayStatus>> = {
+  assigned: 'queued',
+  canceled: 'cancelled',
+  cancelled: 'cancelled',
+  cancel_requested: 'cancelling',
+  cancelling: 'cancelling',
+  claimed: 'starting',
+  completed: 'succeeded',
+  done: 'succeeded',
+  error: 'failed',
+  failed: 'failed',
+  failure: 'failed',
+  in_progress: 'running',
+  interrupted: 'failed',
+  pending: 'queued',
+  pending_approval: 'waiting_approval',
+  queued: 'queued',
+  running: 'running',
+  skipped: 'skipped',
+  stalled: 'failed',
+  starting: 'starting',
+  streaming: 'running',
+  success: 'succeeded',
+  succeeded: 'succeeded',
+  unknown: 'unknown',
+  waiting_device: 'waiting_runtime',
+  waiting_approval: 'waiting_approval',
+  waiting_runtime: 'waiting_runtime',
+}
+
+const ACTIVE_DISPLAY_STATUSES = new Set<ExecutionDisplayStatus>([
+  'waiting_approval',
   'queued',
+  'starting',
+  'waiting_runtime',
   'running',
-  'streaming',
-  'waiting_device',
+  'cancelling',
+  'unknown',
 ])
 
-// Terminal states, including non-success outcomes (failed/cancelled/skipped).
-// The outcome itself stays visible through the error or note text.
-const EXECUTION_COMPLETED_STATUSES = new Set([
-  'canceled',
-  'cancelled',
-  'completed',
-  'done',
-  'error',
-  'failed',
-  'failure',
-  'idle',
-  'interrupted',
-  'skipped',
-  'stalled',
-  'success',
+const TERMINAL_DISPLAY_STATUSES = new Set<ExecutionDisplayStatus>([
   'succeeded',
-])
-
-// Terminal non-success outcomes, used only by recovery actions (rerun, stop)
-// and never rendered as a standalone status.
-export const EXECUTION_FAILED_STATUSES = new Set([
-  'canceled',
-  'cancelled',
-  'error',
   'failed',
-  'failure',
-  'interrupted',
-  'stalled',
+  'cancelled',
+  'skipped',
 ])
 
 export function executionDisplayStatus(
@@ -54,18 +68,24 @@ export function executionDisplayStatus(
 ): ExecutionDisplayStatus | null {
   if (status == null || status === '') return null
   const normalized = status.toLowerCase()
-  if (EXECUTION_COMPLETED_STATUSES.has(normalized)) return 'completed'
-  if (EXECUTION_RUNNING_STATUSES.has(normalized)) return 'running'
-  // Unknown states default to running so an execution is never mistaken for
-  // finished while its outcome is unclear.
-  return 'running'
+  return STATUS_ALIASES[normalized] ?? 'unknown'
 }
 
-export function isExecutionRunning(status: string | null | undefined): boolean {
-  return executionDisplayStatus(status) === 'running'
+export function isExecutionActive(status: string | null | undefined): boolean {
+  const display = executionDisplayStatus(status)
+  return display !== null && ACTIVE_DISPLAY_STATUSES.has(display)
+}
+
+export function isExecutionTerminal(status: string | null | undefined): boolean {
+  const display = executionDisplayStatus(status)
+  return display !== null && TERMINAL_DISPLAY_STATUSES.has(display)
+}
+
+export function isExecutionCancellable(status: string | null | undefined): boolean {
+  const display = executionDisplayStatus(status)
+  return display !== null && ACTIVE_DISPLAY_STATUSES.has(display) && display !== 'cancelling'
 }
 
 export function isExecutionFailed(status: string | null | undefined): boolean {
-  if (status == null || status === '') return false
-  return EXECUTION_FAILED_STATUSES.has(status.toLowerCase())
+  return executionDisplayStatus(status) === 'failed'
 }

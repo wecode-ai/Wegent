@@ -473,12 +473,40 @@ describe('CloudTodoWorkspace', () => {
         user={user}
         localProjects={[]}
         services={workbenchServices}
+        activeProjectRef={{ projectStore: 'backend', projectId: controlledProject.id }}
+      />
+    )
+
+    expect(screen.getByText('管理项目')).toBeInTheDocument()
+
+    view.rerender(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
         activeProjectRef={null}
       />
     )
 
     await waitFor(() => expect(screen.queryByText('管理项目')).not.toBeInTheDocument())
     expect(screen.getByTestId('cloud-projects-home-manage')).toBeInTheDocument()
+  })
+
+  it('opens project-space settings from the root navigation', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-settings'))
+
+    expect(await screen.findByTestId('project-space-settings')).toBeInTheDocument()
+    expect(screen.getByTestId('project-space-api-wiki')).toHaveTextContent(
+      'POST /api/v1/cloud-projects'
+    )
   })
 
   it('renames and archives a project from the sidebar menu', async () => {
@@ -2310,7 +2338,7 @@ describe('CloudTodoWorkspace', () => {
       project_key: 'LOCAL',
       project_name: 'Local project',
       has_active_task: false,
-      execution_state: 'pending_approval',
+      execution_state: 'waiting_approval',
       can_approve: true,
     }
     const localApi = services().deliveryApi!

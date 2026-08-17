@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{future::Future, pin::Pin};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
+
+use tokio::{sync::oneshot, task::JoinHandle};
 
 use crate::{
     emitter::{EventEnvelope, ResponsesEventBuilder},
@@ -48,11 +55,41 @@ pub enum ExecutionOutcome {
 pub struct BackgroundTaskRunner<E, S> {
     engine: E,
     sink: S,
+    handles: Arc<Mutex<BTreeMap<(String, String), BackgroundTaskHandle>>>,
+}
+
+#[derive(Debug)]
+struct BackgroundTaskHandle {
+    identity: Arc<()>,
+    builder: ResponsesEventBuilder,
+    handle: JoinHandle<()>,
+}
+
+struct BackgroundTaskRegistration {
+    handles: Arc<Mutex<BTreeMap<(String, String), BackgroundTaskHandle>>>,
+    key: (String, String),
+    identity: Arc<()>,
+}
+
+impl BackgroundTaskRegistration {
+    fn remove_if_current(&self) {
+        let mut guard = self.handles.lock().expect("background task lock");
+        if guard
+            .get(&self.key)
+            .is_some_and(|state| Arc::ptr_eq(&state.identity, &self.identity))
+        {
+            guard.remove(&self.key);
+        }
+    }
 }
 
 impl<E, S> BackgroundTaskRunner<E, S> {
     pub fn new(engine: E, sink: S) -> Self {
-        Self { engine, sink }
+        Self {
+            engine,
+            sink,
+            handles: Arc::new(Mutex::new(BTreeMap::new())),
+        }
     }
 }
 
@@ -66,6 +103,7 @@ where
     fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture {
         let engine = self.engine.clone();
         let sink = self.sink.clone();
+        let handles = Arc::clone(&self.handles);
         Box::pin(async move {
             let builder = event_builder(&request);
             let fields = task_fields(&request.task_id, &request.subtask_id);
@@ -85,8 +123,61 @@ where
             }
 
             log_executor_event("queued background task", &fields);
-            tokio::spawn(run_in_background(engine, sink, builder, request));
+            let key = (request.task_id.clone(), request.subtask_id.clone());
+            let identity = Arc::new(());
+            let (start_tx, start_rx) = oneshot::channel();
+            let handle = tokio::spawn(run_in_background(
+                engine,
+                sink,
+                builder.clone(),
+                request,
+                BackgroundTaskRegistration {
+                    handles: Arc::clone(&handles),
+                    key: key.clone(),
+                    identity: Arc::clone(&identity),
+                },
+                start_rx,
+            ));
+            let previous = handles.lock().expect("background task lock").insert(
+                key,
+                BackgroundTaskHandle {
+                    identity,
+                    builder,
+                    handle,
+                },
+            );
+            if let Some(previous) = previous {
+                previous.handle.abort();
+            }
+            let _ = start_tx.send(());
             RunnerResult::accepted(TaskStatus::Running)
+        })
+    }
+
+    fn cancel(
+        &self,
+        task_id: String,
+        subtask_id: Option<String>,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
+        let handles = Arc::clone(&self.handles);
+        let sink = self.sink.clone();
+        Box::pin(async move {
+            let state = {
+                let mut guard = handles.lock().expect("background task lock");
+                let key = subtask_id
+                    .as_ref()
+                    .map(|subtask_id| (task_id.clone(), subtask_id.clone()))
+                    .or_else(|| guard.keys().find(|key| key.0 == task_id).cloned());
+                key.and_then(|key| guard.remove(&key))
+            };
+            let Some(state) = state else {
+                return false;
+            };
+            state.handle.abort();
+            let _ = state.handle.await;
+            sink.send(state.builder.response_cancelled("Task cancelled"))
+                .await
+                .is_ok()
         })
     }
 }
@@ -96,10 +187,13 @@ async fn run_in_background<E, S>(
     sink: S,
     builder: ResponsesEventBuilder,
     request: ExecutionRequest,
+    registration: BackgroundTaskRegistration,
+    start_rx: oneshot::Receiver<()>,
 ) where
     E: AgentEngine,
     S: EventSink,
 {
+    let _ = start_rx.await;
     let fields = task_fields(&request.task_id, &request.subtask_id);
     log_executor_event("background task started", &fields);
     let outcome = engine
@@ -108,6 +202,7 @@ async fn run_in_background<E, S>(
     let mut outcome_fields = fields.clone();
     outcome_fields.push(("outcome", outcome_name(&outcome).to_owned()));
     log_executor_event("background task finished", &outcome_fields);
+    registration.remove_if_current();
 
     let event = match outcome {
         ExecutionOutcome::Completed { content } => builder.response_completed(&content),
@@ -115,7 +210,7 @@ async fn run_in_background<E, S>(
             builder.response_waiting_for_user_input(&stop_reason)
         }
         ExecutionOutcome::Failed { message } => builder.error(&message, "runtime_error"),
-        ExecutionOutcome::Cancelled { message } => builder.error(&message, "cancelled"),
+        ExecutionOutcome::Cancelled { message } => builder.response_cancelled(&message),
         ExecutionOutcome::Running => return,
     };
     match sink.send(event).await {
@@ -184,4 +279,61 @@ fn env_value(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct PendingEngine;
+
+    impl AgentEngine for PendingEngine {
+        type RunFuture = std::future::Pending<ExecutionOutcome>;
+
+        fn run(&self, _request: ExecutionRequest) -> Self::RunFuture {
+            std::future::pending()
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingSink {
+        events: Arc<Mutex<Vec<EventEnvelope>>>,
+    }
+
+    impl EventSink for RecordingSink {
+        type SendFuture = std::future::Ready<Result<(), String>>;
+
+        fn send(&self, event: EventEnvelope) -> Self::SendFuture {
+            self.events.lock().expect("event sink lock").push(event);
+            std::future::ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_aborts_active_task_and_emits_runtime_terminal_event() {
+        let sink = RecordingSink::default();
+        let runner = BackgroundTaskRunner::new(PendingEngine, sink.clone());
+        let request = ExecutionRequest {
+            task_id: "282".to_owned(),
+            subtask_id: "536".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let accepted = runner.submit(request).await;
+        assert_eq!(accepted.status, TaskStatus::Running);
+        assert!(
+            runner
+                .cancel("282".to_owned(), Some("536".to_owned()))
+                .await
+        );
+        assert!(!runner.cancel("282".to_owned(), None).await);
+
+        let events = sink.events.lock().expect("event sink lock");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_type, "response.created");
+        assert_eq!(events[1].event_type, "response.incomplete");
+        assert_eq!(events[1].data["response"]["status"], "cancelled");
+        assert_eq!(events[1].data["response"]["error"]["code"], "cancelled");
+    }
 }
