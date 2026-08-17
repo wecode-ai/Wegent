@@ -93,6 +93,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
                 executor_version, latest_version
             ),
             "client_ip": spec.get("clientIp"),
+            "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
             "remote_config": spec.get("remoteConfig"),
             "bind_shell": spec.get("bindShell", "claudecode"),
@@ -177,6 +178,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
                         executor_version, latest_version
                     ),
                     "client_ip": spec.get("clientIp"),
+                    "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
                     "remote_config": spec.get("remoteConfig"),
                     "bind_shell": spec.get("bindShell", "claudecode"),

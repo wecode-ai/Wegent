@@ -749,8 +749,6 @@ async def execute_device_command(
 
 # ==================== Device Session Endpoints ====================
 
-DEFAULT_DEVICE_SESSION_PATH = "/home/ubuntu/.wegent-executor/workspace"
-
 
 class DeviceSessionResponse(BaseModel):
     """Response model for device session creation."""
@@ -796,7 +794,7 @@ async def start_device_terminal(
     )
 
     requested_path = payload.path.strip() if payload and payload.path else ""
-    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
+    session_path = requested_path
     try:
         result = await local_device_session_service.start_session(
             db=db,
@@ -841,7 +839,7 @@ async def start_device_code_server(
     )
 
     requested_path = payload.path.strip() if payload and payload.path else ""
-    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
+    session_path = requested_path
     try:
         result = await local_device_session_service.start_session(
             db=db,
