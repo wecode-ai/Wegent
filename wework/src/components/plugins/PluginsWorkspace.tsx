@@ -36,7 +36,10 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
-import { refreshLocalExecutorCloudConnectionStatus } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
+import {
+  refreshLocalExecutorCloudConnectionStatus,
+  useLocalExecutorCloudConnectionStatus,
+} from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import {
   notifyLocalPluginSkillsChanged,
   queuePluginPromptTrial,
@@ -1296,6 +1299,10 @@ export function PluginsWorkspace({
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
+  const localExecutorCloudConnection = useLocalExecutorCloudConnectionStatus()
+  const deviceCloudConnected =
+    localExecutorCloudConnection.apiBaseUrl === (cloudApiBaseUrl || '') &&
+    localExecutorCloudConnection.connected
   const [query, setQuery] = useState('')
   const [searchResultWindow, setSearchResultWindow] = useState({ query: '', limit: 0 })
   const [marketplaceDistributionFilter, setMarketplaceDistributionFilter] = useState<
@@ -3917,6 +3924,7 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
+    if (!deviceCloudConnected) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
     const autoUpdateCandidateReleaseKeys = pluginMarketplaceState.items.flatMap(item => {
@@ -3945,6 +3953,7 @@ export function PluginsWorkspace({
 
     const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
     if (!finishDeviceSync) return
+    setDeviceAutoSyncSettled(false)
     autoUpdateAttemptKeysRef.current.add(attemptKey)
     const deviceId = currentDeviceId
 
@@ -4010,6 +4019,7 @@ export function PluginsWorkspace({
     cloudMarketplaceAvailable,
     cloudToken,
     currentDeviceId,
+    deviceCloudConnected,
     installedPlugins,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
@@ -4023,12 +4033,17 @@ export function PluginsWorkspace({
     if (!cloudMarketplaceAvailable || !cloudToken || !currentDeviceId) return
     if (localInstalledStateReadyKey !== marketplaceCacheKeyValue) return
     if (pluginMarketplaceState.isLoading) return
-    if (hasAttemptedPluginDeviceAutoSync(currentDeviceId)) return
     if (!marketplaceNeedsDeviceSync(pluginMarketplaceState.items)) return
+    if (!deviceCloudConnected) {
+      setDeviceAutoSyncSettled(true)
+      return
+    }
+    if (hasAttemptedPluginDeviceAutoSync(currentDeviceId)) return
 
     const finishDeviceSync = beginPluginDeviceSync(currentDeviceId)
     if (!finishDeviceSync) return
 
+    setDeviceAutoSyncSettled(false)
     markPluginDeviceAutoSyncAttempted(currentDeviceId)
     const deviceId = currentDeviceId
 
@@ -4101,6 +4116,7 @@ export function PluginsWorkspace({
     cloudMarketplaceAvailable,
     cloudToken,
     currentDeviceId,
+    deviceCloudConnected,
     localInstalledStateReadyKey,
     marketplaceCacheKeyValue,
     pluginApi,

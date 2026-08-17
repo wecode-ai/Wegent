@@ -341,6 +341,41 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('ignores a stale running transcript after the current turn settles', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncTranscript(address, transcript({ running: true }))
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.turn.outcome).toBe('succeeded')
+    expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
+  test('ignores a stale running transcript snapshot after the current turn settles', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.syncRuntimeTranscriptSnapshot(address, {
+      running: true,
+      turns: [],
+    })
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.turn.outcome).toBe('succeeded')
+    expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
   test('does not settle an in-flight turn from a non-terminal idle snapshot', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 

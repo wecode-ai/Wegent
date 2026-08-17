@@ -118,6 +118,7 @@ pub struct EmbeddedBrowserState {
     active_tabs: Arc<Mutex<HashMap<String, String>>>,
     agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
     lifecycle: Arc<AsyncMutex<()>>,
+    snapshot_capture: Arc<AsyncMutex<()>>,
 }
 
 #[derive(Clone)]
@@ -2219,6 +2220,8 @@ pub fn embedded_browser_set_bounds(
         webview
             .show()
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
+        #[cfg(target_os = "macos")]
+        force_embedded_browser_redraw(&webview);
     } else {
         webview
             .hide()
@@ -2242,6 +2245,37 @@ pub fn embedded_browser_set_bounds(
         );
     }
     Ok(())
+}
+
+#[tauri::command]
+#[cfg(target_os = "macos")]
+pub async fn embedded_browser_capture_snapshot(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    label: Option<String>,
+) -> Result<String, String> {
+    let _capture_guard = state
+        .snapshot_capture
+        .try_lock()
+        .map_err(|_| "An embedded browser snapshot is already in progress".to_string())?;
+    let label = browser_label(label);
+    let webview = get_entry(&state, &label)?.ready_webview()?;
+    screenshot::capture_webview_snapshot_base64(webview).await
+}
+
+#[cfg(target_os = "macos")]
+fn force_embedded_browser_redraw(webview: &Webview<Wry>) {
+    // Hiding and re-showing a WKWebView with setHidden can leave its rendered
+    // layer blank (white) on macOS. Ask the native view to redraw once it is
+    // visible again so the browser content does not stay white after a menu or
+    // overlay briefly occluded it.
+    use objc2_app_kit::NSView;
+
+    let _ = webview.with_webview(|platform_webview| unsafe {
+        if let Some(view) = platform_webview.inner().cast::<NSView>().as_ref() {
+            view.setNeedsDisplay(true);
+            view.displayIfNeeded();
+        }
+    });
 }
 
 fn browser_download_control(

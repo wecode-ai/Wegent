@@ -1143,6 +1143,8 @@
     "browser_agent_action_generic": "using the browser",
     "browser_annotation_start": "Annotate page",
     "browser_annotation_active": "Annotating · {{site}}",
+    "browser_annotation_hold_to_view_original": "Hold to view original",
+    "browser_annotation_original_title": "Original · {{site}}",
     "browser_annotation_close": "Exit annotation",
     "browser_annotation_clear": "Clear annotations",
     "browser_annotation_done": "Publish {{count}}",

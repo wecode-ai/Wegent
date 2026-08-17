@@ -87,11 +87,28 @@ fn capture_webview_to_png_file(
     webview: &Webview<Wry>,
     path: &Path,
 ) -> Result<EmbeddedBrowserScreenshotCapture, String> {
-    let scale_factor = webview
+    let bytes = capture_webview_to_png_bytes(webview)?;
+    std::fs::write(path, &bytes)
+        .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
+    let (width, height) = png_dimensions(path)?;
+    Ok(EmbeddedBrowserScreenshotCapture {
+        width,
+        height,
+        scale_factor: webview_scale_factor(webview)?,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn webview_scale_factor(webview: &Webview<Wry>) -> Result<f64, String> {
+    Ok(webview
         .window()
         .scale_factor()
         .map_err(|error| format!("Failed to read Wework window scale factor: {error}"))?
-        .max(1.0);
+        .max(1.0))
+}
+
+#[cfg(target_os = "macos")]
+fn capture_webview_to_png_bytes(webview: &Webview<Wry>) -> Result<Vec<u8>, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     webview
         .with_webview(move |platform_webview| {
@@ -99,17 +116,19 @@ fn capture_webview_to_png_file(
             let _ = sender.send(result);
         })
         .map_err(|error| format!("Failed to access embedded browser webview: {error}"))?;
-    let bytes = receiver
+    receiver
         .recv_timeout(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS))
-        .map_err(|_| "Timed out waiting for native embedded browser snapshot".to_string())??;
-    std::fs::write(path, &bytes)
-        .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
-    let (width, height) = png_dimensions(path)?;
-    Ok(EmbeddedBrowserScreenshotCapture {
-        width,
-        height,
-        scale_factor,
-    })
+        .map_err(|_| "Timed out waiting for native embedded browser snapshot".to_string())?
+}
+
+#[cfg(target_os = "macos")]
+pub(super) async fn capture_webview_snapshot_base64(
+    webview: Webview<Wry>,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    let bytes = crate::desktop_capture::capture_embedded_webview_png(webview).await?;
+    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
 }
 
 #[cfg(target_os = "macos")]

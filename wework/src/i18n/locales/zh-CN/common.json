@@ -1142,6 +1142,8 @@
     "browser_agent_action_generic": "操作浏览器",
     "browser_annotation_start": "批注页面",
     "browser_annotation_active": "正在批注 · {{site}}",
+    "browser_annotation_hold_to_view_original": "按住查看原始页面",
+    "browser_annotation_original_title": "原网页 · {{site}}",
     "browser_annotation_close": "退出批注",
     "browser_annotation_clear": "清除批注",
     "browser_annotation_done": "发布 {{count}}",

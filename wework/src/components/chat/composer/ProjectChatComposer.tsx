@@ -434,7 +434,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             canSend={canSend}
             disabled={disabled}
             placeholder={placeholder}
-            rows={1}
+            rows={2}
             onPasteFiles={onFileSelect}
             onOpenSkillFile={onOpenSkillFile}
             workspaceTarget={workspaceTarget}
@@ -464,7 +464,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               return true
             }}
             className={cn(
-              'max-h-[112px] min-h-8 w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
+              'max-h-[112px] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
               styles.input
             )}
             skillMenuClassName="left-[-1rem] right-[-0.5rem]"

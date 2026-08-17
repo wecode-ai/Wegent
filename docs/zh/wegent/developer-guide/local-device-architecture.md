@@ -89,6 +89,8 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 
 普通持久线程续聊在调用 `turn/start` 前必须通过 `thread/read` 确认当前没有活跃 turn。ephemeral 临时线程不支持 `thread/read(includeTurns)`，因此必须在按任务串行化的发送临界区内检查 executor 本地活跃执行；新 turn 必须先登记为本地运行中，后一个并发发送才能离开临界区。若 provider 拒绝重叠发送，Wework 将任务状态立即恢复为运行中、刷新任务列表，并把用户输入保留在队列；provider 收敛为空闲后复用同一个客户端消息 ID 自动发送，避免丢消息或重复消息。完成或中断事件会清除活跃 turn 并使界面恢复为空闲。“打断并发送”只有在旧 turn 已确认中断后才创建新 turn；持久线程还要确认 provider turn 已停止，ephemeral 临时线程则以本地执行中断为准。
 
+ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保持已加载状态。成功回合结束后，executor 不得对这类线程发送 `thread/unsubscribe`，否则后续直接调用 `turn/start` 可能停留在已经卸载的线程上。临时线程也不支持分页 transcript RPC，因此 transcript 查询必须读取 executor 的本地运行时缓存，不能调用 `thread/turns/list`。持久线程仍在每个终态回合后取消订阅，并继续使用 provider transcript 作为历史记录来源。
+
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
 同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
