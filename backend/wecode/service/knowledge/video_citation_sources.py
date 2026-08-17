@@ -18,6 +18,11 @@ from shared.knowledge.video_segments import (
 MAX_VIDEO_SEGMENTS_PER_SOURCE = DEFAULT_MAX_SEGMENTS
 VideoSourceMap = dict[tuple[int, int], dict[str, Any]]
 
+#: Server label of the built-in knowledge MCP server. Used as the primary
+#: identity check for video citation collection; tool names are not reliable
+#: because MCP clients may rename them.
+KNOWLEDGE_MCP_SERVER_LABEL = "wegent-knowledge"
+
 
 def _decode_mcp_json_payload(value: Any) -> dict[str, Any] | None:
     candidates = value if isinstance(value, list) else [value]
@@ -241,8 +246,29 @@ def collect_and_log_knowledge_mcp_video_sources(
     *,
     logger: logging.Logger,
     context: str,
+    server_label: str | None = None,
 ) -> int:
-    """Collect sources and log only when the collection actually grows."""
+    """Collect sources and log only when the collection actually grows.
+
+    Server identity policy (identity first, content fallback):
+      - ``server_label == wegent-knowledge``: collect (``identity_match``).
+      - Any other non-empty label: skip (``identity_rejected``).
+      - Missing label (some runtimes drop/rewrite it): fall back to the
+        strict content-level guards (``content_fallback``).
+    The decision is included in logs to help diagnose context loss.
+    """
+    if server_label:
+        if server_label != KNOWLEDGE_MCP_SERVER_LABEL:
+            logger.info(
+                "Skipped MCP video citation collection: decision=identity_rejected, "
+                "server_label=%s, context=%s",
+                server_label,
+                context,
+            )
+            return 0
+        decision = "identity_match"
+    else:
+        decision = "content_fallback"
     previous_source_count = len(collected)
     previous_segment_count = sum(
         len(source.get("segments", [])) for source in collected.values()
@@ -254,8 +280,9 @@ def collect_and_log_knowledge_mcp_video_sources(
     added_segments = current_segment_count - previous_segment_count
     if added_segments > 0 or len(collected) > previous_source_count:
         logger.info(
-            "Collected MCP video citations: context=%s, source_count=%d, "
-            "new_segment_count=%d",
+            "Collected MCP video citations: decision=%s, context=%s, "
+            "source_count=%d, new_segment_count=%d",
+            decision,
             context,
             len(collected),
             added_segments,

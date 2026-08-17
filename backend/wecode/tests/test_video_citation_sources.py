@@ -7,11 +7,31 @@ from unittest.mock import Mock
 
 from shared.knowledge.video_segments import extract_all_video_segments
 from wecode.service.knowledge.video_citation_sources import (
+    KNOWLEDGE_MCP_SERVER_LABEL,
     MAX_VIDEO_SEGMENTS_PER_SOURCE,
     collect_and_log_knowledge_mcp_video_sources,
     collect_knowledge_mcp_video_sources,
     merge_video_sources,
 )
+
+
+def _video_rag_output() -> dict:
+    return {
+        "mode": "rag_retrieval",
+        "chunks": [
+            {
+                "title": "825.video.md",
+                "knowledge_base_id": 212,
+                "document_id": 825,
+                "metadata": {
+                    "source_media_type": "video",
+                    "video_start_sec": 1,
+                    "video_end_sec": 2,
+                },
+            }
+        ],
+    }
+
 
 VIDEO_DOCUMENT_CONTENT = (
     "# 产品培训示例视频\n\n"
@@ -244,6 +264,55 @@ def test_collect_and_log_accepts_mcp_text_block_output_without_tool_context() ->
 
     assert added == 1
     assert list(collected) == [(212, 825)]
+
+
+def test_collect_and_log_identity_match_allows_knowledge_server() -> None:
+    logger = Mock()
+    collected = {}
+
+    added = collect_and_log_knowledge_mcp_video_sources(
+        collected,
+        json.dumps(_video_rag_output()),
+        logger=logger,
+        context="test",
+        server_label=KNOWLEDGE_MCP_SERVER_LABEL,
+    )
+
+    assert added == 1
+    assert "identity_match" in logger.info.call_args[0]
+
+
+def test_collect_and_log_identity_rejected_for_other_server() -> None:
+    logger = Mock()
+    collected = {}
+
+    added = collect_and_log_knowledge_mcp_video_sources(
+        collected,
+        json.dumps(_video_rag_output()),
+        logger=logger,
+        context="test",
+        server_label="custom-mcp",
+    )
+
+    assert added == 0
+    assert collected == {}
+    assert "decision=identity_rejected" in logger.info.call_args[0][0]
+
+
+def test_collect_and_log_content_fallback_when_label_missing() -> None:
+    logger = Mock()
+    collected = {}
+
+    added = collect_and_log_knowledge_mcp_video_sources(
+        collected,
+        json.dumps(_video_rag_output()),
+        logger=logger,
+        context="test",
+        server_label=None,
+    )
+
+    assert added == 1
+    assert "content_fallback" in logger.info.call_args[0]
 
 
 def test_collect_document_content_builds_chapters_source() -> None:

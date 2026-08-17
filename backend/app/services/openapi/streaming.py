@@ -486,6 +486,7 @@ class OpenAPIStreamingService:
                                 tool_output,
                                 logger=logger,
                                 context=f"response_id={response_id}",
+                                server_label=server_label or None,
                             )
                         tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
                         completed_output_items[tool_output_index] = MCPCallOutputItem(

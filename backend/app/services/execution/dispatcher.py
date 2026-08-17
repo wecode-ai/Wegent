@@ -621,6 +621,7 @@ class ResponsesAPIEventParser:
                     tool_output,
                     logger=logger,
                     context=f"task_id={task_id},subtask_id={subtask_id}",
+                    server_label=tool_context.get("server_label") or None,
                 )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
