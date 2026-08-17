@@ -50,6 +50,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserAgentControlPaused: vi.fn(),
   setEmbeddedBrowserActiveTab: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
+  setEmbeddedBrowserZoom: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
 }))
@@ -59,6 +60,12 @@ vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
+
+const navigationMocks = vi.hoisted(() => ({
+  navigateTo: vi.fn(),
+}))
+
+vi.mock('@/lib/navigation', () => navigationMocks)
 
 const localTerminalMocks = vi.hoisted(() => ({
   revealLocalFile: vi.fn(),
@@ -178,6 +185,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.resolveEmbeddedBrowserAgentApproval.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
+    embeddedBrowserMocks.setEmbeddedBrowserZoom.mockResolvedValue(undefined)
   })
 
   test('clears cookies from the browser actions submenu and reports completion', async () => {
@@ -2485,5 +2493,156 @@ describe('WorkspaceBrowserPanel', () => {
       screen.queryByTestId('workspace-browser-annotation-close-button')
     ).not.toBeInTheDocument()
     consoleError.mockRestore()
+  })
+
+  async function openExamplePage() {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await screen.findByTestId('workspace-browser-native-view')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+  }
+
+  test('opens the find bar from the more menu and searches the page', async () => {
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue({
+      query: 'hello',
+      matches: 2,
+      active: 1,
+    })
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-find-item'))
+
+    const findInput = screen.getByTestId('workspace-browser-find-input')
+    fireEvent.change(findInput, { target: { value: 'hello' } })
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalledWith(
+        expect.stringContaining('search("hello")'),
+        'workspace-browser'
+      )
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-find-count')).toHaveTextContent('1 / 2')
+    })
+
+    fireEvent.keyDown(findInput, { key: 'Enter' })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalledWith(
+        expect.stringContaining('next()'),
+        'workspace-browser'
+      )
+    })
+
+    fireEvent.keyDown(findInput, { key: 'Escape' })
+    expect(screen.queryByTestId('workspace-browser-find-bar')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalledWith(
+        expect.stringContaining('clear()'),
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('steps browser zoom from the more menu zoom row', async () => {
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    expect(screen.getByTestId('workspace-browser-zoom-label')).toHaveTextContent('100%')
+
+    fireEvent.click(screen.getByTestId('workspace-browser-zoom-in-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-zoom-label')).toHaveTextContent('110%')
+    })
+    expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalledWith(
+      1.1,
+      'workspace-browser'
+    )
+    expect(screen.getByTestId('workspace-browser-zoom-banner')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-zoom-out-button'))
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-zoom-label')).toHaveTextContent('100%')
+    })
+  })
+
+  test('applies zoom keyboard shortcuts to the browser page', async () => {
+    await openExamplePage()
+
+    fireEvent.keyDown(screen.getByTestId('workspace-browser-panel'), {
+      key: '=',
+      metaKey: true,
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalledWith(
+        1.1,
+        'workspace-browser'
+      )
+    })
+
+    fireEvent.keyDown(screen.getByTestId('workspace-browser-panel'), {
+      key: '0',
+      metaKey: true,
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalledWith(
+        1,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('toggles the device toolbar and emulates the preset viewport', async () => {
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-device-toolbar-item'))
+
+    await screen.findByTestId('workspace-browser-device-toolbar')
+
+    // Responsive preset is 390x844; the 400x300 host fits by scaling down.
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        { x: 631, y: 120, width: 139, height: 300 },
+        true,
+        'workspace-browser'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-device-rotate-button'))
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        { x: 500, y: 178, width: 400, height: 185 },
+        true,
+        'workspace-browser'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-device-close-button'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-browser-device-toolbar')).not.toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        { x: 500, y: 120, width: 400, height: 300 },
+        true,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('navigates to the browser settings page from the more menu', async () => {
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-settings-item'))
+
+    expect(navigationMocks.navigateTo).toHaveBeenCalledWith('/settings/browser')
   })
 })

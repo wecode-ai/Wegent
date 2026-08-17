@@ -42,6 +42,10 @@ export interface ActionMenuItem {
   disabled?: boolean
   shortcut?: string
   children?: ActionMenuItem[]
+  /** Renders a static separator row instead of an interactive item. */
+  separator?: boolean
+  /** Renders a custom non-button row (e.g. inline zoom controls). */
+  custom?: ReactNode
 }
 
 interface ActionMenuProps {
@@ -183,7 +187,9 @@ export function ActionMenu({
     refs: MutableRefObject<Record<string, HTMLButtonElement | null>>,
     direction: 1 | -1
   ) => {
-    const availableItems = menuItems.filter(item => !item.disabled)
+    const availableItems = menuItems.filter(
+      item => !item.disabled && !item.separator && !item.custom
+    )
     const currentIndex = availableItems.findIndex(item => item.testId === currentId)
     if (currentIndex < 0 || availableItems.length === 0) return
     const nextIndex = (currentIndex + direction + availableItems.length) % availableItems.length
@@ -204,7 +210,9 @@ export function ActionMenu({
     ) {
       event.preventDefault()
       const menuItems = submenu ? (openSubmenuItem?.children ?? []) : items
-      const availableItems = menuItems.filter(menuItem => !menuItem.disabled)
+      const availableItems = menuItems.filter(
+        menuItem => !menuItem.disabled && !menuItem.separator && !menuItem.custom
+      )
       if (availableItems.length === 0) return
       const targetId =
         event.key === 'Home'
@@ -428,6 +436,23 @@ export function ActionMenu({
           >
             {items.map(item => {
               const ItemIcon = item.icon
+              if (item.separator) {
+                return (
+                  <div
+                    key={item.testId}
+                    data-testid={item.testId}
+                    role="separator"
+                    className="mx-1 my-1 h-px bg-border"
+                  />
+                )
+              }
+              if (item.custom) {
+                return (
+                  <div key={item.testId} data-testid={item.testId} role="group">
+                    {item.custom}
+                  </div>
+                )
+              }
               return (
                 <button
                   key={item.testId}
