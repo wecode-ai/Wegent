@@ -10,6 +10,8 @@ Scope: manual, API, and automation assignment enter one execution-truth and runt
 flowchart LR
     ENTRY[Manual / API / automation] --> ASSIGN[shared assignment service]
     ASSIGN --> ITEM[(loop_items assignee truth)]
+    ITEM --> NORMALIZE[storage sentinel normalization]
+    NORMALIZE --> API[API null semantics]
     ASSIGN --> EXEC[(loop_item_executions truth)]
     EXEC --> ACTIVATE[shared runtime activator]
     ACTIVATE -->|Wework local/cloud| DEVICE[device Runtime]
@@ -27,12 +29,15 @@ flowchart LR
 sequenceDiagram
     participant E as assignment entry
     participant A as assignment service
+    participant I as loop_items
     participant X as execution truth
     participant R as runtime activator
     participant T as Runtime / Team
     participant P as terminal projector
 
     E->>A: assign(agent, item)
+    A->>I: write assignee; MySQL stores unassigned Team as sentinel 0
+    I-->>A: normalize sentinel 0 to domain null on reads
     A->>X: cancel old attempt and create queued execution
     A-->>E: commit assignee and execution
     E->>R: activate(execution_id)
@@ -47,12 +52,13 @@ sequenceDiagram
 | Edge                           | Code owner                                                            |
 | ------------------------------ | --------------------------------------------------------------------- |
 | Entry → assignment             | `backend/app/services/loop_items/`, `project_automation_execution.py` |
+| Assignee storage → API meaning | `backend/app/models/delivery.py`, `backend/app/schemas/delivery.py`   |
 | Assignment → execution truth   | `backend/app/services/loop_item_executions/service.py`                |
 | Execution → runtime activation | `board_team_execution.py`, `robot_queue_tasks.py`, Wework puller      |
 | Wegent request → board MCP     | `execution/request_builder.py`, `mcp_server/tools/wework_space.py`    |
 | Runtime event → terminal state | `board_team_completion.py`, Executor status updates                   |
 | Comment → exact continuation   | `board_team_continuation.py`, `project_automation_tasks.py`           |
 
-Invariants: all entries share assignment and activation; activation occurs only after commit; `loop_item_executions` is the sole board-execution truth; Wegent binding uses exact execution/task/subtask/team IDs; cancellation writes intent first and only a Runtime ACK writes terminal state; messages and UI never overwrite execution state.
+Invariants: all entries share assignment and activation; activation occurs only after commit; `loop_item_executions` is the sole board-execution truth; Wegent binding uses exact execution/task/subtask/team IDs; MySQL `loop_items.assignee_team_id=0` means unassigned only, and services plus APIs must normalize it to `null` instead of treating `0` as a Team ID; optional Team/Task IDs in `loop_item_executions` use a separate but consistent `0 ↔ null` boundary; cancellation writes intent first and only a Runtime ACK writes terminal state; messages and UI never overwrite execution state.
 
 See the [cloud-project collaboration guide](../wegent/developer-guide/cloud-project-collaboration.md) for domain, API, and delivery details.

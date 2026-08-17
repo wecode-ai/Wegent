@@ -272,7 +272,7 @@ class BoardTeamContinuationService:
             or execution.cloud_project_id != request.project_id
             or execution.loop_item_id != request.task_id
             or execution.backend_task_id != backend_task_id
-            or execution.team_id is None
+            or not execution.team_id
         ):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,

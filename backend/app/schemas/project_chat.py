@@ -5,7 +5,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _to_camel(value: str) -> str:
@@ -211,6 +211,11 @@ class LoopItemExecutionView(ProjectChatSchema):
     version: int = 1
     created_at: Any
     updated_at: Any
+
+    @field_validator("team_id", "backend_task_id", mode="before")
+    @classmethod
+    def normalize_optional_execution_id(cls, value: object) -> object:
+        return None if value == 0 else value
 
 
 class LoopItemExecutionListResponse(ProjectChatSchema):

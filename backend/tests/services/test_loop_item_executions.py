@@ -1155,6 +1155,9 @@ def test_recovery_scan_repairs_terminal_automation_projection(
         priority="medium",
         automation_context={"run_id": str(run.id)},
     )
+    assert execution.team_id == 0
+    assert execution.backend_task_id == 0
+    assert execution.executor_type == "automation_manager"
     run.metadata_json = {
         "trigger": "event",
         "activity_message_id": message_id,

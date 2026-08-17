@@ -224,9 +224,9 @@ class LoopItemResponse(BaseModel):
     def normalize_empty_id(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("assignee_user_id", mode="before")
+    @field_validator("assignee_user_id", "assignee_team_id", mode="before")
     @classmethod
-    def normalize_empty_user_id(cls, value: object) -> object:
+    def normalize_empty_numeric_assignee_id(cls, value: object) -> object:
         return None if value == 0 else value
 
     @field_validator("due_at", "completed_at", mode="before")
