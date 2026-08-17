@@ -6,7 +6,7 @@ import type { AsyncCardComponent } from './types'
 
 const cardRegistry: Record<string, () => Promise<{ default: AsyncCardComponent }>> = {
   video_director_generation: () => import('@/features/video/aigc_video/AigcVideoCard'),
-  video_short_generation: () => import('@/features/video/aigc_video/AigcVideoCard'),
+  video_short_generation: () => import('@/features/video/aigc_video/VideoShortGenerationCard'),
 }
 
 export async function loadAsyncCardComponent(cardType: string): Promise<AsyncCardComponent | null> {

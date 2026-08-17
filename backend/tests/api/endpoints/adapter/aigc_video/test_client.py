@@ -6,6 +6,7 @@ import pytest
 
 from app.api.endpoints.adapter.aigc_video.client import (
     parse_card_status,
+    validate_image_url,
     validate_playback_url,
     validate_task_url,
 )
@@ -59,6 +60,25 @@ def test_validate_playback_url_accepts_weibo_video_cdn():
 def test_validate_playback_url_rejects_non_weibo_hosts(url):
     with pytest.raises(ValueError):
         validate_playback_url(url)
+
+
+def test_validate_image_url_accepts_weibo_image_cdn():
+    result = validate_image_url("https://wx4.sinaimg.cn/large/example.jpg")
+
+    assert result.endswith("example.jpg")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/private.jpg",
+        "https://sinaimg.cn.example.com/image.jpg",
+        "file:///etc/passwd",
+    ],
+)
+def test_validate_image_url_rejects_non_weibo_hosts(url):
+    with pytest.raises(ValueError):
+        validate_image_url(url)
 
 
 def test_parse_card_status_flattens_aigc_buttons():

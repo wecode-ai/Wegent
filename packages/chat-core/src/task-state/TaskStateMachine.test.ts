@@ -456,6 +456,96 @@ describe('TaskStateMachine', () => {
     })
   })
 
+  it('fully resyncs terminal task cards after a websocket reconnect', async () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = vi.fn().mockResolvedValue({
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'video card',
+          bot_ids: [],
+          role: 'ASSISTANT',
+          message_id: 7,
+          parent_id: 1,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: {
+            value: 'Working',
+            blocks: [
+              {
+                id: 'card-1',
+                type: 'card',
+                card_id: '1',
+                card_type: 'video_director_generation',
+                card_status: 'populated',
+                card_data: { title: 'Ready' },
+                card_preview_data: { progress: 100 },
+                status: 'done',
+              },
+            ],
+          },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-06-01T10:00:00.000Z',
+          updated_at: '2026-06-01T10:00:10.000Z',
+          completed_at: '2026-06-01T10:00:01.000Z',
+          bots: [],
+        },
+      ],
+    })
+    const pullRuntime = vi.fn().mockResolvedValue({
+      task_id: 100,
+      task_status: 'COMPLETED',
+      status_updated_at: '2026-06-01T10:00:01.000Z',
+      active_stream: null,
+    })
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      pullRuntime,
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', {
+      blocks: [
+        {
+          id: 'card-1',
+          type: 'card',
+          card_id: '1',
+          card_type: 'video_director_generation',
+          card_status: 'pending',
+          card_data: {},
+          card_preview_data: { progress: 30 },
+          status: 'done',
+        },
+      ],
+    })
+    machine.handleChatDone(42, 'Working', undefined, 7)
+
+    await machine.requestRuntimeCheck('websocket-reconnect')
+
+    expect(joinTask).toHaveBeenCalledWith(100, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+    })
+    expect(machine.getState().messages.get('ai-42')?.result?.blocks).toContainEqual(
+      expect.objectContaining({
+        id: 'card-1',
+        card_status: 'populated',
+        card_data: { title: 'Ready' },
+        card_preview_data: { progress: 100 },
+      })
+    )
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('checks runtime before resolving pending socket recovery on reconnect', async () => {
     const joinTask = vi.fn().mockResolvedValue({ subtasks: [] })
     const pullRuntime = vi.fn().mockResolvedValue({

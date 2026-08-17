@@ -63,6 +63,7 @@ async function loadTranslations() {
     'subscription',
     'wecode',
     'resource-library',
+    'video',
   ]
 
   for (const lng of supportedLanguages) {

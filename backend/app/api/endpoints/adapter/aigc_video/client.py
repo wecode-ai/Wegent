@@ -84,6 +84,26 @@ def validate_playback_url(video_url: str) -> str:
     return video_url
 
 
+def validate_image_url(image_url: str) -> str:
+    """Allow image proxying only for the configured Weibo CDN families."""
+    candidate = urlsplit(image_url)
+    hostname = (candidate.hostname or "").lower()
+    allowed = (
+        hostname == "sinaimg.cn"
+        or hostname.endswith(".sinaimg.cn")
+        or hostname == "weibocdn.com"
+        or hostname.endswith(".weibocdn.com")
+    )
+    if (
+        candidate.scheme not in {"http", "https"}
+        or candidate.username
+        or candidate.password
+        or not allowed
+    ):
+        raise ValueError("Invalid AIGC image URL")
+    return image_url
+
+
 def _progress_value(value: Any) -> int:
     if isinstance(value, dict):
         value = value.get("percentage", value.get("progress", 0))
