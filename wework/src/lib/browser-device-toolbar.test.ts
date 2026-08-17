@@ -5,6 +5,7 @@ import {
   clampDeviceDimension,
   computeDeviceViewportPlacement,
   defaultBrowserDeviceToolbarState,
+  deviceZoomOptions,
   matchDevicePresetId,
   resolveDeviceFitScale,
   resolveDevicePreset,
@@ -26,47 +27,51 @@ describe('browser-device-toolbar', () => {
     expect(BROWSER_DEVICE_PRESETS.length).toBeGreaterThanOrEqual(12)
   })
 
-  test('clamps dimensions to the minimum supported size', () => {
-    expect(clampDeviceDimension(10)).toBe(20)
-    expect(clampDeviceDimension(320.4)).toBe(320)
-    expect(clampDeviceDimension(Number.NaN)).toBe(20)
+  test('clamps dimensions into the Codex input range', () => {
+    expect(clampDeviceDimension(10, 240)).toBe(240)
+    expect(clampDeviceDimension(320.4, 240)).toBe(320)
+    expect(clampDeviceDimension(Number.NaN, 160)).toBe(160)
+    expect(clampDeviceDimension(99999, 240)).toBe(4096)
+  })
+
+  test('lists Codex zoom options plus the current zoom when custom', () => {
+    expect(deviceZoomOptions(100)).toEqual([50, 75, 100, 125, 150, 200])
+    expect(deviceZoomOptions(90)).toEqual([50, 75, 90, 100, 125, 150, 200])
   })
 
   test('fit scale shrinks viewports larger than the host', () => {
     const host = { x: 0, y: 0, width: 400, height: 300 }
-    expect(resolveDeviceFitScale(host, 390, 844, 'fit')).toBeCloseTo(300 / 844)
-    expect(resolveDeviceFitScale(host, 390, 844, 50)).toBe(0.5)
-    expect(resolveDeviceFitScale(host, 100, 100, 'fit')).toBe(1)
+    expect(resolveDeviceFitScale(host, 390, 844)).toBeCloseTo(300 / 844)
+    expect(resolveDeviceFitScale(host, 100, 100)).toBe(1)
   })
 
   test('centers the device viewport inside the host without scaling', () => {
     const host = { x: 500, y: 120, width: 1000, height: 1000 }
-    const placement = computeDeviceViewportPlacement(host, {
-      width: 375,
-      height: 667,
-      zoomMode: 'fit',
-    })
-    expect(placement?.fitScale).toBe(1)
+    const placement = computeDeviceViewportPlacement(host, { width: 375, height: 667 }, 100)
+    expect(placement?.scale).toBe(1)
     expect(placement?.webviewBounds).toEqual({ x: 813, y: 287, width: 375, height: 667 })
   })
 
   test('scales the webview down when the device exceeds the host', () => {
     const host = { x: 500, y: 120, width: 400, height: 300 }
-    const placement = computeDeviceViewportPlacement(host, {
-      width: 390,
-      height: 844,
-      zoomMode: 'fit',
-    })
+    const placement = computeDeviceViewportPlacement(host, { width: 390, height: 844 }, 100)
     expect(placement).not.toBeNull()
-    // The webview occupies the visual rect; zoom (fitScale) restores the
+    // The webview occupies the visual rect; zoom (scale) restores the
     // device CSS viewport width.
     expect(placement!.webviewBounds.width).toBe(139)
     expect(placement!.webviewBounds.height).toBe(300)
     expect(placement!.webviewBounds.x).toBe(631)
     expect(placement!.webviewBounds.y).toBe(120)
-    expect(
-      Math.abs(placement!.webviewBounds.width / placement!.fitScale - 390)
-    ).toBeLessThanOrEqual(2)
+    expect(Math.abs(placement!.webviewBounds.width / placement!.scale - 390)).toBeLessThanOrEqual(2)
+  })
+
+  test('page zoom magnifies the viewport while keeping the layout width', () => {
+    const host = { x: 0, y: 0, width: 1000, height: 1000 }
+    const placement = computeDeviceViewportPlacement(host, { width: 390, height: 844 }, 150)
+    expect(placement).not.toBeNull()
+    expect(placement!.scale).toBeCloseTo(1.5)
+    expect(Math.abs(placement!.webviewBounds.width / placement!.scale - 390)).toBeLessThanOrEqual(2)
+    expect(placement!.webviewBounds.width).toBe(585)
   })
 
   test('returns null for an empty host', () => {
@@ -76,8 +81,8 @@ describe('browser-device-toolbar', () => {
         {
           width: 390,
           height: 844,
-          zoomMode: 'fit',
-        }
+        },
+        100
       )
     ).toBeNull()
   })

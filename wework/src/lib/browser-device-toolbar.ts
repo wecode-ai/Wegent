@@ -65,18 +65,19 @@ export const BROWSER_DEVICE_PRESETS: BrowserDevicePreset[] = [
   { id: '4k', labelKey: 'workbench.browser_device_preset_4k', width: 2560, height: 1440 },
 ]
 
-export const BROWSER_DEVICE_MIN_DIMENSION = 20
+// Input ranges match the Codex device toolbar.
+export const BROWSER_DEVICE_MIN_WIDTH = 240
+export const BROWSER_DEVICE_MIN_HEIGHT = 160
+export const BROWSER_DEVICE_MAX_DIMENSION = 4096
 
-export const BROWSER_DEVICE_VIEWPORT_ZOOM_MODES = ['fit', 50, 75, 100, 125, 150, 200] as const
-
-export type BrowserDeviceViewportZoomMode = 'fit' | number
+// Page-zoom options offered by the device toolbar zoom select, as in Codex.
+export const BROWSER_DEVICE_ZOOM_OPTIONS = [50, 75, 100, 125, 150, 200] as const
 
 export interface BrowserDeviceToolbarState {
   isEnabled: boolean
   presetId: string
   width: number
   height: number
-  zoomMode: BrowserDeviceViewportZoomMode
 }
 
 export function defaultBrowserDeviceToolbarState(): BrowserDeviceToolbarState {
@@ -86,7 +87,6 @@ export function defaultBrowserDeviceToolbarState(): BrowserDeviceToolbarState {
     presetId: responsive.id,
     width: responsive.width,
     height: responsive.height,
-    zoomMode: 'fit',
   }
 }
 
@@ -104,16 +104,27 @@ export function matchDevicePresetId(width: number, height: number): string {
   return matched?.id ?? BROWSER_DEVICE_PRESET_RESPONSIVE
 }
 
-export function clampDeviceDimension(value: number): number {
-  if (!Number.isFinite(value)) return BROWSER_DEVICE_MIN_DIMENSION
-  return Math.max(BROWSER_DEVICE_MIN_DIMENSION, Math.round(value))
+export function clampDeviceDimension(
+  value: number,
+  min: number,
+  max = BROWSER_DEVICE_MAX_DIMENSION
+): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+export function deviceZoomOptions(currentZoomPercent: number): number[] {
+  if ((BROWSER_DEVICE_ZOOM_OPTIONS as readonly number[]).includes(currentZoomPercent)) {
+    return [...BROWSER_DEVICE_ZOOM_OPTIONS]
+  }
+  return [...BROWSER_DEVICE_ZOOM_OPTIONS, currentZoomPercent].sort((a, b) => a - b)
 }
 
 export interface DeviceViewportPlacement {
   /** Bounds the native webview should occupy (real layout viewport). */
   webviewBounds: EmbeddedBrowserBounds
-  /** Scale applied through the webview zoom so large devices fit the host. */
-  fitScale: number
+  /** Combined scale (auto-fit x page zoom) applied through the webview zoom. */
+  scale: number
   /** Visually occupied rect inside the host, used for handles and backdrop. */
   visualRect: { x: number; y: number; width: number; height: number }
 }
@@ -121,30 +132,28 @@ export interface DeviceViewportPlacement {
 export function resolveDeviceFitScale(
   host: EmbeddedBrowserBounds,
   width: number,
-  height: number,
-  zoomMode: BrowserDeviceViewportZoomMode
+  height: number
 ): number {
-  if (zoomMode !== 'fit') {
-    return Math.max(0.1, zoomMode / 100)
-  }
   return Math.min(1, host.width / width, host.height / height)
 }
 
 export function computeDeviceViewportPlacement(
   host: EmbeddedBrowserBounds,
-  state: Pick<BrowserDeviceToolbarState, 'width' | 'height' | 'zoomMode'>
+  state: Pick<BrowserDeviceToolbarState, 'width' | 'height'>,
+  pageZoomPercent: number
 ): DeviceViewportPlacement | null {
-  const width = clampDeviceDimension(state.width)
-  const height = clampDeviceDimension(state.height)
+  const width = clampDeviceDimension(state.width, BROWSER_DEVICE_MIN_WIDTH)
+  const height = clampDeviceDimension(state.height, BROWSER_DEVICE_MIN_HEIGHT)
   if (host.width < 1 || host.height < 1) return null
-  const fitScale = resolveDeviceFitScale(host, width, height, state.zoomMode)
-  const visualWidth = Math.max(1, width * fitScale)
-  const visualHeight = Math.max(1, height * fitScale)
-  const visualX = host.x + Math.max(0, (host.width - visualWidth) / 2)
-  const visualY = host.y + Math.max(0, (host.height - visualHeight) / 2)
+  const scale = resolveDeviceFitScale(host, width, height) * (pageZoomPercent / 100)
+  const visualWidth = Math.max(1, width * scale)
+  const visualHeight = Math.max(1, height * scale)
+  const visualX = host.x + (host.width - visualWidth) / 2
+  const visualY = host.y + (host.height - visualHeight) / 2
   // Page zoom in wry scales CSS pixels: the CSS viewport equals
-  // bounds / zoom, so sizing the webview to the *visual* rect while applying
-  // fitScale as zoom yields an exact device-width layout viewport.
+  // bounds / zoom, so sizing the webview to the *scaled* rect while applying
+  // the combined scale as zoom yields an exact device-width layout viewport
+  // at any page zoom level.
   return {
     webviewBounds: {
       x: Math.round(visualX),
@@ -152,7 +161,7 @@ export function computeDeviceViewportPlacement(
       width: Math.round(visualWidth),
       height: Math.round(visualHeight),
     },
-    fitScale,
+    scale,
     visualRect: {
       x: Math.round(visualX),
       y: Math.round(visualY),

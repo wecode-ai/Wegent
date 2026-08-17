@@ -179,13 +179,19 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('waitFor', FIND_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', FIND_INPUT_SELECTOR, { value: FIXTURE_WORD })
       // The fixture contains three visible occurrences of the word.
-      await waitForValue(
-        control,
-        FIND_COUNT_SELECTOR,
-        '1 / 3',
-        uiTimeoutMs,
-        'The find bar did not report all three fixture matches'
-      )
+      {
+        const startedAt = Date.now()
+        let lastCount = null
+        while (Date.now() - startedAt < uiTimeoutMs) {
+          lastCount = await control.command('getValue', FIND_COUNT_SELECTOR)
+          if (lastCount.includes('1 / 3')) break
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        assert.ok(
+          lastCount.includes('1 / 3'),
+          `The find bar did not report all three fixture matches; last count=${lastCount}`
+        )
+      }
       const initialFindState = await evaluateFindState(bridgeIdentity)
       assert.deepEqual(
         initialFindState,

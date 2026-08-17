@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -13,6 +13,11 @@ interface BrowserFindBarProps {
   onClose: () => void
 }
 
+// Mirrors the Codex in-app browser find bar: a floating 340px pill anchored
+// to the top-right, with a 44px input row (search icon + borderless input +
+// divider + close) and a collapsible second row with previous/next and the
+// right-aligned match count. In Wework the pill cannot overlay the native
+// webview, so it docks into a right-aligned strip above the page instead.
 export function BrowserFindBar({
   query,
   result,
@@ -32,84 +37,107 @@ export function BrowserFindBar({
     return () => window.cancelAnimationFrame(frame)
   }, [])
 
+  const matches = result?.matches ?? 0
   const countText = !query
     ? null
-    : result && result.matches > 0
+    : matches > 0
       ? t('workbench.browser_find_results', {
-          active: result.active,
-          matches: result.matches,
+          active: result?.active ?? 0,
+          matches,
         })
       : t('workbench.browser_find_no_results')
+
+  const navDisabled = unavailable || !query || matches === 0
 
   return (
     <div
       data-testid="workspace-browser-find-bar"
-      className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-background px-2"
+      className="flex shrink-0 justify-end border-b border-border bg-background px-3 py-2"
     >
-      <input
-        ref={inputRef}
-        data-testid="workspace-browser-find-input"
-        aria-label={t('workbench.browser_find_in_page')}
-        value={query}
-        disabled={unavailable}
-        onChange={event => onQueryChange(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            onStep(event.shiftKey ? -1 : 1)
-            return
-          }
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            onClose()
-          }
-        }}
-        placeholder={t('workbench.browser_find_placeholder')}
-        className="h-8 w-64 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background disabled:cursor-not-allowed disabled:opacity-60"
-      />
-      <span
-        data-testid="workspace-browser-find-count"
-        aria-live="polite"
-        className={cn(
-          'w-20 shrink-0 text-center text-xs tabular-nums',
-          query && (!result || result.matches === 0) ? 'text-text-muted' : 'text-text-secondary'
-        )}
-      >
-        {countText}
-      </span>
-      <div className="ml-auto flex items-center gap-1">
-        <button
-          type="button"
-          data-testid="workspace-browser-find-prev-button"
-          aria-label={t('workbench.browser_find_previous')}
-          title={t('workbench.browser_find_previous')}
-          disabled={unavailable || !query || !result || result.matches === 0}
-          onClick={() => onStep(-1)}
-          className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+      <div className="grid w-[340px] max-w-[70vw] grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded-[20px] border border-border bg-popover shadow-[0px_8px_16px_-4px_rgba(0,0,0,0.12)]">
+        <div className="col-[1/2] row-[1] flex h-[44px] min-w-0 items-center gap-2 ps-4">
+          <Search aria-hidden className="size-4 shrink-0 text-text-primary" />
+          <label className="sr-only" htmlFor="workspace-browser-find-input">
+            {t('workbench.browser_find_in_page')}
+          </label>
+          <input
+            ref={inputRef}
+            id="workspace-browser-find-input"
+            data-testid="workspace-browser-find-input"
+            type="text"
+            autoFocus
+            value={query}
+            disabled={unavailable}
+            onChange={event => onQueryChange(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                onStep(event.shiftKey ? -1 : 1)
+                return
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                onClose()
+              }
+            }}
+            placeholder={t('workbench.browser_find_placeholder')}
+            className="h-6 min-w-0 flex-1 bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </div>
+        <div className="col-[2/3] row-[1] flex h-[44px] items-center pe-4">
+          <div className="mx-2 h-4 w-px bg-border" />
+          <button
+            type="button"
+            data-testid="workspace-browser-find-close-button"
+            aria-label={t('workbench.browser_find_close')}
+            title={t('workbench.browser_find_close')}
+            onClick={onClose}
+            className="-m-0.5 flex size-6 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div
+          data-testid="workspace-browser-find-matches-row"
+          className={cn(
+            'col-[1/3] row-[2] flex min-w-0 items-center border-border px-4 transition-[border-width,max-height,opacity,padding] duration-200 ease-out',
+            query
+              ? 'max-h-9 border-t py-2 opacity-100'
+              : 'pointer-events-none max-h-0 border-t-0 py-0 opacity-0'
+          )}
         >
-          <ChevronUp className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          data-testid="workspace-browser-find-next-button"
-          aria-label={t('workbench.browser_find_next')}
-          title={t('workbench.browser_find_next')}
-          disabled={unavailable || !query || !result || result.matches === 0}
-          onClick={() => onStep(1)}
-          className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <ChevronDown className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          data-testid="workspace-browser-find-close-button"
-          aria-label={t('workbench.browser_find_close')}
-          title={t('workbench.browser_find_close')}
-          onClick={onClose}
-          className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-        >
-          <X className="h-4 w-4" />
-        </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              data-testid="workspace-browser-find-prev-button"
+              aria-label={t('workbench.browser_find_previous')}
+              title={t('workbench.browser_find_previous')}
+              disabled={navDisabled}
+              onClick={() => onStep(-1)}
+              className="flex h-4 w-4 items-center justify-center text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronUp className="size-4" />
+            </button>
+            <button
+              type="button"
+              data-testid="workspace-browser-find-next-button"
+              aria-label={t('workbench.browser_find_next')}
+              title={t('workbench.browser_find_next')}
+              disabled={navDisabled}
+              onClick={() => onStep(1)}
+              className="flex h-4 w-4 items-center justify-center text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronDown className="size-4" />
+            </button>
+          </div>
+          <span
+            data-testid="workspace-browser-find-count"
+            aria-live="polite"
+            className="pointer-events-none min-w-0 flex-1 truncate px-2 text-end text-base leading-6 text-text-secondary"
+          >
+            {countText}
+          </span>
+        </div>
       </div>
     </div>
   )

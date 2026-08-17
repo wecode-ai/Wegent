@@ -13,6 +13,7 @@ import {
   Pause,
   Play,
   Plus,
+  RotateCcw,
   RotateCw,
   Search,
   Settings,
@@ -85,8 +86,9 @@ import {
   defaultBrowserDeviceToolbarState,
   matchDevicePresetId,
   resolveDevicePreset,
+  BROWSER_DEVICE_MIN_HEIGHT,
+  BROWSER_DEVICE_MIN_WIDTH,
   type BrowserDeviceToolbarState,
-  type BrowserDeviceViewportZoomMode,
 } from '@/lib/browser-device-toolbar'
 import {
   clearEmbeddedBrowserFind,
@@ -777,10 +779,10 @@ export function WorkspaceBrowserTabPanel({
         visible && (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
       const deviceState = deviceToolbarRef.current
       const placement = deviceState.isEnabled
-        ? computeDeviceViewportPlacement(bounds, deviceState)
+        ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
       if (placement) {
-        deviceFitScaleRef.current = placement.fitScale
+        deviceFitScaleRef.current = placement.scale
         const hostRect = host.getBoundingClientRect()
         const nextVisualRect = {
           x: placement.visualRect.x - hostRect.left,
@@ -803,16 +805,13 @@ export function WorkspaceBrowserTabPanel({
         )
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
       } else {
-        deviceFitScaleRef.current = 1
+        deviceFitScaleRef.current = zoomPercentToScaleFactor(zoomPercentRef.current)
         setDeviceVisualRect(current => (current === null ? current : null))
         await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
       }
-      // Page zoom is applied through the native webview zoom. When the device
-      // toolbar is enabled, its fit scale composes multiplicatively.
-      await setEmbeddedBrowserZoom(
-        zoomPercentToScaleFactor(zoomPercentRef.current) * deviceFitScaleRef.current,
-        label
-      ).catch(error => {
+      // The native webview zoom carries the page zoom; in device mode the
+      // placement already folds it into the combined fit scale.
+      await setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(error => {
         console.error('Failed to apply embedded browser zoom:', error)
       })
     },
@@ -2080,27 +2079,21 @@ export function WorkspaceBrowserTabPanel({
       zoomPercentRef.current = nextPercent
       setZoomPercent(nextPercent)
       setZoomBannerNonce(nonce => nonce + 1)
-      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
-      void setEmbeddedBrowserZoom(
-        zoomPercentToScaleFactor(nextPercent) * deviceFitScaleRef.current,
-        label
-      ).catch(error => {
-        console.error('Failed to set embedded browser zoom:', error)
-      })
+      // The bounds sync applies the correct combined zoom (page zoom alone,
+      // or folded into the device viewport fit scale).
+      scheduleEmbeddedBrowserBoundsSync(activeRef.current)
     },
-    [embeddedBrowserAvailable, label]
+    [scheduleEmbeddedBrowserBoundsSync]
   )
 
   // Re-apply the remembered page zoom after the webview reloads or is
   // recreated (native zoom resets on a fresh webview).
   useEffect(() => {
     if (status !== 'ready') return
-    if (zoomPercentRef.current === BROWSER_ZOOM_DEFAULT_PERCENT) return
+    if (zoomPercentRef.current === BROWSER_ZOOM_DEFAULT_PERCENT && deviceFitScaleRef.current === 1)
+      return
     if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
-    void setEmbeddedBrowserZoom(
-      zoomPercentToScaleFactor(zoomPercentRef.current) * deviceFitScaleRef.current,
-      label
-    ).catch(() => undefined)
+    void setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(() => undefined)
   }, [status, embeddedBrowserAvailable, label])
 
   // --- Find in page (JS injection; wry has no native find API) ---
@@ -2133,7 +2126,19 @@ export function WorkspaceBrowserTabPanel({
 
   const openFindBar = useCallback(() => {
     setFindOpen(true)
-  }, [])
+    if (!nativeBrowserOpenRef.current) return
+    // Mirror Codex: prefill the find query with the current page selection.
+    void evalEmbeddedBrowserJson<string | null>(
+      'window.getSelection()?.toString()?.trim() || null',
+      label
+    )
+      .then(selection => {
+        if (typeof selection === 'string' && selection && !/[\r\n]/.test(selection)) {
+          setFindQuery(selection)
+        }
+      })
+      .catch(() => undefined)
+  }, [label])
 
   const closeFindBar = useCallback(() => {
     findRequestSequenceRef.current += 1
@@ -2197,6 +2202,9 @@ export function WorkspaceBrowserTabPanel({
     (presetId: string) => {
       const preset = resolveDevicePreset(presetId)
       if (!preset) return
+      // Codex resets the page zoom when the preset changes.
+      zoomPercentRef.current = BROWSER_ZOOM_DEFAULT_PERCENT
+      setZoomPercent(BROWSER_ZOOM_DEFAULT_PERCENT)
       updateDeviceToolbar({ presetId, width: preset.width, height: preset.height })
     },
     [updateDeviceToolbar]
@@ -2204,8 +2212,8 @@ export function WorkspaceBrowserTabPanel({
 
   const handleDeviceDimensionsChange = useCallback(
     (width: number, height: number) => {
-      const nextWidth = clampDeviceDimension(width)
-      const nextHeight = clampDeviceDimension(height)
+      const nextWidth = clampDeviceDimension(width, BROWSER_DEVICE_MIN_WIDTH)
+      const nextHeight = clampDeviceDimension(height, BROWSER_DEVICE_MIN_HEIGHT)
       updateDeviceToolbar({
         width: nextWidth,
         height: nextHeight,
@@ -2219,13 +2227,6 @@ export function WorkspaceBrowserTabPanel({
     const current = deviceToolbarRef.current
     updateDeviceToolbar({ width: current.height, height: current.width })
   }, [updateDeviceToolbar])
-
-  const handleDeviceZoomModeChange = useCallback(
-    (zoomMode: BrowserDeviceViewportZoomMode) => {
-      updateDeviceToolbar({ zoomMode })
-    },
-    [updateDeviceToolbar]
-  )
 
   const deviceResizeStateRef = useRef<{
     pointerId: number
@@ -2479,16 +2480,23 @@ export function WorkspaceBrowserTabPanel({
                   onSelect: openFindBar,
                 },
                 {
+                  label: '',
+                  testId: 'workspace-browser-more-separator-find',
+                  separator: true,
+                },
+                {
                   label: t('workbench.browser_zoom'),
                   testId: 'workspace-browser-zoom-row',
                   custom: (
                     <div
                       role="group"
                       aria-label={t('workbench.browser_zoom')}
-                      className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-sm leading-[18px]"
+                      className="flex w-full items-center gap-1 rounded-lg px-3 py-0.5 text-sm leading-[18px]"
                     >
-                      <span className="text-text-primary">{t('workbench.browser_zoom')}</span>
-                      <div className="ml-auto flex items-center overflow-hidden rounded-md border border-border bg-foreground/5 text-xs">
+                      <span className="min-w-0 flex-1 truncate text-text-primary">
+                        {t('workbench.browser_zoom')}
+                      </span>
+                      <div className="flex shrink-0 items-center overflow-hidden rounded-md border border-border bg-foreground/5 text-xs">
                         <button
                           type="button"
                           data-testid="workspace-browser-zoom-out-button"
@@ -2502,7 +2510,7 @@ export function WorkspaceBrowserTabPanel({
                         </button>
                         <span
                           data-testid="workspace-browser-zoom-label"
-                          className="w-10 text-center tabular-nums text-text-primary"
+                          className="w-11 border-x border-border py-0.5 text-center tabular-nums text-text-primary"
                         >
                           {zoomPercent}%
                         </span>
@@ -2518,8 +2526,24 @@ export function WorkspaceBrowserTabPanel({
                           <Plus className="h-3.5 w-3.5" />
                         </button>
                       </div>
+                      <button
+                        type="button"
+                        data-testid="workspace-browser-zoom-row-reset-button"
+                        aria-label={t('workbench.browser_zoom_reset')}
+                        title={t('workbench.browser_zoom_reset')}
+                        disabled={zoomPercent === BROWSER_ZOOM_DEFAULT_PERCENT}
+                        onClick={() => changeBrowserZoom(BROWSER_ZOOM_DEFAULT_PERCENT)}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   ),
+                },
+                {
+                  label: '',
+                  testId: 'workspace-browser-more-separator-zoom',
+                  separator: true,
                 },
                 {
                   label: deviceToolbar.isEnabled
@@ -2533,17 +2557,6 @@ export function WorkspaceBrowserTabPanel({
                 {
                   label: '',
                   testId: 'workspace-browser-more-separator-actions',
-                  separator: true,
-                },
-                {
-                  label: t('workbench.browser_settings'),
-                  testId: 'workspace-browser-settings-item',
-                  icon: Settings,
-                  onSelect: () => navigateTo('/settings/browser'),
-                },
-                {
-                  label: '',
-                  testId: 'workspace-browser-more-separator-data',
                   separator: true,
                 },
                 {
@@ -2565,6 +2578,17 @@ export function WorkspaceBrowserTabPanel({
                     },
                   ],
                 },
+                {
+                  label: '',
+                  testId: 'workspace-browser-more-separator-data',
+                  separator: true,
+                },
+                {
+                  label: t('workbench.browser_settings'),
+                  testId: 'workspace-browser-settings-item',
+                  icon: Settings,
+                  onSelect: () => navigateTo('/settings/browser'),
+                },
               ]}
             />
           ) : null}
@@ -2583,10 +2607,11 @@ export function WorkspaceBrowserTabPanel({
       {deviceToolbar.isEnabled && (!annotationMode || internalDesktopPage) ? (
         <BrowserDeviceToolbar
           state={deviceToolbar}
+          zoomPercent={zoomPercent}
           onPresetChange={handleDevicePresetChange}
           onDimensionsChange={handleDeviceDimensionsChange}
           onRotate={handleDeviceRotate}
-          onZoomModeChange={handleDeviceZoomModeChange}
+          onZoomPercentChange={changeBrowserZoom}
           onClose={toggleDeviceToolbar}
         />
       ) : null}
@@ -2900,7 +2925,8 @@ export function WorkspaceBrowserTabPanel({
                   { edge: 'bottom-right' as const, cursor: 'nwse-resize' },
                 ].map(handle => {
                   const rect = deviceVisualRect
-                  const thickness = 8
+                  // Handles sit 20px outside the device viewport, as in Codex.
+                  const thickness = 20
                   const style =
                     handle.edge === 'left'
                       ? {
@@ -2918,9 +2944,9 @@ export function WorkspaceBrowserTabPanel({
                           }
                         : handle.edge === 'bottom'
                           ? {
-                              left: rect.x,
+                              left: rect.x - thickness,
                               top: rect.y + rect.height,
-                              width: rect.width,
+                              width: rect.width + thickness * 2,
                               height: thickness,
                             }
                           : handle.edge === 'bottom-left'
