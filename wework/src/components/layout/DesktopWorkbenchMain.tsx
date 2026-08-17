@@ -185,7 +185,7 @@ import {
   TaskSupervisorControl,
   type TaskSupervisorConfig,
 } from './TaskSupervisorControl'
-import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
+import { isEditableShortcutTarget, WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type {
   ModelSelectionConfig,
   RuntimeName,
@@ -3039,6 +3039,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectBrowserView = useCallback(() => {
     openBrowserTab()
   }, [openBrowserTab])
+  useEffect(() => {
+    if (!paneActive || !paneVisible || rightPanelOpen) return
+
+    const handleOpenBrowser = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
+      const primaryPressed =
+        getPlatform() === 'win'
+          ? event.ctrlKey && event.shiftKey && !event.metaKey
+          : event.metaKey && event.shiftKey && !event.ctrlKey
+      if (!primaryPressed || event.altKey || event.key.toLowerCase() !== 'b') return
+
+      event.preventDefault()
+      selectBrowserView()
+    }
+
+    window.addEventListener('keydown', handleOpenBrowser)
+    return () => window.removeEventListener('keydown', handleOpenBrowser)
+  }, [paneActive, paneVisible, rightPanelOpen, selectBrowserView])
   const selectTerminalView = useCallback(() => {
     openRightPanelTab(allocateTerminalTab())
   }, [allocateTerminalTab, openRightPanelTab])

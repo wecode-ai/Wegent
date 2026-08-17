@@ -6,9 +6,6 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
-const RIGHT_BROWSER_OPTION_SELECTOR = '[data-testid="right-workspace-browser-option"]'
-const RIGHT_NEW_TAB_BROWSER_OPTION_SELECTOR =
-  '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-browser-option"]'
 const RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR =
   '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
 const RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR =
@@ -29,6 +26,9 @@ const FIXTURE_A_TEXT = 'Embedded Browser Multi Tab A'
 const FIXTURE_B_TEXT = 'Embedded Browser Multi Tab B'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const BROWSER_LABEL = 'workspace-browser'
+const OPEN_BROWSER_WHILE_CLOSED_KEY =
+  process.platform === 'win32' ? 'Control+Shift+B' : 'Meta+Shift+B'
+const OPEN_BROWSER_WHILE_OPEN_KEY = process.platform === 'win32' ? 'Control+T' : 'Meta+T'
 
 function fixtureHtml(title, text) {
   return [
@@ -138,8 +138,14 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       const fixtureBUrl = control.url + FIXTURE_B_PATH
 
       await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
-      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="right-workspace-panel-shell"]', {
+          value: 'aria-hidden',
+        }),
+        'true',
+        'The browser shortcut checkpoint did not start with the right panel closed'
+      )
+      await control.command('press', 'body', { key: OPEN_BROWSER_WHILE_CLOSED_KEY })
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
 
       await callBridge(bridgeIdentity, { action: 'open', url: fixtureAUrl, timeoutMs: 8000 })
@@ -152,12 +158,13 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       )
       const firstBrowserLabel = (await callBridge(bridgeIdentity, { action: 'status' })).label
       const secondBrowserLabel = firstBrowserLabel + '-2'
+      await control.command('press', 'body', { key: OPEN_BROWSER_WHILE_CLOSED_KEY })
       await waitForSnapshot(
         control,
         snapshot =>
           snapshot.testIds.includes('right-workspace-browser-tab-1') &&
           !snapshot.testIds.includes('right-workspace-browser-tab-2'),
-        'The right workspace did not start with one browser tab',
+        'The closed-panel browser shortcut fired again while the right panel was open',
         uiTimeoutMs,
         'body'
       )
@@ -166,8 +173,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('click', RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR)
       await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
       await control.command('click', RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR)
-      await control.command('click', RIGHT_WORKSPACE_NEW_TAB_SELECTOR)
-      await control.command('click', RIGHT_NEW_TAB_BROWSER_OPTION_SELECTOR)
+      await control.command('press', 'body', { key: OPEN_BROWSER_WHILE_OPEN_KEY })
       const mixedTabsSnapshot = await waitForSnapshot(
         control,
         snapshot =>
