@@ -1150,6 +1150,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           ? findDesktopControlElements(command.selector).filter(desktopControlElementVisible).length
           : findDesktopControlElements(command.selector).length
       )
+    case 'sampleElementPresence': {
+      const durationMs = Number(command.value)
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('sampleElementPresence requires a finite positive durationMs')
+      }
+      const startedAt = performance.now()
+      let maxCount = 0
+      let samples = 0
+      while (performance.now() - startedAt < durationMs) {
+        maxCount = Math.max(maxCount, findDesktopControlElements(command.selector).length)
+        samples += 1
+        await waitForDesktopControlTick()
+      }
+      return JSON.stringify({ observed: maxCount > 0, maxCount, samples })
+    }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
     case 'startScrollStabilitySampling': {
