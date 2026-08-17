@@ -358,8 +358,23 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-amd64
+          build-args: |
+            APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+            VCS_REF=${{ github.sha }}
           cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-amd64
           cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-amd64,mode=max
+
+      - name: Verify device image version and architecture (amd64)
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_PREFIX}/wegent-device:${VERSION}-amd64"
+          docker pull "$image"
+          test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
 
   build-device-arm64:
     needs: prepare-release
@@ -391,8 +406,23 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-arm64
+          build-args: |
+            APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+            VCS_REF=${{ github.sha }}
           cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-arm64
           cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-arm64,mode=max
+
+      - name: Verify device image version and architecture (arm64)
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.new_version }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_PREFIX}/wegent-device:${VERSION}-arm64"
+          docker pull "$image"
+          test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "arm64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
 
   # ============================================================================
   # Device Multi-arch Manifest

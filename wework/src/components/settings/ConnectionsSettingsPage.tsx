@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  AlertCircle,
   Archive,
   ArrowLeft,
   Palette,
@@ -569,6 +570,7 @@ function CloudDeviceConnectionInfoDialog({
 }
 
 function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
+  const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const remoteTerminalClientFactory = useMemo(
     () =>
@@ -590,6 +592,8 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [pendingIdeUrl, setPendingIdeUrl] = useState<string | null>(null)
   const [metricsState, setMetricsState] = useState<{
     deviceId: string
     value: CloudDeviceMetricsResponse | null
@@ -630,6 +634,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const handleStartTerminal = useCallback(async () => {
     if (device.status !== 'online') return
     setSessionLoading('terminal')
+    setSessionError(null)
     try {
       const result = await createSettingsDeviceApi(cloudConnection).startTerminal(device.device_id)
       if (result.url) {
@@ -642,15 +647,19 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       setTerminalSession(result)
     } catch (e) {
       console.error('Failed to start terminal:', e)
+      setSessionError(
+        e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
+      )
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device, remoteTerminalClientFactory])
+  }, [cloudConnection, device, remoteTerminalClientFactory, t])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
       if (device.status !== 'online') return
       setSessionLoading(type)
+      setSessionError(null)
       try {
         const deviceApi = createSettingsDeviceApi(cloudConnection)
         const result =
@@ -658,16 +667,45 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             ? await deviceApi.startTerminal(device.device_id)
             : await deviceApi.startCodeServer(device.device_id)
         if (result.url) {
+          if (type === 'code-server') {
+            setPendingIdeUrl(result.url)
+            return
+          }
           await openExternalUrl(result.url)
         }
       } catch (e) {
         console.error(`Failed to start ${type}:`, e)
+        setSessionError(
+          e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
+        )
       } finally {
         setSessionLoading(null)
       }
     },
-    [cloudConnection, device.device_id, device.status]
+    [cloudConnection, device.device_id, device.status, t]
   )
+
+  const handleOpenPendingIde = useCallback(async () => {
+    if (!pendingIdeUrl) return
+    setSessionError(null)
+    try {
+      await openExternalUrl(pendingIdeUrl)
+      setPendingIdeUrl(null)
+    } catch (e) {
+      setSessionError(
+        e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
+      )
+    }
+  }, [pendingIdeUrl, t])
+
+  let pendingIdeTarget = pendingIdeUrl
+  if (pendingIdeUrl) {
+    try {
+      pendingIdeTarget = new URL(pendingIdeUrl).origin
+    } catch {
+      // Keep the complete value visible if the Backend returned an invalid URL.
+    }
+  }
 
   const handleStartEdit = () => {
     setEditName(device.name)
@@ -912,6 +950,43 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             )}
           </div>
         </div>
+        {sessionError && (
+          <div
+            data-testid={`connection-session-error-${device.device_id}`}
+            className="mt-3 flex items-start gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-500"
+          >
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{sessionError}</span>
+          </div>
+        )}
+        {pendingIdeUrl && (
+          <div
+            data-testid={`connection-ide-target-${device.device_id}`}
+            className="mt-3 flex items-center justify-between gap-3 rounded-md bg-blue-500/10 px-3 py-2 text-xs text-text-secondary"
+          >
+            <span className="min-w-0">
+              {t('workbench.connection_ide_target')}: <strong>{pendingIdeTarget}</strong>
+            </span>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                data-testid={`connection-ide-cancel-${device.device_id}`}
+                onClick={() => setPendingIdeUrl(null)}
+                className="rounded px-2 py-1 hover:bg-muted"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid={`connection-ide-confirm-${device.device_id}`}
+                onClick={() => void handleOpenPendingIde()}
+                className="rounded bg-text-primary px-2 py-1 text-background"
+              >
+                {t('workbench.connection_ide_open')}
+              </button>
+            </div>
+          </div>
+        )}
         {supportsDeviceMetrics(device) && (
           <div
             data-testid={`connection-device-metrics-${device.device_id}`}
@@ -1154,6 +1229,14 @@ function ConnectionsDeviceSettingsPage({
   const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
 
+  const applyDevices = useCallback((allDevices: DeviceInfo[]) => {
+    const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
+    setDevices(claudeCodeDevices)
+    if (claudeCodeDevices.some(isCloudDevice)) {
+      setCreating(false)
+    }
+  }, [])
+
   const fetchDevices = useCallback(async () => {
     if (!cloudConnection.isConnected) {
       setDevices([])
@@ -1162,17 +1245,25 @@ function ConnectionsDeviceSettingsPage({
     }
     try {
       const allDevices = await createSettingsDeviceApi(cloudConnection).getAllDevices()
-      const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
-      setDevices(claudeCodeDevices)
-      if (claudeCodeDevices.some(isCloudDevice)) {
-        setCreating(false)
-      }
+      applyDevices(allDevices)
     } catch (e) {
       console.error('Failed to fetch devices:', e)
     } finally {
       setLoading(false)
     }
-  }, [cloudConnection])
+  }, [applyDevices, cloudConnection])
+
+  const handleDeviceCreated = useCallback(
+    (discoveredDevices?: DeviceInfo[]) => {
+      if (discoveredDevices) {
+        applyDevices(discoveredDevices)
+        setLoading(false)
+        return
+      }
+      return fetchDevices()
+    },
+    [applyDevices, fetchDevices]
+  )
 
   const cloudDevices = devices.filter(isCloudDevice)
   const remoteDevices = devices.filter(isRemoteDevice)
@@ -1363,7 +1454,7 @@ function ConnectionsDeviceSettingsPage({
         hasCloudDevice={cloudDevices.length > 0 || creating}
         cloudConnection={cloudConnection}
         onClose={() => setAddDialogOpen(false)}
-        onCreated={fetchDevices}
+        onCreated={handleDeviceCreated}
         onCreatingChange={setCreating}
       />
     </>
