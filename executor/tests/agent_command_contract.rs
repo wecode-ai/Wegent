@@ -930,7 +930,11 @@ fn claude_command_injects_selected_knowledge_for_code_tasks() {
     };
 
     let spec = build_claude_command(&request, "claude");
-    let prompt = &spec.args()[1];
+    let query: serde_json::Value = serde_json::from_str(spec.stdin_input().unwrap().trim())
+        .expect("Claude stdin should contain a stream-json user message");
+    let prompt = query["message"]["content"]
+        .as_str()
+        .expect("Claude stdin user message should contain text");
 
     assert!(prompt.starts_with("<selected_knowledge_sources>"));
     assert!(prompt.ends_with("Implement the requested change."));
