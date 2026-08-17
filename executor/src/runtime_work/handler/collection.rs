@@ -469,16 +469,14 @@ impl RuntimeWorkRpcHandler {
                 });
             }
 
-            let mut next_order = 0_usize;
             let ordered_indices = if group.unlisted_before_listed {
                 group.unlisted.into_iter().chain(group.listed)
             } else {
                 group.listed.into_iter().chain(group.unlisted)
             };
-            for index in ordered_indices {
+            for (next_order, index) in ordered_indices.enumerate() {
                 links[index].list_order = Some(next_order);
                 links[index].sidebar_order = Some(next_order);
-                next_order += 1;
             }
         }
     }
