@@ -620,7 +620,7 @@ function WorkbenchPaneView({
           </TitlebarTooltip>
         </div>
       ) : null}
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className={cn(styles.paneContent, 'relative min-h-0 min-w-0 flex-1 overflow-hidden')}>
         {host ? (
           <div
             data-active-workbench-pane={focused ? 'true' : 'false'}

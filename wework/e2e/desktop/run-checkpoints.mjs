@@ -20,15 +20,19 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
+  'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
+  'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'change-request-status',
   'claude-runtime',
   'local-file-preview',
   'local-harness',
+  'offline-local-project-space',
   'runtime-task-queue',
+  'context-compaction',
   'split-workbench',
   'temporary-chat',
 ])

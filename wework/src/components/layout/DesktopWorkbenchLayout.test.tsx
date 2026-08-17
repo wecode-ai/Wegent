@@ -760,6 +760,7 @@ describe('DesktopWorkbenchLayout', () => {
       selectedModel: null,
       selectedModelOptions: {},
       selectedSkills: [],
+      attachmentStateByScope: {},
       attachments: [],
       uploadingFiles: new Map(),
       errors: new Map(),
@@ -770,9 +771,13 @@ describe('DesktopWorkbenchLayout', () => {
       setSelectedSkills: vi.fn(),
       toggleSkill: vi.fn(),
       handleFileSelect: vi.fn(),
+      handleFileSelectForScope: vi.fn(),
       addExistingAttachment: vi.fn(),
+      addExistingAttachmentForScope: vi.fn(),
       removeAttachment: vi.fn(),
+      removeAttachmentForScope: vi.fn(),
       resetAttachments: vi.fn(),
+      resetAttachmentsForScope: vi.fn(),
       listLocalSkills: vi.fn().mockResolvedValue([]),
     },
     projectWork: {
@@ -1263,6 +1268,12 @@ describe('DesktopWorkbenchLayout', () => {
       },
     } as unknown as WorkbenchPaneContextValue
     const paneSession = {
+      scopeKey: projectChat.scopeKey,
+      attachments: projectChat.attachments,
+      uploadingFiles: projectChat.uploadingFiles,
+      attachmentErrors: projectChat.errors,
+      handleFileSelect: projectChat.handleFileSelect,
+      removeAttachment: projectChat.removeAttachment,
       messages: props.messages ?? [],
       queuedMessages: props.queuedMessages ?? [],
       guidanceMessages: props.guidanceMessages ?? [],
@@ -4194,14 +4205,18 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
+    expect(select).toHaveTextContent('云设备')
+    expect(select).toHaveTextContent('远程 Docker 设备')
+    expect(select).toHaveTextContent('Cloud Device')
+    expect(select).toHaveTextContent('Remote Device')
     expect(select).toHaveTextContent('10.201.3.200')
     expect(select).toHaveTextContent('127.0.0.1')
-    expect(select).not.toHaveTextContent('Cloud Device')
-    expect(select).not.toHaveTextContent('Remote Device')
     expect(select).not.toHaveTextContent('Local Device')
+    expect(screen.getByTestId('standalone-remote-device-option-cloud-device')).toBeEnabled()
+    expect(screen.getByTestId('standalone-remote-device-option-remote-device')).toBeEnabled()
   })
 
-  test('remote project dialog excludes incompatible non-local devices', async () => {
+  test('remote project dialog shows a version-mismatched Docker device as disabled', async () => {
     const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
 
     render(
@@ -4213,13 +4228,14 @@ describe('DesktopWorkbenchLayout', () => {
           devices: [
             {
               id: 1,
-              device_id: 'old-device',
-              name: 'Old Device',
+              device_id: 'remote-device',
+              name: 'Remote Docker Device',
               status: 'online',
               is_default: false,
-              device_type: 'cloud',
+              device_type: 'remote',
               bind_shell: 'claudecode',
-              executor_version: '1.8.4',
+              executor_version: 'dev',
+              client_ip: '10.201.3.201',
               slot_used: 0,
             },
           ],
@@ -4233,7 +4249,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
     expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
-    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent(
+      'Remote Docker Device'
+    )
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent('10.201.3.201')
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveTextContent(
+      '需升级到 v1.8.5'
+    )
+    expect(screen.getByTestId('standalone-remote-device-option-remote-device')).toBeDisabled()
+    expect(screen.getByTestId('standalone-remote-device-unavailable-hint')).toHaveTextContent(
+      '版本不匹配'
+    )
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 

@@ -749,7 +749,7 @@ async function verifyWorkspaceTabIsolation(control) {
     'workspace-tabs-isolation-05-detached-window.png'
   )
 
-  const sourceStorageKey = 'wework.workspaceTabs.v2:main'
+  const sourceStorageKey = 'wework.workspaceTabs.v3:main'
   const sourceTabRemovalStartedAt = Date.now()
   let sourceTabs = []
   while (Date.now() - sourceTabRemovalStartedAt < DEFAULT_STEP_TIMEOUT_MS) {

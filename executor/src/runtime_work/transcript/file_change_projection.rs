@@ -357,7 +357,7 @@ fn workspace_relative_path(path: &str, workspace_path: &str) -> String {
 }
 
 pub(super) fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
-    if looks_like_unified_diff(diff, change_type) {
+    if looks_like_unified_diff(diff) {
         return prefixed_diff_stats(diff);
     }
 
@@ -369,11 +369,91 @@ pub(super) fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
     }
 }
 
-fn looks_like_unified_diff(diff: &str, change_type: &str) -> bool {
-    diff.lines().any(|line| {
-        line.starts_with("@@ ")
-            || line.starts_with("diff --git ")
-            || (change_type != "created" && (line.starts_with("+++ ") || line.starts_with("--- ")))
+fn looks_like_unified_diff(diff: &str) -> bool {
+    let lines = diff.lines().collect::<Vec<_>>();
+    if lines.iter().any(|line| line.starts_with("@@ ")) {
+        return has_valid_unified_hunks(&lines);
+    }
+
+    lines.windows(2).any(|lines| {
+        is_unified_file_marker(lines[0], "--- ", "a/")
+            && is_unified_file_marker(lines[1], "+++ ", "b/")
+    })
+}
+
+fn has_valid_unified_hunks(lines: &[&str]) -> bool {
+    let mut index = 0;
+    let mut found_hunk = false;
+    while index < lines.len() {
+        if !lines[index].starts_with("@@ ") {
+            index += 1;
+            continue;
+        }
+
+        let Some((expected_old, expected_new)) = unified_hunk_counts(lines[index]) else {
+            return false;
+        };
+        found_hunk = true;
+        index += 1;
+
+        let mut old_lines = 0;
+        let mut new_lines = 0;
+        while index < lines.len()
+            && !lines[index].starts_with("@@ ")
+            && !lines[index].starts_with("diff --git ")
+        {
+            let line = lines[index];
+            if line.starts_with("\\ ") {
+                index += 1;
+                continue;
+            }
+            match line.as_bytes().first() {
+                Some(b' ') => {
+                    old_lines += 1;
+                    new_lines += 1;
+                }
+                Some(b'-') => old_lines += 1,
+                Some(b'+') => new_lines += 1,
+                _ => return false,
+            }
+            if old_lines > expected_old || new_lines > expected_new {
+                return false;
+            }
+            index += 1;
+        }
+        if old_lines != expected_old || new_lines != expected_new {
+            return false;
+        }
+    }
+
+    found_hunk
+}
+
+fn unified_hunk_counts(line: &str) -> Option<(usize, usize)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, _) = rest.split_once(" @@")?;
+    let (old_range, new_range) = ranges.split_once(" +")?;
+    Some((
+        unified_range_count(old_range)?,
+        unified_range_count(new_range)?,
+    ))
+}
+
+fn unified_range_count(range: &str) -> Option<usize> {
+    let mut values = range.split(',');
+    values.next()?.parse::<usize>().ok()?;
+    let count = values
+        .next()
+        .map(|value| value.parse::<usize>().ok())
+        .unwrap_or(Some(1))?;
+    values.next().is_none().then_some(count)
+}
+
+fn is_unified_file_marker(line: &str, marker: &str, path_prefix: &str) -> bool {
+    line.strip_prefix(marker).is_some_and(|path| {
+        path == "/dev/null"
+            || path.starts_with(path_prefix)
+            || path.starts_with(&format!("\"{path_prefix}"))
     })
 }
 
@@ -475,8 +555,14 @@ fn diff_with_file_header(
     diff: &str,
     workspace_path: &str,
 ) -> String {
-    if diff.trim_start().starts_with("diff --git ") {
-        return diff.to_owned();
+    let kind = kind.unwrap_or("update").to_ascii_lowercase();
+    let change_type = match kind.as_str() {
+        "add" | "create" | "created" => "created",
+        "delete" | "deleted" => "deleted",
+        _ => "modified",
+    };
+    if diff.trim_start().starts_with("diff --git ") && looks_like_unified_diff(diff) {
+        return format!("{}\n", trim_trailing_line_endings(diff));
     }
 
     let relative_path = workspace_relative_path(path, workspace_path);
@@ -488,7 +574,6 @@ fn diff_with_file_header(
         .map(|path| workspace_relative_path(path, workspace_path))
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| relative_path.clone());
-    let kind = kind.unwrap_or("update").to_ascii_lowercase();
     let old_file = if matches!(kind.as_str(), "add" | "create" | "created") {
         "/dev/null".to_owned()
     } else {
@@ -499,21 +584,62 @@ fn diff_with_file_header(
     } else {
         diff_git_path("b", &relative_path)
     };
-    let file_markers = if diff
-        .lines()
-        .any(|line| line.starts_with("--- ") || line.starts_with("+++ "))
+    let unified_diff = looks_like_unified_diff(diff);
+    let file_markers = if unified_diff
+        && diff
+            .lines()
+            .any(|line| line.starts_with("--- ") || line.starts_with("+++ "))
     {
         String::new()
     } else {
         format!("--- {old_file}\n+++ {new_file}\n")
+    };
+    let diff = if unified_diff {
+        trim_trailing_line_endings(diff).to_owned()
+    } else if matches!(change_type, "created" | "deleted") {
+        whole_file_unified_hunk(diff, change_type)
+    } else {
+        trim_trailing_line_endings(diff).to_owned()
     };
     format!(
         "diff --git {} {}\n{}{}\n",
         diff_git_path("a", &relative_old_path),
         diff_git_path("b", &relative_path),
         file_markers,
-        diff.trim_end()
+        diff
     )
+}
+
+fn trim_trailing_line_endings(value: &str) -> &str {
+    value.trim_end_matches(['\r', '\n'])
+}
+
+fn whole_file_unified_hunk(content: &str, change_type: &str) -> String {
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let line_count = lines.len();
+    let (hunk_header, prefix) = if change_type == "created" {
+        (format!("@@ -0,0 +1,{line_count} @@"), '+')
+    } else {
+        (format!("@@ -1,{line_count} +0,0 @@"), '-')
+    };
+    let mut hunk = String::with_capacity(content.len() + line_count + hunk_header.len() + 32);
+    hunk.push_str(&hunk_header);
+    hunk.push('\n');
+    for line in lines {
+        hunk.push(prefix);
+        hunk.push_str(line);
+        hunk.push('\n');
+    }
+    if !content.ends_with('\n') {
+        hunk.push_str("\\ No newline at end of file");
+    } else {
+        hunk.pop();
+    }
+    hunk
 }
 
 fn diff_git_path(prefix: &str, path: &str) -> String {
@@ -522,5 +648,105 @@ fn diff_git_path(prefix: &str, path: &str) -> String {
         format!("\"{path}\"")
     } else {
         path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{diff_stats, diff_with_file_header};
+
+    #[test]
+    fn normalizes_marker_like_whole_file_content() {
+        let incomplete_hunk = diff_with_file_header(
+            "/workspace/repo/incomplete.md",
+            None,
+            Some("add"),
+            "@@ -1 +1 @@\nplain text\n",
+            "/workspace/repo",
+        );
+        assert!(incomplete_hunk.contains("+@@ -1 +1 @@\n+plain text\n"));
+        assert_eq!(diff_stats(&incomplete_hunk, "created"), (2, 0));
+
+        let created = diff_with_file_header(
+            "/workspace/repo/created.md",
+            None,
+            Some("add"),
+            "diff --git is content\n@@ heading\n--- first\n+++ second\n",
+            "/workspace/repo",
+        );
+        assert!(created.contains("+diff --git is content\n+@@ heading\n+--- first\n++++ second\n"));
+
+        let deleted = diff_with_file_header(
+            "/workspace/repo/deleted.md",
+            None,
+            Some("delete"),
+            "--- heading\n+++ heading\n",
+            "/workspace/repo",
+        );
+        assert!(deleted.contains("---- heading\n-+++ heading\n"));
+    }
+
+    #[test]
+    fn preserves_trailing_whitespace_in_unified_diff() {
+        let diff = "@@ -1 +1 @@\n-old\n+new  \n";
+        let rendered = diff_with_file_header(
+            "/workspace/repo/file.txt",
+            None,
+            Some("update"),
+            diff,
+            "/workspace/repo",
+        );
+        assert!(rendered.ends_with("+new  \n"));
+
+        let full_diff = concat!(
+            "diff --git a/file.txt b/file.txt\n",
+            "--- a/file.txt\n",
+            "+++ b/file.txt\n",
+            "@@ -1 +1 @@\n",
+            "-old\n",
+            "+new\t\n",
+        );
+        let rendered = diff_with_file_header(
+            "/workspace/repo/file.txt",
+            None,
+            Some("update"),
+            full_diff,
+            "/workspace/repo",
+        );
+        assert!(rendered.ends_with("+new\t\n"));
+    }
+
+    #[test]
+    fn normalizes_deleted_and_empty_whole_files() {
+        let deleted = diff_with_file_header(
+            "/workspace/repo/deleted.txt",
+            None,
+            Some("delete"),
+            "first\nsecond\n",
+            "/workspace/repo",
+        );
+        assert!(deleted.contains("@@ -1,2 +0,0 @@\n-first\n-second\n"));
+        assert_eq!(diff_stats(&deleted, "deleted"), (0, 2));
+
+        for change_type in ["add", "delete"] {
+            let empty = diff_with_file_header(
+                "/workspace/repo/empty.txt",
+                None,
+                Some(change_type),
+                "",
+                "/workspace/repo",
+            );
+            assert_eq!(
+                diff_stats(
+                    &empty,
+                    if change_type == "add" {
+                        "created"
+                    } else {
+                        "deleted"
+                    }
+                ),
+                (0, 0)
+            );
+        }
     }
 }

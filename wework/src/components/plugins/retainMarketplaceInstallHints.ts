@@ -1,4 +1,5 @@
 import type { PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPluginItem } from './PluginManagementRows'
 
 /**
  * Progressive catalog paints can briefly reuse a stale cache snapshot after a
@@ -35,4 +36,50 @@ export function retainMarketplaceInstallHints(
       },
     }
   })
+}
+
+/**
+ * Keep the installed strip and marketplace actions on the same snapshot when a
+ * post-install catalog refresh temporarily lags behind the optimistic update.
+ */
+export function retainMarketplaceInstalledState(input: {
+  previousItems: PluginMarketplaceItem[]
+  nextItems: PluginMarketplaceItem[]
+  previousInstalled: InstalledPluginItem[]
+  nextInstalled: InstalledPluginItem[]
+  previousStateMatchesScope: boolean
+}): { items: PluginMarketplaceItem[]; installed: InstalledPluginItem[] } {
+  if (!input.previousStateMatchesScope) {
+    return { items: input.nextItems, installed: input.nextInstalled }
+  }
+  const hintedItems = retainMarketplaceInstallHints(input.previousItems, input.nextItems)
+  const nextItemsById = new Map(input.nextItems.map(item => [String(item.id), item]))
+  const retainedPluginIds = new Set(
+    hintedItems.flatMap(item => {
+      const next = nextItemsById.get(String(item.id))
+      const retained = item.installed && !next?.installed && item.installedPluginId != null
+      return retained ? [String(item.installedPluginId)] : []
+    })
+  )
+  if (retainedPluginIds.size === 0) {
+    return { items: hintedItems, installed: input.nextInstalled }
+  }
+
+  const installed = [...input.nextInstalled]
+  const installedIds = new Set(installed.map(plugin => String(plugin.id)))
+  for (const plugin of input.previousInstalled) {
+    const id = String(plugin.id)
+    if (!retainedPluginIds.has(id) || installedIds.has(id)) continue
+    installed.push(plugin)
+    installedIds.add(id)
+  }
+  const items = hintedItems.map(item => {
+    const next = nextItemsById.get(String(item.id))
+    const retainedId =
+      item.installed && !next?.installed && item.installedPluginId != null
+        ? String(item.installedPluginId)
+        : null
+    return retainedId && !installedIds.has(retainedId) && next ? next : item
+  })
+  return { items, installed }
 }

@@ -17,7 +17,7 @@ export interface DeviceSectionProps {
   icon: LucideIcon
   devices: DeviceInfo[]
   emptyMessage: string
-  type?: 'local' | 'cloud'
+  type?: 'local' | 'cloud' | 'remote'
   children: (device: DeviceInfo) => React.ReactNode
 }
 
@@ -27,7 +27,7 @@ export interface DeviceSectionProps {
  * Features:
  * - Section header with icon, title, and device count
  * - Device grid using render prop pattern
- * - Optional type filtering (local/cloud)
+ * - Optional type filtering (local/cloud/remote)
  * - Empty state placeholder when no devices
  *
  * Usage:

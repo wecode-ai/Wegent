@@ -304,6 +304,12 @@ export async function setEmbeddedBrowserBounds(
   })
 }
 
+export async function captureEmbeddedBrowserSnapshot(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<string> {
+  return invoke<string>('embedded_browser_capture_snapshot', browserArgs(label))
+}
+
 export async function navigateEmbeddedBrowser(
   url: string,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL

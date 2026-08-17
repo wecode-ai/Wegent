@@ -159,6 +159,11 @@ const RUNTIME_TRANSCRIPT_PAGE_SIZE =
     ? configuredRuntimeTranscriptPageSize
     : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
+const EMPTY_ATTACHMENT_STATE = {
+  attachments: [],
+  uploadingFiles: new Map(),
+  errors: new Map(),
+}
 
 export function useWorkbenchPaneSession({
   currentRuntimeTask,
@@ -221,6 +226,25 @@ export function useWorkbenchPaneSession({
   const inputScopeKey = currentRuntimeTask
     ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
     : projectChat.scopeKey
+  const attachmentState =
+    projectChat.attachmentStateByScope[inputScopeKey] ?? EMPTY_ATTACHMENT_STATE
+  const addExistingAttachment = useCallback(
+    (attachment: Attachment) =>
+      projectChat.addExistingAttachmentForScope(inputScopeKey, attachment),
+    [inputScopeKey, projectChat]
+  )
+  const handleFileSelect = useCallback(
+    (files: File | File[]) => projectChat.handleFileSelectForScope(inputScopeKey, files),
+    [inputScopeKey, projectChat]
+  )
+  const removeAttachment = useCallback(
+    (attachmentId: number) => projectChat.removeAttachmentForScope(inputScopeKey, attachmentId),
+    [inputScopeKey, projectChat]
+  )
+  const resetAttachments = useCallback(
+    () => projectChat.resetAttachmentsForScope(inputScopeKey),
+    [inputScopeKey, projectChat]
+  )
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
   const setInputForScope = projectChat.setInputForScope
   const scopedSetInput = useCallback(
@@ -1634,7 +1658,7 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
-        const currentAttachments = projectChat.attachments
+        const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
         debugComposerEvent('pane-send-called', {
           hasSubmittedValue: inputOverride !== undefined,
@@ -1677,7 +1701,7 @@ export function useWorkbenchPaneSession({
               ...getRuntimeModelFields(),
             }
 
-            projectChat.resetAttachments()
+            resetAttachments()
             if (paneStatus.isBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
@@ -1685,7 +1709,7 @@ export function useWorkbenchPaneSession({
                 status: 'active',
               })
               if (!response.accepted) {
-                currentAttachments.forEach(projectChat.addExistingAttachment)
+                currentAttachments.forEach(addExistingAttachment)
                 setError(response.error || i18n.t('workbench.goal_set_failed'))
                 return false
               }
@@ -1725,7 +1749,7 @@ export function useWorkbenchPaneSession({
               setGoalDraftActive(false)
               setCodeCommentContexts([])
             } else {
-              currentAttachments.forEach(projectChat.addExistingAttachment)
+              currentAttachments.forEach(addExistingAttachment)
               setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
             }
             return sent
@@ -1962,7 +1986,7 @@ export function useWorkbenchPaneSession({
             if (isRuntimeTaskAddress(sent)) {
               dispatchMessages({ type: 'reset', messages: [] })
             }
-            projectChat.resetAttachments()
+            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else {
             restoreInputAfterFailure(visibleSubmittedInput)
@@ -1984,12 +2008,12 @@ export function useWorkbenchPaneSession({
           }
 
           if (paneStatus.isBusy) {
-            projectChat.resetAttachments()
+            resetAttachments()
             setCodeCommentContexts([])
             if (options.interruptWhenBusy) {
               const sent = await interruptAndSendQueuedMessage(queuedMessage)
               if (!sent) {
-                currentAttachments.forEach(projectChat.addExistingAttachment)
+                currentAttachments.forEach(addExistingAttachment)
                 setCodeCommentContexts(codeCommentContexts)
               } else {
                 setInput('')
@@ -2009,12 +2033,12 @@ export function useWorkbenchPaneSession({
           })
           if (sent) {
             setInput('')
-            projectChat.resetAttachments()
+            resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
-            projectChat.resetAttachments()
+            resetAttachments()
             setCodeCommentContexts([])
           } else {
             setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
@@ -2032,12 +2056,12 @@ export function useWorkbenchPaneSession({
           ...getRuntimeModelFields(),
         }
 
-        projectChat.resetAttachments()
+        resetAttachments()
         if (paneStatus.isBusy) {
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
-              currentAttachments.forEach(projectChat.addExistingAttachment)
+              currentAttachments.forEach(addExistingAttachment)
             } else {
               setInput('')
             }
@@ -2064,13 +2088,15 @@ export function useWorkbenchPaneSession({
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
         } else {
-          currentAttachments.forEach(projectChat.addExistingAttachment)
+          currentAttachments.forEach(addExistingAttachment)
           setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
         }
         return sent || isRuntimeTaskBusyError(sendError)
       },
       [
+        addExistingAttachment,
         appendLocalUserMessage,
+        attachmentState.attachments,
         clearCodeCommentsAfterCommit,
         codeCommentContexts,
         compactRuntimePaneTask,
@@ -2084,8 +2110,8 @@ export function useWorkbenchPaneSession({
         loadRuntimeTranscriptForPane,
         pendingGoalState,
         paneStatus.isBusy,
-        projectChat,
         queuedMessages.length,
+        resetAttachments,
         restoreInputAfterFailure,
         sendCurrentInput,
         sendQueuedMessageAsGuidance,
@@ -2207,11 +2233,11 @@ export function useWorkbenchPaneSession({
 
       setInput(queuedMessage.content)
       queuedMessage.attachments?.forEach(attachment => {
-        projectChat.addExistingAttachment(attachment)
+        addExistingAttachment(attachment)
       })
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [projectChat, queuedMessages, setInput, setQueuedMessages]
+    [addExistingAttachment, queuedMessages, setInput, setQueuedMessages]
   )
 
   const sendQueuedAsGuidance = useCallback(
@@ -2228,7 +2254,7 @@ export function useWorkbenchPaneSession({
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage) return
       const submittedInput = input.trim()
-      const currentAttachments = projectChat.attachments
+      const currentAttachments = attachmentState.attachments
       const combinedMessage: RuntimePaneQueuedMessage = {
         ...queuedMessage,
         content: [queuedMessage.content, submittedInput].filter(Boolean).join('\n\n'),
@@ -2239,20 +2265,22 @@ export function useWorkbenchPaneSession({
         notice: undefined,
       }
       setInput('')
-      projectChat.resetAttachments()
+      resetAttachments()
       const sent = await interruptAndSendQueuedMessage(combinedMessage)
       if (sent) return
       restoreInputAfterFailure(combinedMessage.displayContent ?? combinedMessage.content)
-      combinedMessage.attachments?.forEach(projectChat.addExistingAttachment)
+      combinedMessage.attachments?.forEach(addExistingAttachment)
       if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
         setCodeCommentContexts(combinedMessage.codeComments)
       }
     },
     [
+      addExistingAttachment,
+      attachmentState.attachments,
       input,
       interruptAndSendQueuedMessage,
-      projectChat,
       queuedMessages,
+      resetAttachments,
       restoreInputAfterFailure,
       setInput,
     ]
@@ -2522,6 +2550,12 @@ export function useWorkbenchPaneSession({
   ])
 
   return {
+    scopeKey: inputScopeKey,
+    attachments: attachmentState.attachments,
+    uploadingFiles: attachmentState.uploadingFiles,
+    attachmentErrors: attachmentState.errors,
+    handleFileSelect,
+    removeAttachment,
     messages,
     queuedMessages,
     queuedMessagesPaused,
