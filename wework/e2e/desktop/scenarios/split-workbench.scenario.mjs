@@ -271,7 +271,7 @@ async function assertCompletedPanesStayIdle(control, paneSelectors, durationMs) 
       0,
       'A completed split-pane task periodically returned to the thinking state'
     )
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await new Promise(resolve => setTimeout(resolve, 250))
   }
 }
 
