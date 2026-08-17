@@ -424,8 +424,11 @@ class MrService:
         current = rounds[-1]
         note_id = int(attrs.get("id") or 0)
         # A reply inside an existing discussion is part of that feedback, not
-        # new feedback; ignore it entirely.
-        if int(attrs.get("in_reply_to_id") or 0):
+        # new feedback; ignore it entirely. GitLab's note webhook does not
+        # always carry in_reply_to_id, so fall back to discussion membership.
+        if int(attrs.get("in_reply_to_id") or 0) or self._discussion_exists(
+            db, record, str(attrs.get("discussion_id") or "")
+        ):
             return
         existing = {
             int(n.get("id") or 0)
@@ -522,32 +525,47 @@ class MrService:
                 fetch_error = True
         notes: list[dict[str, object]] = []
         try:
-            notes_data = client.request_all(
+            discussions_data = client.request_all(
                 "GET",
-                self._api_path(client, f"/merge_requests/{record.mr_iid}/notes"),
+                self._api_path(client, f"/merge_requests/{record.mr_iid}/discussions"),
                 not_found_ok=True,
             )
-            if isinstance(notes_data, list):
-                for note in notes_data:
-                    if not isinstance(note, dict) or bool(note.get("system")):
+            if isinstance(discussions_data, list):
+                for discussion in discussions_data:
+                    if not isinstance(discussion, dict):
                         continue
-                    body = str(note.get("body") or "").strip()
-                    if not body:
+                    d_notes = discussion.get("notes")
+                    if not isinstance(d_notes, list):
                         continue
-                    notes.append(
-                        {
-                            "id": int(note.get("id") or 0),
-                            "author": str(
-                                (note.get("author") or {}).get("username") or ""
-                            ),
-                            "note": body,
-                            "web_url": str(note.get("web_url") or ""),
-                            "created_at": str(note.get("created_at") or ""),
-                            "discussion_id": str(note.get("discussion_id") or ""),
-                            "in_reply_to_id": int(note.get("in_reply_to_id") or 0),
-                            "position": _note_position(note),
-                        }
-                    )
+                    root_id = 0
+                    for idx, note in enumerate(d_notes):
+                        if idx == 0:
+                            root_id = (
+                                int(note.get("id") or 0)
+                                if isinstance(note, dict)
+                                else 0
+                            )
+                        if not isinstance(note, dict) or bool(note.get("system")):
+                            continue
+                        body = str(note.get("body") or "").strip()
+                        if not body:
+                            continue
+                        notes.append(
+                            {
+                                "id": int(note.get("id") or 0),
+                                "author": str(
+                                    (note.get("author") or {}).get("username") or ""
+                                ),
+                                "note": body,
+                                "web_url": str(note.get("web_url") or ""),
+                                "created_at": str(note.get("created_at") or ""),
+                                # The first note of a discussion is the standalone
+                                # root; any later note replies to it.
+                                "discussion_id": str(discussion.get("id") or ""),
+                                "in_reply_to_id": root_id if idx > 0 else 0,
+                                "position": _note_position(note),
+                            }
+                        )
         except Exception:
             logger.warning(
                 "Failed to fetch notes for MR %s (integration %s)",
@@ -993,6 +1011,26 @@ class MrService:
             current.get("notes") if isinstance(current.get("notes"), list) else []
         )
         return not current_notes
+
+    def _discussion_exists(
+        self, db: Session, record: MRRecord, discussion_id: str
+    ) -> bool:
+        """Whether any stored note already belongs to the given discussion.
+
+        Used by the note webhook to tell a reply (same discussion, so a prior
+        note exists) from a brand-new standalone comment.
+        """
+        if not discussion_id:
+            return False
+        rounds = record.rounds_json if isinstance(record.rounds_json, list) else []
+        for item in rounds:
+            for n in item.get("notes") or []:
+                if (
+                    isinstance(n, dict)
+                    and str(n.get("discussion_id") or "") == discussion_id
+                ):
+                    return True
+        return False
 
     def _transition_card(
         self,

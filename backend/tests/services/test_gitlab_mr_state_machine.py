@@ -114,6 +114,15 @@ class FakeGitlab:
         files: dict[str, object] | None = None,
         not_found_ok: bool = False,
     ) -> Any:
+        if path.endswith("/merge_requests/1/discussions"):
+            # Group flat notes into discussions: notes sharing a discussion_id
+            # form one thread whose first note is the root and the rest replies;
+            # notes without one are standalone single-note discussions.
+            by_id: dict[str, list[dict[str, Any]]] = {}
+            for note in self.notes:
+                d_id = str(note.get("discussion_id") or f"disc-{note['id']}")
+                by_id.setdefault(d_id, []).append(note)
+            return [{"id": d_id, "notes": notes} for d_id, notes in by_id.items()]
         if path.endswith("/merge_requests/1/notes"):
             return list(self.notes)
         if path.endswith("/merge_requests/1"):
@@ -485,6 +494,65 @@ def test_reply_to_review_is_ignored(env: dict[str, Any]) -> None:
     current_notes = record.rounds_json[-1].get("notes") or []
     assert all(int(n["id"]) != 12 for n in current_notes)
     assert _card(db, env["project"]).status == before
+
+
+def test_reply_shared_discussion_ignored_in_fetch_and_webhook(
+    env: dict[str, Any],
+) -> None:
+    """A reply is detected by discussion membership (not only in_reply_to_id):
+    it must be dropped both when the round fetch groups discussions and when the
+    note webhook carries a discussion_id that already exists."""
+    db = env["db"]
+    fake: FakeGitlab = env["fake"]
+    mr_service.handle_merge_request_event(
+        db, env["integration"], env["project"], _mr_event(1, "opened", SHA1)
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    fake.notes = [
+        {
+            "id": 101,
+            "system": False,
+            "body": "rename this",
+            "author": {"username": "bob"},
+            "web_url": "u",
+            "discussion_id": "D1",
+        },
+        {
+            "id": 102,
+            "system": False,
+            "body": "done",
+            "author": {"username": "alice"},
+            "web_url": "u",
+            "discussion_id": "D1",
+        },
+    ]
+    mr_service.handle_pipeline_event(
+        db, env["integration"], env["project"], _pipeline_event(SHA1, "failed")
+    )
+    db.commit()
+    record = _record(db, env["integration"])
+    current_notes = record.rounds_json[-1].get("notes") or []
+    # The round fetch only keeps the standalone root of discussion D1.
+    assert {int(n["id"]) for n in current_notes} == {101}
+
+    # A webhook reply in the existing D1 thread is ignored.
+    reply = _note_event(1, 103, "also done")
+    reply["object_attributes"]["discussion_id"] = "D1"
+    mr_service.handle_note_event(db, env["integration"], env["project"], reply)
+    db.commit()
+    record = _record(db, env["integration"])
+    current_notes = record.rounds_json[-1].get("notes") or []
+    assert not any(int(n["id"]) == 103 for n in current_notes)
+
+    # A brand-new standalone discussion is still processed.
+    fresh = _note_event(1, 104, "new feedback")
+    fresh["object_attributes"]["discussion_id"] = "D2"
+    mr_service.handle_note_event(db, env["integration"], env["project"], fresh)
+    db.commit()
+    record = _record(db, env["integration"])
+    current_notes = record.rounds_json[-1].get("notes") or []
+    assert any(int(n["id"]) == 104 for n in current_notes)
 
 
 def test_standalone_comment_pulls_card_back_from_in_review(

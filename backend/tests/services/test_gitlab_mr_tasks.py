@@ -50,6 +50,12 @@ class FakeGitlab:
     ) -> Any:
         if "/pipelines/" in path and path.endswith("/jobs"):
             return list(self.jobs)
+        if path.endswith("/merge_requests/1/discussions"):
+            by_id: dict[str, list[dict[str, Any]]] = {}
+            for note in self.notes:
+                d_id = str(note.get("discussion_id") or f"disc-{note['id']}")
+                by_id.setdefault(d_id, []).append(note)
+            return [{"id": d_id, "notes": notes} for d_id, notes in by_id.items()]
         if path.endswith("/merge_requests/1/notes"):
             return list(self.notes)
         return {}
