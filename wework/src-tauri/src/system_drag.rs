@@ -56,17 +56,15 @@ fn ensure_panel(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
         .map_err(|error| format!("Failed to create system drag panel: {error}"))
 }
 
-fn show_panel(app: &AppHandle) {
-    let Ok(window) = ensure_panel(app) else {
-        return;
-    };
-    if let Err(error) = position_panel_at_mouse_screen(&window) {
-        log::warn!("Failed to position system drag panel: {error}");
-        return;
-    }
+fn show_panel(app: &AppHandle) -> Result<(), String> {
+    let window = ensure_panel(app)?;
+    position_panel_at_mouse_screen(&window)?;
     if !window.is_visible().unwrap_or(false) {
-        let _ = window.show();
+        window
+            .show()
+            .map_err(|error| format!("Failed to show system drag panel: {error}"))?;
     }
+    Ok(())
 }
 
 fn panel_top_left_for_visible_frame(
@@ -249,7 +247,9 @@ fn handle_drag_event(
         begin_drag(&state);
     }
     if state.drag_in_progress.load(Ordering::SeqCst) {
-        show_panel(app);
+        if let Err(error) = show_panel(app) {
+            log::warn!("Failed to show system drag panel: {error}");
+        }
     }
 }
 
@@ -404,13 +404,9 @@ fn require_desktop_e2e() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn show_system_drag_panel_for_e2e(app: AppHandle) -> Result<bool, String> {
+pub fn show_system_drag_panel_for_e2e(app: AppHandle) -> Result<(), String> {
     require_desktop_e2e()?;
-    show_panel(&app);
-    app.get_webview_window(PANEL_LABEL)
-        .ok_or_else(|| "System drag panel window is unavailable".to_string())?
-        .is_visible()
-        .map_err(|error| format!("Failed to read system drag panel visibility: {error}"))
+    show_panel(&app)
 }
 
 #[tauri::command]

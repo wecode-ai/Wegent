@@ -1094,8 +1094,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'getWindowFocusSnapshot':
       return getWindowFocusSnapshot()
-    case 'showSystemDragPanel':
-      return String(await invoke<boolean>('show_system_drag_panel_for_e2e'))
+    case 'showSystemDragPanel': {
+      await invoke<void>('show_system_drag_panel_for_e2e')
+      return ''
+    }
     case 'getSystemDragPanelVisibility':
       return String(await invoke<boolean>('get_system_drag_panel_visibility_for_e2e'))
     case 'completeSystemDragDrop':
