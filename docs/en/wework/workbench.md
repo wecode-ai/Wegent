@@ -22,7 +22,7 @@ Selecting **New Issue** in a workspace opens a lightweight composer instead of a
 
 Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. A successful runtime task moves the work item to **Completed** instead of leaving a stale in-progress card or removing it from the board.
 
-The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** is an explicit new-tab action: Wework creates a board tab focused on the linked work item while preserving the original Task tab.
+The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
 
 Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
 
