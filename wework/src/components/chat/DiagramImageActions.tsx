@@ -1,4 +1,12 @@
-import { Check, Copy, Download, LoaderCircle, TriangleAlert } from 'lucide-react'
+import {
+  Check,
+  Copy,
+  Download,
+  LoaderCircle,
+  Maximize2,
+  Minimize2,
+  TriangleAlert,
+} from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import { copyDiagramPng, renderDiagramPng, saveDiagramPng } from './diagramImageExport'
@@ -10,9 +18,17 @@ interface DiagramImageActionsProps {
   containerRef: RefObject<HTMLElement | null>
   filename: string
   theme: 'dark' | 'light' | 'system'
+  fullscreen?: boolean
+  onToggleFullscreen?: () => void
 }
 
-export function DiagramImageActions({ containerRef, filename, theme }: DiagramImageActionsProps) {
+export function DiagramImageActions({
+  containerRef,
+  filename,
+  theme,
+  fullscreen = false,
+  onToggleFullscreen,
+}: DiagramImageActionsProps) {
   const { t } = useTranslation()
   const [copyState, setCopyState] = useState<ActionState>('idle')
   const [saveState, setSaveState] = useState<ActionState>('idle')
@@ -53,6 +69,9 @@ export function DiagramImageActions({ containerRef, filename, theme }: DiagramIm
       : saveState === 'error'
         ? t('workbench.diagram_image_save_failed', '保存图片失败')
         : t('workbench.diagram_save_image', '保存图片')
+  const fullscreenLabel = fullscreen
+    ? t('workbench.diagram_exit_full_screen', '退出全屏')
+    : t('workbench.diagram_full_screen', '全屏查看')
 
   return (
     <div className="absolute bottom-3 right-3 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-1 shadow-sm backdrop-blur">
@@ -78,6 +97,19 @@ export function DiagramImageActions({ containerRef, filename, theme }: DiagramIm
       >
         <ActionIcon state={saveState} idleIcon={<Download className="h-4 w-4" />} />
       </button>
+      {onToggleFullscreen ? (
+        <button
+          type="button"
+          data-testid={fullscreen ? 'diagram-exit-fullscreen-button' : 'diagram-fullscreen-button'}
+          aria-label={fullscreenLabel}
+          title={fullscreenLabel}
+          autoFocus={fullscreen}
+          onClick={onToggleFullscreen}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+        >
+          {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
+      ) : null}
     </div>
   )
 }

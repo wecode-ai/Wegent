@@ -107,3 +107,28 @@ test('copies and saves the rendered diagram as a PNG', async () => {
     expect(imageExportMocks.save).toHaveBeenCalledWith(expect.any(Blob), 'mermaid-diagram.png')
   })
 })
+
+test('opens the diagram full screen and exits with Escape', async () => {
+  const user = userEvent.setup()
+  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
+
+  await user.click(screen.getByTestId('diagram-fullscreen-button'))
+
+  expect(screen.getByTestId('assistant-diagram-fullscreen')).toBeInTheDocument()
+  expect(screen.getByTestId('diagram-exit-fullscreen-button')).toHaveFocus()
+
+  await user.keyboard('{Escape}')
+
+  expect(screen.queryByTestId('assistant-diagram-fullscreen')).not.toBeInTheDocument()
+  expect(screen.getByTestId('diagram-fullscreen-button')).toBeInTheDocument()
+})
+
+test('exits the diagram full screen from the collapse action', async () => {
+  const user = userEvent.setup()
+  render(<MarkdownDiagramPreview code={'graph LR\nA --> B'} language="mermaid" />)
+
+  await user.click(screen.getByTestId('diagram-fullscreen-button'))
+  await user.click(screen.getByTestId('diagram-exit-fullscreen-button'))
+
+  expect(screen.queryByTestId('assistant-diagram-fullscreen')).not.toBeInTheDocument()
+})
