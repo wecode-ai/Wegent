@@ -883,11 +883,12 @@ fn codex_thread_has_in_progress_turn_after(
             string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
         })
         .any(|turn| {
-            local_completed_at.is_none_or(|completed_at| {
-                timestamp_ms_field(turn, "startedAt")
-                    .or_else(|| timestamp_ms_field(turn, "started_at"))
-                    .is_some_and(|started_at| started_at > completed_at)
-            })
+            let Some(completed_at) = local_completed_at else {
+                return true;
+            };
+            timestamp_ms_field(turn, "startedAt")
+                .or_else(|| timestamp_ms_field(turn, "started_at"))
+                .is_some_and(|started_at| started_at > completed_at)
         })
 }
 
