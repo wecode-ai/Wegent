@@ -14,6 +14,7 @@ import {
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
 import type { AppPreferences } from '@/tauri/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
@@ -950,6 +951,11 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
+      logRuntimeTaskCreateStage('workbench-model-prepare-started', {
+        taskId,
+        deviceId: optimisticDeviceId,
+        modelId: executionModel.modelId ?? null,
+      })
       try {
         const prepared = await executorClient.runtime.prepareRuntimeModel({
           deviceId: optimisticDeviceId,
@@ -970,7 +976,18 @@ export function useWorkbenchRuntimeMessaging({
             return false
           }
         }
+        logRuntimeTaskCreateStage('workbench-model-prepare-resolved', {
+          taskId,
+          deviceId: optimisticDeviceId,
+          modelId: executionModel.modelId ?? null,
+          supervisorModelId: supervisorModelId ?? null,
+        })
       } catch (error) {
+        logRuntimeTaskCreateStage('workbench-model-prepare-failed', {
+          taskId,
+          deviceId: optimisticDeviceId,
+          error: runtimeLaunchErrorName(error),
+        })
         reportError(runtimeSendError(error, '发送失败'), options)
         return false
       }
@@ -1128,6 +1145,11 @@ export function useWorkbenchRuntimeMessaging({
         ) {
           await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
         }
+        logRuntimeTaskCreateStage('workbench-runtime-create-dispatched', {
+          taskId,
+          deviceId: optimisticAddress.deviceId,
+          runtime,
+        })
         return executorClient.runtime.createRuntimeTask(createRequest)
       })()
       void createResponsePromise.catch(() => undefined)

@@ -539,6 +539,8 @@ recipe closely:
   shadow;
 - do not add a dark visible border in the normal state; forced-color mode may
   add an explicit outline;
+- the default desktop input starts at two text lines; compact composers start
+  at one line and grow only when content requires it;
 - multiline input horizontal inset is `12px`;
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
@@ -743,6 +745,11 @@ semantics for all three.
 
 ### 7.3 Runtime and conversation state
 
+- 分栏中的编辑器状态必须按任务作用域隔离，包括未发送文本、附件、上传进度和
+  上传错误；一个分栏的粘贴、移除或发送操作不得改变其他分栏的编辑器。
+- Composer state in split panes must be isolated by task scope, including
+  unsent text, attachments, upload progress, and upload errors. Pasting,
+  removing, or sending in one pane must not change another pane's composer.
 - Keep task execution lifecycle state separate from conversation delivery
   state. The runtime task state machine owns execution, turns, and goals; the
   conversation queue reducer owns queued messages and guidance delivery.

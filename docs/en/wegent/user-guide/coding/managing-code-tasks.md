@@ -251,10 +251,10 @@ Export task conversation history and code changes:
 
 When Codex creates an HTML visualization in the task workspace and references it in its response, Wework displays the chart or interactive page directly in that response. You do not need to copy a file path or open a separate browser.
 
-- Wework supports the latest visualize content reference, such as `visualize{"path":"/absolute/path/visualizations/chart.html"}`. The absolute path does not need to appear in the current response's file changes, but it must point to an HTML file inside a `visualizations` directory.
+- Wework supports the latest visualize content reference, such as `visualize{"path":"/absolute/path/output/chart.html"}`. The absolute path does not need to appear in the current response's file changes, and the containing directory is unrestricted, so HTML generated in workspace output folders or Wework attachment drafts can be displayed directly.
 - The legacy `::codex-inline-vis{file="chart.html"}` directive remains supported. Legacy directives resolve relative paths or unique file names only from files created or modified in the current response, including fragments organized by date and thread under `.codex/visualizations/`.
 - The visualization runs in a script-isolated iframe and cannot access the Wework page.
-- Only `.html`, `.htm`, or `.xhtml` files are accepted. Malformed references, paths containing parent traversal, and directives inside code fences remain normal text.
+- Wework's desktop backend reads the HTML before passing it to the isolated iframe. Only regular UTF-8 `.html`, `.htm`, or `.xhtml` files up to 5 MB are accepted; symbolic links, malformed references, paths containing parent traversal, and directives inside code fences remain normal text or are not loaded.
 - Wework wraps HTML fragments in a UTF-8 visualization host, supplies the Codex visualization theme variables, and automatically sizes the iframe to the fragment content.
 
 ### Mermaid and PlantUML Diagrams

@@ -84,6 +84,15 @@
   --z-critical: 100;
   --z-system: 1000;
   --z-system-popover: 1010;
+  /* Browser annotation mode toolbar: a translucent surface tinted with the
+     focus blue so it tracks the active light/dark theme (mirrors Codex). */
+  --color-browser-annotation-surface: color-mix(
+    in srgb,
+    rgb(var(--color-bg-surface)) 82%,
+    rgb(var(--color-focus)) 18%
+  );
+  --color-browser-annotation-border: color-mix(in srgb, rgb(var(--color-focus)) 35%, transparent);
+  --color-browser-annotation-chip: color-mix(in srgb, rgb(var(--color-focus)) 14%, transparent);
 }
 
 .app-view-surface {

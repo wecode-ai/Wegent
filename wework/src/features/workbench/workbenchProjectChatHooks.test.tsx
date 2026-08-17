@@ -714,6 +714,36 @@ describe('workbench project chat hooks', () => {
     expect(result.current.attachments).toEqual([])
   })
 
+  test('keeps attachments isolated between composer scopes', async () => {
+    const attachment: Attachment = {
+      id: 46,
+      filename: 'left-pane.png',
+      file_size: 68,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-08-16T00:00:00.000Z',
+    }
+    const upload = vi.fn().mockResolvedValue(attachment)
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({
+        uploadAttachment: upload,
+        deleteAttachment: vi.fn(),
+        scopeKey: 'right-pane',
+      })
+    )
+
+    await act(async () => {
+      await result.current.handleFileSelectForScope(
+        'left-pane',
+        new File(['image'], attachment.filename, { type: attachment.mime_type })
+      )
+    })
+
+    expect(result.current.stateByScope['left-pane']?.attachments).toEqual([attachment])
+    expect(result.current.attachments).toEqual([])
+  })
+
   test('releases temporary image previews when attachments leave the composer', async () => {
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     const firstAttachment: Attachment = {
