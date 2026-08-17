@@ -23,11 +23,7 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
-from app.schemas.device import (
-    MAX_DEVICE_SLOTS,
-    DeviceConnectionMode,
-    DeviceType,
-)
+from app.schemas.device import DeviceConnectionMode, DeviceType
 from app.services.device.base_provider import BaseDeviceProvider
 from app.services.device.display_name import (
     resolve_device_display_name,
@@ -44,6 +40,31 @@ DEVICE_CAPABILITIES_KEY_PREFIX = "device:capabilities:"
 DEVICE_CAPABILITIES_TTL = 600
 
 
+def runtime_capacity_slot_values(online_info: Any) -> tuple[int, int]:
+    if not isinstance(online_info, dict):
+        return 0, 0
+    capacity = online_info.get("runtime_capacity")
+    if not isinstance(capacity, dict):
+        return 0, 0
+    active = capacity.get("active")
+    active_task_ids = capacity.get("active_task_ids")
+    limit = capacity.get("limit")
+    if not isinstance(active, int) or isinstance(active, bool) or active < 0:
+        return 0, 0
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 20:
+        return 0, 0
+    if (
+        not isinstance(active_task_ids, list)
+        or len(active_task_ids) != active
+        or len(set(active_task_ids)) != len(active_task_ids)
+        or any(
+            not isinstance(task_id, str) or not task_id for task_id in active_task_ids
+        )
+    ):
+        return 0, 0
+    return active, limit
+
+
 class LocalDeviceProvider(BaseDeviceProvider):
     """Provider for local devices connected via WebSocket.
 
@@ -55,7 +76,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
     - WebSocket-based persistent connection
     - Redis-backed online state with TTL (auto-offline on disconnect)
     - Heartbeat-based health monitoring
-    - Concurrent task slot management (default 5 slots)
+    - Runtime-reported task capacity
     """
 
     @property
@@ -417,6 +438,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             running_task_ids = []
             if online_info and "running_task_ids" in online_info:
                 running_task_ids = online_info["running_task_ids"]
+            slot_used, slot_max = runtime_capacity_slot_values(online_info)
 
             # Get version info
             executor_version = (
@@ -445,8 +467,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "last_heartbeat": (
                         online_info.get("last_heartbeat") if online_info else None
                     ),
-                    "slot_used": len(running_task_ids),
-                    "slot_max": MAX_DEVICE_SLOTS,
+                    "slot_used": slot_used,
+                    "slot_max": slot_max,
                     "running_tasks": [],
                     "executor_version": executor_version,
                     "latest_version": latest_version,
@@ -468,6 +490,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
         running_task_ids: Optional[List[int]] = None,
         executor_version: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        runtime_capacity: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -480,6 +504,11 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 data["executor_version"] = executor_version
             if runtime_transfer_host is not None:
                 data["runtime_transfer_host"] = runtime_transfer_host
+            # Every heartbeat replaces the capacity observation. A missing
+            # snapshot must clear the previous value instead of extending a
+            # stale capacity truth with the online TTL.
+            data["runtime_instance_id"] = runtime_instance_id
+            data["runtime_capacity"] = runtime_capacity
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "
@@ -502,7 +531,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
 
     @staticmethod
     def _build_slot_usage(
-        db: Session, running_task_ids: Optional[List[int]]
+        db: Session,
+        running_task_ids: Optional[List[int]],
+        online_info: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Build slot usage payload from reported task IDs."""
         from app.stores.tasks import task_store
@@ -540,9 +571,10 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         f"[LocalDeviceProvider] Failed to parse task {task.id}: {e}"
                     )
 
+        slot_used, slot_max = runtime_capacity_slot_values(online_info)
         return {
-            "used": len(running_task_ids),
-            "max": MAX_DEVICE_SLOTS,
+            "used": slot_used,
+            "max": slot_max,
             "running_tasks": running_tasks,
         }
 
@@ -560,7 +592,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         if device_info and "running_task_ids" in device_info:
             running_task_ids = device_info["running_task_ids"]
 
-        return self._build_slot_usage(db, running_task_ids)
+        return self._build_slot_usage(db, running_task_ids, device_info)
 
     def get_slot_usage_sync(
         self,
@@ -577,7 +609,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         if device_info and "running_task_ids" in device_info:
             running_task_ids = device_info["running_task_ids"]
 
-        return self._build_slot_usage(db, running_task_ids)
+        return self._build_slot_usage(db, running_task_ids, device_info)
 
     async def update_status(
         self,

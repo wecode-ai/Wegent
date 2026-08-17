@@ -4,7 +4,6 @@ import {
   collectWorkbenchPanes,
   createWorkbenchLayout,
   focusWorkbenchTask,
-  openWorkbenchPane,
   parsePersistedWorkbenchLayout,
   placeWorkbenchTask,
   pruneWorkbenchLayout,
@@ -18,33 +17,22 @@ const two = 'runtime:device:two'
 const three = 'runtime:device:three'
 
 describe('workbenchSplitLayout', () => {
-  it('replaces the focused pane when sidebar navigation opens a new task', () => {
-    const initial = createWorkbenchLayout(one)
-    const next = openWorkbenchPane(initial, two)
-
-    expect(collectWorkbenchPanes(next.root).map(pane => pane.paneKey)).toEqual([two])
-    expect(next.focusedPaneId).toBe(initial.focusedPaneId)
-  })
-
   it('focuses an already visible task without duplicating or moving it', () => {
     const initial = createWorkbenchLayout(one)
     const split = placeWorkbenchTask(initial, two, initial.focusedPaneId, 'right')
-    const next = openWorkbenchPane(split, one)
+    const next = focusWorkbenchTask(split, one)
 
-    expect(collectWorkbenchPanes(next.root).map(pane => pane.paneKey)).toEqual([one, two])
+    expect(collectWorkbenchPanes(next!.root).map(pane => pane.paneKey)).toEqual([one, two])
     expect(
-      collectWorkbenchPanes(next.root).find(pane => pane.id === next.focusedPaneId)?.paneKey
+      collectWorkbenchPanes(next!.root).find(pane => pane.id === next!.focusedPaneId)?.paneKey
     ).toBe(one)
   })
 
-  it('creates one empty pane and fills it on the next sidebar navigation', () => {
+  it('creates one empty pane for an explicit split action', () => {
     const initial = createWorkbenchLayout(one)
     const split = splitWorkbenchPane(initial, initial.focusedPaneId, 'right')
 
     expect(collectWorkbenchPanes(split.root).map(pane => pane.paneKey)).toEqual([one, null])
-
-    const filled = openWorkbenchPane(split, two)
-    expect(collectWorkbenchPanes(filled.root).map(pane => pane.paneKey)).toEqual([one, two])
   })
 
   it('places a sidebar task on an edge with one task per pane', () => {

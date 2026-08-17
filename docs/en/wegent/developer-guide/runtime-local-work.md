@@ -125,6 +125,19 @@ Before `turn/start`, the executor starts a watchdog for the first meaningful pro
 
 To diagnose a reply whose text is complete while the sidebar and composer still show a running state, correlate packaged-app logs by the same `deviceId + taskId + subtaskId`. Tauri first records receiving and forwarding `response.completed`, `response.failed`, or `response.incomplete`; the local chat stream then records how many subscriptions matched the terminal event; the pane layer records whether it accepted the terminal event or dropped it because the task or device did not match; finally, Workbench Provider records dispatch of `runtime_task_settled`. These entries contain only runtime identities, event types, and block counts, never response content or credentials. The first missing entry identifies the boundary before which terminal-state propagation stopped.
 
+### Frontend lifecycle projection
+
+Wework maintains one shared runtime task lifecycle state for each `deviceId + taskId`. The visible pane owns write access for stream events. A hidden Provider that remains mounted for layout preservation and fast switching may keep subscribing and reading, but it cannot write `turnStarted`, `turnSettled`, goal status, or executor snapshots. The sidebar, composer, and task execution overlay all read the same immutable store snapshot; they must not derive another running state from Provider-private state or a cached work list.
+
+Task summaries from `runtime.tasks.list`, task creation responses, stream events, and local caches pass through the same projection rules before entering the store:
+
+- `running: false` with a non-null `completedAt` is authoritative completion. Even if an upstream payload still carries `status: active`, it is normalized to `done`, `failed`, `cancelled`, or `archived`.
+- An optimistic `active` projection cannot replace confirmed completion.
+- Only a non-optimistic snapshot with `running: true`, a running thread or turn status, and a null `completedAt` represents a new active turn.
+- Task identity uses only `deviceId + taskId`; workspace paths, tab ids, and hidden layout instances cannot create a second lifecycle identity.
+
+The completion flow is therefore singular: an executor/Backend task snapshot or terminal stream event enters the shared lifecycle store, the projection converges to idle, and every UI consumer removes its running state from the same store update.
+
 Every continuation request must carry the current model selection. The Wework model selector is the source of truth for the turn being sent: whichever model the user selects for that turn becomes the `modelId`, `modelType`, and model options in `runtime.tasks.send`. The executor must not restore a model from a previous request and must not cache model selection. If a request has neither a full `executionRequest` nor a `modelId`, the executor must return `bad_request` instead of falling back to a default model. Local IPC and remote WebSocket only transport the same canonical model selection; local devices invoking remote models and remote devices invoking remote models both enter the same executor backend execution logic. Task creation and continuation must reuse that single model selection path.
 
 If the current LocalTask is still replying, Wework queues new user input locally instead of sending concurrent `runtime.tasks.send` calls. Users can remove queued messages, or choose to stop the current reply and send the queued message from the queue panel. That first calls:
@@ -267,6 +280,7 @@ Empty projects are runtime-owned as well. After Wework creates or selects a dire
 When Wework forks a runtime task, it only offers target workspaces that belong to the source task's Project:
 
 - When a message action forks into a new task, Wework passes the selected completed turn as `lastTurnId` to the executor. The executor may call Codex `thread/fork` while the source task is running a later turn; `lastTurnId` defines the history boundary, and the fork must not stop, cancel, or mutate the source task's active turn.
+- When the executor creates the forked task, it must inherit the source task's `runtime_project_key` and `runtime_workspace_roots`. These fields are routing metadata for Project grouping and workspace filtering; without them, the fork succeeds but the new task is incorrectly excluded from its Project.
 - Other Device Workspaces already bound to that Project can be used directly.
 - An online device that is not yet bound to that Project must first use the same device-directory preparation flow as project creation and editing: choose a directory on the device, then choose whether that Project path is a `worktree` or a regular `workspace`.
 - Backend writes the Device Workspace mapping through `POST /api/runtime-work/device-workspaces/prepare` before continuing the fork.

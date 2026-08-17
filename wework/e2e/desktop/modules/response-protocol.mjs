@@ -57,7 +57,7 @@ function responseCompleted(id, output) {
       id,
       object: 'response',
       status: 'completed',
-      ...(output ? { output } : {}),
+      output: output ?? [],
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -80,23 +80,43 @@ function responseFailed(id, message) {
   }
 }
 
-function functionCall(callId, name, argumentsValue) {
+function functionCall(callId, name, argumentsValue, outputIndex = 0) {
+  const argumentsText = JSON.stringify(argumentsValue)
   return [
     {
       type: 'response.output_item.added',
+      output_index: outputIndex,
       item: {
+        id: callId,
         type: 'function_call',
         call_id: callId,
         name,
+        arguments: '',
       },
     },
     {
+      type: 'response.function_call_arguments.delta',
+      output_index: outputIndex,
+      item_id: callId,
+      call_id: callId,
+      delta: argumentsText,
+    },
+    {
+      type: 'response.function_call_arguments.done',
+      output_index: outputIndex,
+      item_id: callId,
+      call_id: callId,
+      arguments: argumentsText,
+    },
+    {
       type: 'response.output_item.done',
+      output_index: outputIndex,
       item: {
+        id: callId,
         type: 'function_call',
         call_id: callId,
         name,
-        arguments: JSON.stringify(argumentsValue),
+        arguments: argumentsText,
       },
     },
   ]
@@ -119,6 +139,12 @@ function toolSearchCall(callId, argumentsValue) {
       arguments: argumentsValue,
     },
   }
+}
+
+function toolSearchResponseEvents(callId, selection) {
+  return selection.native
+    ? [toolSearchCall(callId, selection.arguments)]
+    : functionCall(callId, selection.name, selection.arguments)
 }
 
 function customToolCall(callId, name, input) {
@@ -460,9 +486,13 @@ function selectToolSearch(request, query) {
     tool =>
       tool?.type === 'tool_search' ||
       (tool?.type === 'function' &&
-        (tool?.name === 'tool_search' || tool?.function?.name === 'tool_search'))
+        ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
   )
-  assert.equal(searchTools.length, 1, 'Real Codex did not advertise exactly one tool_search tool')
+  assert.equal(
+    searchTools.length,
+    1,
+    `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
+  )
   assert.equal(
     tools.some(tool => tool?.type === 'namespace'),
     false,
@@ -478,7 +508,12 @@ function selectToolSearch(request, query) {
     encodedTools < 32 * 1024,
     `Real Codex first-turn tool payload exceeded 32 KiB: ${encodedTools} bytes`
   )
-  return { query, limit: 8 }
+  const searchTool = searchTools[0]
+  return {
+    name: searchTool?.name ?? searchTool?.function?.name ?? 'tool_search',
+    native: searchTool?.type === 'tool_search',
+    arguments: { query, limit: 8 },
+  }
 }
 
 function requestToolSearchResults(request) {
@@ -621,6 +656,7 @@ export {
   selectMcpTool,
   selectConvertedTool,
   selectToolSearch,
+  toolSearchResponseEvents,
   requestToolSearchResults,
   selectShellTool,
   selectShellToolCommand,

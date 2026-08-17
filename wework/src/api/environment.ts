@@ -4,6 +4,7 @@ import type {
   ChangeRequestChecksState,
   ChangeRequestLookup,
   ChangeRequestLookupState,
+  ChangeRequestMergeability,
   ChangeRequestProvider,
   ChangeRequestState,
   EnvironmentInfo,
@@ -183,6 +184,33 @@ function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
   return 'unknown'
 }
 
+function normalizeMergeability(
+  provider: ChangeRequestProvider,
+  record: Record<string, unknown>
+): ChangeRequestMergeability {
+  if (provider === 'github') {
+    const mergeable = stringValue(record, 'mergeable').toLowerCase()
+    const mergeStateStatus = stringValue(record, 'mergeStateStatus').toLowerCase()
+    if (mergeable === 'conflicting' || mergeStateStatus === 'dirty') return 'conflicting'
+    if (mergeable === 'mergeable') return 'mergeable'
+    return 'unknown'
+  }
+
+  if (booleanValue(record, 'has_conflicts', 'hasConflicts')) return 'conflicting'
+  const mergeStatus = stringValue(
+    record,
+    'detailed_merge_status',
+    'detailedMergeStatus',
+    'merge_status',
+    'mergeStatus'
+  ).toLowerCase()
+  if (mergeStatus.includes('conflict') || mergeStatus === 'cannot_be_merged') {
+    return 'conflicting'
+  }
+  if (mergeStatus === 'mergeable' || mergeStatus === 'can_be_merged') return 'mergeable'
+  return 'unknown'
+}
+
 function githubCheckStatuses(record: Record<string, unknown>): string[] {
   const rollup = record.statusCheckRollup
   if (!Array.isArray(rollup)) return []
@@ -241,6 +269,7 @@ function parseChangeRequest(provider: ChangeRequestProvider, value: unknown): Ch
     checks: normalizeChecksState(
       provider === 'github' ? githubCheckStatuses(record) : gitlabCheckStatuses(record)
     ),
+    mergeability: normalizeMergeability(provider, record),
   }
 }
 

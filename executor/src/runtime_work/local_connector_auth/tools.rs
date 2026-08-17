@@ -275,13 +275,10 @@ async fn resolve_managed_tool(
 }
 
 fn executor_home() -> Result<PathBuf, AppIpcError> {
-    if let Some(path) = env::var_os("WEGENT_EXECUTOR_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".wegent-executor"))
-        .ok_or_else(|| AppIpcError::new("internal_error", "HOME is not set"))
+    super::resolve_executor_home(
+        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
+        dirs::home_dir(),
+    )
 }
 
 fn current_tool_target() -> Result<String, AppIpcError> {

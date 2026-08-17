@@ -634,6 +634,14 @@ impl TaskRuntime {
         self.local_store.reject_execution(execution_id, reason)
     }
 
+    pub fn cancel_execution(
+        &self,
+        execution_id: i64,
+        note: Option<&str>,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        self.local_store.cancel_execution(execution_id, note)
+    }
+
     pub fn claim_next_local_execution(
         &self,
         claim: LocalExecutionClaim,
@@ -656,6 +664,51 @@ impl TaskRuntime {
         )
     }
 
+    pub fn request_runtime_start(
+        &self,
+        execution_id: i64,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.request_runtime_start(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            lease_seconds,
+        )
+    }
+
+    pub fn confirm_runtime_accepted(
+        &self,
+        execution_id: i64,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.confirm_runtime_accepted(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            lease_seconds,
+        )
+    }
+
+    pub fn mark_runtime_dispatch_unknown(
+        &self,
+        execution_id: i64,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        error: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.mark_runtime_dispatch_unknown(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            error,
+        )
+    }
+
     pub fn complete_execution(
         &self,
         execution_id: i64,
@@ -674,8 +727,35 @@ impl TaskRuntime {
             .fail_execution(execution_id, error, requeue)
     }
 
+    pub fn fail_runtime_preflight(
+        &self,
+        execution_id: i64,
+        error: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.fail_runtime_preflight(execution_id, error)
+    }
+
     pub fn recover_stale_local_executions(&self) -> Result<(u64, u64), TaskRuntimeError> {
         self.local_store.recover_stale_local_executions()
+    }
+
+    pub fn stale_local_executions(&self) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
+        self.local_store.stale_local_executions()
+    }
+
+    pub fn reconcile_execution_snapshot(
+        &self,
+        execution_id: i64,
+        runtime_status: &str,
+        running: bool,
+        turn_status: Option<&str>,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.reconcile_execution_snapshot(
+            execution_id,
+            runtime_status,
+            running,
+            turn_status,
+        )
     }
 
     pub fn find_task_binding(

@@ -1,0 +1,12 @@
+{
+  "network_notice": "设备会自动探测 IDE 访问地址。命令使用 host network，请先在 Docker Desktop 中启用 host networking；远程主机只允许在内网开放 17888，不要暴露到公网。",
+  "image_label": "内网镜像",
+  "backend_url_label": "HTTP Backend",
+  "socket_url_label": "控制 WSS",
+  "status_idle": "等待启动",
+  "status_waiting": "等待远程设备连接…",
+  "status_connecting": "远程设备正在连接…",
+  "status_online": "远程设备已在线",
+  "status_version_mismatch": "设备已在线，但 Executor 版本需要更新",
+  "status_connection_failed": "连接失败，请检查容器日志、host network 和 WSS 地址"
+}

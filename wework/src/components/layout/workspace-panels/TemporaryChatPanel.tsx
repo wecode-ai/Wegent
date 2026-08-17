@@ -30,7 +30,13 @@ import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { Attachment, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelOptions,
+  ModelType,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
 const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
@@ -58,6 +64,11 @@ interface TemporaryChatPanelProps {
     message: string,
     options: {
       attachments: Attachment[]
+      executionModel: {
+        modelId?: string
+        modelType?: ModelType | null
+        modelOptions?: ModelOptions
+      }
       onError: (message: string) => void
       onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
     }
@@ -139,6 +150,7 @@ export function TemporaryChatPanel({
   const busy = sending || paneStatus.isBusy
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const queuedMessagesRef = useRef(queuedMessages)
+  const createdAddressKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
@@ -172,6 +184,7 @@ export function TemporaryChatPanel({
 
   useEffect(() => {
     if (!address || sendEphemeral) return
+    if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
@@ -418,6 +431,7 @@ export function TemporaryChatPanel({
         setMessages(current => [...current, optimisticUserMessage])
         const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
           optimisticAddress = nextAddress
+          createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
           setMessages(
             applyRuntimeConversationAction(nextAddress, {
               type: 'user_added',
@@ -429,6 +443,7 @@ export function TemporaryChatPanel({
         targetAddress = createTask
           ? await createTask(message, {
               attachments: currentAttachments,
+              executionModel: selectedModelFields,
               onError: handleError,
               onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })

@@ -291,6 +291,7 @@ export function MiniProgramApplicationRow({
   const { t } = useTranslation('sites')
   const [qrCodeOpen, setQrCodeOpen] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const copyStateResetTimeoutRef = useRef<number | null>(null)
   const updatedAt = new Intl.DateTimeFormat(undefined, {
     year: 'numeric',
     month: 'short',
@@ -299,12 +300,27 @@ export function MiniProgramApplicationRow({
   const experienceUrl = program.experience_url ?? ''
   const canUseExperienceUrl = capabilities.has('open_experience') && experienceUrl
 
+  useEffect(
+    () => () => {
+      if (copyStateResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyStateResetTimeoutRef.current)
+      }
+    },
+    []
+  )
+
   const copyExperienceUrl = async () => {
     if (!experienceUrl) return
     try {
       await copyTextToClipboard(experienceUrl)
       setCopyState('copied')
-      window.setTimeout(() => setCopyState('idle'), 1500)
+      if (copyStateResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyStateResetTimeoutRef.current)
+      }
+      copyStateResetTimeoutRef.current = window.setTimeout(() => {
+        copyStateResetTimeoutRef.current = null
+        setCopyState('idle')
+      }, 1500)
     } catch (error) {
       console.error('Failed to copy mini program URL:', error)
       setCopyState('failed')

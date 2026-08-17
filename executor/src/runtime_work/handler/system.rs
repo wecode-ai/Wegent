@@ -6,6 +6,19 @@ use super::codex_config::optional_proxy_url;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn get_runtime_capacity(&self) -> Result<Value, AppIpcError> {
+        let scheduler = self
+            .turn_scheduler
+            .lock()
+            .expect("runtime turn scheduler lock should not be poisoned");
+        Ok(json!({
+            "limit": scheduler.max_concurrent_tasks,
+            "active": scheduler.active_tasks,
+            "active_task_ids": scheduler.active_task_ids,
+            "queued": scheduler.queued_turns.len(),
+        }))
+    }
+
     pub(super) async fn get_runtime_settings(&self) -> Result<Value, AppIpcError> {
         let max_concurrent_tasks = self
             .turn_scheduler

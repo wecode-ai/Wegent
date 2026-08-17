@@ -798,7 +798,10 @@ mod tests {
 
         let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
 
-        assert_eq!(converted["tools"][0]["name"], "tool_search");
+        assert_eq!(
+            converted["tools"][0]["name"],
+            super::chat::BRIDGED_TOOL_SEARCH_NAME
+        );
         assert_eq!(converted["tools"][1]["name"], "create_issue");
         assert_eq!(
             converted["tools"][0]["input_schema"]["required"],
@@ -808,7 +811,7 @@ mod tests {
         assert_eq!(converted["messages"][1]["content"][0]["type"], "tool_use");
         assert_eq!(
             converted["messages"][1]["content"][0]["name"],
-            "tool_search"
+            super::chat::BRIDGED_TOOL_SEARCH_NAME
         );
         assert_eq!(
             converted["messages"][1]["content"][0]["input"],

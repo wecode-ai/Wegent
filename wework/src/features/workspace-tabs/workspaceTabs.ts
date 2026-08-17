@@ -22,7 +22,7 @@ export interface WorkspaceTabLabels {
 
 const WORKSPACE_TAB_PARAM = 'workspaceTab'
 const WORKSPACE_TAB_TITLE_PARAM = 'workspaceTabTitle'
-const WORKSPACE_TABS_STORAGE_PREFIX = 'wework.workspaceTabs.v2:'
+const WORKSPACE_TABS_STORAGE_PREFIX = 'wework.workspaceTabs.v3:'
 
 function newTabId(kind: WorkspaceTabKind): string {
   return `${kind}-${crypto.randomUUID()}`

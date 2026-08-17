@@ -253,7 +253,7 @@ export function CloudProjectManageView({
     role: Exclude<CloudProjectMember['role'], 'Owner'>
   ) {
     try {
-      const updated = await api.updateCloudProjectMember(project.id, member.user_id, role)
+      const updated = await api.updateCloudProjectMember(project.id, member.user_id, { role })
       setMembers(current =>
         current.map(item => (item.user_id === updated.user_id ? updated : item))
       )
@@ -264,6 +264,24 @@ export function CloudProjectManageView({
     } catch (cause) {
       track('operation_failed', { operation: 'project_space_action' })
       setError(cause instanceof Error ? cause.message : '更新成员失败')
+    }
+  }
+
+  async function updateMemberCapability(member: CloudProjectMember, value: string) {
+    const capability = value.trim()
+    if (capability === (member.capability_description ?? '')) return
+    setSavingUserId(member.user_id)
+    try {
+      const updated = await api.updateCloudProjectMember(project.id, member.user_id, {
+        capability_description: capability,
+      })
+      setMembers(current =>
+        current.map(item => (item.user_id === updated.user_id ? updated : item))
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '更新成员能力失败')
+    } finally {
+      setSavingUserId(null)
     }
   }
 
@@ -454,6 +472,17 @@ export function CloudProjectManageView({
                     <span className="block truncate text-sm font-medium">{member.user_name}</span>
                     <span className="block truncate text-xs text-text-muted">{member.email}</span>
                   </span>
+                  <input
+                    data-testid={`cloud-project-member-capability-${member.user_id}`}
+                    defaultValue={member.capability_description}
+                    disabled={savingUserId === member.user_id}
+                    onBlur={event => void updateMemberCapability(member, event.target.value)}
+                    className="h-8 min-w-40 rounded-lg border border-border bg-background px-2 text-xs outline-none placeholder:text-text-tertiary"
+                    placeholder={t('workbench.project_member_capability_placeholder')}
+                    aria-label={t('workbench.project_member_capability_label', {
+                      name: member.user_name,
+                    })}
+                  />
                   {member.role === 'Owner' ? (
                     <span className="text-xs text-text-secondary">Owner</span>
                   ) : (
@@ -584,7 +613,7 @@ export function CloudProjectManageView({
                 data-testid="cloud-project-tag-create-confirm"
                 disabled={!newTag.trim() || tagBusy}
                 onClick={() => void createTag()}
-                className="h-9 rounded-lg bg-black px-3.5 text-sm text-white disabled:bg-black disabled:text-white"
+                className="h-9 rounded-lg bg-text-primary px-3.5 text-sm text-background disabled:bg-text-primary disabled:text-background"
               >
                 新建标签
               </button>
@@ -748,7 +777,7 @@ export function CloudProjectManageView({
                 data-testid="cloud-project-provider-manage-save"
                 disabled={providerBusy || !providerRepository.trim()}
                 onClick={() => void saveProvider()}
-                className="h-9 rounded-lg bg-black px-3.5 text-sm text-white disabled:bg-black disabled:text-white"
+                className="h-9 rounded-lg bg-text-primary px-3.5 text-sm text-background disabled:bg-text-primary disabled:text-background"
               >
                 {providerSaved ? '已保存' : '保存'}
               </button>

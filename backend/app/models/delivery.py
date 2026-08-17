@@ -100,6 +100,17 @@ class LoopNode(Base):
         server_default="",
         comment="Assigned project chat agent ID; empty when unassigned",
     )
+    assignee_team_id = Column(
+        Integer,
+        ForeignKey(
+            "kinds.id",
+            name="fk_loop_items_assignee_team_id_kinds",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+        comment="Assigned Wegent Team ID; null when the assignee is not a Team",
+    )
     task_id = Column(String(255), nullable=True)
     task_title = Column(String(255), nullable=True)
     backend_task_id = Column(
@@ -287,6 +298,7 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "created_by_user_id": 0,
     "updated_by_user_id": 0,
     "assignee_user_id": 0,
+    "assignee_team_id": 0,
     "user_id": 0,
     "added_by_user_id": 0,
     "source": "",
@@ -399,7 +411,8 @@ def loop_unset_datetime_for_connection(
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)
-def _populate_mysql_non_null_defaults(
+@event.listens_for(LoopNode, "before_update", propagate=True)
+def _adapt_mysql_non_null_defaults(
     _mapper: object, connection: Connection, target: LoopNode
 ) -> None:
     """Adapt nullable model values to the production MySQL sentinel schema."""

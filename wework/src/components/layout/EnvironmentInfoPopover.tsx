@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   Clock3,
   Square,
+  TriangleAlert,
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
@@ -160,6 +161,23 @@ export function EnvironmentInfoPopover({
       ? t('workbench.environment_change_request_draft', '草稿')
       : t(`workbench.environment_change_request_${changeRequest.state}`, changeRequest.state)
     : ''
+  const changeRequestChecksLabel =
+    changeRequest && changeRequest.checks !== 'unknown'
+      ? t(
+          `workbench.environment_change_request_checks_${changeRequest.checks}`,
+          changeRequest.checks
+        )
+      : ''
+  const changeRequestConflictLabel =
+    changeRequest?.mergeability === 'conflicting'
+      ? t('workbench.environment_change_request_conflicting', '存在冲突')
+      : ''
+  const changeRequestStatusLabel = [
+    changeRequestStateLabel,
+    changeRequestConflictLabel || changeRequestChecksLabel,
+  ]
+    .filter(Boolean)
+    .join('，')
 
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
@@ -511,55 +529,68 @@ export function EnvironmentInfoPopover({
                           type="button"
                           data-testid="change-request-button"
                           onClick={handleOpenChangeRequest}
-                          title={changeRequest.title}
-                          className="flex min-h-11 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                          title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
+                          aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
+                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
                         >
-                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                          <span
+                            className={cn(
+                              'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary',
+                              changeRequest.state === 'open' &&
+                                !changeRequest.draft &&
+                                'text-green-500',
+                              changeRequest.state === 'merged' && 'text-green-500',
+                              changeRequest.state === 'closed' && 'text-red-500',
+                              changeRequest.mergeability === 'conflicting' && 'text-red-500'
+                            )}
+                            aria-hidden="true"
+                          >
                             <GitPullRequest className="h-[18px] w-[18px]" />
+                            {changeRequest.mergeability === 'conflicting' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
+                                <TriangleAlert className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'success' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-green-500">
+                                <CircleCheck className="h-3.5 w-3.5 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'failure' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-red-500">
+                                <CircleX className="h-3.5 w-3.5 fill-background" />
+                              </span>
+                            ) : changeRequest.checks === 'pending' ? (
+                              <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-text-muted">
+                                <Clock3 className="h-3 w-3 fill-background" />
+                              </span>
+                            ) : null}
                           </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              <span
-                                data-testid="change-request-number"
-                                className="shrink-0 font-medium"
-                              >
-                                {changeRequestPrefix}
-                                {changeRequest.number}
-                              </span>
-                              <span
-                                data-testid="change-request-title"
-                                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                              >
-                                {changeRequest.title}
-                              </span>
+                          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                            <span
+                              data-testid="change-request-number"
+                              className="shrink-0 font-medium"
+                            >
+                              {changeRequestPrefix}
+                              {changeRequest.number}
                             </span>
-                            <span className="mt-0.5 flex items-center gap-2 text-xs text-text-muted">
-                              <span data-testid="change-request-state">
-                                {changeRequestStateLabel}
-                              </span>
-                              {changeRequest.checks !== 'unknown' && (
-                                <span
-                                  data-testid="change-request-checks"
-                                  className={cn(
-                                    'inline-flex items-center gap-1',
-                                    changeRequest.checks === 'success' && 'text-green-500',
-                                    changeRequest.checks === 'failure' && 'text-red-500'
-                                  )}
-                                >
-                                  {changeRequest.checks === 'success' ? (
-                                    <CircleCheck className="h-3.5 w-3.5" />
-                                  ) : changeRequest.checks === 'failure' ? (
-                                    <CircleX className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <Clock3 className="h-3.5 w-3.5" />
-                                  )}
-                                  {t(
-                                    `workbench.environment_change_request_checks_${changeRequest.checks}`,
-                                    changeRequest.checks
-                                  )}
-                                </span>
-                              )}
+                            <span
+                              data-testid="change-request-title"
+                              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                            >
+                              {changeRequest.title}
                             </span>
+                            <span data-testid="change-request-state" className="sr-only">
+                              {changeRequestStateLabel}
+                            </span>
+                            {changeRequest.checks !== 'unknown' && (
+                              <span data-testid="change-request-checks" className="sr-only">
+                                {changeRequestChecksLabel}
+                              </span>
+                            )}
+                            {changeRequest.mergeability === 'conflicting' && (
+                              <span data-testid="change-request-conflict" className="sr-only">
+                                {changeRequestConflictLabel}
+                              </span>
+                            )}
                           </span>
                         </button>
                       ) : (

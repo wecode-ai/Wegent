@@ -1,7 +1,7 @@
 import '@/i18n'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
 
 class ResizeObserverMock {
@@ -11,6 +11,10 @@ class ResizeObserverMock {
 }
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+beforeEach(() => {
+  document.documentElement.dataset.theme = 'light'
+})
 
 function getRenderedDiffText() {
   return Array.from(document.querySelectorAll('diffs-container'))
@@ -76,6 +80,19 @@ const largeDiff = Array.from({ length: 13 }, (_, index) => {
 }).join('\n')
 
 describe('FileChangesReviewPanel', () => {
+  test('uses the application dark theme for review diffs', async () => {
+    document.documentElement.dataset.theme = 'dark'
+
+    render(<FileChangesReviewPanel loading={false} diff={twoFileDiff} />)
+
+    expect(screen.getByTestId('file-changes-review-panel')).toHaveAttribute('data-theme', 'dark')
+    expect(screen.getAllByTestId('file-changes-review-file-diff-body')[0]).toHaveAttribute(
+      'data-theme',
+      'dark'
+    )
+    await waitFor(() => expect(getRenderedDiffText()).toContain('new alpha'))
+  })
+
   test('keeps every changed file diff visible when a file is selected', async () => {
     render(
       <FileChangesReviewPanel

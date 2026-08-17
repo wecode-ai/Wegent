@@ -381,6 +381,18 @@ impl ResponsesEventBuilder {
         )
     }
 
+    pub fn response_cancelled(&self, message: &str) -> EventEnvelope {
+        let mut response = self.response_payload("cancelled", json!([]));
+        response["error"] = json!({
+            "code": "cancelled",
+            "message": message,
+        });
+        self.envelope(
+            "response.incomplete",
+            json!({"type": "response.incomplete", "response": response}),
+        )
+    }
+
     pub fn error(&self, message: &str, code: &str) -> EventEnvelope {
         self.envelope(
             "error",

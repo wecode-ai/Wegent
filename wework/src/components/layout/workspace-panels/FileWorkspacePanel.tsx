@@ -280,7 +280,7 @@ export function FileWorkspacePanel({
       setTreeError(null)
       setTreeRetryPath(null)
       try {
-        const result = await listWorkspaceEntries(stableTarget.deviceId, path)
+        const result = await listWorkspaceEntries(stableTarget.deviceId, path, stableTarget.path)
         if (latestTreeRequestByPath.current.get(path) !== requestId) return
         const resolvedPath = result.path || path
         setEntriesByPath(previous => ({
@@ -345,18 +345,21 @@ export function FileWorkspacePanel({
       setPreviewLoading(true)
       setPreviewLoadingProgress(null)
       setPreviewError(null)
-      setPreview(null)
       setEditing(false)
       setEditedContent('')
       setSaveError(null)
-      setBinaryPreview(null)
       if (stableTarget.workspaceSource !== 'remote') {
         void loadFileOpeners(entry.path)
       }
       try {
         if (isTextFile(entry.path)) {
-          const file = await readWorkspaceTextFile(stableTarget.deviceId, entry.path)
+          const file = await readWorkspaceTextFile(
+            stableTarget.deviceId,
+            entry.path,
+            stableTarget.path
+          )
           if (fileRequestSequence.current !== requestId) return
+          setBinaryPreview(null)
           setPreview(file)
           return
         }
@@ -367,7 +370,12 @@ export function FileWorkspacePanel({
         let offset = 0
         let chunk: WorkspaceFileChunkResponse
         do {
-          chunk = await readWorkspaceFileChunk(stableTarget.deviceId, entry.path, offset)
+          chunk = await readWorkspaceFileChunk(
+            stableTarget.deviceId,
+            entry.path,
+            offset,
+            stableTarget.path
+          )
           if (fileRequestSequence.current !== requestId) return
           chunks.push(decodeBase64(chunk.contentBase64))
           offset += chunks[chunks.length - 1].byteLength
@@ -377,6 +385,7 @@ export function FileWorkspacePanel({
           })
         } while (!chunk.eof)
         if (fileRequestSequence.current !== requestId) return
+        setPreview(null)
         setBinaryPreview({
           path: chunk.path,
           name: chunk.name,
@@ -481,17 +490,18 @@ export function FileWorkspacePanel({
         return
       }
 
-      void listWorkspaceEntries(stableTarget.deviceId, workspaceParentPath(resolvedPath)).then(
-        result => {
-          const entry = result.entries.find(candidate => candidate.path === resolvedPath)
-          if (entry?.isDirectory) {
-            openDirectoryPath()
-            return
-          }
-          openAsFile()
-        },
-        openAsFile
-      )
+      void listWorkspaceEntries(
+        stableTarget.deviceId,
+        workspaceParentPath(resolvedPath),
+        stableTarget.path
+      ).then(result => {
+        const entry = result.entries.find(candidate => candidate.path === resolvedPath)
+        if (entry?.isDirectory) {
+          openDirectoryPath()
+          return
+        }
+        openAsFile()
+      }, openAsFile)
     },
     [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
   )
@@ -760,6 +770,13 @@ export function FileWorkspacePanel({
           {displayPath}
         </p>
         <div className="flex shrink-0 items-center gap-1">
+          {previewLoading && (preview || binaryPreview) ? (
+            <Loader2
+              data-testid="workspace-file-preview-loading-indicator"
+              className="h-4 w-4 animate-spin text-text-secondary"
+              aria-label={t('workbench.workspace_file_preview_loading')}
+            />
+          ) : null}
           {selectableWorkspaceTargets.length > 1 && onSelectWorkspaceTarget && (
             <div ref={workspaceTargetMenuRef} className="relative">
               <button
@@ -872,7 +889,7 @@ export function FileWorkspacePanel({
                 data-testid="workspace-file-save-button"
                 disabled={!dirty || saving}
                 onClick={() => void saveFile()}
-                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-white disabled:opacity-50"
+                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-primary-contrast disabled:opacity-50"
               >
                 {saving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1072,7 +1089,7 @@ export function FileWorkspacePanel({
                 type="button"
                 data-testid="workspace-file-unsaved-save"
                 disabled={saving}
-                className="h-8 rounded-md bg-primary px-3 text-sm text-white disabled:opacity-50"
+                className="h-8 rounded-md bg-primary px-3 text-sm text-primary-contrast disabled:opacity-50"
                 onClick={() =>
                   void (async () => {
                     if (await saveFile()) {

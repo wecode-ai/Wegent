@@ -4,6 +4,8 @@
 
 """Tests for local device provider filtering."""
 
+from unittest.mock import AsyncMock, patch
+
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device.local_provider import AppDeviceProvider, LocalDeviceProvider
@@ -60,3 +62,35 @@ async def test_app_provider_lists_app_devices_separately(test_db):
     assert app_devices[0]["runtime_instance_id"] == "runtime-app-device"
     assert [device["device_id"] for device in local_devices] == ["local-device"]
     assert local_devices[0]["runtime_instance_id"] == "runtime-local-device"
+
+
+async def test_heartbeat_without_capacity_clears_previous_observation():
+    previous = {
+        "status": "online",
+        "runtime_instance_id": "runtime-1",
+        "runtime_capacity": {
+            "limit": 4,
+            "active": 1,
+            "active_task_ids": ["task-1"],
+            "queued": 0,
+        },
+    }
+    cache_set = AsyncMock(return_value=True)
+    with (
+        patch(
+            "app.services.device.local_provider.cache_manager.get",
+            AsyncMock(return_value=previous),
+        ),
+        patch("app.services.device.local_provider.cache_manager.set", cache_set),
+    ):
+        refreshed = await LocalDeviceProvider().refresh_heartbeat(
+            user_id=7,
+            device_id="local-device",
+            runtime_instance_id=None,
+            runtime_capacity=None,
+        )
+
+    assert refreshed is True
+    stored = cache_set.await_args.args[1]
+    assert stored["runtime_instance_id"] is None
+    assert stored["runtime_capacity"] is None

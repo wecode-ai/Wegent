@@ -15,14 +15,15 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import {
   canUseEmbeddedBrowser,
+  captureEmbeddedBrowserSnapshot,
   clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
@@ -97,6 +98,53 @@ const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
   return true;
 })()`
+
+interface BrowserOcclusionState {
+  documentOverlayOccluded: boolean
+  generation: number
+  overlayIds: Set<string>
+}
+
+type BrowserOcclusionAction =
+  | { id: string; occluded: boolean; type: 'overlay' }
+  | { occluded: boolean; type: 'document' }
+
+function isBrowserOccluded(state: BrowserOcclusionState): boolean {
+  return state.overlayIds.size > 0 || state.documentOverlayOccluded
+}
+
+function browserOcclusionReducer(
+  state: BrowserOcclusionState,
+  action: BrowserOcclusionAction
+): BrowserOcclusionState {
+  const next =
+    action.type === 'overlay'
+      ? (() => {
+          const overlayIds = new Set(state.overlayIds)
+          if (action.occluded) {
+            overlayIds.add(action.id)
+          } else {
+            overlayIds.delete(action.id)
+          }
+          return { ...state, overlayIds }
+        })()
+      : { ...state, documentOverlayOccluded: action.occluded }
+
+  if (
+    next.documentOverlayOccluded === state.documentOverlayOccluded &&
+    next.overlayIds.size === state.overlayIds.size &&
+    [...next.overlayIds].every(id => state.overlayIds.has(id))
+  ) {
+    return state
+  }
+  return {
+    ...next,
+    generation:
+      !isBrowserOccluded(state) && isBrowserOccluded(next)
+        ? state.generation + 1
+        : state.generation,
+  }
+}
 
 export interface WorkspaceBrowserPanelProps {
   active: boolean
@@ -296,8 +344,21 @@ export function WorkspaceBrowserTabPanel({
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
   const annotationEmptyPollLogCountRef = useRef(0)
-  const [occludingOverlayIds, setOccludingOverlayIds] = useState<Set<string>>(() => new Set())
-  const [documentOverlayOccluded, setDocumentOverlayOccluded] = useState(false)
+  const [browserOcclusion, dispatchBrowserOcclusion] = useReducer(browserOcclusionReducer, {
+    documentOverlayOccluded: false,
+    generation: 0,
+    overlayIds: new Set<string>(),
+  })
+  const [occlusionSnapshot, setOcclusionSnapshot] = useState<{
+    generation: number
+    url: string
+  } | null>(null)
+  const [occlusionCaptureRetry, setOcclusionCaptureRetry] = useState(0)
+  const occlusionSnapshotInFlightRef = useRef(false)
+  const occlusionSnapshotGenerationRef = useRef(0)
+  const occlusionSnapshotReadyRef = useRef(true)
+  const occlusionSnapshotFallbackTimerRef = useRef<number | null>(null)
+  const embeddedBrowserOccludedRef = useRef(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
   const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
@@ -309,6 +370,7 @@ export function WorkspaceBrowserTabPanel({
   const [, setAnnotationScope] = useState<BrowserAnnotationScope | null>(null)
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
   const [discardingAnnotations, setDiscardingAnnotations] = useState(false)
+  const [originalViewHeld, setOriginalViewHeld] = useState(false)
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
@@ -330,8 +392,11 @@ export function WorkspaceBrowserTabPanel({
     activePageUrl && cloudDesktopExtension.isInternalPageUrl(activePageUrl)
   )
   const embeddedBrowserOccluded =
-    occludingOverlayIds.size > 0 || (active && Boolean(currentUrl) && documentOverlayOccluded)
+    browserOcclusion.overlayIds.size > 0 ||
+    (active && Boolean(currentUrl) && browserOcclusion.documentOverlayOccluded)
   const pendingCommentContextCount = Math.max(codeCommentCount, codeCommentContexts.length)
+  const hasQueuedTweaks = annotations.some(annotation => annotation.adjustments.length > 0)
+  const originalViewEnabled = annotationMode && hasQueuedTweaks && originalViewHeld
 
   const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
     setDownloads(current => {
@@ -380,6 +445,10 @@ export function WorkspaceBrowserTabPanel({
       mountedRef.current = false
       pageStateRequestGenerationRef.current += 1
       annotationRequestGenerationRef.current += 1
+      if (occlusionSnapshotFallbackTimerRef.current !== null) {
+        window.clearTimeout(occlusionSnapshotFallbackTimerRef.current)
+        occlusionSnapshotFallbackTimerRef.current = null
+      }
     }
   }, [])
 
@@ -527,6 +596,7 @@ export function WorkspaceBrowserTabPanel({
       setError(null)
       setInvalidTlsCertificate(null)
       setAnnotationMode(false)
+      setOriginalViewHeld(false)
       setAnnotations([])
       setDownloads([])
       setDownloadsOpen(false)
@@ -596,6 +666,7 @@ export function WorkspaceBrowserTabPanel({
         setAnnotations([])
         setAnnotationScope(null)
         setAnnotationMode(false)
+        setOriginalViewHeld(false)
         void evalEmbeddedBrowser('window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true', label)
       }
       updatePageUrl(nextUrl)
@@ -648,9 +719,11 @@ export function WorkspaceBrowserTabPanel({
         }
         return
       }
-      await setEmbeddedBrowserBounds(bounds, visible && !embeddedBrowserOccluded, label)
+      const nativeVisible =
+        visible && (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
+      await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
     },
-    [active, embeddedBrowserAvailable, embeddedBrowserOccluded, label]
+    [active, embeddedBrowserAvailable, label]
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
@@ -717,6 +790,7 @@ export function WorkspaceBrowserTabPanel({
     annotationRequestGenerationRef.current += 1
     annotationModeRef.current = false
     setAnnotationMode(false)
+    setOriginalViewHeld(false)
     void suspendAnnotationLayer(label)
   }, [currentUrl, label, pendingCommentContextCount, suspendAnnotationLayer])
 
@@ -991,6 +1065,7 @@ export function WorkspaceBrowserTabPanel({
     const requestId = activeOpenRequestIdRef.current
     const openingLabel = label
     const openingUrl = currentUrl
+    const nativeOpeningUrl = requestId ? 'about:blank' : openingUrl
     const isAbandoned = () => !mountedRef.current || currentLabelRef.current !== openingLabel
     nativeBrowserOpeningRef.current = true
 
@@ -1076,8 +1151,19 @@ export function WorkspaceBrowserTabPanel({
           visible,
         })
         const pageState = visible
-          ? await openEmbeddedBrowser(openingUrl, bounds, openingLabel)
-          : await openEmbeddedBrowser(openingUrl, bounds, openingLabel, false, !active)
+          ? requestId
+            ? await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, true, true, false)
+            : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel)
+          : requestId
+            ? await openEmbeddedBrowser(
+                nativeOpeningUrl,
+                bounds,
+                openingLabel,
+                false,
+                !active,
+                false
+              )
+            : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
           await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
           logBrowserOpenDiagnostic('lifecycle_cancelled', {
@@ -1091,7 +1177,10 @@ export function WorkspaceBrowserTabPanel({
         adoptNativeLabel(pageState.nativeLabel, openingLabel)
         setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
-        updatePageUrl(pageState.url || openingUrl)
+        if (activeOpenRequestIdRef.current === requestId) {
+          activeOpenRequestIdRef.current = null
+        }
+        updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
@@ -1212,6 +1301,7 @@ export function WorkspaceBrowserTabPanel({
     if (!embeddedBrowserAvailable) return
 
     const handlePageHide = () => {
+      setOriginalViewHeld(false)
       void hideEmbeddedBrowser().catch(error => {
         console.error('Failed to hide embedded browser before page unload:', error)
       })
@@ -1227,6 +1317,27 @@ export function WorkspaceBrowserTabPanel({
       window.removeEventListener('pageshow', handlePageShow)
     }
   }, [embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
+
+  useEffect(() => {
+    const resetOriginalView = () => setOriginalViewHeld(false)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') resetOriginalView()
+    }
+    const animationFrame = !active ? window.requestAnimationFrame(resetOriginalView) : null
+    window.addEventListener('blur', resetOriginalView)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+      window.removeEventListener('blur', resetOriginalView)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (hasQueuedTweaks || !originalViewHeld) return
+    const animationFrame = window.requestAnimationFrame(() => setOriginalViewHeld(false))
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [hasQueuedTweaks, originalViewHeld])
 
   useEffect(() => {
     if (!embeddedBrowserAvailable || !currentUrl) return
@@ -1376,6 +1487,48 @@ export function WorkspaceBrowserTabPanel({
     onReplaceBrowserCodeComments,
   ])
 
+  const holdOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setOriginalViewHeld(true)
+  }, [])
+  const releaseOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    setOriginalViewHeld(false)
+  }, [])
+  const cancelOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    setOriginalViewHeld(false)
+  }, [])
+  const blurOriginalView = useCallback(() => {
+    setOriginalViewHeld(false)
+  }, [])
+  const handleOriginalViewKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>) => {
+    if ((event.key !== ' ' && event.key !== 'Enter') || event.repeat) return
+    event.preventDefault()
+    setOriginalViewHeld(true)
+  }, [])
+  const handleOriginalViewKeyUp = useCallback((event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== ' ' && event.key !== 'Enter') return
+    event.preventDefault()
+    setOriginalViewHeld(false)
+  }, [])
+
+  useEffect(() => {
+    if (!annotationMode) {
+      return
+    }
+    void evalEmbeddedBrowser(
+      `window.__WEWORK_BROWSER_ANNOTATION__?.setOriginalViewEnabled?.(${originalViewEnabled}) ?? true`,
+      label
+    ).catch(error => {
+      console.error('Failed to update embedded browser original view state:', error)
+    })
+  }, [annotationMode, label, originalViewEnabled])
+
   useEffect(() => {
     return () => {
       // Do NOT close the native embedded browser here. React StrictMode double-invokes
@@ -1396,29 +1549,23 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const handleDebugPanelVisibility = (event: Event) => {
       const expanded = Boolean((event as CustomEvent<{ expanded?: boolean }>).detail?.expanded)
-      setOccludingOverlayIds(current => {
-        const next = new Set(current)
-        if (expanded) {
-          next.add('debug-panel')
-        } else {
-          next.delete('debug-panel')
-        }
-        return next
+      if (!activeRef.current && expanded) return
+      dispatchBrowserOcclusion({
+        id: 'debug-panel',
+        occluded: expanded,
+        type: 'overlay',
       })
     }
 
     const handleBrowserOcclusion = (event: Event) => {
       const detail = (event as CustomEvent<EmbeddedBrowserOcclusionChange>).detail
       if (!detail?.id) return
+      if (!activeRef.current && detail.occluded) return
 
-      setOccludingOverlayIds(current => {
-        const next = new Set(current)
-        if (detail.occluded) {
-          next.add(detail.id)
-        } else {
-          next.delete(detail.id)
-        }
-        return next
+      dispatchBrowserOcclusion({
+        id: detail.id,
+        occluded: detail.occluded,
+        type: 'overlay',
       })
     }
 
@@ -1437,13 +1584,32 @@ export function WorkspaceBrowserTabPanel({
   }, [label])
 
   useEffect(() => {
+    if (active) return
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      setOcclusionSnapshot(null)
+    })
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [active])
+
+  useEffect(() => {
+    if (embeddedBrowserOccluded) return undefined
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      setOcclusionSnapshot(null)
+    })
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [embeddedBrowserOccluded])
+
+  useEffect(() => {
     if (!active || !embeddedBrowserAvailable || !currentUrl) return
 
     let animationFrame: number | null = null
     const updateOverlayOcclusion = () => {
       animationFrame = null
       const host = browserHostRef.current
-      setDocumentOverlayOccluded(Boolean(host && hasEmbeddedBrowserOverlayConflict(host)))
+      const occluded = Boolean(host && hasEmbeddedBrowserOverlayConflict(host))
+      dispatchBrowserOcclusion({ occluded, type: 'document' })
     }
     const scheduleOverlayOcclusionUpdate = () => {
       if (animationFrame !== null) return
@@ -1489,11 +1655,102 @@ export function WorkspaceBrowserTabPanel({
     }
   }, [active, currentUrl, embeddedBrowserAvailable])
 
+  useLayoutEffect(() => {
+    embeddedBrowserOccludedRef.current = embeddedBrowserOccluded
+    occlusionSnapshotGenerationRef.current = browserOcclusion.generation
+    occlusionSnapshotReadyRef.current = !embeddedBrowserOccluded
+  }, [browserOcclusion.generation, embeddedBrowserOccluded])
+
+  const syncOcclusionState = useCallback(
+    async (generation: number) => {
+      if (!mountedRef.current) return
+      if (!activeRef.current || !embeddedBrowserOccludedRef.current) {
+        await syncEmbeddedBrowserBounds(active)
+        return
+      }
+      if (occlusionSnapshotInFlightRef.current || !nativeBrowserOpenRef.current) return
+
+      occlusionSnapshotInFlightRef.current = true
+      try {
+        const fallbackTimeoutId = window.setTimeout(() => {
+          if (
+            mountedRef.current &&
+            activeRef.current &&
+            embeddedBrowserOccludedRef.current &&
+            generation === occlusionSnapshotGenerationRef.current
+          ) {
+            // A stuck native capture must not prevent the menu from becoming usable.
+            occlusionSnapshotReadyRef.current = true
+            void syncEmbeddedBrowserBounds(active)
+          }
+        }, 2000)
+        occlusionSnapshotFallbackTimerRef.current = fallbackTimeoutId
+        const snapshotUrl = await captureEmbeddedBrowserSnapshot(label)
+        if (
+          mountedRef.current &&
+          activeRef.current &&
+          embeddedBrowserOccludedRef.current &&
+          generation === occlusionSnapshotGenerationRef.current
+        ) {
+          setOcclusionSnapshot({ generation, url: snapshotUrl })
+        }
+      } catch (error) {
+        console.error('Failed to capture embedded browser occlusion snapshot:', error)
+        if (
+          mountedRef.current &&
+          embeddedBrowserOccludedRef.current &&
+          generation === occlusionSnapshotGenerationRef.current
+        ) {
+          // Keep menus usable if snapshot capture fails, even though the native
+          // browser cannot be visually preserved for this interaction.
+          occlusionSnapshotReadyRef.current = true
+          await syncEmbeddedBrowserBounds(active)
+        }
+      } finally {
+        if (occlusionSnapshotFallbackTimerRef.current !== null) {
+          window.clearTimeout(occlusionSnapshotFallbackTimerRef.current)
+          occlusionSnapshotFallbackTimerRef.current = null
+        }
+        occlusionSnapshotInFlightRef.current = false
+        if (
+          mountedRef.current &&
+          embeddedBrowserOccludedRef.current &&
+          generation !== occlusionSnapshotGenerationRef.current
+        ) {
+          setOcclusionCaptureRetry(current => current + 1)
+        }
+      }
+    },
+    [active, label, syncEmbeddedBrowserBounds]
+  )
+
   useEffect(() => {
-    void syncEmbeddedBrowserBounds(active).catch(error => {
+    const generation = occlusionSnapshotGenerationRef.current
+    void syncOcclusionState(generation).catch(error => {
       console.error('Failed to sync embedded browser occlusion visibility:', error)
     })
-  }, [active, embeddedBrowserOccluded, syncEmbeddedBrowserBounds])
+  }, [
+    browserOcclusion.generation,
+    embeddedBrowserOccluded,
+    occlusionCaptureRetry,
+    syncOcclusionState,
+  ])
+
+  const handleOcclusionSnapshotLoad = useCallback(
+    (generation: number) => {
+      if (
+        !embeddedBrowserOccludedRef.current ||
+        generation !== occlusionSnapshotGenerationRef.current
+      ) {
+        return
+      }
+      occlusionSnapshotReadyRef.current = true
+      void syncEmbeddedBrowserBounds(active).catch(error => {
+        console.error('Failed to hide embedded browser behind occlusion snapshot:', error)
+      })
+    },
+    [active, syncEmbeddedBrowserBounds]
+  )
 
   const runBrowserCommand = useCallback(
     async (command: () => Promise<void>) => {
@@ -1748,7 +2005,7 @@ export function WorkspaceBrowserTabPanel({
       )}
     >
       {annotationMode && !internalDesktopPage ? (
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-sm text-text-primary">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--color-browser-annotation-border)] bg-[var(--color-browser-annotation-surface)] px-2 text-sm text-text-primary">
           <BrowserToolbarButton
             testId="workspace-browser-annotation-close-button"
             label={t('workbench.browser_annotation_close')}
@@ -1765,14 +2022,51 @@ export function WorkspaceBrowserTabPanel({
             <Trash2 className="h-4 w-4" />
           </BrowserToolbarButton>
           <div className="min-w-0 flex-1 truncate text-center font-medium">
-            {t('workbench.browser_annotation_active', {
-              site: activePageUrl ? getFallbackBrowserTitle(activePageUrl) : t('workbench.browser'),
-            })}
+            {originalViewEnabled
+              ? t('workbench.browser_annotation_original_title', {
+                  site: activePageUrl
+                    ? getFallbackBrowserTitle(activePageUrl)
+                    : t('workbench.browser'),
+                })
+              : t('workbench.browser_annotation_active', {
+                  site: activePageUrl
+                    ? getFallbackBrowserTitle(activePageUrl)
+                    : t('workbench.browser'),
+                })}
           </div>
+          <button
+            type="button"
+            data-testid="workspace-browser-annotation-original-view-button"
+            aria-pressed={originalViewEnabled}
+            aria-label={t('workbench.browser_annotation_hold_to_view_original')}
+            title={t('workbench.browser_annotation_hold_to_view_original')}
+            disabled={!hasQueuedTweaks}
+            onBlur={blurOriginalView}
+            onKeyDown={handleOriginalViewKeyDown}
+            onKeyUp={handleOriginalViewKeyUp}
+            onPointerCancel={cancelOriginalView}
+            onPointerDown={holdOriginalView}
+            onPointerUp={releaseOriginalView}
+            className="flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45 aria-pressed:bg-muted aria-pressed:text-text-primary"
+          >
+            <span
+              className={
+                originalViewEnabled
+                  ? 'inline-flex items-center justify-center transition-transform duration-200 motion-reduce:transition-none scale-[0.8]'
+                  : 'inline-flex items-center justify-center transition-transform duration-200 motion-reduce:transition-none'
+              }
+            >
+              {originalViewEnabled ? (
+                <OriginalViewEyeOff className="h-4 w-4" />
+              ) : (
+                <OriginalViewEye className="h-4 w-4" />
+              )}
+            </span>
+          </button>
           {annotations.length > 0 ? (
             <span
               data-testid="workspace-browser-annotation-count"
-              className="rounded-md bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700"
+              className="rounded-md bg-[var(--color-browser-annotation-chip)] px-2 py-1 text-xs font-medium text-[rgb(var(--color-focus))]"
             >
               {t('workbench.browser_annotation_count', { count: annotations.length })}
             </span>
@@ -1904,6 +2198,7 @@ export function WorkspaceBrowserTabPanel({
               if (!snapshot) throw new Error('Annotation runtime is unavailable')
               setAnnotations(snapshot.annotations)
               setAnnotationScope(snapshot.scope)
+              setOriginalViewHeld(false)
               onRemoveBrowserCodeComments?.(snapshot.scope)
               setDiscardDialogOpen(false)
             })
@@ -2140,6 +2435,17 @@ export function WorkspaceBrowserTabPanel({
             className="relative h-full min-h-0 w-full bg-background"
             aria-label={t('workbench.browser')}
           >
+            {active &&
+            embeddedBrowserOccluded &&
+            occlusionSnapshot?.generation === browserOcclusion.generation ? (
+              <img
+                data-testid="workspace-browser-occlusion-snapshot"
+                src={occlusionSnapshot.url}
+                alt=""
+                onLoad={() => handleOcclusionSnapshotLoad(occlusionSnapshot.generation)}
+                className="pointer-events-none absolute inset-0 h-full w-full bg-background object-fill"
+              />
+            ) : null}
             {status === 'loading' && (
               <div
                 data-testid="workspace-browser-loading"
@@ -2189,5 +2495,42 @@ function BrowserToolbarButton({
     >
       {children}
     </button>
+  )
+}
+
+const ORIGINAL_VIEW_EYE_PATH =
+  'M8.50195 17.5V16.498H6.5C5.81091 16.498 5.25395 16.4987 4.80371 16.4619C4.40303 16.4292 4.04237 16.364 3.70606 16.2197L3.56348 16.1533C3.04236 15.8878 2.60586 15.4841 2.30176 14.9883L2.17969 14.7705C1.98772 14.3937 1.90851 13.9873 1.87109 13.5293C1.83432 13.0791 1.83496 12.522 1.83496 11.833V8.16699C1.83496 7.478 1.83432 6.92091 1.87109 6.4707C1.90851 6.0127 1.98772 5.60625 2.17969 5.22949L2.30176 5.01172C2.60586 4.5159 3.04236 4.1122 3.56348 3.84668L3.70606 3.78027C4.04237 3.636 4.40303 3.57083 4.80371 3.53809C5.25395 3.5013 5.81091 3.50195 6.5 3.50195H8.50195V2.5C8.50195 2.13273 8.79972 1.83496 9.16699 1.83496C9.53411 1.83514 9.83203 2.13284 9.83203 2.5V17.5C9.83203 17.8672 9.53411 18.1649 9.16699 18.165C8.79972 18.165 8.50195 17.8673 8.50195 17.5ZM16.835 11.833V8.16699C16.835 7.4561 16.8341 6.96259 16.8027 6.5791C16.7797 6.29739 16.7428 6.1076 16.6914 5.96387L16.6348 5.83398C16.4808 5.53176 16.2466 5.27886 15.959 5.10254L15.833 5.03125C15.675 4.9508 15.4635 4.89397 15.0879 4.86328C14.7044 4.83195 14.211 4.83203 13.5 4.83203H12.5C12.1328 4.83203 11.8351 4.53411 11.835 4.16699C11.835 3.79972 12.1327 3.50195 12.5 3.50195H13.5C14.1891 3.50195 14.746 3.5013 15.1963 3.53809C15.6541 3.5755 16.0599 3.65483 16.4365 3.84668L16.6553 3.96875C17.1509 4.27282 17.5549 4.70856 17.8203 5.22949L17.8867 5.37207C18.0311 5.70855 18.0961 6.06979 18.1289 6.4707C18.1657 6.92091 18.165 7.478 18.165 8.16699V11.833C18.165 12.522 18.1657 13.0791 18.1289 13.5293C18.0961 13.9302 18.0311 14.2914 17.8867 14.6279L17.8203 14.7705C17.5549 15.2914 17.1509 15.7272 16.6553 16.0312L16.4365 16.1533C16.0599 16.3452 15.6541 16.4245 15.1963 16.4619C14.746 16.4987 14.1891 16.498 13.5 16.498H12.5C12.1327 16.498 11.835 16.2003 11.835 15.833C11.8351 15.4659 12.1328 15.168 12.5 15.168H13.5C14.211 15.168 14.7044 15.1681 15.0879 15.1367C15.4635 15.106 15.675 15.0492 15.833 14.9688L15.959 14.8975C16.2466 14.7211 16.4808 14.4682 16.6348 14.166L16.6914 14.0361C16.7428 13.8924 16.7797 13.7026 16.8027 13.4209C16.8341 13.0374 16.835 12.5439 16.835 11.833Z'
+
+const ORIGINAL_VIEW_EYE_OFF_PATH = `${ORIGINAL_VIEW_EYE_PATH}M3.16504 11.833C3.16504 12.5439 3.16595 13.0374 3.19727 13.4209C3.22795 13.7965 3.28478 14.008 3.36524 14.166L3.43555 14.293C3.61186 14.5804 3.86488 14.8148 4.16699 14.9688L4.29688 15.0244C4.44065 15.0759 4.6021 15.1167 4.7725 15.1481L3.26013 16.7501C2.98382 17.049 3.01822 17.5198 3.33734 17.7341C3.63373 17.9333 4.04444 17.8667 4.26816 17.6251L11.5435 9.67934C11.7375 9.45741 11.7047 9.12753 11.4624 8.94551C11.2303 8.78669 10.9187 8.78911 10.7261 8.99983L3.16504 11.833ZM16.7005 10.4814C16.8404 10.6582 16.88 10.8534 16.7992 10.9698C16.6982 11.0864 16.6063 11.2251 16.5394 11.3935C16.4229 11.6894 16.3539 11.9974 16.3343 12.3106C16.3182 12.5668 16.2619 12.815 16.1672 13.0501L16.124 13.1764C16.0123 13.4719 15.8415 13.7402 15.6236 13.9647L15.4308 14.1801L17.3971 12.0618C17.7 11.7297 17.6586 11.2544 17.2998 11.0136C16.9799 10.7991 16.5405 10.9042 16.7005 11.2238V10.4814Z`
+
+function OriginalViewEye({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d={ORIGINAL_VIEW_EYE_PATH} />
+    </svg>
+  )
+}
+
+function OriginalViewEyeOff({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path d={ORIGINAL_VIEW_EYE_OFF_PATH} />
+    </svg>
   )
 }

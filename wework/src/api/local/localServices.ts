@@ -96,12 +96,7 @@ import type {
   AutomationRunListResponse,
   AutomationSource,
 } from '@/types/automation'
-import type {
-  WorkspaceFileEntry,
-  WorkspaceFileChunkResponse,
-  WorkspaceTextFileResponse,
-  WorkspaceTreeResponse,
-} from '@/types/workspace-files'
+import type { WorkspaceTextFileResponse, WorkspaceTreeResponse } from '@/types/workspace-files'
 import {
   ensureLocalExecutorStarted,
   requestLocalExecutor,
@@ -109,8 +104,14 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
+import {
+  listLocalWorkspaceEntries,
+  readLocalWorkspaceFileChunk,
+  readLocalWorkspaceTextFile,
+} from '@/tauri/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   runtimePermissionMode,
   runtimePermissionProfile,
@@ -380,6 +381,9 @@ interface LocalAppServicesDeps {
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   cloudModelGateway?: CloudModelGateway
   user?: User
+  readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
+  readWorkspaceFileChunk?: typeof readLocalWorkspaceFileChunk
+  listWorkspaceEntries?: typeof listLocalWorkspaceEntries
 }
 
 interface CatalogReconciliationTracker {
@@ -1242,67 +1246,10 @@ function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): str
   return `/${normalizedSegments.join('/')}`
 }
 
-function isWorkspacePathWithin(path: string, rootPath: string): boolean {
-  return path === rootPath || path.startsWith(`${rootPath.replace(/\/+$/, '')}/`)
-}
-
-function requireWorkspacePathWithin(path: string, rootPath: string, errorMessage: string) {
-  if (!isWorkspacePathWithin(path, rootPath)) {
-    throw new Error(errorMessage)
-  }
-}
-
 function normalizeModifiedAt(value: unknown, errorMessage: string): string | null {
   if (value === undefined || value === null) return null
   if (typeof value === 'string') return value
   throw new Error(errorMessage)
-}
-
-function normalizeWorkspaceEntry(
-  value: unknown,
-  responseRootPath: string,
-  requestedRootPath: string
-): WorkspaceFileEntry {
-  const record = recordValue(value)
-  if (
-    typeof record.name !== 'string' ||
-    typeof record.path !== 'string' ||
-    typeof record.is_directory !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace tree response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  requireWorkspacePathWithin(path, responseRootPath, 'Invalid workspace tree response')
-  const requestedPath = `${requestedRootPath}${path.slice(responseRootPath.length)}`
-  return {
-    name: record.name,
-    path: requestedPath,
-    isDirectory: record.is_directory,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
-  }
-}
-
-function normalizeWorkspaceTree(output: unknown, requestedPath: string): WorkspaceTreeResponse {
-  const normalizedRequestedPath = normalizeAbsoluteWorkspacePath(
-    requestedPath,
-    'Workspace path must be absolute'
-  )
-  const record = recordValue(output)
-  if (typeof record.path !== 'string' || !Array.isArray(record.entries)) {
-    throw new Error('Invalid workspace tree response')
-  }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  if (path.split('/').pop() !== normalizedRequestedPath.split('/').pop()) {
-    throw new Error('Invalid workspace tree response')
-  }
-  return {
-    path: normalizedRequestedPath,
-    entries: record.entries.map(entry =>
-      normalizeWorkspaceEntry(entry, path, normalizedRequestedPath)
-    ),
-  }
 }
 
 function normalizeWorkspaceTextFile(
@@ -1340,49 +1287,6 @@ function normalizeWorkspaceTextFile(
     truncated: record.truncated,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
-  }
-}
-
-function normalizeWorkspaceFileChunk(
-  output: unknown,
-  requestedFilePath: string,
-  requestedOffset: number
-): WorkspaceFileChunkResponse {
-  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
-    requestedFilePath,
-    'Workspace file path must be absolute'
-  )
-  const record = recordValue(output)
-  if (
-    typeof record.path !== 'string' ||
-    typeof record.name !== 'string' ||
-    typeof record.content_base64 !== 'string' ||
-    typeof record.offset !== 'number' ||
-    typeof record.eof !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace file chunk response')
-  }
-  const responsePath = normalizeAbsoluteWorkspacePath(
-    record.path,
-    'Invalid workspace file chunk response'
-  )
-  const requestedName = normalizedRequestedFilePath.split('/').pop()
-  if (
-    record.name !== requestedName ||
-    responsePath.split('/').pop() !== requestedName ||
-    record.offset !== requestedOffset
-  ) {
-    throw new Error('Invalid workspace file chunk response')
-  }
-  return {
-    path: normalizedRequestedFilePath,
-    name: record.name,
-    contentBase64: record.content_base64,
-    offset: record.offset,
-    eof: record.eof,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace file chunk response'),
   }
 }
 
@@ -1460,6 +1364,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
@@ -1470,10 +1375,15 @@ interface BuildLocalRuntimeExecutionRequestInput {
 
 function messageWithApplicationContext(
   message: string,
-  context?: RuntimeTaskCreateRequest['additionalContext']
+  context?: RuntimeTaskCreateRequest['additionalContext'],
+  includeImplicitProjectSpaceCapability = true
 ): string {
   const entries = Object.entries(context ?? {}).filter(([, entry]) => entry.kind === 'application')
-  if (message.includes('cloud://projects') && !context?.projectSpaceCapability) {
+  if (
+    includeImplicitProjectSpaceCapability &&
+    message.includes('cloud://projects') &&
+    !context?.projectSpaceCapability
+  ) {
     entries.push([
       'projectSpaceCapability',
       {
@@ -1565,7 +1475,11 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
-    prompt: messageWithApplicationContext(input.message, input.additionalContext),
+    prompt: messageWithApplicationContext(
+      input.message,
+      input.additionalContext,
+      input.origin?.type !== 'project_automation'
+    ),
     enable_tools: true,
     enable_deep_thinking: true,
     skill_names: deployedSkillNames,
@@ -1776,6 +1690,7 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
       cloudProjectId: normalizedData.cloudProjectId,
+      origin: normalizedData.origin,
       workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
       branch: runtimeWorkspace?.branch,
       newSession: true,
@@ -2806,14 +2721,27 @@ export function createRuntimeWorkApiFromIpc(
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+      const startedAt = Date.now()
+      logRuntimeTaskCreateStage('local-create-started', {
+        taskId: data.taskId ?? null,
+        deviceId: data.deviceId ?? null,
+        runtime: data.runtime,
+      })
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      logRuntimeTaskCreateStage('local-device-resolved', {
+        taskId: data.taskId ?? null,
+        requestedDeviceId: data.deviceId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      console.info('[Wework] Runtime task primary model preparation completed', {
+      logRuntimeTaskCreateStage('local-primary-model-prepared', {
+        taskId: data.taskId ?? null,
         deviceId: localDeviceId,
-        taskId: data.taskId,
         modelId: data.modelId ?? null,
+        elapsedMs: Date.now() - startedAt,
       })
       const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
       if (
@@ -2822,11 +2750,11 @@ export function createRuntimeWorkApiFromIpc(
       ) {
         throw modelCatalogSyncCancelled()
       }
-      console.info('[Wework] Runtime task model preparation completed', {
+      logRuntimeTaskCreateStage('local-supervisor-model-prepared', {
+        taskId: data.taskId ?? null,
         deviceId: localDeviceId,
-        taskId: data.taskId,
-        modelId: data.modelId ?? null,
         supervisorModelId: supervisorModelId ?? null,
+        elapsedMs: Date.now() - startedAt,
       })
       const payload = await createLocalRuntimeTaskPayload(
         data,
@@ -2835,6 +2763,11 @@ export function createRuntimeWorkApiFromIpc(
         options.cloudModelGateway,
         user
       )
+      logRuntimeTaskCreateStage('local-payload-built', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+      })
       debugLocalRuntimeCreatePayload(data, payload)
       const executionRequest = recordValue(payload.executionRequest)
       console.info('[Wework] Friendly task title request', {
@@ -2848,11 +2781,23 @@ export function createRuntimeWorkApiFromIpc(
         userId: executionRequest.user_id ?? null,
         userName: stringValue(executionRequest.user_name),
       })
+      logRuntimeTaskCreateStage('local-rpc-dispatched', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        method: 'runtime.tasks.create',
+        elapsedMs: Date.now() - startedAt,
+      })
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
         payload,
         localDeviceId
       )
+      logRuntimeTaskCreateStage('local-rpc-resolved', {
+        taskId: data.taskId ?? null,
+        deviceId: localDeviceId,
+        elapsedMs: Date.now() - startedAt,
+        accepted: response.accepted ?? true,
+      })
       const responseRecord = recordValue(response)
       const workspacePath =
         stringValue(responseRecord.workspacePath) ??
@@ -3091,6 +3036,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
+  const readWorkspaceTextFile = deps.readWorkspaceTextFile ?? readLocalWorkspaceTextFile
+  const readWorkspaceFileChunk = deps.readWorkspaceFileChunk ?? readLocalWorkspaceFileChunk
+  const listWorkspaceEntries = deps.listWorkspaceEntries ?? listLocalWorkspaceEntries
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
 
@@ -3142,6 +3090,24 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         return [localDeviceFromStatus(fallback)]
       }
     },
+    async getRuntimeSettings(deviceId: string) {
+      const settings = await runtimeWorkApi.getRuntimeSettings()
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
+    async updateRuntimeSettings(deviceId: string, maxConcurrentTasks: number) {
+      const settings = await runtimeWorkApi.updateRuntimeSettings({ maxConcurrentTasks })
+      return {
+        device_id: deviceId,
+        max_concurrent_tasks: settings.maxConcurrentTasks,
+        active_tasks: 0,
+        queued_tasks: 0,
+      }
+    },
     async getHomeDirectory(deviceId: string) {
       const response = await executeCommand(deviceId, {
         command_key: 'home_dir',
@@ -3190,43 +3156,27 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to list skills')
       return commandSkills(response)
     },
-    async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
-      const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_tree',
-        path: normalizedPath,
-        timeout_seconds: 15,
-        max_output_bytes: 1024 * 512,
-      })
-      assertCommandSuccess(response, 'Failed to list workspace files')
-      return normalizeWorkspaceTree(response.stdout, normalizedPath)
+    async listWorkspaceEntries(
+      _deviceId: string,
+      path: string,
+      workspaceRoot = path
+    ): Promise<WorkspaceTreeResponse> {
+      return listWorkspaceEntries(workspaceRoot, path)
     },
     async readWorkspaceTextFile(
-      deviceId: string,
-      filePath: string
+      _deviceId: string,
+      filePath: string,
+      workspaceRoot: string
     ): Promise<WorkspaceTextFileResponse> {
-      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_read_text_file',
-        path: parentPath,
-        args: [fileName],
-        timeout_seconds: 15,
-        max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
-      })
-      assertCommandSuccess(response, 'Failed to read workspace file')
-      return normalizeWorkspaceTextFile(response.stdout, filePath)
+      return readWorkspaceTextFile(workspaceRoot, filePath)
     },
-    async readWorkspaceFileChunk(deviceId: string, filePath: string, offset: number) {
-      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
-      const response = await executeCommand(deviceId, {
-        command_key: 'workspace_read_file_chunk',
-        path: parentPath,
-        args: [fileName, String(offset)],
-        timeout_seconds: 30,
-        max_output_bytes: 1024 * 1024 * 2,
-      })
-      assertCommandSuccess(response, 'Failed to read workspace file')
-      return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
+    async readWorkspaceFileChunk(
+      _deviceId: string,
+      filePath: string,
+      offset: number,
+      workspaceRoot: string
+    ) {
+      return readWorkspaceFileChunk(workspaceRoot, filePath, offset)
     },
     async writeWorkspaceTextFile(
       deviceId: string,
@@ -3275,42 +3225,44 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
+  const teamApi = {
+    listTeams: async () => [LOCAL_WORKBENCH_TEAM],
+    getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
+  }
+  const modelApi = {
+    listModels: async () => {
+      let codexOfficialModels: CodexOfficialModel[]
+      let codexOfficialError: string | null
+      let codexAuthConfigured: boolean
+      try {
+        await ensureStatus()
+        const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
+          requestLocalCodexOfficialModels(request).then(
+            value => ({ value, error: null }),
+            error => ({
+              value: null,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          ),
+          loadLocalCodexAuthConfigured(request),
+        ])
+        codexOfficialModels = codexOfficialResult.value?.models ?? []
+        codexOfficialError = codexOfficialResult.error
+        codexAuthConfigured = nextCodexAuthConfigured
+      } catch (error) {
+        codexOfficialModels = []
+        codexOfficialError = error instanceof Error ? error.message : String(error)
+        codexAuthConfigured = false
+      }
+      return {
+        data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
+      }
+    },
+  }
 
   return {
-    teamApi: {
-      listTeams: async () => [LOCAL_WORKBENCH_TEAM],
-      getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
-    },
-    modelApi: {
-      listModels: async () => {
-        let codexOfficialModels: CodexOfficialModel[]
-        let codexOfficialError: string | null
-        let codexAuthConfigured: boolean
-        try {
-          await ensureStatus()
-          const [codexOfficialResult, nextCodexAuthConfigured] = await Promise.all([
-            requestLocalCodexOfficialModels(request).then(
-              value => ({ value, error: null }),
-              error => ({
-                value: null,
-                error: error instanceof Error ? error.message : String(error),
-              })
-            ),
-            loadLocalCodexAuthConfigured(request),
-          ])
-          codexOfficialModels = codexOfficialResult.value?.models ?? []
-          codexOfficialError = codexOfficialResult.error
-          codexAuthConfigured = nextCodexAuthConfigured
-        } catch (error) {
-          codexOfficialModels = []
-          codexOfficialError = error instanceof Error ? error.message : String(error)
-          codexAuthConfigured = false
-        }
-        return {
-          data: localRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
-        }
-      },
-    },
+    teamApi,
+    modelApi,
     skillApi: {
       listSkills: async () => [],
       getTeamSkills: async () => ({ skills: [], preload_skills: [] }),
@@ -3354,6 +3306,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     projectSpaceApis: {
       local: deliveryApi,
       defaultLocation: 'local',
+    },
+    projectSpaceDetailServices: {
+      local: {
+        deliveryApi,
+        projectChatClient: localProjectChatClient,
+        projectChatAgentApi: localProjectChatAgentApi,
+        loopItemExecutionApi: localLoopItemExecutionApi,
+        deviceApi,
+        modelApi,
+        teamApi,
+      },
     },
     runtimeWorkApi,
     automationApi,

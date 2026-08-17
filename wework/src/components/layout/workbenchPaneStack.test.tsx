@@ -18,10 +18,15 @@ import {
 } from './workbenchPanePresentation'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
 import {
+  closeWorkbenchPane,
   collectWorkbenchPanes,
   createWorkbenchLayout,
+  focusWorkbenchPane,
+  parsePersistedWorkbenchLayout,
   placeWorkbenchTask,
   serializeWorkbenchLayout,
+  splitWorkbenchPane,
+  updateWorkbenchSplitSizes,
 } from './workbenchSplitLayout'
 
 const paneOne: WorkbenchPaneIdentity = {
@@ -92,26 +97,56 @@ function Stack({
   onPaneFocus = () => undefined,
   retainedResourceKeys = [],
   workbenchVisible = true,
+  followActivePane = false,
 }: {
   activePane: WorkbenchPaneIdentity
   onPaneFocus?: (pane: WorkbenchPaneIdentity) => void
   retainedResourceKeys?: string[]
   workbenchVisible?: boolean
+  followActivePane?: boolean
 }) {
+  const [layout, setLayout] = useState(
+    () =>
+      parsePersistedWorkbenchLayout(localStorage.getItem('workbench-split-test')) ??
+      createWorkbenchLayout(getWorkbenchPaneKey(activePane))
+  )
+  // Production layout state belongs to the parent. This flag lets tests emulate the
+  // former active-pane-following parent behavior for host retention and blank replacement.
+  const renderedLayout = followActivePane
+    ? createWorkbenchLayout(getWorkbenchPaneKey(activePane))
+    : layout
   return (
     <>
       <div id={WORKBENCH_SPLIT_ACTIONS_PORTAL_ID} />
       <SplitWorkbenchPaneStack
         activePane={activePane}
-        storageKey="workbench-split-test"
+        layout={renderedLayout}
         validRuntimeKeys={[...paneByKey.keys()]}
         retainedResourceKeys={retainedResourceKeys}
-        runtimeKeysReady
         activeTestId="active-pane"
         workbenchVisible={workbenchVisible}
         resolvePane={key => paneByKey.get(key) ?? null}
         getPaneTitle={pane => pane.currentRuntimeTask?.taskId ?? 'blank'}
         onPaneFocus={onPaneFocus}
+        onLayoutFocus={paneId => {
+          const next = focusWorkbenchPane(layout, paneId)
+          setLayout(next)
+          return next
+        }}
+        onLayoutClose={paneId => {
+          const next = closeWorkbenchPane(layout, paneId)
+          setLayout(next)
+          return next
+        }}
+        onLayoutSplit={(paneId, direction) =>
+          setLayout(current => splitWorkbenchPane(current, paneId, direction))
+        }
+        onLayoutPlace={(paneKey, paneId, position) =>
+          setLayout(current => placeWorkbenchTask(current, paneKey, paneId, position))
+        }
+        onLayoutSizesChange={(splitId, sizes) =>
+          setLayout(current => updateWorkbenchSplitSizes(current, splitId, sizes))
+        }
         renderPane={pane => <PaneContent pane={pane} />}
       />
     </>
@@ -148,28 +183,34 @@ describe('SplitWorkbenchPaneStack', () => {
     expect(screen.queryByTestId('pane-header-action-two')).not.toBeInTheDocument()
   })
 
-  it('replaces the focused pane during ordinary sidebar navigation', async () => {
+  it('does not mutate the controlled layout when the external active pane changes', async () => {
     const view = render(<Stack activePane={paneOne} />)
 
     view.rerender(<Stack activePane={paneTwo} />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('pane-content-two')).toBeVisible()
-      expect(screen.queryByTestId('pane-content-one')).not.toBeInTheDocument()
+      expect(screen.getByTestId('pane-content-one')).toBeVisible()
+      expect(screen.queryByTestId('pane-content-two')).not.toBeInTheDocument()
     })
   })
 
   it('keeps retained resources mounted outside the document and restores their host', async () => {
-    const view = render(<Stack activePane={paneOne} retainedResourceKeys={[paneOneKey]} />)
+    const view = render(
+      <Stack activePane={paneOne} retainedResourceKeys={[paneOneKey]} followActivePane />
+    )
     const mountId = screen.getByTestId('pane-content-one').dataset.mountId
 
-    view.rerender(<Stack activePane={paneTwo} retainedResourceKeys={[paneOneKey]} />)
+    view.rerender(
+      <Stack activePane={paneTwo} retainedResourceKeys={[paneOneKey]} followActivePane />
+    )
     await waitFor(() => {
       expect(screen.queryByTestId('pane-content-one')).not.toBeInTheDocument()
       expect(screen.getByTestId('pane-content-two')).toBeVisible()
     })
 
-    view.rerender(<Stack activePane={paneOne} retainedResourceKeys={[paneOneKey]} />)
+    view.rerender(
+      <Stack activePane={paneOne} retainedResourceKeys={[paneOneKey]} followActivePane />
+    )
     await waitFor(() =>
       expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-mount-id', mountId)
     )
@@ -278,10 +319,10 @@ describe('SplitWorkbenchPaneStack', () => {
   })
 
   it('replaces a startup blank identity without retaining it', async () => {
-    const view = render(<Stack activePane={blankPane} />)
+    const view = render(<Stack activePane={blankPane} followActivePane />)
     expect(screen.getByTestId('pane-content-blank')).toBeVisible()
 
-    view.rerender(<Stack activePane={paneOne} />)
+    view.rerender(<Stack activePane={paneOne} followActivePane />)
 
     await waitFor(() => {
       expect(screen.queryByTestId('pane-content-blank')).not.toBeInTheDocument()

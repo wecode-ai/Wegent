@@ -1,0 +1,12 @@
+{
+  "network_notice": "The device automatically detects its IDE address. The command uses host networking, so enable it in Docker Desktop first. Expose port 17888 only on the intranet, never to the public internet.",
+  "image_label": "Internal image",
+  "backend_url_label": "HTTP Backend",
+  "socket_url_label": "Control WSS",
+  "status_idle": "Waiting to start",
+  "status_waiting": "Waiting for the remote device to connect…",
+  "status_connecting": "The remote device is connecting…",
+  "status_online": "Remote device is online",
+  "status_version_mismatch": "The device is online, but its Executor version needs an update",
+  "status_connection_failed": "Connection failed. Check the container logs, host networking, and WSS URL."
+}

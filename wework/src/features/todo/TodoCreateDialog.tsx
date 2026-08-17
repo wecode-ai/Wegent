@@ -113,7 +113,7 @@ export function TodoCreateDialog({
   return (
     <div
       data-testid="todo-create-dialog-overlay"
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-[#11182766] p-5"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-5"
       onMouseDown={event => {
         if (event.currentTarget === event.target && !submitting) onClose()
       }}
@@ -123,23 +123,23 @@ export function TodoCreateDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="todo-create-dialog-title"
-        className="flex h-[min(744px,calc(100vh-40px))] w-[772px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-xl border border-[#D8DCE0] bg-white shadow-[0_18px_42px_rgba(17,24,39,0.30)] dark:border-border dark:bg-background"
+        className="flex h-[min(744px,calc(100vh-40px))] w-[772px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-[0_18px_42px_rgba(17,24,39,0.30)]"
         onMouseDown={event => event.stopPropagation()}
       >
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#E2E5E7] px-[18px] dark:border-border">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-[18px]">
           <div className="flex min-w-0 items-center gap-3">
             <h2
               id="todo-create-dialog-title"
-              className="shrink-0 text-lg font-semibold text-[#24282D] dark:text-text-primary"
+              className="shrink-0 text-lg font-semibold text-text-primary"
             >
               {t('todo.create_action', '新建任务')}
             </h2>
-            <label className="relative flex h-[30px] min-w-0 max-w-[230px] items-center gap-2 rounded-md border border-[#E0E3E6] bg-[#F7F8F9] pl-2.5 pr-7 dark:border-border dark:bg-muted">
+            <label className="relative flex h-[30px] min-w-0 max-w-[230px] items-center gap-2 rounded-md border border-border bg-muted pl-2.5 pr-7">
               <span
                 className="h-[18px] w-[18px] shrink-0 rounded-[4px]"
                 style={{ backgroundColor: selectedProject?.color || '#14B8A6' }}
               />
-              <span className="truncate text-xs font-semibold text-[#4A5158] dark:text-text-primary">
+              <span className="truncate text-xs font-semibold text-text-primary">
                 {selectedProject?.name ?? t('todo.no_project', '未选择项目')}
               </span>
               <select
@@ -155,11 +155,11 @@ export function TodoCreateDialog({
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-[#818991]" />
+              <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-text-muted" />
             </label>
           </div>
           <div className="flex items-center gap-3">
-            <span className="font-mono text-xs text-[#969EA5]">
+            <span className="font-mono text-xs text-text-muted">
               ESC {t('workbench.close', '关闭')}
             </span>
             <button
@@ -167,7 +167,7 @@ export function TodoCreateDialog({
               data-testid="todo-create-close"
               onClick={onClose}
               disabled={submitting}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[#6F7880] hover:bg-[#F2F4F5] disabled:opacity-50 dark:hover:bg-muted"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
               aria-label={t('workbench.close', '关闭')}
             >
               <X className="h-[15px] w-[15px]" />
@@ -177,9 +177,9 @@ export function TodoCreateDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="space-y-[13px]">
-            <div className="flex h-8 items-center justify-between rounded-md bg-[#F7F8F9] px-2.5 dark:bg-muted">
-              <span className="flex items-center gap-2 text-xs font-semibold text-[#626A72] dark:text-text-secondary">
-                <span className="h-2.5 w-2.5 rounded-full bg-[#858E97]" />
+            <div className="flex h-8 items-center justify-between rounded-md bg-muted px-2.5">
+              <span className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
+                <span className="h-2.5 w-2.5 rounded-full bg-text-muted" />
                 {t('todo.create_into_state', {
                   defaultValue: '将创建到「{{state}}」',
                   state: t(
@@ -189,7 +189,7 @@ export function TodoCreateDialog({
                   ),
                 })}
               </span>
-              <span className="text-xs text-[#949CA3]">
+              <span className="text-xs text-text-muted">
                 {t('todo.create_state_source', '由当前看板列预填')}
               </span>
             </div>
@@ -200,7 +200,7 @@ export function TodoCreateDialog({
                 value={goal}
                 onChange={event => setGoal(event.target.value)}
                 placeholder={t('todo.goal_placeholder', '例如：用户登录后 2 秒内稳定进入工作区')}
-                className="h-[38px] w-full rounded-md border border-[#DDE1E4] bg-white px-3 text-xs text-[#424A52] outline-none placeholder:text-[#A1A8AF] focus:border-[#8FD6CE] dark:border-border dark:bg-background dark:text-text-primary"
+                className="h-[38px] w-full rounded-md border border-border bg-background px-3 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-focus"
               />
             </FormGroup>
 
@@ -210,15 +210,15 @@ export function TodoCreateDialog({
               spread
             >
               <div
-                className="h-[clamp(190px,26vh,236px)] overflow-hidden rounded-[7px] border border-[#D9DDE0] bg-white dark:border-border dark:bg-background"
+                className="h-[clamp(190px,26vh,236px)] overflow-hidden rounded-[7px] border border-border bg-background"
                 onDragOver={event => event.preventDefault()}
                 onDrop={event => {
                   event.preventDefault()
                   addFiles(event.dataTransfer.files)
                 }}
               >
-                <div className="flex h-[34px] items-center justify-between border-b border-[#E5E7E9] bg-[#F7F8F9] px-2 dark:border-border dark:bg-muted">
-                  <div className="flex items-center gap-1 text-[#707981]">
+                <div className="flex h-[34px] items-center justify-between border-b border-border bg-muted px-2">
+                  <div className="flex items-center gap-1 text-text-secondary">
                     <MarkdownTool icon={Bold} />
                     <MarkdownTool icon={Italic} />
                     <MarkdownTool icon={Code2} />
@@ -229,7 +229,7 @@ export function TodoCreateDialog({
                     type="button"
                     data-testid="todo-create-attach-toolbar"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-[#6D767E] hover:bg-[#EDEFF1] dark:hover:bg-background"
+                    className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-text-secondary hover:bg-background"
                   >
                     <Paperclip className="h-3 w-3" />
                     {t('todo.add_attachment', '添加附件')}
@@ -244,9 +244,9 @@ export function TodoCreateDialog({
                     'todo.markdown_placeholder',
                     '写下任务背景、问题、要求或任何模型需要读取的内容…'
                   )}
-                  className="block h-[calc(100%-78px)] w-full resize-none bg-white px-3 py-2.5 font-mono text-xs leading-[1.5] text-[#424A52] outline-none placeholder:font-sans placeholder:text-[#A1A8AF] dark:bg-background dark:text-text-primary"
+                  className="block h-[calc(100%-78px)] w-full resize-none bg-background px-3 py-2.5 font-mono text-xs leading-[1.5] text-text-primary outline-none placeholder:font-sans placeholder:text-text-muted"
                 />
-                <div className="flex h-11 items-center justify-between border-t border-[#E8EAEC] bg-[#FAFBFB] px-2.5 dark:border-border dark:bg-background">
+                <div className="flex h-11 items-center justify-between border-t border-border bg-background px-2.5">
                   <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
                     <input
                       ref={fileInputRef}
@@ -260,7 +260,7 @@ export function TodoCreateDialog({
                       }}
                     />
                     {files.length === 0 ? (
-                      <span className="flex items-center gap-1.5 text-xs text-[#899199]">
+                      <span className="flex items-center gap-1.5 text-xs text-text-muted">
                         <Paperclip className="h-3 w-3" />
                         {t('todo.no_attachments', '暂无附件')}
                       </span>
@@ -271,7 +271,7 @@ export function TodoCreateDialog({
                           type="button"
                           data-testid={`todo-create-file-${index}`}
                           onClick={() => setFiles(current => current.filter(item => item !== file))}
-                          className="flex h-6 max-w-[160px] items-center gap-1 rounded border border-[#E0E3E6] bg-white px-1.5 text-xs text-[#626A72] hover:bg-[#F2F4F5] dark:border-border dark:bg-muted"
+                          className="flex h-6 max-w-[160px] items-center gap-1 rounded border border-border bg-muted px-1.5 text-xs text-text-secondary hover:bg-surface"
                           title={t('todo.remove_attachment', '移除附件')}
                         >
                           <Image className="h-3 w-3 shrink-0" />
@@ -281,10 +281,10 @@ export function TodoCreateDialog({
                       ))
                     )}
                     {files.length > 3 && (
-                      <span className="text-xs text-[#899199]">+{files.length - 3}</span>
+                      <span className="text-xs text-text-muted">+{files.length - 3}</span>
                     )}
                   </div>
-                  <span className="shrink-0 text-xs text-[#9AA1A8]">
+                  <span className="shrink-0 text-xs text-text-muted">
                     {t('todo.drop_files_hint', '可拖拽文件到编辑器')}
                   </span>
                 </div>
@@ -348,10 +348,10 @@ export function TodoCreateDialog({
                 {assignee === 'ai' && (
                   <div
                     data-testid="todo-create-model"
-                    className="flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-[#E1E4E7] bg-[#F7F8F9] px-2 dark:border-border dark:bg-muted"
+                    className="flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-border bg-muted px-2"
                   >
-                    <Bot className="h-3 w-3 shrink-0 text-[#7C858D]" />
-                    <span className="truncate text-xs text-[#626A72] dark:text-text-secondary">
+                    <Bot className="h-3 w-3 shrink-0 text-text-muted" />
+                    <span className="truncate text-xs text-text-secondary">
                       {modelName || t('todo.model_automatic', 'Model：自动')}
                     </span>
                   </div>
@@ -371,17 +371,17 @@ export function TodoCreateDialog({
           </div>
         </div>
 
-        <footer className="flex h-[72px] shrink-0 items-center justify-between border-t border-[#E0E3E6] bg-[#FAFBFB] px-[18px] dark:border-border dark:bg-background">
+        <footer className="flex h-[72px] shrink-0 items-center justify-between border-t border-border bg-background px-[18px]">
           <span
             className={`flex min-w-0 items-center gap-1.5 text-xs font-semibold ${
-              error ? 'text-destructive' : 'text-[#57706D]'
+              error ? 'text-destructive' : 'text-text-secondary'
             }`}
           >
             {error ? (
               error
             ) : (
               <>
-                <Sparkles className="h-3.5 w-3.5 text-[#0F8F82]" />
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
                 {t('todo.creation_principle', '内容保持自由，运行时自动结构化')}
               </>
             )}
@@ -392,7 +392,7 @@ export function TodoCreateDialog({
               data-testid="todo-create-cancel"
               onClick={onClose}
               disabled={submitting}
-              className="h-[34px] rounded-md border border-[#D8DCE0] bg-white px-3 text-xs font-semibold text-[#596169] hover:bg-[#F5F6F7] disabled:opacity-50 dark:border-border dark:bg-background dark:text-text-secondary"
+              className="h-[34px] rounded-md border border-border bg-background px-3 text-xs font-semibold text-text-secondary hover:bg-muted disabled:opacity-50"
             >
               {t('workbench.cancel', '取消')}
             </button>
@@ -401,7 +401,7 @@ export function TodoCreateDialog({
               data-testid="todo-create-submit"
               onClick={() => void submit(false)}
               disabled={submitting}
-              className="flex h-[34px] items-center gap-1.5 rounded-md border border-[#A9DAD3] bg-white px-3 text-xs font-bold text-[#0F766E] hover:bg-[#F1FAF8] disabled:opacity-50 dark:bg-background"
+              className="flex h-[34px] items-center gap-1.5 rounded-md border border-primary/30 bg-background px-3 text-xs font-bold text-primary hover:bg-primary/10 disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
               {t('todo.create_only', '创建任务')}
@@ -411,7 +411,7 @@ export function TodoCreateDialog({
               data-testid="todo-create-and-run"
               onClick={() => void submit(true)}
               disabled={submitting}
-              className="flex h-[34px] items-center gap-1.5 rounded-md bg-[#14B8A6] px-3.5 text-xs font-bold text-white hover:bg-[#0FA797] disabled:opacity-50"
+              className="flex h-[34px] items-center gap-1.5 rounded-md bg-primary px-3.5 text-xs font-bold text-primary-contrast hover:bg-primary/90 disabled:opacity-50"
             >
               <Play className="h-3 w-3 fill-current" />
               {submitting ? t('todo.creating', '创建中…') : t('todo.create_and_run', '创建并运行')}
@@ -437,10 +437,8 @@ function FormGroup({
   return (
     <section className="space-y-1.5">
       <div className={`flex items-center ${spread ? 'justify-between' : 'gap-1.5'}`}>
-        <span className="text-xs font-semibold text-[#555D65] dark:text-text-secondary">
-          {label}
-        </span>
-        <span className="text-xs text-[#929AA1]">{hint}</span>
+        <span className="text-xs font-semibold text-text-secondary">{label}</span>
+        <span className="text-xs text-text-muted">{hint}</span>
       </div>
       {children}
     </section>
@@ -469,12 +467,12 @@ function PropertySelect({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="relative flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-[#E1E4E7] bg-[#F7F8F9] px-2 dark:border-border dark:bg-muted">
-      <Icon className="h-3 w-3 shrink-0 text-[#7C858D]" />
-      <span className="truncate text-xs text-[#626A72] dark:text-text-secondary">
+    <label className="relative flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-border bg-muted px-2">
+      <Icon className="h-3 w-3 shrink-0 text-text-muted" />
+      <span className="truncate text-xs text-text-secondary">
         {options.find(option => option.value === value)?.label}
       </span>
-      <ChevronDown className="ml-auto h-2.5 w-2.5 shrink-0 text-[#9AA1A8]" />
+      <ChevronDown className="ml-auto h-2.5 w-2.5 shrink-0 text-text-muted" />
       <select
         data-testid={testId}
         value={value}
@@ -502,11 +500,9 @@ function DateProperty({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="relative flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-[#E1E4E7] bg-[#F7F8F9] px-2 dark:border-border dark:bg-muted">
-      <CalendarDays className="h-3 w-3 shrink-0 text-[#7C858D]" />
-      <span className="truncate text-xs text-[#626A72] dark:text-text-secondary">
-        {value || label}
-      </span>
+    <label className="relative flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-border bg-muted px-2">
+      <CalendarDays className="h-3 w-3 shrink-0 text-text-muted" />
+      <span className="truncate text-xs text-text-secondary">{value || label}</span>
       <input
         data-testid="todo-create-due-date"
         type="date"

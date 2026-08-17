@@ -25,6 +25,10 @@ from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
+from .download_url import (
+    IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS,
+    build_image_download_url,
+)
 from .intent_analyzer import ImageIntentAnalyzer, ImageIntentResult
 from .providers import get_image_provider
 
@@ -204,6 +208,7 @@ class ImageAgent(PollingAgent):
             user_id = request.user.get("id") if request.user else None
             attachment_ids: List[int] = []
             image_urls: List[str] = []
+            image_download_urls: List[str] = []
 
             for i, image in enumerate(result.images):
                 # Get image URL (either direct URL or convert from base64)
@@ -228,6 +233,7 @@ class ImageAgent(PollingAgent):
                     image_urls.append(
                         context_service.build_attachment_url(attachment_id)
                     )
+                    image_download_urls.append(build_image_download_url(attachment_id))
 
             # Emit final image block with persisted attachment URLs
             final_image_block = {
@@ -236,6 +242,10 @@ class ImageAgent(PollingAgent):
                 "status": "done",
                 "is_placeholder": False,
                 "image_urls": image_urls,
+                "image_download_urls": image_download_urls,
+                "image_download_url_expires_in_seconds": (
+                    IMAGE_DOWNLOAD_URL_EXPIRES_SECONDS
+                ),
                 "image_attachment_ids": attachment_ids,
                 "image_count": len(image_urls),
                 "image_size": image_size,

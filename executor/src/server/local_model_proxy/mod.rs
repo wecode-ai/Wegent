@@ -95,7 +95,8 @@ pub(crate) struct LocalModelProxyUpstream {
     pub max_output_tokens: Option<u64>,
 }
 
-pub(crate) fn register_harness(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream) -> String {
+    upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -151,6 +152,15 @@ impl LocalModelProxyUpstream {
     }
 }
 
+fn canonical_upstream_api_format(api_format: &str) -> String {
+    match api_format.trim().to_ascii_lowercase().as_str() {
+        "responses" | "openai-responses" => "openai-responses".to_owned(),
+        "chat/completions" | "openai-chat-completions" => "openai-chat-completions".to_owned(),
+        "messages" | "anthropic-messages" => "anthropic-messages".to_owned(),
+        _ => api_format.trim().to_owned(),
+    }
+}
+
 pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalModelProxyUpstream> {
     let base_url = non_empty_string(model_config, "base_url")
         .or_else(|| non_empty_string(model_config, "baseUrl"))?;
@@ -164,10 +174,12 @@ pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalMo
             .or_else(|| non_empty_string(model_config, "responsesUrl"))
             .or_else(|| non_empty_string(model_config, "request_url"))
             .or_else(|| non_empty_string(model_config, "requestUrl")),
-        api_format: non_empty_string(model_config, "upstream_api_format")
-            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-            .or_else(|| non_empty_string(model_config, "api_format"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
+        api_format: canonical_upstream_api_format(
+            &non_empty_string(model_config, "upstream_api_format")
+                .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+                .or_else(|| non_empty_string(model_config, "api_format"))
+                .unwrap_or_else(|| "openai-responses".to_owned()),
+        ),
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
@@ -265,9 +277,10 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
 
 pub(crate) fn register_with_vision_sidecar(
     route_scope: &str,
-    upstream: LocalModelProxyUpstream,
+    mut upstream: LocalModelProxyUpstream,
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) -> String {
+    upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -676,10 +689,23 @@ async fn handle_for_token(
         ("upstream", safe_url(&request_url)),
         ("body_bytes", request_body.len().to_string()),
         (
+            "convert_custom_tools",
+            upstream.convert_custom_tools.to_string(),
+        ),
+        (
+            "native_tool_search",
+            upstream.native_tool_search.to_string(),
+        ),
+        (
+            "native_namespace_tools",
+            upstream.native_namespace_tools.to_string(),
+        ),
+        (
             "expanded_browser_tools",
             expanded_browser_tools.len().to_string(),
         ),
     ];
+    request_log_fields.extend(request_tool_diagnostic_fields(&request_body));
     if let Some(parent_thread_id) = forked_from_thread_id {
         request_log_fields.extend([
             ("forked_from_thread_id", parent_thread_id),
@@ -873,6 +899,129 @@ async fn handle_for_token(
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
     Ok(response)
+}
+
+fn request_tool_diagnostic_fields(body: &[u8]) -> Vec<(&'static str, String)> {
+    let Ok(request) = serde_json::from_slice::<Value>(body) else {
+        return vec![("tool_payload_parse_ok", "false".to_owned())];
+    };
+    let tools = request
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut namespace_names = HashSet::new();
+    let mut relevant_tool_names = HashSet::new();
+    let mut tool_search_present = false;
+    for tool in tools {
+        collect_tool_diagnostics(
+            tool,
+            &mut namespace_names,
+            &mut relevant_tool_names,
+            &mut tool_search_present,
+        );
+    }
+    let mut namespace_names = namespace_names.into_iter().collect::<Vec<_>>();
+    namespace_names.sort();
+    let mut relevant_tool_names = relevant_tool_names.into_iter().collect::<Vec<_>>();
+    relevant_tool_names.sort();
+    let tool_search = tools.iter().find(|tool| {
+        let tool_type = tool.get("type").and_then(Value::as_str);
+        let name = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| tool.pointer("/function/name").and_then(Value::as_str));
+        tool_type == Some("tool_search")
+            || matches!(name, Some("tool_search"))
+            || name == Some(chat::BRIDGED_TOOL_SEARCH_NAME)
+    });
+    let tool_search_wire_name = tool_search
+        .and_then(|tool| {
+            tool.get("name")
+                .and_then(Value::as_str)
+                .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
+        })
+        .unwrap_or(if tool_search_present { "native" } else { "" });
+    let tool_search_description_present = tool_search.is_some_and(|tool| {
+        tool.get("description")
+            .or_else(|| tool.pointer("/function/description"))
+            .and_then(Value::as_str)
+            .is_some_and(|description| !description.trim().is_empty())
+    });
+    let mut tool_search_parameter_names = tool_search
+        .and_then(|tool| {
+            tool.get("parameters")
+                .or_else(|| tool.pointer("/function/parameters"))
+        })
+        .and_then(|parameters| parameters.get("properties"))
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    tool_search_parameter_names.sort();
+    vec![
+        ("tool_payload_parse_ok", "true".to_owned()),
+        ("tool_count", tools.len().to_string()),
+        ("namespace_names", namespace_names.join(",")),
+        ("wework_tool_names", relevant_tool_names.join(",")),
+        ("tool_search_present", tool_search_present.to_string()),
+        ("tool_search_wire_name", tool_search_wire_name.to_owned()),
+        (
+            "tool_search_description_present",
+            tool_search_description_present.to_string(),
+        ),
+        (
+            "tool_search_parameter_names",
+            tool_search_parameter_names.join(","),
+        ),
+    ]
+}
+
+fn collect_tool_diagnostics(
+    tool: &Value,
+    namespace_names: &mut HashSet<String>,
+    relevant_tool_names: &mut HashSet<String>,
+    tool_search_present: &mut bool,
+) {
+    let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.pointer("/function/name").and_then(Value::as_str));
+    if tool_type == "namespace" {
+        if let Some(name) = name {
+            namespace_names.insert(name.to_owned());
+        }
+        for nested in tool
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            collect_tool_diagnostics(
+                nested,
+                namespace_names,
+                relevant_tool_names,
+                tool_search_present,
+            );
+        }
+    }
+    if tool_type == "tool_search"
+        || name == Some("tool_search")
+        || name == Some(chat::BRIDGED_TOOL_SEARCH_NAME)
+    {
+        *tool_search_present = true;
+    }
+    if let Some(name) = name.filter(|name| is_wework_space_tool_name(name)) {
+        relevant_tool_names.insert(name.to_owned());
+    }
+}
+
+fn is_wework_space_tool_name(name: &str) -> bool {
+    name.contains("wework_space")
+        || matches!(
+            name,
+            "get_board_item" | "get_assignment_candidates" | "assign_board_item"
+        )
 }
 
 fn requested_model(body: &[u8]) -> Option<String> {
@@ -2023,6 +2172,60 @@ fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_diagnostics_find_wework_tools_without_logging_schema_values() {
+        let body = serde_json::to_vec(&json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "wework_space",
+                    "description": "secret-description",
+                    "tools": [
+                        {"type": "function", "name": "get_board_item"},
+                        {"type": "function", "name": "assign_board_item"}
+                    ]
+                },
+                {"type": "tool_search", "execution": "client"}
+            ]
+        }))
+        .unwrap();
+
+        let fields = request_tool_diagnostic_fields(&body)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(fields["tool_count"], "2");
+        assert_eq!(fields["namespace_names"], "wework_space");
+        assert_eq!(
+            fields["wework_tool_names"],
+            "assign_board_item,get_board_item,wework_space"
+        );
+        assert_eq!(fields["tool_search_present"], "true");
+        assert_eq!(fields["tool_search_wire_name"], "native");
+        assert_eq!(fields["tool_search_description_present"], "false");
+        assert_eq!(fields["tool_search_parameter_names"], "");
+        assert!(!fields
+            .values()
+            .any(|value| value.contains("secret-description")));
+    }
+
+    #[test]
+    fn normalizes_provider_api_format_aliases_before_proxy_registration() {
+        for (configured, expected) in [
+            ("responses", "openai-responses"),
+            ("chat/completions", "openai-chat-completions"),
+            ("messages", "anthropic-messages"),
+        ] {
+            let upstream = upstream_from_model_config(&json!({
+                "base_url": "https://example.com",
+                "upstream_api_format": configured
+            }))
+            .expect("model config should produce an upstream");
+
+            assert_eq!(upstream.api_format, expected);
+        }
+    }
     use std::{
         env, fs,
         sync::{
@@ -3694,7 +3897,7 @@ mod tests {
                                 )
                             } else {
                                 concat!(
-                                    "data: {\"id\":\"chatcmpl-search\",\"model\":\"third-party-chat\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                                    "data: {\"id\":\"chatcmpl-search\",\"model\":\"third-party-chat\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"type\":\"function\",\"function\":{\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
                                     "data: [DONE]\n\n"
                                 )
                             };
@@ -3747,7 +3950,10 @@ mod tests {
             serde_json::to_vec(first_tools).expect("serialize first-turn tools");
 
         assert_eq!(first_tools.len(), 1);
-        assert_eq!(first_tools[0]["function"]["name"], "tool_search");
+        assert_eq!(
+            first_tools[0]["function"]["name"],
+            chat::BRIDGED_TOOL_SEARCH_NAME
+        );
         assert!(
             first_tools_bytes.len() < 1_024,
             "deferred App discovery must keep the first-turn tool payload compact: {} bytes",
@@ -3789,7 +3995,8 @@ mod tests {
 
         assert_eq!(second_tools.len(), 2);
         assert!(second_tools.iter().any(|tool| {
-            tool.pointer("/function/name").and_then(Value::as_str) == Some("tool_search")
+            tool.pointer("/function/name").and_then(Value::as_str)
+                == Some(chat::BRIDGED_TOOL_SEARCH_NAME)
         }));
         assert!(second_tools.iter().any(|tool| {
             tool.pointer("/function/name").and_then(Value::as_str) == Some("github__create_issue")
@@ -3904,9 +4111,9 @@ mod tests {
                             } else {
                                 concat!(
                                     "event: response.output_item.done\n",
-                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
+                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
                                     "event: response.completed\n",
-                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
                                 )
                             };
                             (
@@ -3928,7 +4135,7 @@ mod tests {
             LocalModelProxyUpstream {
                 base_url: format!("http://{address}"),
                 request_url: Some(format!("http://{address}/responses")),
-                api_format: "openai-responses".to_owned(),
+                api_format: "responses".to_owned(),
                 convert_custom_tools: false,
                 native_tool_search: false,
                 native_namespace_tools: false,
@@ -4238,7 +4445,7 @@ mod tests {
                                     "event: message_start\n",
                                     "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_search\",\"model\":\"kimi-k3\",\"usage\":{\"input_tokens\":1}}}\n\n",
                                     "event: content_block_start\n",
-                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"search_1\",\"name\":\"tool_search\",\"input\":{}}}\n\n",
+                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"search_1\",\"name\":\"search_deferred_tools\",\"input\":{}}}\n\n",
                                     "event: content_block_delta\n",
                                     "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
                                     "event: content_block_stop\n",
@@ -4472,7 +4679,7 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(
             tools[0].pointer(tool_name_pointer).and_then(Value::as_str),
-            Some("tool_search")
+            Some(chat::BRIDGED_TOOL_SEARCH_NAME)
         );
         assert!(
             tool_bytes.len() < 1_024,

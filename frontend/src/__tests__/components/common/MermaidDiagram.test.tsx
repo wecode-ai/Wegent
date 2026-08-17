@@ -40,6 +40,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 // Create mock functions for mermaid
 const mockInitialize = jest.fn()
 let mockRenderResolve: (value: { svg: string }) => void
+let resizeObserverCallback: ResizeObserverCallback | undefined
 const mockRender = jest.fn().mockImplementation(() => {
   return new Promise(resolve => {
     mockRenderResolve = resolve
@@ -54,6 +55,21 @@ jest.mock('mermaid', () => ({
     render: mockRender,
   },
 }))
+
+class MockResizeObserver {
+  constructor(callback: ResizeObserverCallback) {
+    resizeObserverCallback = callback
+  }
+
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
+
+Object.defineProperty(global, 'ResizeObserver', {
+  configurable: true,
+  value: MockResizeObserver,
+})
 
 // Mock clipboard API
 const mockClipboard = {
@@ -102,6 +118,7 @@ const renderWithProviders = (ui: React.ReactElement) => {
 describe('MermaidDiagram', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    resizeObserverCallback = undefined
     // Reset mock implementation to default success case with controlled promise
     mockRender.mockImplementation(() => {
       return new Promise(resolve => {
@@ -161,6 +178,41 @@ describe('MermaidDiagram', () => {
 
     // Check zoom controls exist
     expect(screen.getByText('100%')).toBeInTheDocument()
+  })
+
+  it('fits a wide diagram to the available markdown width and preserves manual zoom', async () => {
+    await act(async () => {
+      renderWithProviders(<MermaidDiagram code={sampleMermaidCode} />)
+    })
+
+    await act(async () => {
+      mockRenderResolve({
+        svg: '<svg width="1000" height="500"><rect width="1000" height="500" fill="blue"></rect></svg>',
+      })
+    })
+
+    const fitContainer = await screen.findByTestId('mermaid-fit-container')
+    Object.defineProperty(fitContainer, 'clientWidth', {
+      configurable: true,
+      value: 500,
+    })
+
+    await act(async () => {
+      resizeObserverCallback?.([], {} as ResizeObserver)
+    })
+    expect(screen.getByText('47%')).toBeInTheDocument()
+    expect(fitContainer.querySelector('svg')).toHaveAttribute('width', '468px')
+
+    await act(async () => {
+      fireEvent.wheel(fitContainer, { ctrlKey: true, deltaY: -100 })
+      resizeObserverCallback?.([], {} as ResizeObserver)
+    })
+    expect(screen.getByText('57%')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('mermaid-reset-zoom-button'))
+    })
+    expect(screen.getByText('47%')).toBeInTheDocument()
   })
 
   it('handles zoom in', async () => {

@@ -13,14 +13,19 @@ so it can emit `runtime:rpc` to a device reliably.
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.socketio import get_sio
+from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.device_service import device_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/robot-queue", tags=["internal-robot-queue"])
+router = APIRouter(
+    prefix="/robot-queue",
+    tags=["internal-robot-queue"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 
 @router.post("/emit-runtime-rpc")

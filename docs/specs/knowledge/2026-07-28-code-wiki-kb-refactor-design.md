@@ -109,16 +109,22 @@ spec:
 
 > 第 3 层是关键:它覆盖第 1 层管不到的查询形状(如「本 KB 所有 generated 文档」)。**该 helper 必须接入生产查询路径**(`list_documents` / `get_folder_tree` / 投影)—— 初稿曾把它写成零调用方的孤立模块,那等于没埋。
 
-### 3.5 内容归属 `origin` + 位置隔离(双保险)
+### 3.5 内容归属 `origin` + 层级隔离
 
 - **字段** `origin: generated | user`,**同时加在 folder 与 document 上**,默认 `user`(fail-safe)。
-  - folder 是权威(顶层决定子树),document 上是写入时落下的冗余值——因为根级文档没有父文件夹,且让投影是一次简单过滤而非逐级回溯。
-  - **两类内容是并列的顶层子树,不交错**:generated 文件夹会被 agent 重组甚至删除,放在里面的用户内容会无处安放。
-- **用户内容集中在保留顶层文件夹内**,投影永不进入该子树。
+  - document 的 `origin` 是投影/普通文档 API 的唯一写者边界;folder 的 `origin` 约束层级,
+    防止 user 内容被放进会由 agent 重组或删除的 generated folder。
+  - 后端强制父子 folder 与其中 document 的 origin 一致;`transfer_documents_to_kb`、移动、
+    重命名、删除等所有写路径都必须经过同一门禁。投影 resolver 只复用 generated folder。
+- 前端按 `origin` 显示「生成内容 / 用户内容」两个**虚拟根节点**,不把它们编码为真实路径。
+  现有 generated page path 与链接因此无需迁移;根级文档也能由自身 origin 正确归类。
 
-> **两者都要,不是冗余。** 位置规则依赖「所有写入路径都被拦住」,而 `transfer_documents_to_kb` 这类方法**现在就存在**,能把用户文档挪进本 KB 且落在保留区外 —— 此时投影会按集合差删掉它。用户内容不可再生;`origin` 默认 `user` 使**任何非投影创建的行天生受保护**,与它被放在哪无关。
+> `origin` 默认 `user` 是 fail-safe:任何非投影创建的行天生受保护。folder/document 双字段与
+> 层级门禁则阻止两类内容交错;generated folder 会被 agent 重组甚至删除,不能容纳用户内容。
 
-**固定 prompt 文件**:保留区内一个固定路径的指令文档(如 `WIKI_INSTRUCTIONS.md`),`origin='user'`,永不参与投影,由 agent 作为生成输入读取。其内容 hash 记入 `wiki_generations.ext`(可回答「哪版指令产出了哪版 wiki」);**其变更是升级到 `full` 的条件**。
+**固定 prompt 文件**:用户内容区内一个固定路径的指令文档(如 `WIKI_INSTRUCTIONS.md`),
+`origin='user'`,永不参与投影,由 agent 作为生成输入读取。其内容 hash 记入
+`wiki_generations.ext`(可回答「哪版指令产出了哪版 wiki」);**其变更是升级到 `full` 的条件**。
 
 ### 3.6 迁移
 
@@ -465,8 +471,8 @@ UNIQUE (source_url, kind_id)
 
 ### 6.5 触发生成(已定)
 
-- **权限**:仓库写权限。`check_user_project_access` 已返回 `access_level`,加阈值即可。
-  语义上「改 wiki ≈ 改仓库的衍生物」
+- **权限**:标准 KB ACL 的 manage 能力,与 §6.2 的唯一事实源一致。仓库权限只在创建时检查
+  可读性,创建后不再参与重新生成或版本恢复。
 - **创建后自动触发一次**。创建完是空的、要用户自己找按钮,是说不通的流程
 - **在途不可重复触发**:`start_generation` 已有单 KB 互斥(`GenerationInFlight` → 409),**现状即成立**
 - 更复杂的并发度与频率控制,留到订阅任务那一期
@@ -495,6 +501,9 @@ UNIQUE (source_url, kind_id)
 **列表深度融合。** code wiki 与文档知识库同列表、同 ACL、同端点,按 `kbType` 区分卡片内容
 (仓库、分支、已发布 commit、重新生成)。移除文档/代码两个 tab。
 
+列表可提供「全部 / 文档 / 代码」本地过滤签,但这只是同一列表上的临时视图:
+`notebook + classic` 归入文档,`code_wiki` 归入代码,不拆成两个 workspace 或两套数据源。
+
 `content_scope.exclude_code_wikis`(14 处调用)的理由从「权限」变成「分类」,**绝大部分删除** ——
 code wiki 要能被 chat 引用,就不该在查询层被排除。
 
@@ -504,8 +513,14 @@ code wiki 要能被 chat 引用,就不该在查询层被排除。
 **不做 admin 管理页。** 前一版需要它,是因为 KB 归 wiki 账号导致「没人看得见、配置改不了」的死角;
 归属改回创建者后死角不存在 —— 创建者在常规 KB 设置页里就能看能改。
 
-管理端能力(版本浏览/回退、强制重生成、删除目标)沿用平台既有 admin 判定;
-**仍不允许手工编辑生成页正文** —— 生成页由 agent 拥有,手改会在下次发布时被静默覆盖。
+Code Wiki 使用自己的「Wiki / 文档管理」视图,不复用文档知识库的「工作台 / 文档管理」。
+默认进入 Wiki;文档管理恢复标准 KB 权限管理,并以「生成内容 / 用户内容」两个虚拟根节点
+展示同一个 KB 的内容。虚拟根只按 `origin` 分组,不改写真实路径。
+
+**仍不允许手工编辑生成页正文** —— 生成页由 generation 投影拥有。普通文档 API 必须在
+服务端拒绝 generated document/folder 的正文更新、改名、删除和跨 origin 移动;只隐藏前端
+按钮不足以守住版本真相。user 文档可按标准 KB 文档权限创建和维护,照常进入 RAG,但本期不
+进入 Wiki 导航。后续纠错使用 user note 与 generated page 的关联,不原地修改生成页。
 
 ### 6.8 创建弹层(已定)
 
@@ -575,7 +590,10 @@ code wiki 要能被 chat 引用,就不该在查询层被排除。
 
 **模型**:默认用配置好的 wiki 模型(public-safe),允许覆盖,**任何情况回落 public**,保证 upstream 与内网都能跑。不硬依赖 protected 模型。KB embedding 模型同样需能回落 public。
 
-**前端**:视图由 `kb_type` 驱动(`notebook` → 编辑壳,`code_wiki` → 阅读壳),但建在共享 KB 原语上(文件夹树组件、`DocumentContentViewer`、权限、路由)。现有 `WikiSidebarList` / `WikiContent` / `WikiDetailSidebar` / `useWikiDetail` 重构为「folder-tree 的 wiki 阅读模式」,而非独立栈。保留既有 `data-testid`,变更同步更新 E2E。
+**前端**:视图由知识库类别驱动。文档知识库使用「工作台 / 文档管理」;代码知识库使用
+「Wiki / 文档管理」,其中 Wiki 只导航 generated pages,文档管理同时展示只读 generated 与
+可编辑 user 内容。两者建在共享 KB 原语上(文件夹树组件、`DocumentContentViewer`、权限、
+路由),不拆成两套资源。保留既有 `data-testid`,变更同步更新 E2E。
 
 **执行者身份**:手动触发在 **KB owner(创建者)** 身份下执行(§6.5);订阅更新在 `subscription.user_id` 身份下执行。风险是 token 过期/权限回收/离职导致静默失败 → 失败时置 FAILED 并给出可见告警(指针不动),并允许绑定**服务账号**用于长期自动化。
 

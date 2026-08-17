@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/refs -- Pane hosts intentionally preserve live task sessions across layout changes. */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Columns2,
   Focus,
@@ -30,19 +30,9 @@ import {
 } from './workbenchPanePresentation'
 import styles from './workbenchPaneStack.module.css'
 import {
-  closeWorkbenchPane,
   collectWorkbenchPaneKeys,
   collectWorkbenchPanes,
-  createWorkbenchLayout,
   findWorkbenchPane,
-  focusWorkbenchPane,
-  openWorkbenchPane,
-  parsePersistedWorkbenchLayout,
-  placeWorkbenchTask,
-  pruneWorkbenchLayout,
-  serializeWorkbenchLayout,
-  splitWorkbenchPane,
-  updateWorkbenchSplitSizes,
   type WorkbenchLayoutNode,
   type WorkbenchLayoutState,
   type WorkbenchPaneNode,
@@ -55,16 +45,23 @@ const MIN_PANE_HEIGHT = 240
 
 interface SplitWorkbenchPaneStackProps {
   activePane: WorkbenchPaneIdentity
-  storageKey: string
+  layout: WorkbenchLayoutState
   validRuntimeKeys: string[]
-  retainedResourceKeys: string[]
-  runtimeKeysReady: boolean
+  retainedResourceKeys?: string[]
   activeTestId: string
   workbenchVisible: boolean
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
   getPaneTitle: (pane: WorkbenchPaneIdentity) => string
   onPaneFocus: (pane: WorkbenchPaneIdentity) => void
-  onSplitModeChange?: (split: boolean) => void
+  onLayoutFocus: (paneId: string) => void
+  onLayoutClose: (paneId: string) => WorkbenchLayoutState
+  onLayoutSplit: (paneId: string, direction: WorkbenchSplitDirection) => void
+  onLayoutPlace: (
+    paneKey: string,
+    paneId: string,
+    position: 'center' | WorkbenchSplitDirection
+  ) => void
+  onLayoutSizesChange: (splitId: string, sizes: Record<string, number>) => void
   renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
 }
 
@@ -94,33 +91,27 @@ interface LayoutLabels {
 
 export function SplitWorkbenchPaneStack({
   activePane,
-  storageKey,
+  layout,
   validRuntimeKeys,
   retainedResourceKeys = [],
-  runtimeKeysReady,
   activeTestId,
   workbenchVisible,
   resolvePane,
   getPaneTitle,
   onPaneFocus,
-  onSplitModeChange,
+  onLayoutFocus,
+  onLayoutClose,
+  onLayoutSplit,
+  onLayoutPlace,
+  onLayoutSizesChange,
   renderPane,
 }: SplitWorkbenchPaneStackProps) {
   const { t } = useTranslation()
   const activeKey = getWorkbenchPaneKey(activePane)
   const paneCacheRef = useRef(new Map<string, WorkbenchPaneIdentity>())
   const paneHostCacheRef = useRef(new Map<string, HTMLDivElement>())
-  const appliedActiveKeyRef = useRef(activeKey)
   const sidebarDragActiveRef = useRef(false)
   paneCacheRef.current.set(activeKey, activePane)
-
-  const [layout, setLayout] = useState<WorkbenchLayoutState>(() => {
-    const restored =
-      typeof window === 'undefined'
-        ? null
-        : parsePersistedWorkbenchLayout(window.localStorage.getItem(storageKey))
-    return restored ?? createWorkbenchLayout(activeKey)
-  })
   const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const [focusedViewPaneId, setFocusedViewPaneId] = useState<string | null>(null)
@@ -169,26 +160,6 @@ export function SplitWorkbenchPaneStack({
     return host
   }, [])
 
-  useLayoutEffect(() => {
-    if (appliedActiveKeyRef.current === activeKey) return
-    appliedActiveKeyRef.current = activeKey
-    setLayout(current => openWorkbenchPane(current, activeKey))
-  }, [activeKey])
-
-  useEffect(() => {
-    if (!runtimeKeysReady) return
-    const validKeys = new Set([...validRuntimeKeys, activeKey])
-    // Runtime hydration is external state; the persisted layout must discard tasks deleted elsewhere.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLayout(
-      current => pruneWorkbenchLayout(current, validKeys) ?? createWorkbenchLayout(activeKey)
-    )
-  }, [activeKey, runtimeKeysReady, validRuntimeKeys])
-
-  useEffect(() => {
-    window.localStorage.setItem(storageKey, serializeWorkbenchLayout(layout))
-  }, [layout, storageKey])
-
   const panes = collectWorkbenchPanes(layout.root)
   const splitMode = panes.length > 1
   const layoutPaneKeys = collectWorkbenchPaneKeys(layout.root)
@@ -223,10 +194,6 @@ export function SplitWorkbenchPaneStack({
   }, [mountedPaneKeySignature])
 
   useEffect(() => {
-    onSplitModeChange?.(splitMode)
-  }, [onSplitModeChange, splitMode])
-
-  useEffect(() => {
     if (!effectiveFocusedViewPaneId) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !event.defaultPrevented) setFocusedViewPaneId(null)
@@ -241,32 +208,29 @@ export function SplitWorkbenchPaneStack({
       if (!node?.paneKey) return
       const pane = resolveCachedPane(node.paneKey)
       if (!pane) return
-      setLayout(current => focusWorkbenchPane(current, paneId))
+      onLayoutFocus(paneId)
       onPaneFocus(pane)
     },
-    [layout.root, onPaneFocus, resolveCachedPane, setLayout]
+    [layout.root, onLayoutFocus, onPaneFocus, resolveCachedPane]
   )
 
   const closePane = useCallback(
     (paneId: string) => {
       setFocusedViewPaneId(current => (current === paneId ? null : current))
-      setLayout(current => {
-        const next = closeWorkbenchPane(current, paneId)
-        const nextNode = findWorkbenchPane(next.root, next.focusedPaneId)
-        const nextPane = nextNode?.paneKey ? resolveCachedPane(nextNode.paneKey) : null
-        if (nextPane) queueMicrotask(() => onPaneFocus(nextPane))
-        return next
-      })
+      const next = onLayoutClose(paneId)
+      const nextNode = findWorkbenchPane(next.root, next.focusedPaneId)
+      const nextPane = nextNode?.paneKey ? resolveCachedPane(nextNode.paneKey) : null
+      if (nextPane) queueMicrotask(() => onPaneFocus(nextPane))
     },
-    [onPaneFocus, resolveCachedPane, setFocusedViewPaneId, setLayout]
+    [onLayoutClose, onPaneFocus, resolveCachedPane, setFocusedViewPaneId]
   )
 
   const splitPane = useCallback(
     (paneId: string, direction: WorkbenchSplitDirection) => {
       setFocusedViewPaneId(null)
-      setLayout(current => splitWorkbenchPane(current, paneId, direction))
+      onLayoutSplit(paneId, direction)
     },
-    [setFocusedViewPaneId, setLayout]
+    [onLayoutSplit, setFocusedViewPaneId]
   )
 
   const placeTask = useCallback(
@@ -274,10 +238,10 @@ export function SplitWorkbenchPaneStack({
       const pane = resolveCachedPane(paneKey)
       if (!pane) return
       setFocusedViewPaneId(null)
-      setLayout(current => placeWorkbenchTask(current, paneKey, target.paneId, target.position))
+      onLayoutPlace(paneKey, target.paneId, target.position)
       queueMicrotask(() => onPaneFocus(pane))
     },
-    [onPaneFocus, resolveCachedPane, setFocusedViewPaneId, setLayout]
+    [onLayoutPlace, onPaneFocus, resolveCachedPane, setFocusedViewPaneId]
   )
 
   useEffect(() => {
@@ -375,9 +339,7 @@ export function SplitWorkbenchPaneStack({
           onToggleFocusedView={paneId =>
             setFocusedViewPaneId(current => (current === paneId ? null : paneId))
           }
-          onSizesChanged={(splitId, sizes) =>
-            setLayout(current => updateWorkbenchSplitSizes(current, splitId, sizes))
-          }
+          onSizesChanged={onLayoutSizesChange}
         />
       </div>
     </>
@@ -658,7 +620,7 @@ function WorkbenchPaneView({
           </TitlebarTooltip>
         </div>
       ) : null}
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className={cn(styles.paneContent, 'relative min-h-0 min-w-0 flex-1 overflow-hidden')}>
         {host ? (
           <div
             data-active-workbench-pane={focused ? 'true' : 'false'}

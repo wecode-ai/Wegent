@@ -118,6 +118,7 @@ pub struct EmbeddedBrowserState {
     active_tabs: Arc<Mutex<HashMap<String, String>>>,
     agent_tabs: Arc<Mutex<HashMap<(String, String), AgentTabRoute>>>,
     lifecycle: Arc<AsyncMutex<()>>,
+    snapshot_capture: Arc<AsyncMutex<()>>,
 }
 
 #[derive(Clone)]
@@ -127,6 +128,8 @@ struct EmbeddedBrowserEntry {
     url: Option<String>,
     loaded_url: Option<String>,
     opened_at_unix_ms: u128,
+    bootstrap_finished: bool,
+    host_ready: bool,
     phase: EmbeddedBrowserPhase,
 }
 
@@ -619,10 +622,6 @@ fn browser_open_action(readiness: Option<EmbeddedBrowserReadiness>) -> EmbeddedB
     }
 }
 
-fn browser_open_action_requires_navigation(action: EmbeddedBrowserOpenAction) -> bool {
-    action != EmbeddedBrowserOpenAction::RequestOpen
-}
-
 fn wait_for_browser_ready_with_observer(
     mut readiness: impl FnMut() -> Result<Option<EmbeddedBrowserReadiness>, String>,
     attempts: u64,
@@ -918,10 +917,11 @@ fn mark_entry_ready_for_native_label(
     state: &EmbeddedBrowserState,
     native_label: &str,
     webview: Webview<Wry>,
-    bridge_ready: bool,
+    host_ready: bool,
 ) -> Result<(), String> {
     let updated = update_entry_for_native_label(state, native_label, |entry| {
-        entry.phase = if bridge_ready {
+        entry.host_ready = host_ready;
+        entry.phase = if browser_host_is_ready(entry.bootstrap_finished, entry.host_ready) {
             EmbeddedBrowserPhase::Ready(webview)
         } else {
             EmbeddedBrowserPhase::Hidden(webview)
@@ -930,6 +930,35 @@ fn mark_entry_ready_for_native_label(
     updated
         .then_some(())
         .ok_or_else(|| "Embedded browser route disappeared while opening".to_string())
+}
+
+fn mark_entry_bootstrap_finished_for_native_label(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    webview: Webview<Wry>,
+) -> Result<bool, String> {
+    let mut transitioned = false;
+    update_entry_for_native_label(state, native_label, |entry| {
+        if entry.bootstrap_finished {
+            return;
+        }
+        entry.bootstrap_finished = true;
+        entry.phase = if browser_host_is_ready(entry.bootstrap_finished, entry.host_ready) {
+            EmbeddedBrowserPhase::Ready(webview)
+        } else {
+            EmbeddedBrowserPhase::Hidden(webview)
+        };
+        transitioned = true;
+    })?;
+    Ok(transitioned)
+}
+
+fn browser_host_is_ready(bootstrap_finished: bool, host_ready: bool) -> bool {
+    bootstrap_finished && host_ready
+}
+
+fn bootstrap_is_stable_at_build(post_build_navigation: bool) -> bool {
+    !post_build_navigation
 }
 
 fn entry_readiness(
@@ -1403,7 +1432,7 @@ fn handle_bridge_request(
                 .url
                 .ok_or_else(|| "Embedded browser navigate requires url".to_string())?;
             bridge_navigation_url(&url)?;
-            let open_action = request_browser_open(
+            request_browser_open(
                 app,
                 state,
                 &base_label,
@@ -1411,9 +1440,7 @@ fn handle_bridge_request(
                 &url,
                 request.browser_session_id.as_deref(),
             )?;
-            if browser_open_action_requires_navigation(open_action) {
-                navigate_label(state, &label, url.clone())?;
-            }
+            navigate_label(state, &label, url.clone())?;
             let timeout_ms = request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS);
             wait_for_browser_navigation(state, &label, timeout_ms)?;
             Ok(json!({ "ok": true }))
@@ -1599,10 +1626,12 @@ pub async fn embedded_browser_open(
     label: Option<String>,
     visible: Option<bool>,
     ready_when_hidden: Option<bool>,
+    navigate_existing: Option<bool>,
 ) -> Result<EmbeddedBrowserPageState, String> {
     let label = browser_label(label);
     let visible = visible.unwrap_or(true);
     let bridge_ready = visible || ready_when_hidden.unwrap_or(true);
+    let navigate_existing = navigate_existing.unwrap_or(true);
     let _lifecycle = state.lifecycle.lock().await;
     let display_url = resolve_browser_navigation_url(&state, &url)?;
     let initial_title = browser_url(&url)
@@ -1617,7 +1646,7 @@ pub async fn embedded_browser_open(
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
         match webviews.get(&label) {
-            Some(entry) if matches!(&entry.phase, EmbeddedBrowserPhase::Opening) => {
+            Some(entry) if entry.readiness() == EmbeddedBrowserReadiness::Opening => {
                 return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
             }
             Some(entry) => Some(entry.clone()),
@@ -1637,19 +1666,21 @@ pub async fn embedded_browser_open(
                 "nativeLabel": &entry.native_label,
             }),
         );
-        if let Err(error) = webview.navigate(display_url) {
-            let message = format!("Failed to navigate embedded browser: {error}");
-            log_embedded_browser_diagnostic(
-                &state,
-                &label,
-                "open_reuse_navigate_failed",
-                json!({
-                    "requestedUrl": &url,
-                    "nativeLabel": &entry.native_label,
-                    "error": &message,
-                }),
-            );
-            return Err(message);
+        if navigate_existing {
+            if let Err(error) = webview.navigate(display_url) {
+                let message = format!("Failed to navigate embedded browser: {error}");
+                log_embedded_browser_diagnostic(
+                    &state,
+                    &label,
+                    "open_reuse_navigate_failed",
+                    json!({
+                        "requestedUrl": &url,
+                        "nativeLabel": &entry.native_label,
+                        "error": &message,
+                    }),
+                );
+                return Err(message);
+            }
         }
         let visibility_result = if visible {
             webview
@@ -1675,8 +1706,11 @@ pub async fn embedded_browser_open(
         }
         let initial_title_for_entry = initial_title.clone();
         update_entry_for_native_label(&state, &entry.native_label, |entry| {
-            entry.url = Some(url.clone());
-            entry.title = initial_title_for_entry;
+            if navigate_existing {
+                entry.url = Some(url.clone());
+                entry.title = initial_title_for_entry;
+            }
+            entry.host_ready = bridge_ready;
             entry.phase = if bridge_ready {
                 EmbeddedBrowserPhase::Ready(webview.clone())
             } else {
@@ -1686,7 +1720,11 @@ pub async fn embedded_browser_open(
         log_embedded_browser_diagnostic(
             &state,
             &label,
-            "open_reuse_dispatched",
+            if navigate_existing {
+                "open_reuse_dispatched"
+            } else {
+                "open_reuse_preserved"
+            },
             json!({
                 "requestedUrl": &url,
                 "nativeLabel": &entry.native_label,
@@ -1700,8 +1738,16 @@ pub async fn embedded_browser_open(
             #[cfg(not(target_os = "macos"))]
             invalid_tls_certificate: None,
             native_label: entry.native_label,
-            title: initial_title,
-            url: Some(url),
+            title: if navigate_existing {
+                initial_title
+            } else {
+                entry.title
+            },
+            url: if navigate_existing {
+                Some(url)
+            } else {
+                entry.url
+            },
         });
     }
 
@@ -1732,6 +1778,12 @@ pub async fn embedded_browser_open(
         url: Some(url.clone()),
         loaded_url: None,
         opened_at_unix_ms: current_unix_millis(),
+        // macOS attaches the destination with a post-build navigate(), so its
+        // initial about:blank load must finish before bridge navigation. Other
+        // platforms bind the initial URL atomically in the builder and have no
+        // post-build bootstrap navigation to wait for.
+        bootstrap_finished: bootstrap_is_stable_at_build(cfg!(target_os = "macos")),
+        host_ready: bridge_ready,
         phase: EmbeddedBrowserPhase::Opening,
     };
     state
@@ -1874,6 +1926,23 @@ pub async fn embedded_browser_open(
                 }),
             );
             if matches!(payload.event(), PageLoadEvent::Finished) {
+                let bootstrap_finished = mark_entry_bootstrap_finished_for_native_label(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    webview.clone(),
+                )
+                .unwrap_or(false);
+                if bootstrap_finished {
+                    log_embedded_browser_diagnostic(
+                        &load_state_handle,
+                        &owner,
+                        "bootstrap_finished",
+                        json!({
+                            "url": &current_url,
+                            "nativeLabel": &native_label_for_load,
+                        }),
+                    );
+                }
                 #[cfg(target_os = "macos")]
                 crate::embedded_browser_tls::clear_invalid_tls_certificate_if_origin_changed(
                     &native_label_for_load,
@@ -2063,9 +2132,9 @@ pub async fn embedded_browser_open(
         )
         .await
         .and_then(|_| {
-            webview
-                .navigate(display_url)
-                .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
+            webview.navigate(display_url).map_err(|error| {
+                format!("Failed to navigate embedded browser after TLS setup: {error}")
+            })
         });
         if let Err(error) = tls_result {
             if let Ok(mut webviews) = state.webviews.lock() {
@@ -2154,20 +2223,12 @@ pub async fn embedded_browser_open(
     log_embedded_browser_diagnostic(
         &state,
         &label,
-        if bridge_ready {
-            "open_ready"
-        } else {
-            "open_waiting_for_visible_bounds"
-        },
+        "open_waiting_for_bootstrap",
         json!({
             "nativeLabel": &native_label,
+            "hostReady": bridge_ready,
         }),
     );
-    if bridge_ready {
-        if let Ok(mut requests) = state.pending_open_requests.lock() {
-            requests.remove(&label);
-        }
-    }
 
     Ok(EmbeddedBrowserPageState {
         #[cfg(target_os = "macos")]
@@ -2219,6 +2280,8 @@ pub fn embedded_browser_set_bounds(
         webview
             .show()
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
+        #[cfg(target_os = "macos")]
+        force_embedded_browser_redraw(&webview);
     } else {
         webview
             .hide()
@@ -2228,13 +2291,15 @@ pub fn embedded_browser_set_bounds(
         && readiness != EmbeddedBrowserReadiness::Ready
     {
         mark_entry_ready_for_native_label(&state, &native_label, webview, true)?;
-        if let Ok(mut requests) = state.pending_open_requests.lock() {
-            requests.remove(&label);
-        }
+        let ready = entry_readiness(&state, &label)? == Some(EmbeddedBrowserReadiness::Ready);
         log_embedded_browser_diagnostic(
             &state,
             &label,
-            "bounds_visible_ready",
+            if ready {
+                "bounds_visible_ready"
+            } else {
+                "bounds_waiting_for_bootstrap"
+            },
             json!({
                 "nativeLabel": native_label,
                 "visible": visible,
@@ -2242,6 +2307,37 @@ pub fn embedded_browser_set_bounds(
         );
     }
     Ok(())
+}
+
+#[tauri::command]
+#[cfg(target_os = "macos")]
+pub async fn embedded_browser_capture_snapshot(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    label: Option<String>,
+) -> Result<String, String> {
+    let _capture_guard = state
+        .snapshot_capture
+        .try_lock()
+        .map_err(|_| "An embedded browser snapshot is already in progress".to_string())?;
+    let label = browser_label(label);
+    let webview = get_entry(&state, &label)?.ready_webview()?;
+    screenshot::capture_webview_snapshot_base64(webview).await
+}
+
+#[cfg(target_os = "macos")]
+fn force_embedded_browser_redraw(webview: &Webview<Wry>) {
+    // Hiding and re-showing a WKWebView with setHidden can leave its rendered
+    // layer blank (white) on macOS. Ask the native view to redraw once it is
+    // visible again so the browser content does not stay white after a menu or
+    // overlay briefly occluded it.
+    use objc2_app_kit::NSView;
+
+    let _ = webview.with_webview(|platform_webview| unsafe {
+        if let Some(view) = platform_webview.inner().cast::<NSView>().as_ref() {
+            view.setNeedsDisplay(true);
+            view.displayIfNeeded();
+        }
+    });
 }
 
 fn browser_download_control(

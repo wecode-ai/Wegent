@@ -257,6 +257,10 @@ impl CodexGlobalProjectIndex {
             .position(|value| value == thread_id)
     }
 
+    pub fn has_manual_thread_order(&self, project_key: &str) -> bool {
+        self.project_thread_orders.contains_key(project_key)
+    }
+
     pub fn thread_sort_order(&self, project_key: &str, thread_id: &str, fallback: usize) -> usize {
         let Some(order) = self.project_thread_orders.get(project_key) else {
             return fallback;
@@ -265,6 +269,12 @@ impl CodexGlobalProjectIndex {
             .iter()
             .position(|value| value == thread_id)
             .unwrap_or(order.len() + fallback)
+    }
+
+    pub fn sidebar_project_key_for_thread(&self, thread_id: &str) -> Option<&str> {
+        self.thread_project_assignments
+            .get(thread_id)
+            .map(String::as_str)
     }
 
     pub fn project_for_key(&self, value: &str) -> Option<&CodexGlobalProject> {
@@ -401,15 +411,28 @@ pub(crate) fn reorder_codex_global_project_thread(
     before_thread_id: Option<&str>,
     insert_at_end: bool,
 ) -> Result<(), String> {
+    let project_key = canonical_sidebar_project_key(&CodexGlobalProjectIndex::load(), project_key);
     record_sidebar_op(CodexGlobalStateOplogRecord {
         kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
-        project_key: clean_text(project_key),
+        project_key: clean_text(&project_key),
         thread_id: clean_text(thread_id),
         before_id: before_thread_id.and_then(clean_text),
         insert_at_end: Some(insert_at_end),
         updated_at: now_ms(),
         ..Default::default()
     })
+}
+
+fn canonical_sidebar_project_key(index: &CodexGlobalProjectIndex, project_key: &str) -> String {
+    index
+        .project_for_key(project_key)
+        .or_else(|| {
+            project_key
+                .strip_prefix("local:")
+                .and_then(|workspace_path| index.project_for_key(workspace_path))
+        })
+        .map(|project| project.key.clone())
+        .unwrap_or_else(|| project_key.to_owned())
 }
 
 pub(crate) fn set_codex_global_thread_pinned(
@@ -1680,6 +1703,10 @@ fn reorder_project_thread_payload(
     before_thread_id: Option<&str>,
     insert_at_end: bool,
 ) {
+    assign_thread_to_project_payload(payload, thread_id, project_key);
+    if let Some(before_thread_id) = before_thread_id {
+        assign_thread_to_project_payload(payload, before_thread_id, project_key);
+    }
     let orders = payload
         .entry(SIDEBAR_PROJECT_THREAD_ORDERS_KEY.to_owned())
         .or_insert_with(|| Value::Object(Map::new()));
@@ -1706,7 +1733,29 @@ fn reorder_project_thread_payload(
             .unwrap_or(0)
     };
     order.insert(index, thread_id.to_owned());
+    project_order.insert("sortKey".to_owned(), Value::String("manual".to_owned()));
     project_order.insert("threadIds".to_owned(), serde_json::json!(order));
+}
+
+fn assign_thread_to_project_payload(
+    payload: &mut Map<String, Value>,
+    thread_id: &str,
+    project_key: &str,
+) {
+    let assignments = payload
+        .entry(THREAD_PROJECT_ASSIGNMENTS_KEY.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Some(assignments) = assignments.as_object_mut() {
+        let assignment = assignments
+            .entry(thread_id.to_owned())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(assignment) = assignment.as_object_mut() {
+            assignment.insert("projectId".to_owned(), json!(project_key));
+        } else {
+            *assignment = json!({"projectId": project_key});
+        }
+    }
+    remove_text_list_item(payload, PROJECTLESS_THREAD_IDS_KEY, thread_id);
 }
 
 fn normalized_text_list(value: Option<&Value>) -> Vec<String> {
@@ -1795,8 +1844,8 @@ fn is_codex_gui_process_command(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_codex_global_state_ops, codex_app_running_probe_args, index_from_payload,
-        is_codex_gui_process_command, remove_codex_global_project_payload,
+        apply_codex_global_state_ops, canonical_sidebar_project_key, codex_app_running_probe_args,
+        index_from_payload, is_codex_gui_process_command, remove_codex_global_project_payload,
         rename_codex_global_project_payload, runtime_project_ui_id, CodexGlobalStateOplogRecord,
         ACTIVE_REMOTE_PROJECT_ID_KEY, CODEX_GLOBAL_STATE_OPLOG_FILENAME,
         OPLOG_KIND_ACTIVATE_PROJECT, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
@@ -1864,6 +1913,27 @@ mod tests {
             project.workspace_path,
             "/Volumes/OuterHD/OuterIdeaProjects/Wegent"
         );
+    }
+
+    #[test]
+    fn canonicalizes_sidebar_project_path_aliases_before_reordering_threads() {
+        let index = index_from_payload(&payload(json!({
+            "local-projects": {
+                "entry": {
+                    "id": "local-id",
+                    "name": "Wegent"
+                }
+            },
+            "project-writable-roots": {
+                "local-id": [{"kind": "local", "path": "/repo"}]
+            }
+        })));
+
+        assert_eq!(
+            canonical_sidebar_project_key(&index, "local:/repo"),
+            "local-id"
+        );
+        assert_eq!(canonical_sidebar_project_key(&index, "chats"), "chats");
     }
 
     #[test]
@@ -2071,6 +2141,54 @@ mod tests {
             json!({"color": "blue"})
         );
         assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
+    }
+
+    #[test]
+    fn reordering_thread_creates_manual_order_used_by_project_index() {
+        let mut payload = payload(json!({
+            "thread-project-assignments": {
+                "moved": {"projectId": "old-project", "projectKind": "local"},
+                "target": {"projectId": "old-project", "futureField": {"keep": true}}
+            },
+            "unknown-codex-setting": {"keep": true}
+        }));
+
+        apply_codex_global_state_ops(
+            &mut payload,
+            &[CodexGlobalStateOplogRecord {
+                kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
+                project_key: Some("project".to_owned()),
+                thread_id: Some("moved".to_owned()),
+                before_id: Some("target".to_owned()),
+                ..Default::default()
+            }],
+        );
+
+        assert_eq!(
+            payload["sidebar-project-thread-orders"]["project"],
+            json!({"threadIds": ["moved"], "sortKey": "manual"})
+        );
+        assert_eq!(
+            payload["thread-project-assignments"]["moved"],
+            json!({"projectId": "project", "projectKind": "local"})
+        );
+        assert_eq!(
+            payload["thread-project-assignments"]["target"],
+            json!({"projectId": "project", "futureField": {"keep": true}})
+        );
+        assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
+
+        let index = index_from_payload(&payload);
+        assert_eq!(
+            index.sidebar_project_key_for_thread("moved"),
+            Some("project")
+        );
+        assert_eq!(
+            index.sidebar_project_key_for_thread("target"),
+            Some("project")
+        );
+        assert_eq!(index.thread_sort_order("project", "moved", 1), 0);
+        assert_eq!(index.thread_sort_order("project", "target", 0), 1);
     }
 
     #[test]

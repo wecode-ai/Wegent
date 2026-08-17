@@ -21,6 +21,8 @@ use crate::logging::log_executor_event;
 
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const TOOL_SEARCH_NAME: &str = "tool_search";
+pub(super) const BRIDGED_TOOL_SEARCH_NAME: &str = "search_deferred_tools";
+const TOOL_SEARCH_DESCRIPTION: &str = "Search deferred MCP and App tools by capability. Call this before concluding that a requested tool is unavailable.";
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.";
 const APPLY_PATCH_OUTPUT_CONTRACT: &str = r#"Critical apply_patch input contract:
 - Set the function's `input` field to the patch text itself. JSON escaping is handled by the function-call protocol.
@@ -277,7 +279,7 @@ fn build_tool_context(tools: &[Value], preserve_namespace: bool) -> ToolContext 
     let mut context = ToolContext::default();
     for tool in tools {
         if tool.get("type").and_then(Value::as_str) == Some("tool_search") {
-            let wire_name = unique_wire_name(&context, bounded_wire_name(TOOL_SEARCH_NAME));
+            let wire_name = unique_wire_name(&context, bounded_wire_name(BRIDGED_TOOL_SEARCH_NAME));
             context.insert_tool(
                 wire_name,
                 ToolIdentity {
@@ -492,14 +494,56 @@ fn chat_tool_search(tool: &Value, context: &ToolContext, kimi_k3_compat: bool) -
     let wire_name = context.wire_name(None, TOOL_SEARCH_NAME)?;
     let mut function = Map::new();
     function.insert("name".to_owned(), Value::String(wire_name.to_owned()));
-    if let Some(description) = tool.get("description") {
-        function.insert("description".to_owned(), description.clone());
-    }
+    function.insert(
+        "description".to_owned(),
+        bridged_tool_search_description(tool),
+    );
     function.insert(
         "parameters".to_owned(),
-        normalize_function_parameters(tool.get("parameters"), kimi_k3_compat),
+        normalize_function_parameters(Some(&bridged_tool_search_parameters(tool)), kimi_k3_compat),
     );
     Some(json!({"type": "function", "function": function}))
+}
+
+fn bridged_tool_search_description(tool: &Value) -> Value {
+    tool.get("description")
+        .filter(|description| {
+            !description
+                .as_str()
+                .is_some_and(|description| description.trim().is_empty())
+        })
+        .cloned()
+        .unwrap_or_else(|| Value::String(TOOL_SEARCH_DESCRIPTION.to_owned()))
+}
+
+fn bridged_tool_search_parameters(tool: &Value) -> Value {
+    let parameters = tool.get("parameters");
+    let has_explicit_properties = parameters
+        .and_then(|parameters| parameters.get("properties"))
+        .and_then(Value::as_object)
+        .is_some_and(|properties| !properties.is_empty());
+    if has_explicit_properties {
+        return parameters
+            .cloned()
+            .expect("parameters were inspected above");
+    }
+
+    json!({
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Describe the MCP or App capability needed to continue the task."
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of matching tools to return.",
+                "minimum": 1
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+    })
 }
 
 fn chat_tool(
@@ -679,18 +723,13 @@ fn responses_tools(
                 let mut function = Map::new();
                 function.insert("type".to_owned(), Value::String("function".to_owned()));
                 function.insert("name".to_owned(), Value::String(name.to_owned()));
-                if let Some(description) = tool.get("description") {
-                    function.insert("description".to_owned(), description.clone());
-                }
+                function.insert(
+                    "description".to_owned(),
+                    bridged_tool_search_description(tool),
+                );
                 function.insert(
                     "parameters".to_owned(),
-                    tool.get("parameters").cloned().unwrap_or_else(|| {
-                        json!({
-                            "type": "object",
-                            "properties": {},
-                            "additionalProperties": false
-                        })
-                    }),
+                    bridged_tool_search_parameters(tool),
                 );
                 converted.push(Value::Object(function));
                 continue;
@@ -3160,14 +3199,17 @@ mod tests {
         let (converted, _) = responses_to_chat(&input).expect("request should convert");
 
         assert_eq!(converted["tools"][0]["type"], "function");
-        assert_eq!(converted["tools"][0]["function"]["name"], "tool_search");
+        assert_eq!(
+            converted["tools"][0]["function"]["name"],
+            BRIDGED_TOOL_SEARCH_NAME
+        );
         assert_eq!(
             converted["tools"][1]["function"]["name"],
             "github__create_issue"
         );
         assert_eq!(
             converted["messages"][1]["tool_calls"][0]["function"]["name"],
-            "tool_search"
+            BRIDGED_TOOL_SEARCH_NAME
         );
         assert_eq!(
             converted["messages"][1]["tool_calls"][0]["function"]["arguments"],
@@ -3752,7 +3794,7 @@ mod tests {
         let context = responses_to_chat(&input).expect("context should build").1;
         let output = convert_stream(
             concat!(
-                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"search_1\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"search_1\",\"function\":{\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
                 "data: [DONE]\n\n"
             ),
             context,
@@ -4208,11 +4250,11 @@ mod tests {
 
         assert_eq!(converted["tools"].as_array().unwrap().len(), 2);
         assert_eq!(converted["tools"][0]["type"], "function");
-        assert_eq!(converted["tools"][0]["name"], TOOL_SEARCH_NAME);
+        assert_eq!(converted["tools"][0]["name"], BRIDGED_TOOL_SEARCH_NAME);
         assert_eq!(converted["tools"][1]["type"], "function");
         assert_eq!(converted["tools"][1]["name"], "github__create_issue");
         assert_eq!(converted["input"][1]["type"], "function_call");
-        assert_eq!(converted["input"][1]["name"], TOOL_SEARCH_NAME);
+        assert_eq!(converted["input"][1]["name"], BRIDGED_TOOL_SEARCH_NAME);
         assert!(converted["input"][1].get("id").is_none());
         assert_eq!(converted["input"][1]["call_id"], "search_1");
         assert_eq!(
@@ -4238,7 +4280,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_bridge_omits_missing_tool_search_description() {
+    fn responses_bridge_completes_native_tool_search_contract() {
         let input = json!({
             "model": "third-party-responses-model",
             "tools": [{
@@ -4252,7 +4294,26 @@ mod tests {
             responses_to_responses(&input, false, false, false).expect("request should convert");
 
         assert_eq!(converted["tools"][0]["type"], "function");
-        assert!(converted["tools"][0].get("description").is_none());
+        assert_eq!(
+            converted["tools"][0]["description"],
+            TOOL_SEARCH_DESCRIPTION
+        );
+        assert_eq!(
+            converted["tools"][0]["parameters"]["properties"]["query"]["type"],
+            "string"
+        );
+        assert_eq!(
+            converted["tools"][0]["parameters"]["properties"]["limit"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            converted["tools"][0]["parameters"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            converted["tools"][0]["parameters"]["additionalProperties"],
+            false
+        );
     }
 
     #[test]
@@ -4422,13 +4483,13 @@ mod tests {
         let output = convert_responses_stream(
             concat!(
                 "event: response.output_item.added\n",
-                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"\"}}\n\n",
+                "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"\"}}\n\n",
                 "event: response.function_call_arguments.delta\n",
                 "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_search\",\"output_index\":0,\"delta\":\"{\\\"query\\\":\\\"GitHub\\\"}\"}\n\n",
                 "event: response.function_call_arguments.done\n",
                 "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_search\",\"output_index\":0,\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"}\n\n",
                 "event: response.output_item.done\n",
-                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"}}\n\n",
+                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"}}\n\n",
                 "event: response.output_item.added\n",
                 "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"in_progress\",\"call_id\":\"call_1\",\"name\":\"github__create_issue\",\"arguments\":\"\"}}\n\n",
                 "event: response.function_call_arguments.delta\n",
@@ -4436,7 +4497,7 @@ mod tests {
                 "event: response.output_item.done\n",
                 "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"github__create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}}\n\n",
                 "event: response.completed\n",
-                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"},{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"github__create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}]}}\n\n"
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub\\\"}\"},{\"id\":\"fc_app\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"call_1\",\"name\":\"github__create_issue\",\"arguments\":\"{\\\"title\\\":\\\"Bug\\\"}\"}]}}\n\n"
             ),
             context,
         )

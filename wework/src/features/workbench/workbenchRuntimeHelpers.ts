@@ -16,6 +16,7 @@ import type {
   User,
 } from '@/types/api'
 import type { RuntimeTaskRoute } from '@/lib/navigation'
+import { normalizeRuntimeTaskSummary } from './runtimeTaskLifecycle/projection'
 
 export const STANDALONE_PROJECT_ID = 0
 export const EMPTY_MESSAGE_TASK_TITLE = '新对话'
@@ -214,7 +215,7 @@ export function updateRuntimeWorkTask(
     }
 
     const tasks = workspace.tasks.map(task =>
-      task.taskId === address.taskId ? { ...task, ...updates } : task
+      task.taskId === address.taskId ? normalizeRuntimeTaskSummary({ ...task, ...updates }) : task
     )
     if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
     return { ...workspace, tasks }

@@ -78,7 +78,7 @@ use super::{
         CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
-    events::{emit_response_event, CodexNotificationEventMapper},
+    events::{emit_response_event, is_context_compaction_request, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
@@ -98,9 +98,10 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
-        infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, restore_cloud_project_id, runtime_task_id, string_field, timestamp_ms_field,
-        workspace_group_path, workspace_path,
+        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
+        item_type, normalize_device_id, normalize_workspace_path, now_ms, prompt_text,
+        restore_cloud_project_id, restore_origin, runtime_task_id, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -113,6 +114,8 @@ const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
+const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
+const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
 const PROVIDER_TURN_INTERRUPT_WAIT_MS: u64 = 100;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
@@ -152,6 +155,7 @@ fn default_turn_runtime() -> String {
 struct RuntimeTurnScheduler {
     max_concurrent_tasks: usize,
     active_tasks: usize,
+    active_task_ids: HashSet<String>,
     queued_turns: VecDeque<SpawnTurnRequest>,
 }
 
@@ -160,6 +164,7 @@ impl RuntimeTurnScheduler {
         Self {
             max_concurrent_tasks,
             active_tasks: 0,
+            active_task_ids: HashSet::new(),
             queued_turns,
         }
     }
@@ -170,6 +175,7 @@ impl RuntimeTurnScheduler {
             return None;
         }
         self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
         Some(turn)
     }
 
@@ -195,8 +201,9 @@ impl RuntimeTurnScheduler {
         Ok(reordered)
     }
 
-    fn finish(&mut self) -> Vec<SpawnTurnRequest> {
-        self.active_tasks = self.active_tasks.saturating_sub(1);
+    fn finish(&mut self, local_task_id: &str) -> Vec<SpawnTurnRequest> {
+        self.active_task_ids.remove(local_task_id);
+        self.active_tasks = self.active_task_ids.len();
         self.take_available()
     }
 
@@ -205,8 +212,14 @@ impl RuntimeTurnScheduler {
             .queued_turns
             .iter()
             .position(|turn| turn.local_task_id == local_task_id)?;
+        if self.active_tasks >= self.max_concurrent_tasks {
+            let turn = self.queued_turns.remove(position)?;
+            self.queued_turns.push_front(turn);
+            return None;
+        }
         let turn = self.queued_turns.remove(position)?;
         self.active_tasks += 1;
+        self.active_task_ids.insert(turn.local_task_id.clone());
         Some(turn)
     }
 
@@ -220,6 +233,8 @@ impl RuntimeTurnScheduler {
         let turns = (0..available)
             .filter_map(|_| self.queued_turns.pop_front())
             .collect::<Vec<_>>();
+        self.active_task_ids
+            .extend(turns.iter().map(|turn| turn.local_task_id.clone()));
         self.active_tasks += turns.len();
         turns
     }
@@ -482,20 +497,25 @@ struct RuntimeThreadEventRoute {
 
 struct ScheduledTurnGuard {
     handler: RuntimeWorkRpcHandler,
+    local_task_id: String,
 }
 
 impl ScheduledTurnGuard {
-    fn new(handler: RuntimeWorkRpcHandler) -> Self {
-        Self { handler }
+    fn new(handler: RuntimeWorkRpcHandler, local_task_id: String) -> Self {
+        Self {
+            handler,
+            local_task_id,
+        }
     }
 }
 
 impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
         let handler = self.handler.clone();
+        let local_task_id = self.local_task_id.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                handler.finish_scheduled_turn().await;
+                handler.finish_scheduled_turn(&local_task_id).await;
             });
         }
     }
@@ -680,6 +700,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.settings.get" => self.get_runtime_settings().await,
             "runtime.settings.update" => self.update_runtime_settings(payload).await,
+            "runtime.capacity.get" => self.get_runtime_capacity().await,
             "runtime.hooks.list" | "runtime.hooks.reload" => {
                 Ok(json!({"plugins": self.hook_service.list()}))
             }

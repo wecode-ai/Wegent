@@ -121,7 +121,7 @@ describe('WorkspaceTabsProvider routing', () => {
 
   test('recreates the preferred startup tab when the persisted list no longer contains it', () => {
     localStorage.setItem(
-      'wework.workspaceTabs.v2:context-test',
+      'wework.workspaceTabs.v3:context-test',
       JSON.stringify({
         activeTabId: 'task-1',
         tabs: [

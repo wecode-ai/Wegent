@@ -24,6 +24,7 @@ const rawRunningPattern = /\b(?:task|runtimeTask|summary|transcript)\.running\b/
 const rawStreamPublicationPattern =
   /\bsubscribeRuntimeTaskStream\s*:\s*runtimeTasks\.subscribeRuntimeTaskStream\b/
 const rawRunningAllowedFiles = new Set([
+  path.join(lifecycleRoot, 'projection.ts'),
   path.join(lifecycleRoot, 'reducer.ts'),
   path.join(lifecycleRoot, 'RuntimeTaskLifecycleStore.ts'),
   path.join(sourceRoot, 'features', 'workbench', 'useWorkbenchRuntimeTasks.ts'),

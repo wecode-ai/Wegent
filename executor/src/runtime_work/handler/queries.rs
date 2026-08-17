@@ -227,7 +227,9 @@ impl RuntimeWorkRpcHandler {
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
         if let Some(link) = local_link.as_ref().filter(|link| {
-            !runtime_has_provider_transcript_reader(&link.runtime) || session_id.is_none()
+            link.ephemeral
+                || !runtime_has_provider_transcript_reader(&link.runtime)
+                || session_id.is_none()
         }) {
             let messages = cached_runtime_transcript_messages(link);
             log_runtime_transcript_finished(RuntimeTranscriptLog {

@@ -81,7 +81,7 @@ async def test_start_device_code_server_uses_requested_path(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_device_code_server_keeps_default_settings_path(monkeypatch):
+async def test_start_device_code_server_uses_executor_default_workspace(monkeypatch):
     from app.api.endpoints import devices
     from app.services.device import session_service
 
@@ -90,7 +90,7 @@ async def test_start_device_code_server_keeps_default_settings_path(monkeypatch)
             "session_id": "code-1",
             "device_id": "device-2",
             "type": "code_server",
-            "path": devices.DEFAULT_DEVICE_SESSION_PATH,
+            "path": "/home/wegent/.wecode/wegent-executor/workspace",
             "url": "http://device.example/s/code-1/",
             "transport": "url",
         }
@@ -108,7 +108,41 @@ async def test_start_device_code_server_keeps_default_settings_path(monkeypatch)
         current_user=SimpleNamespace(id=7),
     )
 
-    assert response.path == devices.DEFAULT_DEVICE_SESSION_PATH
+    assert response.path == "/home/wegent/.wecode/wegent-executor/workspace"
     kwargs = start_session.await_args.kwargs
-    assert kwargs["path"] == devices.DEFAULT_DEVICE_SESSION_PATH
+    assert kwargs["path"] == ""
+    assert kwargs["create_if_missing"] is True
+
+
+@pytest.mark.asyncio
+async def test_start_device_terminal_uses_executor_default_workspace(monkeypatch):
+    from app.api.endpoints import devices
+    from app.services.device import session_service
+
+    start_session = AsyncMock(
+        return_value={
+            "session_id": "terminal-1",
+            "device_id": "device-2",
+            "type": "terminal",
+            "path": "/home/wegent/.wecode/wegent-executor/workspace",
+            "url": "",
+            "transport": "socketio",
+        }
+    )
+    monkeypatch.setattr(
+        session_service.local_device_session_service,
+        "start_session",
+        start_session,
+    )
+
+    response = await devices.start_device_terminal(
+        "device-2",
+        payload=None,
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.path == "/home/wegent/.wecode/wegent-executor/workspace"
+    kwargs = start_session.await_args.kwargs
+    assert kwargs["path"] == ""
     assert kwargs["create_if_missing"] is True

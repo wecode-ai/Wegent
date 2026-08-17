@@ -788,8 +788,8 @@ importers:
         specifier: ^10.5.0
         version: 10.5.0(postcss@8.5.15)
       dingtalk-workspace-cli:
-        specifier: 1.0.54
-        version: 1.0.54
+        specifier: 1.0.58
+        version: 1.0.58
       eslint:
         specifier: ^10.3.0
         version: 10.4.1(jiti@1.21.7)
@@ -5226,8 +5226,8 @@ packages:
   dingtalk-jsapi@3.2.9:
     resolution: {integrity: sha512-VLt8co92z29bdguxUvJLnhpQn7WFjb5rJTODDczieS7I0yyWj5+KwF04sWfMvyIKX0MQPVL++Fyo6z2JucFpgQ==}
 
-  dingtalk-workspace-cli@1.0.54:
-    resolution: {integrity: sha512-R1gNPwc7yVgU5VKbyI7FaYNjh2L2+/yBo7cdqEdrBP35Xcnm0yOjJcRbk/EEq31Sk60feSBoQ3RtKVhxwduW+Q==}
+  dingtalk-workspace-cli@1.0.58:
+    resolution: {integrity: sha512-9sYkNwfBuT/FM6IYgLEZCJZJItUq6/5dP7+rWXQt/Mbhxty8HPK7rxNepUbmhjfRPI34ZFMT6PSnetfvkTTO3g==}
     engines: {node: '>=16'}
     hasBin: true
 
@@ -14202,7 +14202,7 @@ snapshots:
     dependencies:
       promise-polyfill: 7.1.2
 
-  dingtalk-workspace-cli@1.0.54: {}
+  dingtalk-workspace-cli@1.0.58: {}
 
   direction@2.0.1: {}
 

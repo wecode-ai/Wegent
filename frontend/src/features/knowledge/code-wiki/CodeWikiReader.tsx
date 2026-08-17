@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, PanelLeft, RefreshCw, Settings } from 'lucide-react'
 import { toast } from 'sonner'
@@ -197,6 +197,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // Controlled so that picking a page closes it: leaving it open would cover the
   // page it was just asked to show.
   const [navigationOpen, setNavigationOpen] = useState(false)
+  const pagesRequest = useRef(0)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -204,27 +205,44 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
 
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    codeWikiApi
-      .pages(wiki.id)
-      .then(response => {
-        if (cancelled) return
+  const reloadPages = useCallback(
+    async (showError = true) => {
+      const request = pagesRequest.current + 1
+      pagesRequest.current = request
+      setLoading(true)
+
+      try {
+        const response = await codeWikiApi.pages(wiki.id)
+        if (pagesRequest.current !== request) return
+
         setPages(response.pages)
         const first = firstReadable(response.pages)
         if (first) setActivePath(first.path)
-      })
-      .catch(error => {
-        if (!cancelled) toast.error(error instanceof Error ? error.message : String(error))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+      } catch (error) {
+        if (showError && pagesRequest.current === request) {
+          toast.error(error instanceof Error ? error.message : String(error))
+        }
+        throw error
+      } finally {
+        if (pagesRequest.current === request) setLoading(false)
+      }
+    },
+    [wiki.id]
+  )
+
+  useEffect(() => {
+    void reloadPages().catch(() => undefined)
     return () => {
-      cancelled = true
+      pagesRequest.current += 1
     }
-  }, [wiki.id])
+  }, [reloadPages])
+
+  const handleRepublished = useCallback(async () => {
+    // A restore replaces the whole published version. Re-fetch its tree so both
+    // navigation and the currently rendered page refer to the newly live version.
+    await reloadPages(false)
+    runStatus.refresh()
+  }, [reloadPages, runStatus])
 
   const activePage = useMemo(
     () => (activePath ? findByPath(pages, activePath) : null),
@@ -305,7 +323,11 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                     a wiki that had been generated, whether the last run failed and
                     which version is live were unreachable, and so was restoring one. */}
                 <div className="border-b border-border px-1 pb-3">
-                  <RunHistory knowledgeBaseId={wiki.id} status={runStatus.status} />
+                  <RunHistory
+                    knowledgeBaseId={wiki.id}
+                    status={runStatus.status}
+                    onRepublished={handleRepublished}
+                  />
                 </div>
                 <WikiNavigation
                   pages={pages}
@@ -389,7 +411,11 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             whichever page came first and stayed there. */}
         <div className="hidden w-64 shrink-0 flex-col border-r border-border lg:flex">
           <div className="border-b border-border px-3 py-2">
-            <RunHistory knowledgeBaseId={wiki.id} status={runStatus.status} />
+            <RunHistory
+              knowledgeBaseId={wiki.id}
+              status={runStatus.status}
+              onRepublished={handleRepublished}
+            />
           </div>
           {pages.length > 0 && (
             <WikiNavigation
@@ -423,7 +449,11 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                   to the history -- and a wiki with no pages is exactly when it is
                   wanted. */}
               <div className="lg:hidden">
-                <RunHistory knowledgeBaseId={wiki.id} status={runStatus.status} />
+                <RunHistory
+                  knowledgeBaseId={wiki.id}
+                  status={runStatus.status}
+                  onRepublished={handleRepublished}
+                />
               </div>
             </div>
           ) : (

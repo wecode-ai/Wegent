@@ -69,6 +69,22 @@ export interface ProjectSpaceApis {
   defaultLocation: ProjectSpaceLocation
 }
 
+export interface ProjectSpaceDetailServices {
+  deliveryApi: DeliveryApi
+  projectChatClient?: ProjectChatClient
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  loopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
+  deviceApi: WorkbenchServices['deviceApi']
+  modelApi: WorkbenchServices['modelApi']
+  teamApi: WorkbenchServices['teamApi']
+}
+
+export interface ProjectSpaceDetailServiceMap {
+  local?: ProjectSpaceDetailServices
+  cloud?: ProjectSpaceDetailServices
+}
+
 export interface AutomationApi {
   listAutomations: () => Promise<AutomationListResponse>
   getAutomation: (automationId: string) => Promise<{ automation: Automation }>
@@ -98,6 +114,8 @@ export interface WorkbenchServices {
   deviceApi: Pick<
     ReturnType<typeof createDeviceApi>,
     | 'listDevices'
+    | 'getRuntimeSettings'
+    | 'updateRuntimeSettings'
     | 'getHomeDirectory'
     | 'getProjectWorkspaceRoot'
     | 'listDirectories'
@@ -105,10 +123,10 @@ export interface WorkbenchServices {
     | 'executeCommand'
     | 'upgradeDevice'
     | 'listSkills'
-    | 'listWorkspaceEntries'
-    | 'readWorkspaceTextFile'
-    | 'readWorkspaceFileChunk'
   > & {
+    listWorkspaceEntries: WorkspaceFileApi['listWorkspaceEntries']
+    readWorkspaceTextFile: WorkspaceFileApi['readWorkspaceTextFile']
+    readWorkspaceFileChunk: NonNullable<WorkspaceFileApi['readWorkspaceFileChunk']>
     writeWorkspaceTextFile?: NonNullable<WorkspaceFileApi['writeWorkspaceTextFile']>
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi
@@ -120,6 +138,7 @@ export interface WorkbenchServices {
   dwsApi?: DwsApi
   externalIssueApi?: ExternalIssueApi
   projectSpaceApis?: ProjectSpaceApis
+  projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   automationApi?: AutomationApi
@@ -238,6 +257,10 @@ export function createDefaultWorkbenchServices(
       local: localServices.deliveryApi,
       cloud: cloudProjectSpaceApi,
       defaultLocation: 'cloud',
+    },
+    projectSpaceDetailServices: {
+      local: localServices.projectSpaceDetailServices?.local,
+      cloud: cloudServices.projectSpaceDetailServices?.cloud,
     },
   }
 }

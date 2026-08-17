@@ -20,6 +20,22 @@ The desktop startup screen waits only for the local executor to report ready thr
 
 When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
 
+## Diagnosing Runtime Task Creation
+
+The frontend writes key task-creation stages to the persisted log with the `[Wework] Runtime task create diagnostic` prefix. This does not require Performance Diagnostics to be enabled. Records contain only the stage, task/device identifiers, model identifiers, elapsed time, and result; they do not contain message content, credentials, or model connection configuration.
+
+When an optimistic task is visible but the executor never receives `runtime.tasks.create`, find the last stage logged in this sequence:
+
+1. `workbench-model-prepare-*`: the workbench starts and completes its initial model preparation.
+2. `workbench-runtime-create-dispatched`: the workbench begins calling the runtime creation API.
+3. `hybrid-local-device-discovery-*` and `hybrid-route-resolved`: the hybrid service completes device discovery and selects the local or cloud route.
+4. `hybrid-create-forwarded`: the creation request is forwarded to the selected runtime API.
+5. `local-device-resolved`, `local-primary-model-prepared`, `local-supervisor-model-prepared`, and `local-payload-built`: the local/remote Executor IPC client completes device resolution, model preparation, and payload construction.
+6. `local-rpc-dispatched` and `local-rpc-resolved`: `runtime.tasks.create` is sent and returns.
+7. `hybrid-create-resolved` or `hybrid-create-failed`: the hybrid service observes the final result.
+
+A missing next stage usually means the call stalled between the two records. Correlate the same `taskId` across the frontend log, cloud WebSocket RPC log, and executor log to identify whether model synchronization, device discovery, payload construction, IPC dispatch, or the executor response is blocked.
+
 ## Enabling Diagnostics
 
 Press the hidden shortcut in the Wework window:

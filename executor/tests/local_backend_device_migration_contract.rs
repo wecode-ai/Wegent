@@ -270,6 +270,65 @@ async fn default_session_handler_uses_configured_workspace_root_for_relative_pat
 }
 
 #[tokio::test]
+async fn default_session_handler_uses_configured_workspace_root_for_blank_path() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "wegent-default-session-root-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&workspace_root);
+    let transport = RecordingTransport::default();
+    let mut config = local_backend_config();
+    config.local_workspace_root = workspace_root.clone();
+    let runner = LocalBackendRunner::new(config, transport.clone());
+    runner.register_handlers();
+
+    let ack = transport
+        .handler("device:start_code_server_session")
+        .unwrap()(json!({
+        "type": "code_server",
+        "session_id": "code-default-root",
+        "project_id": 0,
+        "path": "   ",
+        "access_token": "secret",
+        "create_if_missing": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(ack["path"], workspace_root.display().to_string());
+    assert!(workspace_root.is_dir());
+}
+
+#[tokio::test]
+async fn default_session_handler_uses_configured_workspace_root_when_path_is_omitted() {
+    let workspace_root = std::env::temp_dir().join(format!(
+        "wegent-omitted-session-root-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&workspace_root);
+    let transport = RecordingTransport::default();
+    let mut config = local_backend_config();
+    config.local_workspace_root = workspace_root.clone();
+    let runner = LocalBackendRunner::new(config, transport.clone());
+    runner.register_handlers();
+
+    let ack = transport.handler("device:start_terminal_session").unwrap()(json!({
+        "type": "terminal",
+        "session_id": "terminal-default-root",
+        "project_id": 0,
+        "access_token": "secret",
+        "create_if_missing": true
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(ack["path"], workspace_root.display().to_string());
+    assert!(workspace_root.is_dir());
+}
+
+#[tokio::test]
 async fn session_events_start_terminal_and_route_terminal_controls() {
     let transport = RecordingTransport::default();
     let terminal = Arc::new(Mutex::new(RecordingTerminal::default()));
@@ -854,9 +913,13 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         heartbeat_transport.calls()[1].payload["running_task_ids"],
         json!([])
     );
-    assert!(sink.events().iter().any(|event| event.event_type == "error"
-        && event.data["code"] == "cancelled"
-        && event.task_id == "501"));
+    assert!(sink
+        .events()
+        .iter()
+        .any(|event| event.event_type == "response.incomplete"
+            && event.data["response"]["status"] == "cancelled"
+            && event.data["response"]["error"]["code"] == "cancelled"
+            && event.task_id == "501"));
 }
 
 #[derive(Clone, Debug)]

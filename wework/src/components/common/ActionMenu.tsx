@@ -400,7 +400,7 @@ export function ActionMenu({
         onKeyDown={handleTriggerKeyDown}
         className={
           triggerClassName ??
-          'flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]'
+          'flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary'
         }
         aria-label={ariaLabel}
         title={ariaLabel}

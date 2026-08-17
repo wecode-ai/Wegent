@@ -36,7 +36,7 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
     })
   })
 
-  test('maps disk personal plugins without calling Codex plugin/list', async () => {
+  test('maps disk personal plugins as available without inferring installation', async () => {
     mocks.invoke.mockResolvedValue({
       marketplaceId: 'wework-personal',
       marketplacePath: '/tmp/wework-personal',
@@ -48,6 +48,7 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
           description: 'Take notes',
           logo: './logo.png',
           category: 'Productivity',
+          marketplacePath: '/Users/test/.agents/plugins/marketplace.json',
           pluginPath: '/tmp/wework-personal/plugins/notes',
           installed: true,
         },
@@ -61,9 +62,14 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
       displayName: 'Notes',
       visibility: 'personal',
       sourceProvider: 'user',
-      installed: true,
-      installedLocally: true,
-      manifest: expect.objectContaining({ marketplaceId: 'wework-personal' }),
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+      enabled: false,
+      manifest: expect.objectContaining({
+        marketplaceId: 'wework-personal',
+        marketplacePath: '/Users/test/.agents/plugins/marketplace.json',
+      }),
     })
     expect(mocks.ensureLocalExecutorStarted).not.toHaveBeenCalled()
     expect(mocks.invoke).toHaveBeenCalledWith('local_executor_list_personal_marketplace_plugins', {
@@ -97,7 +103,12 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
 
     const items = await listPersonalMarketplacePluginsFromDisk()
     expect(items).toHaveLength(1)
-    expect(items[0]?.name).toBe('dev-tools')
+    expect(items[0]).toMatchObject({
+      name: 'dev-tools',
+      installed: false,
+      installedLocally: false,
+      installedPluginId: null,
+    })
     expect(mocks.invoke).toHaveBeenCalledWith('local_executor_list_personal_marketplace_plugins', {
       marketplacePath: '',
     })

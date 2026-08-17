@@ -36,6 +36,10 @@ const cloudDesktopExtensionMock = vi.hoisted(() => ({
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
+const remoteDeviceOnboardingExtensionMock = vi.hoisted(() => ({
+  Notice: vi.fn(() => null),
+  CommandDetails: vi.fn(() => null),
+}))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
@@ -44,6 +48,10 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
 
 vi.mock('@extensions/cloud-desktop', () => ({
   cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
+
+vi.mock('@extensions/remote-device-onboarding', () => ({
+  remoteDeviceOnboardingExtension: remoteDeviceOnboardingExtensionMock,
 }))
 
 vi.mock('@/config/runtime', () => ({
@@ -1676,9 +1684,11 @@ describe('ConnectionsSettingsPage', () => {
       env: {
         DEVICE_TYPE: 'remote',
         EXECUTOR_MODE: 'local',
+        WEGENT_BACKEND_URL: 'https://cloud.example.com/api',
+        WEGENT_SOCKET_URL: 'wss://cloud.example.com/socket.io',
       },
       command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
+        'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -1690,16 +1700,43 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('add-remote-docker-button'))
 
     await waitFor(() => expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledTimes(1))
-    expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledWith({
-      client_origin: window.location.origin,
-    })
+    expect(api.createDockerRemoteDeviceCommand).toHaveBeenCalledWith()
     expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('DEVICE_TYPE=remote')
     expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('EXECUTOR_MODE=local')
 
     await userEvent.click(screen.getByTestId('copy-remote-docker-command'))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest'
+      'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest'
     )
+  })
+
+  test('refreshes the device list and closes the dialog when the generated remote device connects', async () => {
+    api.getAllDevices
+      .mockResolvedValueOnce([cloudDevice()])
+      .mockResolvedValue([cloudDevice(), remoteDevice()])
+    api.createDockerRemoteDeviceCommand.mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'Docker Remote Device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: {
+        DEVICE_TYPE: 'remote',
+        EXECUTOR_MODE: 'local',
+      },
+      command:
+        'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-add-device-button'))
+    await userEvent.click(screen.getByTestId('add-remote-docker-button'))
+
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(2))
+    await waitFor(() => {
+      expect(screen.queryByTestId('add-cloud-device-dialog')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('connection-device-remote-device')).toHaveTextContent('10.201.3.201')
+    expect(screen.getByText('远程设备')).toBeInTheDocument()
   })
 
   test('disables cloud device creation when the user already has one cloud device', async () => {
@@ -1713,7 +1750,7 @@ describe('ConnectionsSettingsPage', () => {
         EXECUTOR_MODE: 'local',
       },
       command:
-        'docker run -d -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
+        'docker run -d -p 17888:17888 -e DEVICE_TYPE=remote -e EXECUTOR_MODE=local ghcr.io/wecode-ai/wegent-device:latest',
     })
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -1810,6 +1847,33 @@ describe('ConnectionsSettingsPage', () => {
     await waitFor(() => expect(api.startTerminal).toHaveBeenCalledWith('device-1'))
     expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/terminal')
     expect(openSpy).not.toHaveBeenCalled()
+  })
+
+  test('shows the actual IDE target before opening a remote device session', async () => {
+    api.getAllDevices.mockResolvedValue([remoteDevice()])
+    api.startCodeServer.mockResolvedValue({
+      session_id: 'code-server-1',
+      device_id: 'remote-device',
+      type: 'code-server',
+      path: '/home/wegent/.wecode/wegent-executor/workspace',
+      url: 'http://10.20.30.40:17888/session/code-server-1?token=secret',
+      transport: 'http',
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-code-server-button-remote-device'))
+    const target = await screen.findByTestId('connection-ide-target-remote-device')
+    expect(target).toHaveTextContent('http://10.20.30.40:17888')
+    expect(target).not.toHaveTextContent('token=secret')
+    expect(openExternalUrlMock).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('connection-ide-confirm-remote-device'))
+    await waitFor(() => {
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'http://10.20.30.40:17888/session/code-server-1?token=secret'
+      )
+    })
   })
 
   test('allows deleting offline remote device registrations', async () => {

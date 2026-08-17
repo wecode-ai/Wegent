@@ -72,7 +72,9 @@ interface PluginDetailViewProps {
   onSkillRun?: (skillName: string) => void
   shareRecipient?: boolean
   primaryActionIcon?: 'try' | 'install' | 'none'
-  actionMenuBeforePrimary?: boolean
+  deleteActionLabel?: string
+  deleteActionDisabled?: boolean
+  onDeleteAction?: () => void
 }
 
 interface DetailComponentItem {
@@ -465,7 +467,9 @@ export function PluginDetailView({
   onSkillRun,
   shareRecipient = false,
   primaryActionIcon = 'try',
-  actionMenuBeforePrimary = true,
+  deleteActionLabel,
+  deleteActionDisabled = false,
+  onDeleteAction,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
@@ -625,7 +629,11 @@ export function PluginDetailView({
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
   const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
   const showActionMenu =
-    showUninstall || Boolean(onEditAction) || Boolean(onMenuPublish) || showMenuCopy
+    showUninstall ||
+    Boolean(onEditAction) ||
+    Boolean(onMenuPublish) ||
+    showMenuCopy ||
+    Boolean(onDeleteAction)
 
   const actionMenu = showActionMenu ? (
     <div ref={actionMenuRef} className="relative">
@@ -697,6 +705,23 @@ export function PluginDetailView({
             >
               {t('workbench.plugins_uninstall', '卸载')}
             </button>
+          )}
+          {onDeleteAction && (
+            <>
+              <div className="my-1 border-t border-border/30" />
+              <button
+                type="button"
+                disabled={deleteActionDisabled}
+                data-testid={`plugin-detail-delete-${plugin.id}`}
+                className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50 disabled:opacity-40"
+                onClick={() => {
+                  setIsActionMenuOpen(false)
+                  onDeleteAction()
+                }}
+              >
+                {deleteActionLabel || t('workbench.plugins_delete_plugin', '删除插件')}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -870,19 +895,9 @@ export function PluginDetailView({
           </div>
 
           <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
-            {actionMenuBeforePrimary ? (
-              <>
-                {secondaryActionButton}
-                {actionMenu}
-                {primaryActionButton}
-              </>
-            ) : (
-              <>
-                {primaryActionButton}
-                {secondaryActionButton}
-                {actionMenu}
-              </>
-            )}
+            {secondaryActionButton}
+            {actionMenu}
+            {primaryActionButton}
           </div>
         </header>
 

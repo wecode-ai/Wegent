@@ -279,7 +279,8 @@ export async function openEmbeddedBrowser(
   bounds: EmbeddedBrowserBounds,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL,
   visible = true,
-  readyWhenHidden = true
+  readyWhenHidden = true,
+  navigateExisting = true
 ): Promise<EmbeddedBrowserPageState> {
   return invoke<EmbeddedBrowserPageState>('embedded_browser_open', {
     ...browserArgs(label),
@@ -287,6 +288,7 @@ export async function openEmbeddedBrowser(
     bounds,
     visible,
     readyWhenHidden,
+    navigateExisting,
   })
 }
 
@@ -302,6 +304,12 @@ export async function setEmbeddedBrowserBounds(
     visible,
     readyWhenHidden,
   })
+}
+
+export async function captureEmbeddedBrowserSnapshot(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<string> {
+  return invoke<string>('embedded_browser_capture_snapshot', browserArgs(label))
 }
 
 export async function navigateEmbeddedBrowser(

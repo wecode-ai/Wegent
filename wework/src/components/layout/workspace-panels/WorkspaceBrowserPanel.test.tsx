@@ -23,6 +23,7 @@ vi.mock('@extensions/cloud-desktop', () => ({
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   canUseEmbeddedBrowser: vi.fn(),
+  captureEmbeddedBrowserSnapshot: vi.fn(),
   clearEmbeddedBrowserData: vi.fn(),
   closeEmbeddedBrowser: vi.fn(),
   consumeEmbeddedBrowserLabelTransfer: vi.fn(),
@@ -72,7 +73,16 @@ class ResizeObserverMock {
 }
 
 function annotationSnapshot(
-  annotations: Array<{ id: string; number: number; comment: string }>,
+  annotations: Array<{
+    id: string
+    number: number
+    comment: string
+    adjustments?: Array<{
+      property: string
+      before: string
+      after: string
+    }>
+  }>,
   revision = 1
 ) {
   return {
@@ -84,7 +94,7 @@ function annotationSnapshot(
     revision,
     annotations: annotations.map(annotation => ({
       ...annotation,
-      adjustments: [],
+      adjustments: annotation.adjustments ?? [],
       target: {
         tagName: 'button',
         text: 'Example target',
@@ -110,12 +120,33 @@ function mockBrowserHostRect() {
   })
 }
 
+function createDeferred<T>() {
+  let resolve: (value: T) => void = () => undefined
+  const promise = new Promise<T>(nextResolve => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
+}
+
+function dispatchBrowserOcclusionChange(id: string, occluded: boolean) {
+  act(() => {
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id, occluded },
+      })
+    )
+  })
+}
+
 describe('WorkspaceBrowserPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetEmbeddedBrowserDownloadStoreForTests()
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockResolvedValue(
+      'data:image/png;base64,aW1hZ2U='
+    )
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
     embeddedBrowserMocks.isEmbeddedBrowserLabelTransferred.mockReturnValue(false)
     embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockReturnValue(null)
@@ -1238,7 +1269,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
       nativeLabel: 'workspace-browser-native-1',
       title: null,
-      url: 'https://example.test/',
+      url: 'about:blank',
     })
     render(
       <WorkspaceBrowserPanel
@@ -1258,7 +1289,69 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.test/',
+        'about:blank',
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        'workspace-browser',
+        true,
+        true,
+        false
+      )
+    })
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
+  })
+
+  test('uses the submitted URL when reopening after an external open request', async () => {
+    mockBrowserHostRect()
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    embeddedBrowserMocks.openEmbeddedBrowser
+      .mockResolvedValueOnce({
+        nativeLabel: 'workspace-browser-native-1',
+        title: null,
+        url: 'about:blank',
+      })
+      .mockResolvedValueOnce({
+        nativeLabel: 'workspace-browser-native-2',
+        title: null,
+        url: 'https://reopened.example.test/',
+      })
+    render(
+      <WorkspaceBrowserPanel
+        active
+        openRequest={{
+          id: 'test-1',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          label: 'workspace-browser',
+          url: 'https://example.test/',
+        }}
+      />
+    )
+
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1))
+    act(() => {
+      handleClose({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+    })
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'https://reopened.example.test/' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenLastCalledWith(
+        'https://reopened.example.test/',
         {
           x: 500,
           y: 120,
@@ -1268,7 +1361,6 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
   })
 
   test('opens hidden immediately when the active browser host is not measurable yet', async () => {
@@ -1311,7 +1403,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.test/',
+        'about:blank',
         {
           x: 0,
           y: 0,
@@ -1319,6 +1411,7 @@ describe('WorkspaceBrowserPanel', () => {
           height: 1,
         },
         'workspace-browser',
+        false,
         false,
         false
       )
@@ -1351,7 +1444,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'https://example.test/',
+        'about:blank',
         {
           x: 0,
           y: 0,
@@ -1360,7 +1453,8 @@ describe('WorkspaceBrowserPanel', () => {
         },
         'workspace-browser',
         false,
-        true
+        true,
+        false
       )
     })
     expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
@@ -1531,7 +1625,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
-  test('hides the native browser while a main webview overlay occludes it', async () => {
+  test('hides the native browser after the occlusion snapshot loads', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
 
@@ -1544,12 +1638,21 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: true },
-      })
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
+
+    const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).not.toHaveBeenCalledWith(
+      {
+        x: 500,
+        y: 120,
+        width: 400,
+        height: 300,
+      },
+      false,
+      'workspace-browser'
     )
 
+    fireEvent.load(snapshot)
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
         {
@@ -1564,11 +1667,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    window.dispatchEvent(
-      new CustomEvent('wework:embedded-browser-occlusion-change', {
-        detail: { id: 'workspace-add-menu', occluded: false },
-      })
-    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
@@ -1582,6 +1681,128 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('does not capture a snapshot for an inactive browser tab', async () => {
+    mockBrowserHostRect()
+    const { rerender } = render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    rerender(<WorkspaceBrowserPanel active={false} />)
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockClear()
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).not.toHaveBeenCalled()
+  })
+
+  test('uses a fresh snapshot for every occlusion', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
+
+    const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalledWith(
+      'workspace-browser'
+    )
+    expect(snapshot).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    fireEvent.load(snapshot)
+
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-browser-occlusion-snapshot')).not.toBeInTheDocument()
+    })
+
+    const nextSnapshot = createDeferred<string>()
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockImplementationOnce(
+      () => nextSnapshot.promise
+    )
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalledTimes(2)
+    })
+    expect(screen.queryByTestId('workspace-browser-occlusion-snapshot')).not.toBeInTheDocument()
+
+    await act(async () => {
+      nextSnapshot.resolve('data:image/png;base64,bmV3LWltYWdl')
+    })
+
+    const freshSnapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    expect(freshSnapshot).toHaveAttribute('src', 'data:image/png;base64,bmV3LWltYWdl')
+  })
+
+  test('does not hide the browser after an in-flight occlusion capture is released', async () => {
+    mockBrowserHostRect()
+    const pendingSnapshot = createDeferred<string>()
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockImplementationOnce(
+      () => pendingSnapshot.promise
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).toHaveBeenCalled()
+    })
+
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        true,
+        'workspace-browser'
+      )
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    await act(async () => {
+      pendingSnapshot.resolve('data:image/png;base64,bGF0ZS1pbWFnZQ==')
+    })
+
+    await Promise.resolve()
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).not.toHaveBeenCalledWith(
+      {
+        x: 500,
+        y: 120,
+        width: 400,
+        height: 300,
+      },
+      false,
+      'workspace-browser'
+    )
   })
 
   test('automatically hides the native browser while an intersecting dialog is open', async () => {
@@ -1599,8 +1820,13 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
     const dialogOverlay = document.createElement('div')
     dialogOverlay.className = 'fixed inset-0 z-modal'
-    document.body.append(dialogOverlay)
+    await act(async () => {
+      document.body.append(dialogOverlay)
+      await Promise.resolve()
+    })
 
+    const snapshot = await screen.findByTestId('workspace-browser-occlusion-snapshot')
+    fireEvent.load(snapshot)
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
         {
@@ -1615,7 +1841,10 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
-    dialogOverlay.remove()
+    await act(async () => {
+      dialogOverlay.remove()
+      await Promise.resolve()
+    })
 
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
@@ -1700,6 +1929,137 @@ describe('WorkspaceBrowserPanel', () => {
     expect(selectedText.type).toBe('browser_annotation')
     expect(selectedText.target.tagName).toBe('button')
     expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
+  })
+
+  test('hold-to-view-original button is enabled for queued tweaks and toggles the original page runtime', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(
+      annotationSnapshot([
+        {
+          id: 'browser-annotation-1',
+          number: 1,
+          comment: 'Make the button blue',
+          adjustments: [{ property: 'color', before: '#000000', after: '#1683ff' }],
+        },
+      ])
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    const button = await screen.findByTestId('workspace-browser-annotation-original-view-button')
+    await waitFor(() => {
+      expect(button).toBeEnabled()
+    })
+    expect(
+      document.querySelector(
+        '[data-testid="workspace-browser-panel"] [class*="browser-annotation-surface"]'
+      )
+    ).not.toBeNull()
+    expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveClass(
+      'bg-[var(--color-browser-annotation-chip)]'
+    )
+    expect(screen.getByText('正在批注 · example.com')).toBeInTheDocument()
+
+    fireEvent.pointerDown(button)
+    await waitFor(() => {
+      expect(
+        embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.some(([script]) =>
+          String(script).includes('setOriginalViewEnabled?.(true)')
+        )
+      ).toBe(true)
+    })
+    expect(screen.getByText('原网页 · example.com')).toBeInTheDocument()
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.pointerUp(button)
+    await waitFor(() => {
+      expect(
+        embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.some(([script]) =>
+          String(script).includes('setOriginalViewEnabled?.(false)')
+        )
+      ).toBe(true)
+    })
+    expect(screen.getByText('正在批注 · example.com')).toBeInTheDocument()
+    expect(button).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('hold-to-view-original button is disabled without queued tweaks', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(
+      annotationSnapshot([
+        {
+          id: 'browser-annotation-1',
+          number: 1,
+          comment: 'Plain comment without adjustments',
+        },
+      ])
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    const button = await screen.findByTestId('workspace-browser-annotation-original-view-button')
+    await waitFor(() => {
+      expect(button).toBeDisabled()
+    })
+  })
+
+  test('replays adjustments when the active browser tab is left while viewing the original page', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(
+      annotationSnapshot([
+        {
+          id: 'browser-annotation-1',
+          number: 1,
+          comment: 'Make the button blue',
+          adjustments: [{ property: 'color', before: '#000000', after: '#1683ff' }],
+        },
+      ])
+    )
+    const { rerender } = render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    const button = await screen.findByTestId('workspace-browser-annotation-original-view-button')
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.pointerDown(button)
+    await waitFor(() => expect(button).toHaveAttribute('aria-pressed', 'true'))
+    embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
+
+    rerender(<WorkspaceBrowserPanel active={false} />)
+
+    await waitFor(() => {
+      expect(button).toHaveAttribute('aria-pressed', 'false')
+      expect(
+        embeddedBrowserMocks.evalEmbeddedBrowser.mock.calls.some(([script]) =>
+          String(script).includes('setOriginalViewEnabled?.(false)')
+        )
+      ).toBe(true)
+    })
   })
 
   test('clear button wipes page annotation boxes while staying in annotation mode', async () => {
