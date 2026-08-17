@@ -43,6 +43,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
+  const isComposingRef = useRef(false)
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
 
@@ -136,9 +137,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         draftEditVersionRef.current += 1
         onDraftEdit?.()
       }
+      if (isComposingRef.current) {
+        cancelPendingFlush()
+        return
+      }
       scheduleDraftFlush(nextDraft)
     },
-    [onDraftEdit, scheduleDraftFlush]
+    [cancelPendingFlush, onDraftEdit, scheduleDraftFlush]
   )
 
   // Flush after the next frame so the editor state settles first.
@@ -153,10 +158,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     [flushDraft]
   )
   const handleBlur = useCallback(() => flushDraftNextFrame('blur'), [flushDraftNextFrame])
-  const handleCompositionEnd = useCallback(
-    () => flushDraftNextFrame('composition-end'),
-    [flushDraftNextFrame]
-  )
+  const handleCompositionStart = useCallback(() => {
+    isComposingRef.current = true
+    cancelPendingFlush()
+  }, [cancelPendingFlush])
+  const handleCompositionEnd = useCallback(() => {
+    isComposingRef.current = false
+    flushDraftNextFrame('composition-end')
+  }, [flushDraftNextFrame])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
@@ -198,6 +207,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       value={draft}
       onChange={setDraft}
       onBlur={handleBlur}
+      onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onSubmit={handleSubmit}
     />
