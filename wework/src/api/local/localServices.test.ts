@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER } from './localSession'
-import { createLocalAppServices, createRuntimeWorkApiFromIpc } from './localServices'
+import {
+  createAutomationApiFromIpc,
+  createLocalAppServices,
+  createRuntimeWorkApiFromIpc,
+} from './localServices'
 import {
   clearLocalModelConfigs,
   listLocalModelConfigs,
@@ -1609,11 +1613,28 @@ describe('createLocalAppServices', () => {
       message: 'continue from cloud',
       modelId: 'local-model:cloud-ollama',
     })
+    await runtimeApi.setRuntimeSupervisor({
+      address: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/project',
+        taskId: 'cloud-task',
+      },
+      mode: 'auto',
+      modelSelection: {
+        modelName: 'local-model:cloud-ollama',
+        modelType: 'runtime',
+        options: {},
+      },
+      intervalSeconds: 30,
+    })
 
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
     const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    const supervisorPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.supervisor.set'
+    )?.[1]
     const expectedModelConfig = expect.objectContaining({
       model_id: 'qwen3-coder',
       base_url: 'http://localhost:11434/v1',
@@ -1624,6 +1645,7 @@ describe('createLocalAppServices', () => {
 
     expect(createPayload.executionRequest.model_config).toEqual(expectedModelConfig)
     expect(sendPayload.executionRequest.model_config).toEqual(expectedModelConfig)
+    expect(supervisorPayload.modelConfig).toEqual(expectedModelConfig)
     expect(requestModelCatalogSync).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'cloud-device',
@@ -1657,6 +1679,76 @@ describe('createLocalAppServices', () => {
     expect(requestModelCatalogSync).toHaveBeenCalledTimes(1)
     expect(listLocalModelConfigs()[0]).toMatchObject({
       id: 'cloud-ollama',
+      catalogReady: false,
+    })
+  })
+
+  test('builds cloud automation payloads from a remotely synchronized model catalog', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-automation',
+      displayName: 'Cloud Automation',
+      modelId: 'qwen3-coder',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: 'cloud-device-key',
+      catalogReady: false,
+    })
+    const request = vi
+      .fn()
+      .mockImplementation(async (_method: string, data: Record<string, unknown>) => ({
+        automation: data.automation,
+      }))
+    const automationApi = createAutomationApiFromIpc(
+      request,
+      (method, data) => request(method, data as Record<string, unknown>),
+      {
+        resolveDeviceId: async () => 'cloud-device',
+        syncConfiguredModelCatalog: true,
+      },
+      'cloud-device',
+      'cloud'
+    )
+
+    await automationApi.createAutomation({
+      source: 'cloud',
+      name: 'Cloud automation',
+      prompt: 'Run remotely',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'UTC',
+      enabled: true,
+      conversationMode: 'continue_thread',
+      notificationPolicy: 'all_runs',
+      taskRequest: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/project',
+        teamId: 0,
+        runtime: 'codex',
+        message: 'Run remotely',
+        modelId: 'local-model:cloud-automation',
+      },
+      continuationPayload: {
+        address: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          taskId: 'cloud-task',
+        },
+        message: 'Continue remotely',
+        modelId: 'local-model:cloud-automation',
+      },
+    })
+
+    const automation = request.mock.calls.find(
+      ([method]) => method === 'runtime.automations.create'
+    )?.[1].automation
+    expect(automation.taskPayload.executionRequest.model_config).toMatchObject({
+      model_id: 'qwen3-coder',
+      api_key: 'cloud-device-key',
+    })
+    expect(automation.continuationPayload.executionRequest.model_config).toMatchObject({
+      model_id: 'qwen3-coder',
+      api_key: 'cloud-device-key',
+    })
+    expect(listLocalModelConfigs()[0]).toMatchObject({
+      id: 'cloud-automation',
       catalogReady: false,
     })
   })

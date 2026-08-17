@@ -519,6 +519,7 @@ export function createHybridWorkbenchServices(
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
         cloudModelGateway,
         user: options.user,
+        syncConfiguredModelCatalog: true,
       },
       logicalDeviceId,
       'cloud'
