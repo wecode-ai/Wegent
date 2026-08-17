@@ -1,9 +1,6 @@
-use std::{
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Mutex,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -11,7 +8,6 @@ const PANEL_LABEL: &str = "system-drag-panel";
 const PANEL_WIDTH: f64 = 440.0;
 const PANEL_HEIGHT: f64 = 60.0;
 const PANEL_TOP_MARGIN: f64 = 8.0;
-const PANEL_DISMISS_FALLBACK_MS: u64 = 10_000;
 const DROP_EVENT: &str = "wework-system-drag-drop";
 const NATIVE_TEXT_DROP_EVENT: &str = "wework-system-drag-native-text-drop";
 
@@ -34,7 +30,6 @@ struct NativeTextDropPayload {
 pub struct SystemDragState {
     pending: Mutex<Vec<SystemDragDropPayload>>,
     drag_in_progress: AtomicBool,
-    drag_generation: AtomicU64,
 }
 
 fn ensure_panel(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
@@ -149,25 +144,7 @@ fn take_drag_in_progress(state: &SystemDragState) -> bool {
 
 #[cfg(target_os = "macos")]
 fn begin_drag(state: &SystemDragState) {
-    state.drag_generation.fetch_add(1, Ordering::SeqCst);
     state.drag_in_progress.store(true, Ordering::SeqCst);
-}
-
-#[cfg(target_os = "macos")]
-fn schedule_panel_fallback_hide(app: &AppHandle, drag_generation: u64) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(PANEL_DISMISS_FALLBACK_MS)).await;
-        let state = app.state::<SystemDragState>();
-        if state.drag_generation.load(Ordering::SeqCst) != drag_generation
-            || state.drag_in_progress.load(Ordering::SeqCst)
-        {
-            return;
-        }
-        if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
-            let _ = panel.hide();
-        }
-    });
 }
 
 #[cfg(target_os = "macos")]
@@ -185,7 +162,6 @@ fn handle_drag_event(
         if !take_drag_in_progress(&state) {
             return;
         }
-        let drag_generation = state.drag_generation.load(Ordering::SeqCst);
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
             if cursor_is_inside(&panel) {
                 use objc2_app_kit::{NSPasteboardTypeFileURL, NSPasteboardTypeString};
@@ -219,7 +195,6 @@ fn handle_drag_event(
                                         x: (cursor.x - position.x as f64) / scale_factor,
                                     },
                                 );
-                                schedule_panel_fallback_hide(app, drag_generation);
                                 return;
                             }
                         }
@@ -230,7 +205,6 @@ fn handle_drag_event(
                 return;
             }
         }
-        schedule_panel_fallback_hide(app, drag_generation);
         return;
     }
     let pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
@@ -389,7 +363,6 @@ pub fn take_pending_system_drag_drops(
 #[tauri::command]
 pub fn dismiss_system_drag_panel(app: AppHandle, state: tauri::State<'_, SystemDragState>) {
     state.drag_in_progress.store(false, Ordering::SeqCst);
-    state.drag_generation.fetch_add(1, Ordering::SeqCst);
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         let _ = panel.hide();
     }
