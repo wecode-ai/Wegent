@@ -250,7 +250,7 @@ class MrService:
         integration: MRIntegration,
         project: CloudProject,
         payload: dict[str, object],
-    ) -> None:
+    ) -> MRRecord | None:
         attrs = payload.get("object_attributes") or {}
         if not isinstance(attrs, dict):
             return
@@ -304,6 +304,7 @@ class MrService:
         if not moved:
             self._refresh_card(db, project, record)
         db.flush()
+        return record
 
     def handle_pipeline_event(
         self,
@@ -311,7 +312,7 @@ class MrService:
         integration: MRIntegration,
         project: CloudProject,
         payload: dict[str, object],
-    ) -> None:
+    ) -> MRRecord | None:
         attrs = payload.get("object_attributes") or {}
         if not isinstance(attrs, dict):
             return
@@ -346,6 +347,7 @@ class MrService:
             terminal_status=status,
             pipeline_id=pipeline_id,
         )
+        return record
 
     @staticmethod
     def _pipeline_target(records: list[MRRecord], ref: str) -> MRRecord | None:
@@ -380,7 +382,7 @@ class MrService:
         integration: MRIntegration,
         project: CloudProject,
         payload: dict[str, object],
-    ) -> None:
+    ) -> MRRecord | None:
         attrs = payload.get("object_attributes") or {}
         if not isinstance(attrs, dict):
             return
@@ -446,6 +448,7 @@ class MrService:
             return
         self.create_or_update_card(db, integration, project, record)
         self._maybe_retrigger(db, integration, project, record)
+        return record
 
     def finalize_round(
         self,
@@ -688,6 +691,11 @@ class MrService:
             db.add(card)
             db.flush()
             record.current_loop_item_id = card.id
+            # Transient marker for the caller: a fresh fix card should feed the
+            # project-automation assignment flow. It is a plain Python attribute,
+            # never persisted; the Celery task reads it after commit and fires a
+            # task.created event.
+            record._mr_card_created = True
         else:
             card.title = title
             card.description = description

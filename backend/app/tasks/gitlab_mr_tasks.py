@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
 from app.models.cloud_project import CloudProject
-from app.models.gitlab_mr import MRIntegration
+from app.models.gitlab_mr import MRIntegration, MRRecord
 from app.services.gitlab.integration_service import mr_integration_service
 from app.services.gitlab.mr_service import mr_service
 
@@ -28,6 +28,59 @@ EVENT_KIND_HANDLERS = {
     "note": mr_service.handle_note_event,
     "pipeline": mr_service.handle_pipeline_event,
 }
+
+
+def _emit_task_created_event(
+    db: Session, integration: MRIntegration, record: MRRecord
+) -> None:
+    """Fire a project-automation ``task.created`` event for a freshly created
+    MR fix card so matching assignment rules can take over. Best-effort: a
+    failure must not break the MR state machine or the reconcile loop."""
+    import asyncio
+
+    from app.models.delivery import LoopItem
+    from app.services.project_automations import (
+        ProjectAutomationEvent,
+        project_automation_processor,
+    )
+
+    card = db.get(LoopItem, record.current_loop_item_id)
+    if card is None:
+        return
+    project = db.get(CloudProject, integration.cloud_project_id)
+    if project is None:
+        return
+    try:
+        asyncio.run(
+            project_automation_processor.process(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.created",
+                    project_id=str(project.id),
+                    subject_id=str(card.id),
+                    source=project.task_provider,
+                    actor_user_id=integration.created_by_user_id or None,
+                    payload={
+                        "id": card.id,
+                        "title": card.title or "",
+                        "status": card.status or "",
+                        "priority": card.priority or "none",
+                        "tags": ["mr-fix"],
+                        "description": card.description or "",
+                        "source": "gitlab",
+                        "mr_iid": record.mr_iid,
+                        "source_task_binding_id": card.source_task_binding_id or "",
+                    },
+                ),
+            )
+        )
+    except Exception:
+        logger.exception(
+            "Project automation failed for MR fix card card=%s mr_iid=%s",
+            card.id,
+            record.mr_iid,
+        )
+        db.rollback()
 
 
 def _process_integration_event(
@@ -42,8 +95,15 @@ def _process_integration_event(
     handler = EVENT_KIND_HANDLERS.get(event_kind)
     if handler is None:
         return
-    handler(db, integration, project, payload)
+    record = handler(db, integration, project, payload)
+    created = record is not None and getattr(record, "_mr_card_created", False)
+    if record is not None:
+        # One-shot marker: consumed (and cleared) per handler call so a later
+        # event on the same session cannot fire a duplicate notification.
+        record._mr_card_created = False
     db.commit()
+    if created:
+        _emit_task_created_event(db, integration, record)
 
 
 @celery_app.task(
@@ -89,8 +149,12 @@ def reconcile_gitlab_mr_integrations(self) -> dict[str, object]:
         )
         for integration in integrations:
             try:
-                mr_integration_service.reconcile(db, integration)
+                touched = mr_integration_service.reconcile(db, integration)
                 db.commit()
+                for record in touched:
+                    if getattr(record, "_mr_card_created", False):
+                        record._mr_card_created = False
+                        _emit_task_created_event(db, integration, record)
                 processed += 1
             except Exception:
                 logger.exception(

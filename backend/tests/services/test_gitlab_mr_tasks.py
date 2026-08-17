@@ -13,8 +13,10 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectChatAgent
 from app.models.gitlab_mr import MRIntegration
+from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.services.gitlab.client import ProjectScopedGitlabClient
 from app.tasks.gitlab_mr_tasks import _process_integration_event
@@ -189,3 +191,197 @@ def test_process_gitlab_event_reraises_instead_of_swallowing(
     monkeypatch.setattr("app.tasks.gitlab_mr_tasks._process_integration_event", boom)
     with pytest.raises(RuntimeError):
         process_gitlab_event(env["integration"].id, "merge_request", {})
+
+
+def _create_card(db: Session, integration: MRIntegration, fake: FakeGitlab) -> None:
+    """Bootstrap the MR and drive a failed pipeline so a fix card is created."""
+    _process_integration_event(
+        db,
+        integration.id,
+        "merge_request",
+        {
+            "object_kind": "merge_request",
+            "object_attributes": {
+                "iid": 1,
+                "state": "opened",
+                "title": "X",
+                "source_branch": "feat/x",
+                "target_branch": "main",
+                "author_id": 11,
+                "url": "https://gitlab.internal/group/project/-/merge_requests/1",
+                "last_commit": {"id": SHA1},
+            },
+        },
+    )
+    fake.jobs = [{"id": 200, "name": "test", "stage": "test", "web_url": "u"}]
+    fake.traces = {"/projects/group%2Fproject/jobs/200/trace": "boom"}
+    _process_integration_event(
+        db,
+        integration.id,
+        "pipeline",
+        {
+            "object_kind": "pipeline",
+            "object_attributes": {
+                "id": 100,
+                "sha": SHA1,
+                "status": "failed",
+                "ref": "feat/x",
+            },
+        },
+    )
+
+
+def _note_payload(note_id: int, body: str) -> dict[str, Any]:
+    return {
+        "object_kind": "note",
+        "object_attributes": {
+            "id": note_id,
+            "noteable_type": "MergeRequest",
+            "system": False,
+            "note": body,
+            "author": {"username": "alice"},
+            "url": f"https://gitlab.internal/group/project/-/merge_requests/1#note_{note_id}",
+        },
+        "merge_request": {"iid": 1},
+    }
+
+
+def test_card_create_emits_task_created_event(
+    env: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A freshly created MR fix card must notify the assignment flow once."""
+    db = env["db"]
+    emitted: list[Any] = []
+    monkeypatch.setattr(
+        "app.tasks.gitlab_mr_tasks._emit_task_created_event",
+        lambda _db, _integration, record: emitted.append(record),
+    )
+
+    _create_card(db, env["integration"], env["fake"])
+
+    assert len(emitted) == 1
+
+
+def test_card_update_does_not_emit_task_created_event_again(
+    env: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """New feedback on an existing card updates it in place; the automation
+    assignment flow is only entered once at creation."""
+    db = env["db"]
+    emitted: list[Any] = []
+    monkeypatch.setattr(
+        "app.tasks.gitlab_mr_tasks._emit_task_created_event",
+        lambda _db, _integration, record: emitted.append(record),
+    )
+
+    _create_card(db, env["integration"], env["fake"])
+    _process_integration_event(
+        db, env["integration"].id, "note", _note_payload(12, "please fix")
+    )
+
+    assert len(emitted) == 1
+
+
+def test_emit_task_created_event_payload(
+    env: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The emitted task.created event carries the fields automation rules match
+    on (source/status/priority/tags) plus the MR identity."""
+    from app.services.project_automations import project_automation_processor
+
+    captured: list[Any] = []
+
+    async def fake_process(_db, event, *, automation_id=None) -> int:
+        captured.append(event)
+        return 0
+
+    monkeypatch.setattr(project_automation_processor, "process", fake_process)
+
+    db = env["db"]
+    _create_card(db, env["integration"], env["fake"])
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.event_type == "task.created"
+    assert event.source == "gitlab"
+    assert event.payload["tags"] == ["mr-fix"]
+    assert event.payload["status"] == "inbox"
+    assert event.payload["priority"] == "none"
+    card = (
+        db.query(LoopItem)
+        .filter(LoopItem.cloud_project_id == str(env["project"].id))
+        .one()
+    )
+    assert event.subject_id == card.id
+    assert event.payload["mr_iid"] == 1
+
+
+def test_manual_rule_assigns_mr_card_to_robot(
+    env: dict[str, Any],
+    test_db: Session,
+    test_user: User,
+) -> None:
+    """A manual assignment rule matching the MR card must queue a project-robot
+    run through the real processor (end to end)."""
+    db = env["db"]
+    project = env["project"]
+    integration = env["integration"]
+
+    device_id = f"local-{uuid.uuid4().hex[:10]}"
+    db.add(
+        Kind(
+            kind="Device",
+            name=device_id,
+            namespace="default",
+            user_id=test_user.id,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+    )
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="MR Fix Bot",
+        name="MR Fix Bot",
+        status="active",
+        created_by_user_id=test_user.id,
+        device_id=device_id,
+        metadata_json={
+            "runtime": "codex",
+            "execution_mode": "auto",
+            "execution_environment": "local",
+            "visibility": "public",
+        },
+    )
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:8]}",
+        cloud_project_id=project.id,
+        title="MR fix rule",
+        description="Assign MR fix cards",
+        status="enabled",
+        assignee_agent_id=bot.id,
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "assignment_mode": "manual",
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "event_config": {"sources": ["gitlab"], "tags": ["mr-fix"]},
+        },
+    )
+    db.add_all([bot, rule])
+    db.commit()
+
+    _create_card(db, integration, env["fake"])
+
+    card = db.query(LoopItem).filter(LoopItem.cloud_project_id == str(project.id)).one()
+    execution = (
+        db.query(LoopItemExecution)
+        .filter(LoopItemExecution.loop_item_id == card.id)
+        .first()
+    )
+    assert execution is not None
+    assert execution.executor_type == "project_robot"
+    assert execution.status in {"queued", "pending_approval"}

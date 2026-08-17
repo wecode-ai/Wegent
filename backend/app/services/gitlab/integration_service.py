@@ -186,26 +186,27 @@ class MrIntegrationService:
             "last_reconcile_at": integration.last_reconcile_at,
         }
 
-    def reconcile(self, db: Session, integration: MRIntegration) -> None:
+    def reconcile(self, db: Session, integration: MRIntegration) -> list[MRRecord]:
         """Sweep one integration: hook health, stale evaluating rounds, and
-        open-MR bootstrap / lost merge closure."""
+        open-MR bootstrap / lost merge closure. Returns every record the sweep
+        touched so the caller can read transient per-record markers."""
         project = db.get(CloudProject, integration.cloud_project_id)
         if project is None or not integration.enabled:
-            return
+            return []
         try:
             current_repository = resolve_repository(project)
         except HTTPException:
             integration.status = "error"
             integration.last_error = "Provider credential is not configured"
             db.flush()
-            return
+            return []
         if integration.repository != current_repository:
             integration.status = "error"
             integration.last_error = (
                 "Repository changed in project settings; re-enable MR integration"
             )
             db.flush()
-            return
+            return []
 
         client = ProjectScopedGitlabClient(project)
         self._reconcile_hook(db, client, integration)
@@ -246,14 +247,17 @@ class MrIntegrationService:
                     terminal_status=record.pipeline_status,
                     pipeline_id=record.pipeline_id,
                 )
+        bootstrapped_records: list[MRRecord] = []
         for iid in open_iids:
             if iid in tracked:
                 continue
             bootstrapped = mr_service.bootstrap_mr(db, integration, project, iid)
             if bootstrapped is not None:
                 mr_service.settle_by_reconcile(db, integration, project, bootstrapped)
+                bootstrapped_records.append(bootstrapped)
         integration.last_reconcile_at = _utcnow()
         db.flush()
+        return records + bootstrapped_records
 
     # ------------------------------------------------------------- helpers
 
